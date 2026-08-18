@@ -4,7 +4,7 @@ A UPI ``subscription.activated`` grants the first period's credits BEFORE the
 first debit. If that debit fails (``subscription.halted`` / ``pending`` with no
 successful ``subscription.charged``), the customer must not keep a full period
 of credits they never paid for. ``_revoke_unpaid_activation_grant`` reverses
-that grant — but ONLY the unpaid first period, and in a way that lets a later
+that grant, but ONLY the unpaid first period, and in a way that lets a later
 successful retry re-grant cleanly.
 
 Covered:
@@ -44,7 +44,7 @@ def _plan(db, *, slug, credits=10_000):
 
 def _activated_sub(db, client, plan, *, rzp_id, period_start, period_end):
     """A subscription in the just-activated state: credits granted, marker set,
-    no paid charge yet — exactly the UPI activated-before-charged window."""
+    no paid charge yet, exactly the UPI activated-before-charged window."""
     sub = Subscription(
         client_id=client.id,
         plan_id=plan.id,
@@ -151,7 +151,7 @@ def test_redelivered_halted_does_not_double_revoke(db):
     rzp._handle_subscription_halted(db, _halted_payload("sub_cb3"))  # redelivery
     db.commit()
     db.refresh(sub)
-    # Revoked exactly once: marker at start, balance 0 — the second call
+    # Revoked exactly once: marker at start, balance 0, the second call
     # short-circuits on the marker guard.
     assert sub.last_granted_period_end == PERIOD_START
     assert credit_service.get_balance(db, client.id, bot_id=None) == 0
@@ -172,7 +172,7 @@ def test_pending_also_revokes_unpaid_activation_grant(db):
 
 
 def test_paid_seat_invoice_does_not_mask_unpaid_activation(db):
-    """F5 — seat add-on invoices stamp the main sub's id but pay for seats,
+    """F5. Seat add-on invoices stamp the main sub's id but pay for seats,
     not the plan. A successfully-charged seat mandate must not defeat the
     unpaid-activation revoke when the first PLAN debit failed."""
     client = _client(db, "seat-mask@e.com")
@@ -202,7 +202,7 @@ def test_paid_seat_invoice_does_not_mask_unpaid_activation(db):
 
 
 def test_legacy_null_kind_paid_invoice_still_masks_revoke(db):
-    """Legacy rows (kind IS NULL) must keep counting as plan charges — the
+    """Legacy rows (kind IS NULL) must keep counting as plan charges, the
     is_distinct_from filter excludes only known seat invoices."""
     client = _client(db, "legacy-mask@e.com")
     plan = _plan(db, slug="std-legacy-mask")

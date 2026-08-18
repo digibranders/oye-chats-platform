@@ -125,7 +125,7 @@ export function LeadEnrichmentSection({
             description="Identify the company a visitor is browsing from, using their IP address."
             // Stated as a condition, not a flat price. Most visitors arrive on
             // home or mobile connections that name no employer, and those cost
-            // nothing — a bare "10 credits" would read as 10 per visitor.
+            // nothing, a bare "10 credits" would read as 10 per visitor.
             cost="Costs 10 credits only when a company is found."
             planName="the Professional plan"
             planAllows={companyLookupPlanAllows}

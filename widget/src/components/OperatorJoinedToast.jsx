@@ -3,14 +3,14 @@ import { UserCheck, X } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 
 /**
- * OperatorJoinedToast — non-blocking notification shown when an operator
+ * OperatorJoinedToast. Non-blocking notification shown when an operator
  * becomes available WHILE the visitor is mid-way through the offline form.
  *
  * UX choice: we don't silently swap the offline form for a live chat
  * (jarring, loses what the user typed). Instead we offer an inline switch
  * via this toast. Visitor decides: keep typing the form, or jump to chat.
  *
- * Auto-dismisses after ``autoDismissMs`` (default 10s) — assumption is
+ * Auto-dismisses after ``autoDismissMs`` (default 10s). Assumption is
  * "no action" means "I'm committed to the form, leave me alone".
  *
  * Props:

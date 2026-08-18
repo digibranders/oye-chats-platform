@@ -40,7 +40,7 @@ def _client(db, email, **billing):
 
 
 def test_capture_paid_at_parses_epoch():
-    # 2026-03-31 18:30:00 UTC == 2026-04-01 00:00 IST — an FY-boundary capture.
+    # 2026-03-31 18:30:00 UTC == 2026-04-01 00:00 IST, an FY-boundary capture.
     dt = _capture_paid_at({"created_at": 1774981800})
     assert dt.tzinfo is not None
     assert dt.year == 2026 and dt.month == 3 and dt.day == 31
@@ -77,8 +77,8 @@ def test_finalize_dates_from_paid_at_not_now(db, enabled):
 
 def test_finalize_fy_boundary_ist(db, enabled):
     """End-to-end proof of the fix: a capture at 23:59 IST on 31-Mar (still FY
-    25-26) vs 01:30 IST on 1-Apr (FY 26-27) must land in the right FY serial —
-    exercising _capture_paid_at (UTC) x financial_year_label (IST) together, which
+    25-26) vs 01:30 IST on 1-Apr (FY 26-27) must land in the right FY serial.
+    Exercising _capture_paid_at (UTC) x financial_year_label (IST) together, which
     is the exact interaction finding G is about. IST = UTC+5:30."""
     _seller(db)
     # 31-Mar-2026 23:59 IST == 31-Mar-2026 18:29 UTC → FY 25-26.

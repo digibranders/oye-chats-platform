@@ -1,14 +1,14 @@
 """Free, in-house company-domain extraction from an email address.
 
-No API call — see docs/superpowers/plans/2026-08-08-visitor-intelligence.md
+No API call. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md
 for why this replaced a paid reverse-email-lookup vendor.
 """
 
 from app.services.domain_normalizer import registrable_domain
 
-# Not exhaustive by design — covers the providers a B2B chatbot lead is
+# Not exhaustive by design. Covers the providers a B2B chatbot lead is
 # actually likely to type. Extend this list as false positives are
-# reported; do not attempt to auto-generate it — a bad addition here
+# reported; do not attempt to auto-generate it, a bad addition here
 # silently drops a real company's leads.
 _FREE_EMAIL_DOMAINS = frozenset(
     {
@@ -117,7 +117,7 @@ _FREE_EMAIL_DOMAINS = frozenset(
         # NOT here on purpose: sify.com and indiatimes.com. Both ran consumer
         # webmail, but both are also the live corporate domains of real
         # companies (Sify Technologies; Times Internet / Bennett Coleman), and
-        # this file's own warning applies — a bad entry silently drops a real
+        # this file's own warning applies, a bad entry silently drops a real
         # company's leads, which is worse than paying to resolve a webmail
         # domain and getting nothing back.
         "in.com",
@@ -131,7 +131,7 @@ def extract_company_domain(email: str | None) -> str | None:
     This is THE entry point for "which company does this address belong to?".
     It layers the free-provider policy on top of
     ``domain_normalizer.registrable_domain``, which owns every rule about what
-    a domain actually is — public suffixes, hosting platforms, IP literals,
+    a domain actually is. Public suffixes, hosting platforms, IP literals,
     malformed labels.
 
     Delegating rather than re-implementing matters because the result is the

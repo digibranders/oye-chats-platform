@@ -47,7 +47,7 @@ def test_resolve_and_update_location_writes_visitor_metadata(db):
 
     with (
         patch("app.api.chat_routes.fetch_ip_intel", return_value=fake_intel),
-        # Company lookup is now Professional-gated + metered — stub the plan gate,
+        # Company lookup is now Professional-gated + metered. Stub the plan gate,
         # the per-agent toggle (defaults OFF), and the credit reservation so the
         # lookup path runs. This test cares about the write, not the gates.
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
@@ -59,7 +59,7 @@ def test_resolve_and_update_location_writes_visitor_metadata(db):
         _resolve_and_update_location(session_id, "8.8.8.8", bot.id)
 
     # IP intel is namespaced under ``ip_intel`` rather than replacing the whole
-    # blob — ``visitor_metadata`` is shared with the operator console's
+    # blob. ``visitor_metadata`` is shared with the operator console's
     # user-agent fields.
     updated = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     assert updated.visitor_metadata["ip_intel"]["company_name"] == "Acme Corp"
@@ -127,14 +127,14 @@ class _MockSessionManager:
 @contextmanager
 def _metering_allowed():
     """Plan gate open and the charge accepted, so the dedup tests exercise the
-    real path. The charge mock is ASSERTED ON, not just installed — "charged
+    real path. The charge mock is ASSERTED ON, not just installed. "charged
     once per session, not once per message" is the billing property these
     tests exist to protect."""
     with (
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
         # The third gate: the per-agent customer toggle. Patched because most
         # of these tests seed a bot row directly and care about dedup/metering
-        # order, not about the toggle — the toggle has its own tests.
+        # order, not about the toggle, the toggle has its own tests.
         patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
         patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
     ):
@@ -188,10 +188,10 @@ def test_the_company_lookup_is_charged_once_per_session_not_once_per_message(db)
     `fetch_ip_intel` is metered at `credit_cost.company_name` (5). It is
     submitted from /chat and /chat/stream on EVERY message, so charging before
     the dedup check bills a 15-turn conversation 75 credits of enrichment
-    against 15 credits of actual AI replies — roughly 133 conversations would
+    against 15 credits of actual AI replies. Roughly 133 conversations would
     exhaust a Professional plan's whole monthly allowance.
 
-    The two halves of this — the metering and the dedup — were written
+    The two halves of this, the metering and the dedup. Were written
     independently and git merges them with no conflict in either order, so
     nothing but this test holds the order in place.
     """
@@ -207,7 +207,7 @@ def test_the_company_lookup_is_charged_once_per_session_not_once_per_message(db)
             _resolve_and_update_location(session_id, "8.8.8.8", 30)
 
     assert charge.call_count == 1, (
-        f"charged {charge.call_count}x for one visitor's company lookup — "
+        f"charged {charge.call_count}x for one visitor's company lookup. "
         "the charge must sit behind the per-session dedup"
     )
     # And it must carry an idempotency key, so two overlapping background
@@ -216,7 +216,7 @@ def test_the_company_lookup_is_charged_once_per_session_not_once_per_message(db)
 
 
 def test_a_changed_ip_is_resolved_again(db):
-    """Keyed on the IP, not on mere presence — a visitor who moves from wifi to
+    """Keyed on the IP, not on mere presence, a visitor who moves from wifi to
     mobile data mid-conversation is genuinely somewhere new."""
     session_id = _seed(db, client_id=11, bot_key="bot-moved1", session_id="s-moved")
 
@@ -287,7 +287,7 @@ def test_the_bare_ip_stamp_does_not_count_as_a_resolved_location(db):
 
 def test_a_failed_state_read_resolves_rather_than_skipping(db):
     """The guard is an optimisation. If it cannot read the prior state it must
-    fall through and do the work — never silently suppress the feature."""
+    fall through and do the work, never silently suppress the feature."""
     from app.api.chat_routes import _already_resolved
 
     with patch("app.api.chat_routes.get_session", side_effect=RuntimeError("db down")):
@@ -332,7 +332,7 @@ def test_the_geolocation_vendors_are_skipped_once_the_location_is_known(db):
 
 def test_a_new_ip_replaces_a_stale_resolved_location(db):
     """The writer only overwrote an empty or "IP:"-prefixed value, so a visitor
-    who changed network kept their first city forever — and because the guard
+    who changed network kept their first city forever, and because the guard
     then never saw a location matching the new IP, BOTH geo vendors were re-hit
     on every subsequent message and the answer thrown away each time."""
     session_id = _seed(db, client_id=21, bot_key="bot-geo2", session_id="s-geo-move")
@@ -413,7 +413,7 @@ def test_company_lookup_skipped_when_not_professional(db):
 # ── Charge only for an answer ────────────────────────────────────────────────
 #
 # An IP names a company only when that company owns its range. Measured on
-# production traffic, 10 resolutions produced ZERO usable company names — 9
+# production traffic, 10 resolutions produced ZERO usable company names. 9
 # consumer ISPs and a subnet label. Charging before the lookup therefore billed
 # the full 10 credits for "not identified" nearly every time.
 
@@ -433,7 +433,7 @@ def test_no_charge_when_the_visitor_cannot_be_resolved_to_a_company(db):
     ):
         _resolve_and_update_location(session_id, "8.8.8.8", 40)
 
-    assert intel.call_count == 1, "the lookup still runs — we eat the vendor call"
+    assert intel.call_count == 1, "the lookup still runs. We eat the vendor call"
     assert charge.call_count == 0, "charged 10 credits for 'no company identified'"
 
     # The free network signal is still stored, so the operator sees who routed
@@ -459,7 +459,7 @@ def test_charged_when_a_company_is_actually_identified(db):
 
 
 def test_the_feature_switch_stops_the_vendor_call_entirely(db):
-    """Off must mean no lookup, not merely no charge — otherwise a disabled
+    """Off must mean no lookup, not merely no charge. Otherwise a disabled
     feature still spends OyeChats' own ipapi.is quota on every session."""
     from app.services import credit_service
 
@@ -509,7 +509,7 @@ def test_the_customer_toggle_stops_the_company_lookup(db):
     """The third gate, end-to-end and NOT patched.
 
     The helper has its own unit tests, but those pass whether or not the gate
-    is actually wired into the resolution path — `_metering_allowed` patches
+    is actually wired into the resolution path. `_metering_allowed` patches
     the helper open. This one drives the real column: a Professional agent with
     `company_lookup_enabled = False` must make no vendor call and no charge.
 

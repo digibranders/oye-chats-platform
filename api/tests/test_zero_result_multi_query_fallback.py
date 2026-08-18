@@ -1,7 +1,7 @@
 """Tests for the zero-result multi-query fallback (AR-40).
 
 Before this, query transformation was limited to a single conditional LLM
-rewrite — a vaguely-worded question with poor lexical/semantic overlap to
+rewrite, a vaguely-worded question with poor lexical/semantic overlap to
 source phrasing got exactly one embedding shot, and a miss on the cosine
 cutoff fell straight to the empty-retrieval refusal even though a
 differently-phrased retrieval attempt might have found the chunk. This adds
@@ -65,8 +65,8 @@ class TestZeroResultMultiQueryFallback:
         doc_a, doc_b, doc_c = _FakeDoc(1), _FakeDoc(2), _FakeDoc(3)
 
         def fake_vector_search(cid, bid, embedding, k):
-            # First paraphrase finds doc_a (far) and doc_b (farther still) —
-            # deliberately in the OPPOSITE of final sorted order, so a test
+            # First paraphrase finds doc_a (far) and doc_b (farther still).
+            # Deliberately in the OPPOSITE of final sorted order, so a test
             # that passed merely by accidental dict-insertion order would
             # fail here. Second paraphrase finds doc_b again (much closer
             # this time) and doc_c (closest of all).

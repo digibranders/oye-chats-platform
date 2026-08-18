@@ -1,7 +1,7 @@
 """Company identity from a site's own markup, no LLM.
 
 Fixtures are the REAL markup patterns captured from live lead domains on
-2026-08-10 — do not "simplify" them into idealised HTML. Two bugs shipped
+2026-08-10. Do not "simplify" them into idealised HTML. Two bugs shipped
 earlier the same day because tests asserted an invented payload shape.
 """
 
@@ -9,7 +9,7 @@ import pytest
 
 from app.services.company_markup import extract_from_markup, extract_logo
 
-# fynix.digital — og:site_name only, title carries a tagline after a pipe.
+# fynix.digital. Og:site_name only, title carries a tagline after a pipe.
 FYNIX = """
 <html><head>
 <title>Fynix Digital | A digital marketing company</title>
@@ -19,7 +19,7 @@ FYNIX = """
 </head><body></body></html>
 """
 
-# cleanstart.com — schema.org carries the LEGAL entity; the title is pure SEO copy.
+# cleanstart.com. Schema.org carries the LEGAL entity; the title is pure SEO copy.
 CLEANSTART = """
 <html><head>
 <title>Verified, zero-CVE container images and linux packages</title>
@@ -31,7 +31,7 @@ CLEANSTART = """
 </head><body></body></html>
 """
 
-# digibranders.com — brand sits AFTER the separator in the title.
+# digibranders.com. Brand sits AFTER the separator in the title.
 DIGIBRANDERS = """
 <html><head>
 <title>Digital Marketing Company | Digibranders</title>
@@ -39,10 +39,10 @@ DIGIBRANDERS = """
 </head><body></body></html>
 """
 
-# zomato.com — no markup at all; a clean one-word title is the only signal.
+# zomato.com, no markup at all; a clean one-word title is the only signal.
 ZOMATO = "<html><head><title>Zomato</title></head><body></body></html>"
 
-# A site with nothing usable — must fall through to the LLM.
+# A site with nothing usable. Must fall through to the LLM.
 BARE = "<html><head><title>Home</title></head><body>Welcome!</body></html>"
 
 
@@ -74,7 +74,7 @@ def test_og_site_name_used_when_no_schema_org():
     ],
 )
 def test_title_is_never_a_source(title, domain):
-    """`<title>` is written for search engines, not machines — nothing in it is
+    """`<title>` is written for search engines, not machines, nothing in it is
     a declaration. Three separate classes of wrong answer came out of mining
     it, so it was removed rather than tuned further. See the module docstring.
     """
@@ -143,7 +143,7 @@ def test_malformed_json_ld_does_not_raise():
 )
 def test_non_string_json_ld_name_does_not_raise(name_value):
     """JSON-LD legitimately allows objects and arrays for `name`. The contract
-    is 'never raises' — a bad type must fall through to og:site_name."""
+    is 'never raises', a bad type must fall through to og:site_name."""
     html = (
         '<html><head><script type="application/ld+json">'
         f'{{"@type":"Organization","name":{name_value}}}</script>'
@@ -314,7 +314,7 @@ def test_logo_url_is_bounded():
 # Added with the resolver's LLM path, which uses it to recover a logo from a
 # page that declared no NAME. It shares parsing with extract_from_markup
 # precisely because the hand-rolled regex it replaced mishandled attribute
-# order, `name=` vs `property=`, and HTML entities — the last of which wrote a
+# order, `name=` vs `property=`, and HTML entities, the last of which wrote a
 # broken URL into a cache every tenant renders.
 
 

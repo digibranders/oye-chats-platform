@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 def _seat_plan_configured():
     """Seat billing is env-only with no baked-in default (``RAZORPAY_SEAT_PLAN_ID``).
     Configure it for the suite so the seat add-on create/carry paths run instead of
-    raising ``RazorpayBillingError`` — mirrors the patch in ``test_razorpay_service``.
+    raising ``RazorpayBillingError``. Mirrors the patch in ``test_razorpay_service``.
     """
     with patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"):
         yield
@@ -110,7 +110,7 @@ def test_seat_charged_creates_invoice(db):
 
 def test_dismiss_then_retry_does_not_entitle(db):
     """C1: a customer who dismisses the first-purchase checkout (never authorizes)
-    and retries must get the checkout AGAIN, not silently entitled seats — the
+    and retries must get the checkout AGAIN, not silently entitled seats, the
     seat sub is still in `created` state and never charged."""
     client, sub = _sub(db)
     rzp = MagicMock()
@@ -143,7 +143,7 @@ def test_retry_with_changed_quantity_updates_created_sub(db):
 
 def test_carry_does_not_self_entitle(db):
     """Revenue-safety: the system seat-carry (require_authorization=False) mints a
-    NEW seat sub in `created` state (uncharged) — it must NOT grant entitlement,
+    NEW seat sub in `created` state (uncharged), it must NOT grant entitlement,
     or the customer gets free, unbilled seats forever. Entitlement stays gated on
     a seat webhook; carried seats are suspended until re-authorized (a documented
     pre-existing gap, deliberately NOT widened here)."""
@@ -155,7 +155,7 @@ def test_carry_does_not_self_entitle(db):
 
     assert result is None  # carry doesn't return a checkout
     assert sub.seat_addon_quantity == 2  # billed mirror carried
-    assert sub.operator_quantity == 1  # NOT entitled — no free seats on an uncharged sub
+    assert sub.operator_quantity == 1  # NOT entitled, no free seats on an uncharged sub
 
 
 def test_first_purchase_checkout_carries_short_url_for_reauth(db):

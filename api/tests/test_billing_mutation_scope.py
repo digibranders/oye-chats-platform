@@ -4,7 +4,7 @@ The read path (``/subscription/current``) falls back to the account plan when
 the selected agent has no subscription of its own. The write path did not, so
 Billing rendered the account plan next to Cancel / Reactivate / Add-seat
 buttons that every one of them answered with 404 "No active subscription
-found" — the exact symptom reported against the Cancel modal.
+found", the exact symptom reported against the Cancel modal.
 
 Read and write must agree, or the UI offers actions it cannot perform.
 """
@@ -96,7 +96,7 @@ def test_no_bot_id_targets_the_account_subscription(db):
 
 
 def test_a_client_with_no_subscription_at_all_still_resolves_to_none(db):
-    """The 404 is correct here — there is genuinely nothing to act on."""
+    """The 404 is correct here. There is genuinely nothing to act on."""
     from app.api.subscription_routes import _resolve_target_subscription
 
     client = _client(db, "mut-empty@e.com")
@@ -167,7 +167,7 @@ def test_fallback_never_targets_another_agents_subscription(db):
     """The defect this guards against is a wrong-target DESTRUCTIVE write.
 
     ``get_client_subscription`` spans per-bot rows and returns the highest
-    PRICED one — right for entitlements (H2), catastrophic as a mutation
+    PRICED one. Right for entitlements (H2), catastrophic as a mutation
     target. With an unpaid agent selected it resolves to whichever agent is on
     the priciest plan, so ``/cancel`` would cancel THAT agent's Razorpay
     mandate. Razorpay has no un-cancel, so the customer cannot undo it.

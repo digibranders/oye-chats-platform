@@ -2,7 +2,7 @@
 
 Power mode was chosen over quick mode after a live accuracy test found
 3 of 11 quick-mode results wrong (including a real false positive on a
-known-invalid address) — see
+known-invalid address). See
 docs/superpowers/plans/2026-08-08-visitor-intelligence.md §04. Power mode
 costs the same 1 credit per call as quick mode, confirmed empirically.
 """
@@ -19,7 +19,7 @@ REOON_VERIFY_URL = "https://emailverifier.reoon.com/api/v1/verify"
 
 
 def verify_email(email: str) -> dict | None:
-    """Run a Reoon power-mode check. Returns None on any failure — callers
+    """Run a Reoon power-mode check. Returns None on any failure. Callers
     must treat None as 'unknown, do not send', never as 'safe'."""
     api_key = os.getenv("REOON_API_KEY", "")
     if not api_key:
@@ -59,13 +59,13 @@ def is_obviously_undeliverable(validation: dict) -> bool:
     the widget's real-time blur check (``/chat/validate-email``) and the
     background enrichment that persists ``LeadInfo.is_valid_email``.
 
-    Deliberately lenient — it does NOT use Reoon's ``is_safe_to_send``.
+    Deliberately lenient, it does NOT use Reoon's ``is_safe_to_send``.
     That flag is False for catch-all and ``unknown`` results, which is
     correct for "can Reoon *prove* deliverability?" but wrong as a gate on
     real B2B leads: plenty of legitimate corporate domains run catch-all
     gateways Reoon can never confirm either way. Using the strict flag here
     previously meant the widget accepted a lead the follow-up feature could
-    then never email — two different answers to the same question. Keep
+    then never email, two different answers to the same question. Keep
     these two behaviours identical by calling this from both paths.
 
     Returns False when ``validation`` is falsy so an unreachable Reoon

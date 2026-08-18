@@ -71,7 +71,7 @@ export interface AvatarPickerProps {
   /** Provenance of `botLogo` from the server: 'derived' means the crawl took
    * it from the site's favicon rather than anyone uploading it. Captioned so
    * a picture the customer did not choose is never presented as one they
-   * did — and so "Remove" reads as a decision rather than a repair. */
+   * did, and so "Remove" reads as a decision rather than a repair. */
   botLogoSource?: string | null;
   /** True when the previewed avatar is the one currently live on the widget. */
   avatarIsLive?: boolean;
@@ -106,7 +106,7 @@ export function AvatarPicker({
     name: string;
     sourceType: string | null;
   } | null>(null);
-  // Why the last pick was refused — the format/size rules the hint promises.
+  // Why the last pick was refused, the format/size rules the hint promises.
   const [pickError, setPickError] = useState<string | null>(null);
 
   const handlePick = (file: File): void => {
@@ -128,7 +128,7 @@ export function AvatarPicker({
 
   return (
     <div className="flex flex-col gap-6 sm:flex-row sm:items-stretch">
-      {/* Left column — options */}
+      {/* Left column. Options */}
       <div className="min-w-0 flex-1 space-y-4">
         {/* Type segmented control */}
         <div
@@ -243,7 +243,7 @@ export function AvatarPicker({
         )}
       </div>
 
-      {/* Right column — live preview. When a photo is set, clicking it reopens
+      {/* Right column. Live preview. When a photo is set, clicking it reopens
           the cropper so the framing can be adjusted without re-uploading. The
           green tick marks that this preview is the avatar currently live on the
           widget (hidden once there are unsaved avatar changes). */}

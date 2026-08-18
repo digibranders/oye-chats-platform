@@ -21,18 +21,18 @@ _pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="oyechats-bg")
 def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
     """Submit a function to the shared background thread pool.
 
-    Failures are logged but never propagated — this is for non-critical
+    Failures are logged but never propagated. This is for non-critical
     fire-and-forget work only.
 
     Each task runs in its own forked Sentry scope. Three threads serve every
     caller of this function, and a pool thread is a long-lived
     ``threading.Thread``: Sentry's ThreadingIntegration forks the scope once,
     when the thread is created, and every task submitted afterwards then shared
-    it — for the life of the process. So a breadcrumb left by a geolocation
+    it, for the life of the process. So a breadcrumb left by a geolocation
     lookup for one visitor (``chat_routes._resolve_and_update_location``)
     attached itself to the next error raised by an unrelated task on the same
-    thread, and ``webhook_service`` dispatches its deliveries — which do report
-    errors to Sentry — into this same pool. Forking per task also means no task
+    thread, and ``webhook_service`` dispatches its deliveries (which do report
+    errors to Sentry) into this same pool. Forking per task also means no task
     can inherit a live transaction from an earlier one, which is what keeps
     outbound geolocation URLs (visitor address in the path, vendor key in the
     query, recorded unsanitised by Sentry's StdlibIntegration) from being

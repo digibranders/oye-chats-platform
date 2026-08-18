@@ -1,7 +1,7 @@
 """mark-paid must not violate the finalized-invoice immutability guard (F8).
 
 ``paid_at`` is a frozen column once an invoice is numbered (models.py
-``_INVOICE_FROZEN_EXEMPT``) — and rightly so: a numbered document's supply date
+``_INVOICE_FROZEN_EXEMPT``), and rightly so: a numbered document's supply date
 is what its FY serial and GSTR period were derived from. Writing it on a
 numbered row raises, so the endpoint 500s.
 """
@@ -80,7 +80,7 @@ def test_mark_paid_on_a_legacy_row_stamps_paid_at(db, enabled):
 
 def test_shadowed_ops_invoice_list_route_is_gone():
     """superadmin_ops_routes registered GET /superadmin/invoices on the same
-    prefix as superadmin_routes_v2, which main.py includes FIRST — so the ops
+    prefix as superadmin_routes_v2, which main.py includes FIRST, so the ops
     handler was unreachable and its ?status= filter silently no-opped."""
     from app.api.superadmin_ops_routes import router
 

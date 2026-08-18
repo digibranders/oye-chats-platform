@@ -1,5 +1,5 @@
 """reconcile_subscription_from_razorpay must not burn its idempotency key when
-the Razorpay subscription is still in a non-billable state — otherwise a too-
+the Razorpay subscription is still in a non-billable state. Otherwise a too-
 early verify call permanently strands the customer on their old plan (localhost
 has no webhook to fall back on)."""
 
@@ -60,7 +60,7 @@ def test_early_created_state_does_not_burn_key_then_later_succeeds(db, monkeypat
     status = {"status": "created"}  # mandate not yet authorised
     monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp(status, client.id, plan.id))
 
-    # First verify — Razorpay still 'created'. No row, and crucially no key burned.
+    # First verify. Razorpay still 'created'. No row, and crucially no key burned.
     assert rzp.reconcile_subscription_from_razorpay(db, RZP_SUB, expected_client_id=client.id) is None
     assert rzp._resolve_local_subscription(db, RZP_SUB) is None
     assert _key_recorded(db) is False  # the fix: key NOT burned

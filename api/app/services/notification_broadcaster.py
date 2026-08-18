@@ -1,7 +1,7 @@
 """Lightweight WebSocket fan-out for in-app notifications.
 
-A dedicated channel (``/ws/notifications``) so that *every* dashboard tab —
-regardless of which page it's on — receives notification events in real
+A dedicated channel (``/ws/notifications``) so that *every* dashboard tab
+(regardless of which page it's on) receives notification events in real
 time. This is deliberately separate from the heavy ``/ws/operator`` channel
 used by the live-chat console: notifications are broadcast everywhere
 (Knowledge Base, Settings, Insights, …) and shouldn't share fate with the
@@ -10,7 +10,7 @@ operator presence machinery.
 Each workspace (``client_id``) keeps its own set of connections. A handful
 of tabs per operator is typical; the broadcaster fan-outs sequentially with
 ``asyncio.gather`` and prunes dead sockets eagerly. No back-pressure or
-buffering — if a tab disconnects, the next poll/refetch through REST closes
+buffering. If a tab disconnects, the next poll/refetch through REST closes
 the gap.
 """
 
@@ -42,7 +42,7 @@ class NotificationBroadcaster:
         # threadpool can still hand off a coroutine onto the main loop.
         # ``None`` until ``bind_loop`` is called (or when the broadcaster
         # is used from a context that genuinely has no main loop, like
-        # the ARQ worker — in that case the row is still persisted; only
+        # the ARQ worker, in that case the row is still persisted; only
         # the real-time WS push is skipped).
         self._main_loop: asyncio.AbstractEventLoop | None = None
 
@@ -63,7 +63,7 @@ class NotificationBroadcaster:
             return False
         try:
             if loop.is_running():
-                # Called from a worker thread — use the thread-safe API.
+                # Called from a worker thread. Use the thread-safe API.
                 asyncio.run_coroutine_threadsafe(self.broadcast(client_id, payload), loop)
                 return True
             return False
@@ -77,13 +77,13 @@ class NotificationBroadcaster:
         """Register a connection, enforcing the per-workspace cap.
 
         Returns ``True`` if accepted, ``False`` when the workspace is already at
-        ``_MAX_CONNECTIONS_PER_CLIENT`` — the caller should close the socket.
+        ``_MAX_CONNECTIONS_PER_CLIENT``, the caller should close the socket.
         """
         async with self._lock:
             conns = self._conns[client_id]
             if len(conns) >= _MAX_CONNECTIONS_PER_CLIENT:
                 logger.warning(
-                    "notification ws cap reached for client_id=%s (%d) — rejecting connection",
+                    "notification ws cap reached for client_id=%s (%d). Rejecting connection",
                     client_id,
                     len(conns),
                 )
@@ -134,5 +134,5 @@ class NotificationBroadcaster:
         return len(self._conns.get(client_id, ()))
 
 
-# Module-level singleton — imported by routes + service for fan-out.
+# Module-level singleton. Imported by routes + service for fan-out.
 broadcaster = NotificationBroadcaster()

@@ -249,8 +249,8 @@ def _get_default_workspace_bot(session, client_id: int) -> Bot | None:
 
 
 class LoginRequest(BaseModel):
-    # Neither field is length-checked against the *stored* credential here —
-    # this is the unauthenticated entry point, so the bound exists to keep an
+    # Neither field is length-checked against the *stored* credential here.
+    # This is the unauthenticated entry point, so the bound exists to keep an
     # arbitrary-size string out of the query parameter and the bcrypt call,
     # not to hint at what a valid password looks like. ``verify_password``
     # truncates to bcrypt's 72 bytes regardless.
@@ -275,18 +275,18 @@ class RegisterRequest(BaseModel):
     password: Password
     company_name: OptionalName = None
     website: OptionalName = None
-    # Billing country chosen at signup — sets the account's display/charge
+    # Billing country chosen at signup. Sets the account's display/charge
     # currency (IN -> INR, else USD) from the very first load. Optional; falls
     # back to IP geo when omitted.
     billing_country: str | None = Field(default=None, max_length=8)
     # Optional affiliate referral code captured from the ``?ref=`` cookie at
-    # signup. Silent on invalid/self-referral — registration must never fail
+    # signup. Silent on invalid/self-referral. Registration must never fail
     # because of a referral problem. Bounded because it is looked up verbatim
     # and echoed into audit records.
     referral_code: str | None = Field(default=None, max_length=64)
     # Optional launch-promo code captured from the campaign link's ``?code=``.
     # Makes the offer link-exclusive (only link arrivals qualify). Silent on
-    # unknown codes — a bad link must never fail signup.
+    # unknown codes, a bad link must never fail signup.
     promo_code: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
@@ -352,13 +352,13 @@ class CurrentUserResponse(BaseModel):
     """Profile payload for the authenticated principal (TopBar profile dropdown).
 
     Works for both clients (admins) and operators. The ``kind`` discriminator
-    tells the UI which fields are meaningful — operators don't own bots
+    tells the UI which fields are meaningful. Operators don't own bots
     directly, so ``bot_count`` reflects the bots in their workspace (the
     client they belong to). For clients ``role`` is None; for operators
     ``role`` is one of ``owner | admin | operator``.
 
     Exposes only the small set of profile fields the admin app needs to
-    render the user menu — never sensitive data (no api_key, no password
+    render the user menu, never sensitive data (no api_key, no password
     hash).
     """
 
@@ -388,13 +388,13 @@ class CurrentUserResponse(BaseModel):
     is_verified: bool = False
     onboarding_complete: bool = False
     role: str | None = None  # operator role; None for clients
-    # Affiliate-program membership — derived from the affiliates table.
+    # Affiliate-program membership. Derived from the affiliates table.
     # ``True`` only when an active (non-deactivated) row exists for the
     # current client; always ``False`` for operators (they're a different
     # principal type and can't be affiliates themselves).
     is_affiliate: bool = False
     affiliate_id: int | None = None
-    # ``True`` for affiliates who are NOT also customers — i.e. they came
+    # ``True`` for affiliates who are NOT also customers. I.e. they came
     # in via the magic-link onboarding and never created a bot. The admin
     # app uses this to render the dedicated AffiliateLayout instead of the
     # full customer dashboard. ``False`` for customer-affiliates so they
@@ -413,7 +413,7 @@ def get_my_entitlements(auth: dict = Depends(get_current_client_or_operator)):
     Used by the admin app's ``useEntitlements`` hook to drive every feature
     gate, limit display, and upgrade prompt without each component
     re-fetching the plan. Operators see the entitlements of the client
-    they belong to — that's the workspace they're acting in, not their
+    they belong to. That's the workspace they're acting in, not their
     own (operators don't have personal subscriptions).
 
     Response shape mirrors ``PlanEntitlements.to_json_dict()`` plus a small
@@ -426,7 +426,7 @@ def get_my_entitlements(auth: dict = Depends(get_current_client_or_operator)):
         entitlements = get_entitlements(client_id, session, include_usage=True)
 
     payload = entitlements.to_json_dict()
-    # Derived helpers — saves the frontend a handful of conditionals.
+    # Derived helpers. Saves the frontend a handful of conditionals.
     payload["is_free"] = entitlements.plan_slug == "free"
     payload["topup_allowed"] = entitlements.has_feature("topup_allowed")
     return payload
@@ -440,7 +440,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
     joining date, bots). Accepts BOTH ``X-API-Key`` (clients) and
     ``X-Operator-Key`` (operators) so the dropdown works regardless of how
     the user logged in. For an operator, ``bot_count`` is the count of bots
-    in their workspace (the client they belong to) — that's what the user
+    in their workspace (the client they belong to). That's what the user
     expects to see for the "X bots" line, not zero.
     """
     with get_session() as session:
@@ -463,7 +463,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
                 bot_count=int(bot_count or 0),
                 is_superadmin=False,
                 is_online=bool(operator.is_online),
-                # Reflect the workspace owner's account state — operators act
+                # Reflect the workspace owner's account state. Operators act
                 # inside a client's workspace and share its verification /
                 # onboarding status rather than owning their own.
                 is_verified=bool(owner_client.is_verified) if owner_client else False,
@@ -494,7 +494,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
         is_online = operator_row.is_online if operator_row else False
 
         # Google (OAuth) profile picture, when this account is linked to a
-        # provider. Informational only — used for the TopBar avatar; falls back
+        # provider. Informational only. Used for the TopBar avatar; falls back
         # to initials in the UI when None (password-only accounts).
         from app.db.models import OAuthAccount
 
@@ -608,8 +608,8 @@ class ResendVerificationRequest(BaseModel):
 def complete_onboarding(client: Client = Depends(get_current_client_strict)):
     """Mark the account's guided onboarding (Build Studio) as complete.
 
-    Called when the user finishes the Studio's Go-live milestone. Idempotent —
-    safe to call more than once.
+    Called when the user finishes the Studio's Go-live milestone. Idempotent.
+    Safe to call more than once.
     """
     with get_session() as session:
         row = session.get(Client, client.id)
@@ -652,7 +652,7 @@ def verify_email(request: Request, body: VerifyEmailRequest):
                     client.email_otp = None
                     client.email_otp_expires_at = None
                     session.commit()
-                    logger.warning("email_otp_attempts_exhausted client_id=%s — code invalidated", client.id)
+                    logger.warning("email_otp_attempts_exhausted client_id=%s. Code invalidated", client.id)
                     raise HTTPException(
                         status_code=400,
                         detail="Too many incorrect codes. Please request a new one.",
@@ -692,7 +692,7 @@ def resend_verification(request: Request, body: ResendVerificationRequest):
             client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
             session.commit()
 
-            # Dev convenience — see the register handler. Never logs in production.
+            # Dev convenience. See the register handler. Never logs in production.
             from app.config import APP_ENV
 
             if APP_ENV != "production":
@@ -773,7 +773,7 @@ def login(request: Request, body: LoginRequest):
                 logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
-            # Standing checks — a suspended or hard-deleted account must not
+            # Standing checks, a suspended or hard-deleted account must not
             # get past the password check, or the customer lands on a working
             # session that any subsequent API call immediately rejects.
             # Superadmins are exempt (platform staff, never customers).
@@ -821,7 +821,7 @@ def login(request: Request, body: LoginRequest):
 def detect_country(request: Request):
     """Resolve the caller's country from edge headers, for the signup form.
 
-    Public (no auth) — the register page calls this on load to preselect the
+    Public (no auth), the register page calls this on load to preselect the
     visitor's country in the billing-country field. Returns the ISO 3166-1
     alpha-2 code, or ``null`` when no edge signal is present (local dev, direct
     origin hit) so the form can fall back to an unselected placeholder.
@@ -910,7 +910,7 @@ def register(request: Request, body: RegisterRequest):
 
             # Auto-assign the default plan. Whether that yields a trialing
             # or an active subscription depends on the plan seed
-            # (``Plan.trial_days``) — today the default plan is "free" with
+            # (``Plan.trial_days``). Today the default plan is "free" with
             # zero trial days, so a plain signup lands active on Free and
             # the trial is opt-in via the billing modal. The subscription
             # row is bound locally so we can build the trial payload +
@@ -930,7 +930,7 @@ def register(request: Request, body: RegisterRequest):
 
             # Build the trial payload + fire the welcome email AFTER commit.
             # If the email layer crashes, we don't want to roll back the
-            # client row — they're already a customer, the day-1 cron will
+            # client row. They're already a customer, the day-1 cron will
             # follow up.
             trial_payload: TrialStatePayload | None = None
             if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
@@ -959,7 +959,7 @@ def register(request: Request, body: RegisterRequest):
                         duration_days=int(subscription.plan.trial_days or 7) if subscription.plan else 7,
                     )
                 except Exception as mail_err:
-                    # send_trial_welcome_email is already defensive — this is
+                    # send_trial_welcome_email is already defensive. This is
                     # the belt-and-braces guard for any import-time error.
                     logger.warning(
                         "trial_welcome_dispatch_failed for client %s: %s",
@@ -967,7 +967,7 @@ def register(request: Request, body: RegisterRequest):
                         mail_err,
                     )
 
-            # Affiliate first-touch attribution. Best-effort — invalid /
+            # Affiliate first-touch attribution. Best-effort. Invalid /
             # self-referral / inactive code all silently no-op so the
             # signup response stays fast and successful.
             if body.referral_code:
@@ -985,7 +985,7 @@ def register(request: Request, body: RegisterRequest):
                     session.rollback()
 
             # Launch-promo first-touch attribution from the campaign link's
-            # ``?code=``. Best-effort — an unknown code silently no-ops so a bad
+            # ``?code=``. Best-effort, an unknown code silently no-ops so a bad
             # link never blocks a signup; a valid one stamps the account so the
             # link-exclusive offer resolves at checkout.
             if body.promo_code:
@@ -1020,7 +1020,7 @@ def register(request: Request, body: RegisterRequest):
                 # Non-dev local envs still get the OTP in the log (never in production).
                 logger.info("[DEV] email verification OTP for %s: %s", new_client.email, otp)
 
-            # Fire verification email after commit — failure must not roll back the account.
+            # Fire verification email after commit. Failure must not roll back the account.
             try:
                 from app.services.email_service import send_verification_otp_email
 
@@ -1029,7 +1029,7 @@ def register(request: Request, body: RegisterRequest):
                 logger.warning("verification_otp_email_failed for client %s: %s", new_client.id, mail_err)
 
             logger.info(
-                "New client registered: id=%s (%s) — verification OTP dispatched", new_client.id, new_client.name
+                "New client registered: id=%s (%s). Verification OTP dispatched", new_client.id, new_client.name
             )
 
             return {
@@ -1066,7 +1066,7 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
-            # Standing checks — a deactivated or suspended account must
+            # Standing checks, a deactivated or suspended account must
             # not receive a reset OTP. The login endpoint already returns
             # a specific reason for these states so there's no further
             # enumeration signal being leaked here; matching the login
@@ -1124,7 +1124,7 @@ def reset_password(request: Request, body: ResetPasswordRequest):
 
             # Defence-in-depth: even if the OTP was minted before the
             # account was deactivated / suspended (e.g. a support action
-            # ran between the two calls), don't let the reset land — the
+            # ran between the two calls), don't let the reset land, the
             # customer would set a password only to be blocked at login.
             if not client.is_superadmin:
                 if client.deactivated_at is not None:
@@ -1161,7 +1161,7 @@ def reset_password(request: Request, body: ResetPasswordRequest):
             client.reset_otp_expires_at = None
             # Rotate the session credential. ``api_key`` is a permanent bearer
             # token with no expiry and no server-side session table, so a reset
-            # that leaves it in place revokes nothing — the whole point of a
+            # that leaves it in place revokes nothing, the whole point of a
             # password reset ("someone else may have my account") is defeated if
             # the attacker's copy of the key keeps working. The new key is NOT
             # returned: a reset is unauthenticated, so handing a credential back
@@ -1204,7 +1204,7 @@ class ImpersonationRedeemResponse(BaseModel):
     name: str
     email: str
     expires_at: str
-    # Who is watching — rendered in the customer-side banner.
+    # Who is watching. Rendered in the customer-side banner.
     actor_email: str
     is_impersonation: bool = True
 
@@ -1214,7 +1214,7 @@ class ImpersonationRedeemResponse(BaseModel):
 def redeem_impersonation_token(request: Request, body: ImpersonationRedeemRequest):
     """Exchange a raw impersonation token for the session's display profile.
 
-    Unauthenticated by design — the token *is* the authentication. Rate-limited
+    Unauthenticated by design, the token *is* the authentication. Rate-limited
     per IP because this is an unauthenticated endpoint that validates a secret.
 
     The call does **not** burn the token: the impersonated tab may reload, and
@@ -1222,7 +1222,7 @@ def redeem_impersonation_token(request: Request, body: ImpersonationRedeemReques
     re-checked on every subsequent request anyway, so revoking still ends the
     session immediately).
 
-    Returns 401 for an expired, revoked, unknown, empty or malformed token —
+    Returns 401 for an expired, revoked, unknown, empty or malformed token,
     one message for all of them, so a prober learns nothing from the response.
 
     Returns 403 when impersonation is disabled outright (design §14). This is
@@ -1330,7 +1330,7 @@ def operator_login(request: Request, body: OperatorLoginRequest):
     """
     email = body.email.strip().lower()
     try:
-        # Same per-account ceiling as the client login above — an operator key
+        # Same per-account ceiling as the client login above, an operator key
         # is a full workspace credential, so this door needs the same lock.
         if login_attempts_exhausted(f"operator:{email}"):
             logger.warning(

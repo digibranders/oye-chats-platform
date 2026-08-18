@@ -3,7 +3,7 @@
  *
  * A crawl can set the agent's avatar from the site's favicon at any point after
  * this editor loaded its draft. Re-sending the loaded value on save wrote that
- * derived avatar straight back off — the PATCH merges by key, so including
+ * derived avatar straight back off, the PATCH merges by key, so including
  * `bot_logo: null` is an instruction to clear it, not an absence of opinion.
  *
  * The guard is "unchanged", not "empty": removing the avatar is a deliberate
@@ -84,7 +84,7 @@ describe('settingsFromDraft avatar handling', () => {
     expect(payload.launcher_logo).toBeNull();
   });
 
-  it('never sends provenance back — the server owns it', () => {
+  it('never sends provenance back, the server owns it', () => {
     // `bot_logo_source` is derived state stamped server-side on write. Echoing
     // a page-load snapshot of it would let the client assert a provenance it
     // has no authority over, including re-asserting 'derived' after the
@@ -100,7 +100,7 @@ describe('settingsFromDraft avatar handling', () => {
 
   it('sends the avatar when no baseline is available to compare against', () => {
     // Without a baseline there is nothing to call "unchanged", so the caller's
-    // value is authoritative — the pre-existing behaviour.
+    // value is authoritative, the pre-existing behaviour.
     const payload = settingsFromDraft(draftWith({ botLogo: 'logos/x.png' }));
 
     expect(payload.bot_logo).toBe('logos/x.png');

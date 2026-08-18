@@ -87,7 +87,7 @@ export function normalizeTier(status: string | null | undefined): TierKey {
 
 export type ScoreTone = 'neutral' | 'info' | 'warning' | 'success';
 
-/** Map a 0–100 qualification score onto a semantic tone for bars/gauges. */
+/** Map a 0 to 100 qualification score onto a semantic tone for bars/gauges. */
 export function scoreTone(score: number): ScoreTone {
   if (score >= 75) return 'success';
   if (score >= 55) return 'warning';
@@ -158,9 +158,9 @@ export interface FunnelStageView {
   readonly label: string;
   readonly sublabel: string;
   count: number;
-  /** Share of this stage vs. the top of the funnel (0–100). */
+  /** Share of this stage vs. the top of the funnel (0 to 100). */
   widthPct: number;
-  /** Conversion from the previous stage (0–100), or null for the top stage. */
+  /** Conversion from the previous stage (0 to 100), or null for the top stage. */
   conversionFromPrev: number | null;
 }
 
@@ -245,7 +245,7 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
         lead.contact?.company,
         // The RESOLVED company name, which is what the drawer shows and
         // therefore what an operator will type. Searching only the raw domain
-        // meant "Infosys Limited" — the name on screen — matched nothing.
+        // meant "Infosys Limited" (the name on screen) matched nothing.
         lead.contact?.company_name,
         lead.location,
         lead.session_id,
@@ -282,20 +282,20 @@ export const UNKNOWN_LOCATION = 'Unknown';
  * printing a bare address. The raw value is left untouched in the database,
  * where ops still needs it.
  *
- * MIRROR — this is the twin of `format_visitor_location` in
+ * MIRROR. This is the twin of `format_visitor_location` in
  * `api/app/core/visitor_privacy.py`, which is the source of truth: the server
  * now redacts at every serialisation boundary, so a `location` arriving here
  * has already been through the Python copy. This one stays as belt-and-braces
  * for payloads cached from an older build, and because the export it feeds
  * (`leadsCsv.ts`) is assembled entirely in the browser. It is idempotent, so
- * the two passes cannot fight. Change one, change the other — a divergence
+ * the two passes cannot fight. Change one, change the other, a divergence
  * between exactly these two implementations is what leaked every lead's IP
  * through `GET /leads/export`.
  */
 export function formatLocation(raw: string | null | undefined): string {
   const value = (raw ?? '').trim();
   if (!value) return UNKNOWN_LOCATION;
-  // "IP: 1.2.3.4" is the pre-resolution stamp — no geography in it at all.
+  // "IP: 1.2.3.4" is the pre-resolution stamp, no geography in it at all.
   if (/^ip:/i.test(value)) return UNKNOWN_LOCATION;
   const geo = value.split('|')[0]?.trim() ?? '';
   return geo || UNKNOWN_LOCATION;
@@ -305,7 +305,7 @@ export function formatLocation(raw: string | null | undefined): string {
  * What a table cell shows when there is no value to show.
  *
  * Exported because non-table consumers have to recognise it and substitute
- * their own representation of absence — the CSV export blanks it, since a
+ * their own representation of absence, the CSV export blanks it, since a
  * spreadsheet says "no value" with an empty cell and a CRM importing a literal
  * dash would store it as the date. Keep this the single definition: a second
  * copy compared against a hardcoded '-' silently stops matching the day this
@@ -355,12 +355,12 @@ export function humanizeDimension(key: string): string {
  * `contact.company` holds the registrable domain of the captured email
  * ("infosys.com") and always has. `contact.company_name` is the resolved
  * identity ("Infosys Limited"), produced by a Professional-gated paid
- * enrichment and therefore frequently ABSENT — resolution can fail, be
+ * enrichment and therefore frequently ABSENT. Resolution can fail, be
  * switched off per agent, or still be in flight when the drawer opens.
  *
  * So the resolved name appends to the domain, never replaces it. Rendering
  * only `company_name` would blank the company row for every lead on a lower
- * plan and every domain that could not be resolved — a regression against
+ * plan and every domain that could not be resolved, a regression against
  * behaviour that predates the feature.
  */
 export function companyDisplay(

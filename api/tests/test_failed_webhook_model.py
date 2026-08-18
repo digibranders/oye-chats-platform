@@ -1,7 +1,7 @@
 """Dead-letter table for billing webhooks (Phase 0, unblocks C1).
 
 When a verified webhook's processing fails, the raw signed event must be
-persisted so it can be replayed later — the exact bytes are kept (not parsed
+persisted so it can be replayed later, the exact bytes are kept (not parsed
 JSON) so the signature can be re-verified on replay.
 """
 

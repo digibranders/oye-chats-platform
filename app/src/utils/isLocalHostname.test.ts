@@ -1,6 +1,6 @@
 /**
  * `isLocalHostname` keeps developer-machine traffic out of shared observability
- * (Sentry) — including a production bundle served locally via `vite preview`.
+ * (Sentry), including a production bundle served locally via `vite preview`.
  * A false positive silences a real deployed host; a false negative leaks local
  * noise into prod telemetry. Both matter, so the exact allowlist is pinned here.
  */

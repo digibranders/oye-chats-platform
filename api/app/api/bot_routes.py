@@ -68,13 +68,13 @@ _MAX_LEAD_FORM_FIELDS = 10
 
 # ``bant_config`` holds a full qualification rubric (four-plus dimensions,
 # each with prompts and scored options), so it gets a larger budget than the
-# generic object ceiling — but a budget nonetheless. Its strings are
+# generic object ceiling, but a budget nonetheless. Its strings are
 # interpolated into the LLM system prompt on every turn.
 _MAX_BANT_CONFIG_BYTES = 128 * 1024
 
-# The customer's own website. Free-form on purpose — ``normalize_domain_input``
+# The customer's own website. Free-form on purpose. ``normalize_domain_input``
 # accepts a bare apex ("acme.com") as readily as a full URL, and the signup
-# form has always let people type either — so this bounds length and bans
+# form has always let people type either, so this bounds length and bans
 # control characters without imposing a scheme the UI never asked for.
 WebsiteRef = Annotated[
     str,
@@ -83,13 +83,13 @@ WebsiteRef = Annotated[
 
 # An avatar reference is EITHER an absolute http(s) URL (R2/CDN object, or a
 # favicon derived during a crawl) OR a stored object key served back through
-# ``/files/{key}`` — ``client_routes`` branches on ``startswith("http")`` to
+# ``/files/{key}``. ``client_routes`` branches on ``startswith("http")`` to
 # tell them apart. Both forms are accepted; anything carrying another scheme
 # is not, because the value is rendered as an ``<img src>`` in the widget on
 # the customer's page and in the admin dashboard.
 #
 # Stored keys carry a prefix ("logos/abc.png"), so the key form is a bounded
-# sequence of safe segments — relative, no traversal, no empty segments.
+# sequence of safe segments. Relative, no traversal, no empty segments.
 _LOGO_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$")
 _MAX_LOGO_KEY_SEGMENTS = 6
 
@@ -179,7 +179,7 @@ def _normalize_session_share_domain(raw: str | None) -> str | None:
         return None
     normalized = normalize_domain_input(raw)
     if normalized.startswith("*."):
-        raise ValueError("session_share_domain cannot be a wildcard — use the parent domain, e.g. example.com")
+        raise ValueError("session_share_domain cannot be a wildcard. Use the parent domain, e.g. example.com")
     return normalized
 
 
@@ -200,7 +200,7 @@ def _is_external_install_origin(request: Request) -> bool:
     clients that omit it). A missing/opaque origin, or one of our own hosts,
     returns False so we only stamp an install for a genuine customer embed. The
     request's own host is excluded too, because the hosted demo/preview pages are
-    served by the API itself — a widget embedded there reports the API host as
+    served by the API itself, a widget embedded there reports the API host as
     its origin, which must not count as a customer install regardless of how the
     ``APP_URL``/``MARKETING_URL`` config resolves.
     """
@@ -247,7 +247,7 @@ def _normalize_services(raw) -> list[dict]:
 def _normalize_answer_links(raw) -> list[dict]:
     """Coerce a stored or incoming smart-links value to ``[{keyword, url}]``.
 
-    Every entry needs both a non-empty ``keyword`` and a valid ``http(s)`` URL —
+    Every entry needs both a non-empty ``keyword`` and a valid ``http(s)`` URL,
     a smart link with no destination is meaningless, so blank/invalid rows are
     dropped rather than persisted. ``javascript:`` and other non-http schemes are
     rejected here (the widget's ``SafeLink`` also refuses them, this is
@@ -310,7 +310,7 @@ class NotificationEmailRouting(BaseModel):
 
     Previously a bare ``dict``: whatever the caller sent was written to JSONB
     and later handed to the transactional email provider as a recipient list.
-    An unvalidated address there is not a cosmetic problem — it is who the
+    An unvalidated address there is not a cosmetic problem, it is who the
     customer's lead notifications get delivered to. Each bucket is now an
     allow-listed key holding validated, de-duplicated addresses.
     """
@@ -349,7 +349,7 @@ class BusinessHours(BaseModel):
     ``extra="forbid"`` matters here specifically: the availability service
     looks days up by these exact keys, so a payload with ``"monday"`` instead
     of ``"mon"`` used to be stored intact and then silently ignored at
-    runtime — the customer's agent stayed offline all Monday with a schedule
+    runtime, the customer's agent stayed offline all Monday with a schedule
     on screen that said otherwise. Now it is a 422 at save time.
     """
 
@@ -369,7 +369,7 @@ class BusinessHours(BaseModel):
     def _known_timezone(cls, v: str | None) -> str | None:
         """Reject a zone ``zoneinfo`` cannot load.
 
-        The evaluator catches the lookup failure and fails OPEN — the agent
+        The evaluator catches the lookup failure and fails OPEN, the agent
         reports itself available around the clock. A typo in this field is
         therefore a silent availability change, so it is caught at write time
         instead.
@@ -386,7 +386,7 @@ class BusinessHours(BaseModel):
 class LeadFormField(BaseModel):
     """One row of the configurable pre-chat lead form.
 
-    Exactly the shape both clients produce and consume — the admin app writes
+    Exactly the shape both clients produce and consume, the admin app writes
     ``{field, required}`` and the widget's ``LeadCaptureForm`` renders those
     four field names. Anything else was previously stored and then dropped on
     read, so it is rejected here instead.
@@ -399,7 +399,7 @@ class LeadFormField(BaseModel):
 
 
 class ServiceEntry(BaseModel):
-    """``{"name": ..., "url": ...}`` — a service the agent can talk about."""
+    """``{"name": ..., "url": ...}``, a service the agent can talk about."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -419,7 +419,7 @@ class AnswerLink(BaseModel):
 class CreateBotRequest(BaseModel):
     name: RequiredName = "AI Assistant"
     website: WebsiteRef | None = None
-    # Same ceiling ``UpdateBotRequest`` uses — and the same one
+    # Same ceiling ``UpdateBotRequest`` uses, and the same one
     # ``rag_service._MAX_CUSTOM_PROMPT_CHARS`` enforces at generation time. It
     # was absent here, so a prompt could be created larger than it could ever
     # be edited to.
@@ -440,10 +440,10 @@ class CreateBotRequest(BaseModel):
 
 class UpdateBotRequest(BaseModel):
     name: RequiredName | None = None
-    # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service — enforced at API boundary
+    # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service. Enforced at API boundary
     system_prompt: str | None = Field(None, max_length=2000)
     brand_tone: str | None = Field(None, max_length=500)
-    # A preset key, "custom", or None — the active chip in the AI & Personality tab.
+    # A preset key, "custom", or None, the active chip in the AI & Personality tab.
     brand_tone_preset: str | None = Field(None, max_length=64)
     company_name: str | None = Field(None, max_length=100)
     company_description: str | None = Field(None, max_length=1000)
@@ -452,8 +452,8 @@ class UpdateBotRequest(BaseModel):
     launcher_name: Name | None = None
     launcher_logo: LogoRef | None = None
     # Written straight into the widget's inline styles on the customer's own
-    # site. Constrained to hex so the value is a colour and nothing else —
-    # every default this platform ships and every value its colour picker
+    # site. Constrained to hex so the value is a colour and nothing else.
+    # Every default this platform ships and every value its colour picker
     # emits is already in this form.
     primary_color: HexColor | None = None
     background_color: HexColor | None = None
@@ -467,7 +467,7 @@ class UpdateBotRequest(BaseModel):
     qualification_framework: Literal["bant", "meddic"] | None = None
     # CRAG relevance gate threshold override. None = use env default (0.55).
     # 0.0 = always pass (effectively disable), 1.0 = always fail (refuse everything).
-    # Reasonable range 0.40 (lenient) – 0.70 (strict). Out-of-range writes are
+    # Reasonable range 0.40 (lenient). 0.70 (strict). Out-of-range writes are
     # rejected at the API; runtime ALSO clamps in case a bad value slipped past.
     relevance_threshold: float | None = Field(None, ge=0.0, le=1.0)
     # The three styles the admin preview and ``BotAvatar`` actually render.
@@ -479,7 +479,7 @@ class UpdateBotRequest(BaseModel):
     lead_form_enabled: bool | None = None
     lead_form_fields: Annotated[list[LeadFormField], bounded_list(_MAX_LEAD_FORM_FIELDS)] | None = None
     # Email notification settings. Both are recipient addresses for the
-    # customer's own lead notifications — validated, not merely bounded,
+    # customer's own lead notifications. Validated, not merely bounded,
     # because an unparseable address here means a lead alert silently goes
     # nowhere.
     notification_email: EmailAddress | None = None
@@ -502,7 +502,7 @@ class UpdateBotRequest(BaseModel):
     # Business hours
     business_hours: BusinessHours | None = None
     # Feature flags / widget copy / widget tuning. These three are genuinely
-    # open-ended maps — their keys are product config, not API contract, and
+    # open-ended maps. Their keys are product config, not API contract, and
     # the PATCH handler shallow-merges each into what is stored. Open-ended is
     # not unbounded: each is held to the default object budget (64 KB, 6
     # levels, 200 keys) so a JSONB column cannot be used as free storage.
@@ -527,8 +527,8 @@ class UpdateBotRequest(BaseModel):
     # for backward compat with the v1 list[str] shape and normalized to
     # ``{"name": str, "url": None}`` in the route handler.
     services: Annotated[list[ServiceEntry | str], bounded_list(_MAX_SERVICES)] | None = None
-    services_url: str | None = Field(None, max_length=MAX_URL)  # Legacy global URL — no longer used by prompt.
-    # Smart links — each entry is ``{keyword, url}``. ``_normalize_answer_links``
+    services_url: str | None = Field(None, max_length=MAX_URL)  # Legacy global URL, no longer used by prompt.
+    # Smart links. Each entry is ``{keyword, url}``. ``_normalize_answer_links``
     # in the handler still de-dupes and drops blanks; the model now rejects a
     # malformed entry outright rather than letting the normalizer discard it,
     # so a typo'd URL is a visible 422 instead of a link that never appears.
@@ -616,7 +616,7 @@ class BotResponse(BaseModel):
     lead_form_enabled: bool = False
     lead_form_fields: list[dict] | None = None
     # Default FALSE, matching the column. Both construction sites pass explicit
-    # values today, so this is only a fallback — but a fallback pointing the
+    # values today, so this is only a fallback, but a fallback pointing the
     # wrong way is how a future construction that omits them would publish ON
     # for a row that is OFF, and the frontend renders the switch on `=== true`.
     email_verification_enabled: bool = False
@@ -632,7 +632,7 @@ class BotResponse(BaseModel):
     # Set once the embedded widget has been seen live on a real external site;
     # None until then. Drives the "widget installed" setup-checklist step.
     widget_installed_at: datetime | None = None
-    # Durable per-bot ingestion ("trained") state — a persistent fact the UI can
+    # Durable per-bot ingestion ("trained") state, a persistent fact the UI can
     # read instead of racing the ephemeral /crawl/progress toast.
     last_crawl_status: str | None = None
     crawl_completed_at: datetime | None = None
@@ -672,7 +672,7 @@ class BotResponse(BaseModel):
     # hold a Professional agent and a Free agent at once, and the admin UI's
     # per-agent feature gates need the agent's own answer. The frontend used to
     # infer it from the credit-balance payload, which omits Free agents
-    # entirely (they have no per-bot ledger) — so a Free agent silently
+    # entirely (they have no per-bot ledger), so a Free agent silently
     # inherited the workspace's highest-priced plan and rendered paid controls
     # the server then denied. Defaults to "free": fail closed.
     plan_slug: str = "free"
@@ -698,12 +698,12 @@ def bot_plan(bot_id: int, session) -> tuple[str, str]:
         ents = plan_entitlements_service.get_bot_entitlements(bot_id, session)
         slug, name = ents.plan_slug, ents.plan_name
     except Exception:
-        logger.warning("bot_plan: entitlements lookup failed for bot %s — defaulting to Free", bot_id)
+        logger.warning("bot_plan: entitlements lookup failed for bot %s. Defaulting to Free", bot_id)
         return "free", "Free"
 
     # Type-checked, not just truthy: a non-string here (a stub, a bad row) would
     # sail through `or "free"` and reach the response as a value the frontend's
-    # slug comparison can never match — an agent locked out of everything it
+    # slug comparison can never match, an agent locked out of everything it
     # pays for, with no error anywhere.
     safe_slug = slug.lower() if isinstance(slug, str) and slug else "free"
     safe_name = name if isinstance(name, str) and name else "Free"
@@ -805,12 +805,12 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
 
 def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | None:
     """Return an existing workspace bot whose website resolves to the same apex
-    host as ``website`` — or ``None`` if there is no match.
+    host as ``website``, or ``None`` if there is no match.
 
     Used to make onboarding bot-creation idempotent: a retried/duplicate create
     for the same site (the Build Studio double-submit) returns the bot that was
     already created, instead of either tripping the free 1-bot cap with a
-    confusing 402 or — on any path the cap allows — silently writing a second
+    confusing 402 or (on any path the cap allows) silently writing a second
     row for the same website.
 
     Matching is on the normalized apex host, not the stored string, so the
@@ -851,13 +851,13 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     Includes the bot owner's subscription health so the widget can choose
     to suppress the launcher (or render an offline indicator) when the
     workspace is not serving. ``is_offline=True`` means visitors who do
-    open the widget will only get the configured ``offline_message`` —
+    open the widget will only get the configured ``offline_message``,
     the chat endpoint will not run RAG.
     """
     # One-time "widget is live" detection. The first time the widget bootstraps
     # from a real external site (not our dashboard preview / demo / localhost),
     # stamp the bot so the Dashboard setup checklist can confirm the install
-    # without a user self-report. Best-effort and idempotent — the guarded
+    # without a user self-report. Best-effort and idempotent, the guarded
     # UPDATE only matches while the column is NULL, and we invalidate the cached
     # bot config so subsequent loads skip this path entirely. Never blocks the
     # widget response.
@@ -890,7 +890,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     # Plan-feature gate for live chat. Even if the bot has live_chat_enabled
     # toggled on, we suppress the widget's "Live chat" affordance when the
     # owner's plan doesn't include the feature. Otherwise visitors would see
-    # a button that — when clicked — routes them to a queue with no possible
+    # a button that (when clicked) routes them to a queue with no possible
     # operator. The operator side of the platform 403s the toggle endpoint,
     # so this exposed surface is the last visible artifact to clean up.
     from app.db.session import get_session as _get_session
@@ -909,7 +909,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
             plan_slug = (_ents.plan_slug or "free").lower()
             _plan_branding_removable = _ents.has_feature("branding_removable")
     except Exception:
-        # Fail closed — if we can't resolve the plan, hide live chat AND
+        # Fail closed. If we can't resolve the plan, hide live chat AND
         # apply Free-plan widget-behavior locks. Safer than leaking a paid
         # feature when the entitlements check fails.
         plan_includes_live_chat = False
@@ -938,7 +938,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         # Non-free plans that don't include branding removal (e.g. Starter)
         # must also force show_branding=True. The admin UI locks the toggle
         # for these plans but stored feature_flags may have show_branding=False
-        # left over from a previous paid tier — enforce server-side so the
+        # left over from a previous paid tier. Enforce server-side so the
         # widget always reflects the plan entitlement.
         effective_feature_flags["show_branding"] = True
 
@@ -994,7 +994,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         # Smart-link destinations (URLs only) so the widget can recognise which
         # answer links are admin-configured smart links and apply the
         # "don't re-link a smart link the visitor already clicked" behaviour.
-        # Keywords are intentionally omitted — the widget matches on URL alone.
+        # Keywords are intentionally omitted, the widget matches on URL alone.
         "smart_link_urls": [link["url"] for link in _normalize_answer_links(bot.answer_links)],
         # ── Service status ──
         # ``is_offline=True`` flips the widget into "leave a message" mode
@@ -1009,7 +1009,7 @@ def _build_public_cta_options(bot) -> dict:
 
     BR-01: previously hardcoded to BANT's own dimension names
     (need/timeline/authority/budget) regardless of the bot's actual
-    ``framework`` — a MEDDIC/CHAMP/GPCTBA+C&I bot's CTA-enabled dimensions
+    ``framework``, a MEDDIC/CHAMP/GPCTBA+C&I bot's CTA-enabled dimensions
     (e.g. ``economic_buyer``, ``champion``) were silently never sent to the
     widget at all, no matter how the admin configured ``cta_enabled``.
     Iterates the bot's real framework dimensions instead.
@@ -1232,9 +1232,9 @@ def _check_iframe_allowed(target_url: str) -> bool:
     ``frame-ancestors 'none'`` CSP directive is detected.  Network
     errors are treated as "allow" so the iframe gets a chance to load.
     """
-    import httpx  # local import — only used in this preview path
+    import httpx  # local import. Only used in this preview path
 
-    # Re-validate here (defence in depth) and — crucially — do NOT follow
+    # Re-validate here (defence in depth) and. Crucially. Do NOT follow
     # redirects: the initial URL passed _validate_preview_url, but a 3xx could
     # bounce the server-side request to an internal address. A redirect is
     # surfaced as-is (its 3xx response carries no framing headers → "allow").
@@ -1247,7 +1247,7 @@ def _check_iframe_allowed(target_url: str) -> bool:
     try:
         with httpx.Client(timeout=5, follow_redirects=False) as client:
             resp = client.head(target_url, headers={"User-Agent": "OyeChats-Preview/1.0"})
-            # A redirect (http→https, apex→www — near-universal): we intentionally
+            # A redirect (http→https, apex→www. Near-universal): we intentionally
             # don't follow it (SSRF), so we can't read the final page's framing
             # headers. Report not-embeddable so the demo serves the working hero
             # fallback instead of embedding a page that likely blocks framing
@@ -1267,7 +1267,7 @@ def _check_iframe_allowed(target_url: str) -> bool:
                         return False
             return True
     except Exception:
-        # Network error, timeout, DNS failure — let the iframe try
+        # Network error, timeout, DNS failure. Let the iframe try
         return True
 
 
@@ -1286,7 +1286,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
 
     When *edit* is True, a bootstrap flag is injected so the widget enables its
     live-preview bridge (accepts `oyechats:preview-config` postMessage events
-    from the parent frame — typically the admin dashboard editor).
+    from the parent frame. Typically the admin dashboard editor).
     """
     bot_name = html.escape(bot.name or "OyeChats")
     bot_key = html.escape(bot.bot_key)
@@ -1302,7 +1302,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
   <title>{bot_name} Preview | OyeChats</title>
   <style>
     /*
-     * Scope resets to preview-shell only — never touch #oyechats-widget-root
+     * Scope resets to preview-shell only, never touch #oyechats-widget-root
      * or its children, as the widget ships its own self-contained styles.
      */
     .preview-shell,
@@ -1484,7 +1484,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
        * 1. Pre-flight: fetch the URL in no-cors mode.  If the server
        *    responds with an opaque response we cannot inspect headers,
        *    but a network error (DNS, TLS, etc.) rejects the promise.
-       * 2. On iframe load: try to read contentWindow.length — an error
+       * 2. On iframe load: try to read contentWindow.length, an error
        *    page served by the browser after X-Frame-Options block
        *    typically has 0 sub-frames AND we can still read `length`
        *    (it's cross-origin accessible).  We combine this with a
@@ -1494,7 +1494,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
 
       frame.addEventListener('load', function() {{
         try {{
-          // Same-origin check — works when our server serves the error
+          // Same-origin check. Works when our server serves the error
           var doc = frame.contentDocument;
           if (doc) {{
             var url = doc.URL || '';
@@ -1540,7 +1540,7 @@ def get_bot_demo_page(
     request: Request,
     # Unauthenticated route. ``bot_key`` is the public embed key
     # (``bot-<hex>``) used verbatim in a DB lookup; ``url`` is fed to
-    # ``_validate_preview_url``, which performs DNS resolution — so both are
+    # ``_validate_preview_url``, which performs DNS resolution, so both are
     # bounded before either does any work.
     bot_key: BotKey,
     url: str | None = Query(default=None, max_length=MAX_URL),
@@ -1564,7 +1564,7 @@ def get_bot_demo_page(
             _validate_preview_url(url)
             if _check_iframe_allowed(url):
                 return HTMLResponse(content=_build_preview_page_html(bot, url, edit=edit_mode))
-            # Site blocks framing — fall through to the hero demo page
+            # Site blocks framing. Fall through to the hero demo page
             # so the user still sees a working widget.
         return HTMLResponse(content=_build_demo_page_html(bot, edit=edit_mode))
 
@@ -1579,11 +1579,11 @@ def list_bots(
 
     Scoping matrix
     --------------
-    * **Client / workspace owner (own workspace, no operator hat)** — every
+    * **Client / workspace owner (own workspace, no operator hat)**. Every
       bot in the workspace.
-    * **Operator (X-Operator-Key or linked-operator via X-Workspace-Id)** —
+    * **Operator (X-Operator-Key or linked-operator via X-Workspace-Id)**,
       the single bot they're bound to (one-to-one operator↔bot binding).
-    * **Owner acting as their own self-operator** — the auth resolver classifies
+    * **Owner acting as their own self-operator**, the auth resolver classifies
       this as ``type="client"`` because the caller is looking at their own
       workspace, so the operator-scoping branch above wouldn't fire on its
       own. When the frontend sends ``X-Acting-Role: operator`` (the workspace
@@ -1605,7 +1605,7 @@ def list_bots(
                 return []
             stmt = stmt.where(Bot.id == operator_bot_id)
         elif auth["type"] == "client" and (acting_as or "").lower() == "operator":
-            # Self-operator path — owner added themselves as an operator in
+            # Self-operator path. Owner added themselves as an operator in
             # their own workspace and the switcher pill is in "operator"
             # mode. Resolve the self-operator row (client_id ==
             # linked_client_id == workspace owner id) and scope to its bot.
@@ -1706,7 +1706,7 @@ def list_bots(
 def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> bool:
     """Does this client's plan fund another AI agent without a new subscription?
 
-    Consumer of ``limits.bots`` — the plan's **included agent quota**, which is
+    Consumer of ``limits.bots``, the plan's **included agent quota**, which is
     what every plan row has always declared and nothing has ever read.
 
     Read ``PlanEntitlements.limit_for`` before changing this: ``bots`` is the
@@ -1714,12 +1714,12 @@ def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> b
     per-bot billing model an account legitimately holds more agents than this
     number by funding each extra one with its own subscription
     (``POST /bots/checkout``). So this predicate can only ever *widen* the
-    default rule, never tighten it — see the call site in :func:`create_bot`.
+    default rule, never tighten it. See the call site in :func:`create_bot`.
 
-    * Free / Starter / Standard / Professional declare ``bots: 1`` — the
+    * Free / Starter / Standard / Professional declare ``bots: 1``, the
       caller has already been denied at ≥1 active agent, so this returns False
       and the existing per-bot-subscription 402 stands. Behaviour is unchanged.
-    * Enterprise declares ``bots: -1`` (UNLIMITED) — this returns True and the
+    * Enterprise declares ``bots: -1`` (UNLIMITED). This returns True and the
       agency gets unlimited agents pooled under its single subscription, which
       is the tier's entire headline differentiator.
 
@@ -1736,7 +1736,7 @@ def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> b
         entitlements = get_entitlements(client_id, session, include_usage=False)
     except Exception:
         logger.warning(
-            "bots_limit_gate: entitlements lookup failed for client=%s — falling back to the paid-bot gate",
+            "bots_limit_gate: entitlements lookup failed for client=%s. Falling back to the paid-bot gate",
             client_id,
             exc_info=True,
         )
@@ -1748,7 +1748,7 @@ def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> b
         # other trace. Log it so support can tell "plan data lost a term" apart
         # from "customer is on the wrong plan" without reading the JSONB by hand.
         logger.info(
-            "bots_limit_gate: plan '%s' declares no 'bots' quota for client=%s — "
+            "bots_limit_gate: plan '%s' declares no 'bots' quota for client=%s. "
             "treating it as 0 (no widening); check the plan's limits JSON",
             entitlements.plan_slug,
             client_id,
@@ -1778,13 +1778,13 @@ def create_bot(
         # A Build Studio double-submit sends the same payload twice: submit #1
         # creates the agent, submit #2 arrives behind it. If the workspace
         # already has an agent for the same site, that is a retry, not a second
-        # agent — return the one that exists.
+        # agent. Return the one that exists.
         #
         # This deliberately does NOT live inside the 402 branch below. Only the
-        # *denied* path used to reach it, so the two paths the gate ALLOWS —
+        # *denied* path used to reach it, so the two paths the gate ALLOWS,
         # an account with zero agents (its very first submit, the case this
-        # exists for) and a plan whose quota widens the gate (``bots: -1``) —
-        # created a duplicate row on the retry with nothing to catch it: the
+        # exists for) and a plan whose quota widens the gate (``bots: -1``).
+        # Created a duplicate row on the retry with nothing to catch it: the
         # ``Bot`` model has no unique constraint on ``(client_id, website)``,
         # and could not usefully have one, because ``website`` is stored raw
         # and ``https://x.com`` / ``x.com`` are the same site to
@@ -1794,8 +1794,8 @@ def create_bot(
         # the rule on every path, not just the capped one. Agents created
         # without a website are unaffected (the lookup answers ``None``), which
         # is the escape hatch for deliberately running two agents on one site.
-        # Two genuinely simultaneous requests can still both miss this read —
-        # that race is unchanged and needs row-level locking, not a reordering.
+        # Two genuinely simultaneous requests can still both miss this read.
+        # That race is unchanged and needs row-level locking, not a reordering.
         existing = _find_bot_by_website(session, auth["client_id"], request.website)
         if existing is not None:
             existing_plan = bot_plan(existing.id, session)
@@ -1811,19 +1811,19 @@ def create_bot(
         # ``/me/entitlements``: that endpoint ships ``limits`` + ``usage`` and
         # never surfaces this decision, so nothing on the frontend consumes the
         # service's answer and the two cannot be "in lockstep". Read alone the
-        # service is in fact WRONG about what happens here — on an
+        # service is in fact WRONG about what happens here, on an
         # unlimited-agents plan it answers ``must_subscribe`` while this route
         # returns 201, because the full rule is the service's default AND the
         # widening below. Any surface needing the real answer has to reproduce
         # both clauses; ``app/src/features/agents/agentLimit.ts`` is the
         # frontend mirror that does, off ``limits.bots`` + ``usage.bots``. Fold
         # the widening into the service the day the decision gets an endpoint
-        # of its own — until then it would centralise nothing.
+        # of its own. Until then it would centralise nothing.
         #
         # ``_plan_bots_limit_allows`` is the override: a plan whose
         # ``limits.bots`` quota still covers the account's current agent count
         # funds this agent already, so it must not be pushed through checkout.
-        # Only Enterprise (``bots: -1``) takes that branch today — the other
+        # Only Enterprise (``bots: -1``) takes that branch today, the other
         # four plans declare ``bots: 1`` and behave exactly as before.
         # Ordering matters: the quota check runs only AFTER the default gate
         # denies, so it can never block a create the default gate would allow
@@ -1834,7 +1834,7 @@ def create_bot(
 
         decision = can_client_add_new_bot(auth["client_id"], session)
         if not decision.allowed and not _plan_bots_limit_allows(auth["client_id"], session, decision.active_bot_count):
-            # Reached only for a genuinely NEW site — the same-site retry above
+            # Reached only for a genuinely NEW site, the same-site retry above
             # has already returned. The frontend paywall keys on this exact
             # body (``apiErrors.requiresSubscription`` → ``CreateAgentDialog``'s
             # pricing step), so the shape is a contract.
@@ -1883,7 +1883,7 @@ def create_bot(
 
         # Drop a notification into the workspace feed so every operator
         # (and the owner) sees the new bot show up in the bell. Best-effort
-        # — broadcast failures are swallowed inside the service.
+        # . Broadcast failures are swallowed inside the service.
         try:
             from app.services.notification_service import notify_bot_created
 
@@ -1898,7 +1898,7 @@ def create_bot(
             logger.exception("Failed to record bot_created notification for bot %s", new_bot.id)
 
         # Return the full bot object (same shape as GET /bots/{id}) so callers
-        # don't need a second round-trip to resolve the created bot — the thin
+        # don't need a second round-trip to resolve the created bot, the thin
         # {bot_id, bot_key} envelope is what forced the frontend to re-fetch and
         # select by id, the mistake behind the duplicate-bot onboarding bounce.
         _plan = bot_plan(new_bot.id, session)
@@ -1909,7 +1909,7 @@ def create_bot(
 
 
 class BotCheckoutRequest(BaseModel):
-    """Body for ``POST /bots/checkout`` — start a per-bot subscription.
+    """Body for ``POST /bots/checkout``. Start a per-bot subscription.
 
     The bot row is NOT created here. We pass the bot's name + website +
     domain settings in the Razorpay subscription notes so the activation
@@ -1933,7 +1933,7 @@ class BotCheckoutRequest(BaseModel):
 
 
 class BotCheckoutVerifyRequest(BaseModel):
-    """Body for ``POST /bots/checkout/verify`` — sync fallback for localhost.
+    """Body for ``POST /bots/checkout/verify``. Sync fallback for localhost.
 
     Webhook delivery is the source of truth in production, but Razorpay
     can't hit ``localhost`` so the success callback hits this endpoint to
@@ -1964,7 +1964,7 @@ def create_bot_checkout(
     calls ``POST /bots/checkout/verify`` (or the production webhook
     arrives first) to materialise the new Bot row.
 
-    Free / first-bot creation does NOT go through this endpoint — that
+    Free / first-bot creation does NOT go through this endpoint. That
     keeps using ``POST /bots`` directly. Use ``can_client_add_new_bot``
     to decide which path the frontend should take.
     """
@@ -1977,7 +1977,7 @@ def create_bot_checkout(
         # Serialize this client's billing mutations for the whole read → decide
         # → mint → write sequence (H1). The marker below is a read-then-write
         # check, so without the lock two concurrent submits both read "nothing
-        # in flight" and both mint a chargeable mandate — which is the bug, not
+        # in flight" and both mint a chargeable mandate, which is the bug, not
         # a smaller version of it. Held to COMMIT, so the loser reads the
         # winner's COMMITTED marker and reuses it.
         lock_client_for_billing(session, auth["client_id"])
@@ -1985,7 +1985,7 @@ def create_bot_checkout(
         # ``is_active`` is part of the lookup, not a second check: ``delete_plan``
         # soft-deletes by clearing the flag, and a super admin deactivates a tier
         # to withdraw it from sale. Without the predicate a withdrawn plan stays
-        # purchasable by slug through a direct API call — the plan list hides it
+        # purchasable by slug through a direct API call, the plan list hides it
         # but this route would still mint a subscription on it. Matches
         # ``/subscriptions/checkout`` and ``/subscriptions/change-plan``, which
         # both gate on the flag. Deliberately 404 (not 400): a withdrawn plan is
@@ -2013,7 +2013,7 @@ def create_bot_checkout(
         # unlimited agents on ONE pooled credit balance therefore self-destructs
         # here: its monthly credits are granted and reset into a single bot's
         # isolated ledger, while every further agent the plan entitles carries
-        # no subscription of its own and drains the shared client pool — which
+        # no subscription of its own and drains the shared client pool, which
         # that purchase never funded. The agency ends up with one working agent
         # and N silent ones.
         # ``POST /subscriptions/checkout`` creates the same plan's subscription
@@ -2032,7 +2032,7 @@ def create_bot_checkout(
         if client is None:
             raise HTTPException(status_code=404, detail="Account not found.")
 
-        # Resolve the bot's domain whitelist now (deterministic — derived
+        # Resolve the bot's domain whitelist now (deterministic. Derived
         # the same way ``POST /bots`` does) so the webhook handler doesn't
         # have to repeat the logic.
         if request.allowed_domains is not None:
@@ -2053,8 +2053,8 @@ def create_bot_checkout(
         # is why live Enterprise testing could not surface it).
         #
         # Same mechanism as ``/subscriptions/checkout`` and ``/change-plan``
-        # Branch 3 — ``clients.pending_checkout_*`` via
-        # ``pending_checkout_service`` — with the two differences this path
+        # Branch 3. ``clients.pending_checkout_*`` via
+        # ``pending_checkout_service``, with the two differences this path
         # forces, both explained on ``reuse_or_supersede``: the agent does not
         # exist yet, so its identity is compared from the gateway notes rather
         # than from ``pending_checkout_bot_id``, and a failed supersede-cancel
@@ -2181,7 +2181,7 @@ def verify_bot_checkout(body: BotCheckoutVerifyRequest, auth=Depends(get_current
 
     # Razorpay's real webhook envelope nests entities under
     # ``payload.subscription.entity``, but ``_extract_subscription_entity``
-    # already starts from the ``payload`` dict — so the synthetic shape we
+    # already starts from the ``payload`` dict, so the synthetic shape we
     # pass to the handler must be ``{"subscription": {"entity": ...}}``,
     # NOT wrapped again in a ``"payload"`` key.
     synthetic_payload = {"subscription": {"entity": subscription_entity}}
@@ -2225,7 +2225,7 @@ def get_framework_presets(bot_id: int, auth=Depends(get_current_client_or_operat
 
 # ── Brand tone: presets catalog, on-demand detect, and voice preview ──
 # NOTE: the presets route is a LITERAL path and MUST be declared before the
-# ``/{bot_id}`` route below — otherwise FastAPI matches it against the int path
+# ``/{bot_id}`` route below. Otherwise FastAPI matches it against the int path
 # param and 422s. Route registration order (module top-to-bottom) wins.
 
 
@@ -2305,7 +2305,7 @@ def get_seed_questions(
         questions = build_seed_questions(session, bot)
         # Only cache an authoritative result. An empty list computed *before* any
         # content is indexed (crawl still running) must not be persisted as `[]`
-        # — because the cache check is `is not None`, that empty list becomes a
+        # . Because the cache check is `is not None`, that empty list becomes a
         # permanent hit and the bot shows no sample questions forever. Leave
         # `seed_questions` null in that case so the next call recomputes once
         # ingestion has produced chunks.
@@ -2328,7 +2328,7 @@ def preview_brand_tone(
 
     _require_bot_management_access(auth)
     with get_session() as session:
-        # Ownership check only — preview never reads or writes tone from the DB.
+        # Ownership check only. Preview never reads or writes tone from the DB.
         _get_workspace_bot(session, bot_id, auth["client_id"])
 
     sample = generate_tone_sample(body.brand_tone, "Can you tell me about your services?")
@@ -2386,9 +2386,9 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
     """Update settings for a specific bot.
 
     Writable under a super-admin impersonation session (design §6.1, "AI Agent
-    config edits") — this is the single endpoint behind name, greeting, tone and
+    config edits"). This is the single endpoint behind name, greeting, tone and
     appearance/branding, which is the most common "it looks wrong" support
-    report. Nothing here touches billing, credits, or credentials — but
+    report. Nothing here touches billing, credits, or credentials, but
     ``UpdateBotRequest`` is broader than the §6.1 wording: it also carries the
     widget's origin allowlist (a security control) and the Account's
     notification/reply-to addresses, so those specific fields are rejected for
@@ -2406,7 +2406,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             # request body, but a support session editing "it looks wrong"
             # config must not be able to widen the widget origin allowlist
             # (``allowed_domains`` / ``domain_check_enabled`` /
-            # ``session_share_domain`` — persistent changes that outlive the
+            # ``session_share_domain``. Persistent changes that outlive the
             # 30-minute token and re-scope where the public bot_key is
             # embeddable) or redirect the customer's lead emails.
             if getattr(auth["entity"], "_impersonator_id", None) is not None:
@@ -2423,7 +2423,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         # looks wrong must not be able to switch spending back
                         # on, leaving only a field name in a log line as the
                         # trace. The set was originally scoped to security
-                        # controls and lead-email redirection — "don't spend
+                        # controls and lead-email redirection. "don't spend
                         # my money" belongs in the same category.
                         "email_verification_enabled",
                         "company_lookup_enabled",
@@ -2454,23 +2454,23 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             elif "launcher_logo" in update_data:
                 update_data["bot_logo"] = update_data["launcher_logo"]
 
-            # Any avatar write here is the customer's, including clearing it —
+            # Any avatar write here is the customer's, including clearing it,
             # which is what stops the crawl re-deriving a deleted avatar.
             stamp_manual_avatar(bot, update_data)
 
-            # Merge feature_flags — partial updates must not wipe existing flags
+            # Merge feature_flags. Partial updates must not wipe existing flags
             if "feature_flags" in update_data and update_data["feature_flags"] is not None:
                 current_flags = dict(bot.feature_flags or {})
                 current_flags.update(update_data.pop("feature_flags"))
                 bot.feature_flags = current_flags
 
-            # Merge widget_messages — partial updates must not wipe existing messages
+            # Merge widget_messages. Partial updates must not wipe existing messages
             if "widget_messages" in update_data and update_data["widget_messages"] is not None:
                 current_messages = dict(bot.widget_messages or {})
                 current_messages.update(update_data.pop("widget_messages"))
                 bot.widget_messages = current_messages
 
-            # Merge widget_config — partial updates must not wipe existing config
+            # Merge widget_config. Partial updates must not wipe existing config
             if "widget_config" in update_data and update_data["widget_config"] is not None:
                 current_config = dict(bot.widget_config or {})
                 current_config.update(update_data.pop("widget_config"))
@@ -2486,7 +2486,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             if "bant_config" in update_data and update_data["bant_config"] is not None:
                 # The qualification editor always sends the COMPLETE authoritative
                 # config, so store it wholesale. A shallow merge would resurrect
-                # dimensions the user removed or renamed — orphan dimension dicts
+                # dimensions the user removed or renamed. Orphan dimension dicts
                 # linger at the top level and ``_dimension_keys`` re-scores them,
                 # silently corrupting every session's composite score. Replacing
                 # is the only way a removal actually takes effect. Reads fall back
@@ -2538,12 +2538,12 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
 #
 # Two endpoints back the KnowledgeBase → Auto-Recrawl card:
 #
-# * ``GET  /bots/{bot_id}/recrawl``   — current toggle state, last-run
+# * ``GET  /bots/{bot_id}/recrawl``  . Current toggle state, last-run
 #                                       summary, next-run timestamp, and a
 #                                       ``feature_available`` boolean the UI
 #                                       uses to decide between the live card
 #                                       and the upsell.
-# * ``PATCH /bots/{bot_id}/recrawl``  — toggle on/off. Enforces the plan
+# * ``PATCH /bots/{bot_id}/recrawl`` . Toggle on/off. Enforces the plan
 #                                       gate; toggle-on stamps
 #                                       ``next_recrawl_at = now + 7d``,
 #                                       toggle-off clears the schedule
@@ -2633,7 +2633,7 @@ def update_recrawl(
     """Toggle auto-recrawl on or off for a bot.
 
     Enabling requires the ``auto_recrawl`` feature flag on the client's
-    plan — Free / Starter plans get a structured 403 the admin UI catches
+    plan. Free / Starter plans get a structured 403 the admin UI catches
     and routes to the upgrade flow. Disabling always succeeds so a
     customer can turn the feature off even after a plan downgrade left
     them without the entitlement.
@@ -2663,7 +2663,7 @@ def update_recrawl(
         if request.enabled:
             bot.recrawl_enabled = True
             # Fresh 7-day countdown from the moment the toggle flips on.
-            # Toggling off then on again resets this — that's the product
+            # Toggling off then on again resets this. That's the product
             # behavior the customer sees on the card.
             bot.next_recrawl_at = compute_next_recrawl_at(now)
         else:
@@ -2699,7 +2699,7 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
        is gone would keep charging the customer for nothing.
     2. **Side-step the partial unique index.** ``subscriptions.bot_id``
        is ``ON DELETE SET NULL``, so deleting the bot would otherwise
-       null the FK on an ``active`` subscription — which collides with
+       null the FK on an ``active`` subscription, which collides with
        ``ix_subscriptions_client_legacy_active`` (only one client-level
        active sub per client). Marking the sub ``canceled`` first takes
        it out of that index's predicate before the row is touched.
@@ -2713,7 +2713,7 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
 
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         bot_key_val = bot.bot_key
-        # ``getattr`` defensively — test mocks use SimpleNamespace and
+        # ``getattr`` defensively. Test mocks use SimpleNamespace and
         # may not populate per-bot-billing columns.
         sub_id = getattr(bot, "subscription_id", None)
 
@@ -2722,11 +2722,11 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
             # Only cancel a sub that's actually funding THIS bot. Legacy
             # / pooled bots have a copy of the client-level subscription
             # id stamped on them (Phase 2 backfill) but the sub itself
-            # has ``bot_id IS NULL`` — cancelling that would kill the
+            # has ``bot_id IS NULL``. Cancelling that would kill the
             # customer's account-level subscription too.
             if sub is not None and sub.bot_id == bot.id and sub.status in ("active", "trialing", "past_due"):
                 # Best-effort cancel in Razorpay so we stop the renewal.
-                # Local row is marked canceled regardless — even if the
+                # Local row is marked canceled regardless, even if the
                 # provider call fails, we don't want to leave a stranded
                 # active subscription pointing at a bot we just deleted.
                 if sub.payment_provider == "razorpay" and sub.razorpay_subscription_id:
@@ -2736,7 +2736,7 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
                         razorpay_service.cancel_subscription(sub, at_period_end=False)
                     except Exception:
                         logger.exception(
-                            "Razorpay cancel failed for sub %s during bot %s delete — proceeding with local cancel",
+                            "Razorpay cancel failed for sub %s during bot %s delete. Proceeding with local cancel",
                             sub.id,
                             bot.id,
                         )

@@ -1,4 +1,4 @@
-// WidgetController — singleton state bridge between the public API
+// WidgetController. Singleton state bridge between the public API
 // (window.OyeChats) and the React component tree. React components
 // subscribe via useWidgetController(); the public API mutates state
 // or fires actions through it.
@@ -33,7 +33,7 @@ const createController = () => {
   const actionListeners = new Set()  // (action) -> void
   const sendListeners = new Set()    // (text) -> void  (chat panel takes deliveries here)
 
-  // Pending action / send queues — drained when the first listener subscribes.
+  // Pending action / send queues. Drained when the first listener subscribes.
   // Without this, OyeChats.open() called before ChatWidget's useEffect runs is
   // silently dropped (race between loader register() and React effect commit).
   const actionQueue = []  // [{action, expiresAt}]
@@ -51,7 +51,7 @@ const createController = () => {
   const emit = (event, payload) => {
     if (!VALID_EVENTS.has(event)) {
       if (!event.includes(':') || event.startsWith('state:')) {
-        // internal channel — skip
+        // internal channel. Skip
       } else {
         console.warn(`[OyeChats] Unknown event "${event}"`)
       }
@@ -187,7 +187,7 @@ const createController = () => {
   }
 }
 
-// Singleton — there's only ever one widget instance per page.
+// Singleton. There's only ever one widget instance per page.
 let _instance = null
 export const getController = () => {
   if (!_instance) _instance = createController()

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Shadow DOM host reset — prevents host page CSS from leaking into widget.
+/* Shadow DOM host reset. Prevents host page CSS from leaking into widget.
    position:fixed + 0-size box takes the host out of document flow so it cannot
    interfere with the customer's page layout on mobile. pointer-events:none stops
    the invisible host from intercepting touches; the render target re-enables them. */
@@ -14,7 +14,7 @@
   overflow: visible !important;
   z-index: 2147483647 !important;
   pointer-events: none !important;
-  /* System stack only — see the note on --font-sans below. Never lead this
+  /* System stack only. See the note on --font-sans below. Never lead this
      with a bundled-with-Office face (Calibri / Gill Sans MT): the widget runs
      on customers' sites, so one visitor with a broken install renders every
      glyph as tofu. */
@@ -27,7 +27,7 @@
   pointer-events: auto;
 }
 
-/* iOS safe area support — prevents content from going behind notch/home indicator.
+/* iOS safe area support. Prevents content from going behind notch/home indicator.
    Uses max() so the rule never shrinks the Tailwind base padding on desktop
    (where env(safe-area-inset-bottom) = 0). On iOS with notch the safe inset wins. */
 @supports (padding-top: env(safe-area-inset-top)) {
@@ -74,13 +74,13 @@
   /* System fonts only, and deliberately so.
      This stack used to lead with 'Calibri Light', Calibri, 'Gill Sans MT'.
      Calibri and Gill Sans MT ship with Microsoft Office, not with any OS, so
-     on a given visitor's machine each is absent (harmless — the browser falls
+     on a given visitor's machine each is absent (harmless, the browser falls
      through) or present-but-damaged (fatal). A damaged face still advertises
      the characters in its cmap, so the browser selects it and renders every
      one as a missing-glyph box; per-character fallback never triggers and the
      entire widget becomes tofu. Observed in production on macOS, where
      Calibri was registered with no usable glyph data: "Hello World" measured
-     194px against 82px in sans-serif — 11 characters at one full em each.
+     194px against 82px in sans-serif. 11 characters at one full em each.
      The widget is embedded on customers' sites, so this is their visitors'
      experience, not ours to gamble with. Every family below ships with an OS
      or is a generic, so there is no font here that can be half-installed. */
@@ -93,17 +93,17 @@
   }
 }
 
-/* Typing indicator dot — opacity pulse used by TypingIndicator.jsx */
+/* Typing indicator dot. Opacity pulse used by TypingIndicator.jsx */
 @keyframes typingDot {
   0%, 60%, 100% { opacity: 0.25; }
   30% { opacity: 1; }
 }
 
 
-/* Widget open/close — Scale from launcher (desktop), slide (mobile) */
+/* Widget open/close. Scale from launcher (desktop), slide (mobile) */
 
-/* Static visible state — after open animation completes, no re-trigger on component switch.
-   Deliberately avoids `transform` — even an identity transform (scale(1)) on a position:fixed
+/* Static visible state. After open animation completes, no re-trigger on component switch.
+   Deliberately avoids `transform`, even an identity transform (scale(1)) on a position:fixed
    element triggers compositing-layer promotion on iOS Safari, which can cause sub-pixel
    width rounding errors (content clipped on one edge). */
 .widget-visible {
@@ -132,7 +132,7 @@
   will-change: transform, opacity;
 }
 
-/* Chat window drop shadow — a soft, light halo around ALL four borders so the
+/* Chat window drop shadow, a soft, light halo around ALL four borders so the
    floating panel lifts gently off the host page (see reference: text.com widget).
    Written as a plain box-shadow (not Tailwind's shadow-[…] utility) because that
    utility composes through the --tw-shadow custom property + an @property
@@ -211,7 +211,7 @@
   }
 }
 
-/* Desktop — scale up from launcher position */
+/* Desktop. Scale up from launcher position */
 @keyframes widgetOpen {
   from {
     opacity: 0;
@@ -223,7 +223,7 @@
   }
 }
 
-/* Desktop — scale down toward launcher position */
+/* Desktop. Scale down toward launcher position */
 @keyframes widgetClose {
   from {
     opacity: 1;
@@ -235,7 +235,7 @@
   }
 }
 
-/* Mobile — slide up/down from bottom edge */
+/* Mobile. Slide up/down from bottom edge */
 @media (max-width: 767px) {
   .widget-hidden {
     transform: translateY(100%);
@@ -258,7 +258,7 @@
   }
 }
 
-/* Launcher pulse ring — indicates active conversation */
+/* Launcher pulse ring. Indicates active conversation */
 @keyframes launcherPulse {
   0%, 100% { transform: scale(1); opacity: 0.5; }
   50%      { transform: scale(1.18); opacity: 0; }
@@ -284,7 +284,7 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Premium orb avatar — living procedural energy field. Interior motion
+/* Premium orb avatar. Living procedural energy field. Interior motion
    is driven by SVG feTurbulence + feDisplacementMap; CSS only handles
    the outer breathing scale. Bloom lives inside the SVG and follows the
    internal energy (no circular drop-shadow). */
@@ -297,7 +297,7 @@
   .oyechats-premium-orb * { animation: none !important; }
 }
 
-/* Read-receipt tick states — in-flight pulse + green "pop" when read */
+/* Read-receipt tick states, in-flight pulse + green "pop" when read */
 @keyframes oyechatsTickPulse {
   0%, 100% { opacity: 0.45; }
   50%      { opacity: 0.95; }
@@ -314,7 +314,7 @@
 }
 
 
-/* Chat Markdown Styles — clean, readable */
+/* Chat Markdown Styles. Clean, readable */
 .prose {
   line-height: 1.7;
   font-weight: 300;
@@ -385,7 +385,7 @@
   color: #1e293b;
 }
 
-/* Messages-area scrollbar — overlay style: transparent track (no vertical
+/* Messages-area scrollbar. Overlay style: transparent track (no vertical
    line beside the thumb), thin rounded thumb only. Applied to the widget's
    single scroll container; ChatInput hides its own scrollbar separately. */
 [data-messages-area] {
@@ -415,7 +415,7 @@
   background-color: rgba(22, 32, 44, 0.32);
 }
 
-/* Chat mode transitions — fade + slide up on mode switch */
+/* Chat mode transitions. Fade + slide up on mode switch */
 @keyframes modeEnter {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -425,7 +425,7 @@
   animation: modeEnter 400ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
-/* Accessibility — honour reduced motion preference */
+/* Accessibility. Honour reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

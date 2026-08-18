@@ -56,7 +56,7 @@ from app.db.session import get_session  # noqa: E402
 #
 # Kept in sync with the migration's _PLAN_DATA constant. Single source of
 # truth would be nice but a deploy-safety script that depends on the same
-# Python module it's verifying is too clever — better to maintain two
+# Python module it's verifying is too clever. Better to maintain two
 # slightly-redundant maps and reconcile manually when the matrix shifts.
 
 EXPECTED_PLAN_LIMITS = {
@@ -146,7 +146,7 @@ def collect_pricing_diff(session) -> dict:
 def collect_over_limit_customers(session, client_id: int | None) -> list[dict]:
     """Customers whose current usage would exceed the new plan limits.
 
-    These customers won't be deleted or downgraded — the new limits stop
+    These customers won't be deleted or downgraded, the new limits stop
     them from CREATING more, not from KEEPING what they already have.
     But support should notify them proactively so they know their next
     add will be blocked.
@@ -218,7 +218,7 @@ def render_text(plan_diffs, pricing_diffs, over_limit) -> str:
     lines.append("\n=== PLAN ROWS ===")
     for d in plan_diffs:
         if d["missing"]:
-            lines.append(f"  [{d['slug']:<10}] ❌ MISSING — migration will INSERT this plan")
+            lines.append(f"  [{d['slug']:<10}] ❌ MISSING. Migration will INSERT this plan")
             continue
         marker = "✓" if not d["limit_diffs"] and not d["feature_diffs"] else "Δ"
         lines.append(f"  [{d['slug']:<10}] {marker}  active_subs={d['active_subs']}")
@@ -234,7 +234,7 @@ def render_text(plan_diffs, pricing_diffs, over_limit) -> str:
 
     lines.append("\n=== CUSTOMERS OVER NEW LIMITS ===")
     if not over_limit:
-        lines.append("  ✓ None — no customer would be over-limit after migration")
+        lines.append("  ✓ None, no customer would be over-limit after migration")
     else:
         for v in over_limit[:25]:
             lines.append(f"  client={v['client_id']} plan={v['plan']}")
@@ -249,13 +249,13 @@ def render_text(plan_diffs, pricing_diffs, over_limit) -> str:
     any_pricing_diff = any(not info["matches"] for info in pricing_diffs.values())
 
     if any_missing_plan:
-        verdict = "BLOCKED — missing plan rows; investigate before running migration"
+        verdict = "BLOCKED. Missing plan rows; investigate before running migration"
     elif over_limit:
-        verdict = "REVIEW REQUIRED — customers above new limits; notify support team"
+        verdict = "REVIEW REQUIRED. Customers above new limits; notify support team"
     elif any_diff or any_pricing_diff:
-        verdict = "READY TO DEPLOY — migration will apply the listed diffs"
+        verdict = "READY TO DEPLOY. Migration will apply the listed diffs"
     else:
-        verdict = "NO-OP — production already matches the matrix"
+        verdict = "NO-OP. Production already matches the matrix"
 
     lines.append("\n" + "=" * 60)
     lines.append(f"VERDICT: {verdict}")

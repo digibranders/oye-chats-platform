@@ -36,7 +36,7 @@ def main() -> None:
 
     print("# Add the following to your .env file:\n")
     print(f"VAPID_PUBLIC_KEY={public_b64}")
-    # Single-line PEM with literal "\n" escapes — safe for .env files that
+    # Single-line PEM with literal "\n" escapes. Safe for .env files that
     # do not support multi-line values. python-dotenv un-escapes on load.
     escaped_pem = private_pem.replace("\n", "\\n")
     print(f'VAPID_PRIVATE_KEY="{escaped_pem}"')

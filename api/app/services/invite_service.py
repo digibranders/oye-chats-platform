@@ -1,28 +1,28 @@
-"""Operator invite lifecycle — create, accept, revoke, resend, expire.
+"""Operator invite lifecycle. Create, accept, revoke, resend, expire.
 
 Invitations replace the legacy "create operator with password" flow. An owner
 or admin sends an email invite; the invitee either signs up (creating a fresh
 Client) or logs in with an existing Client. On acceptance, a linked Operator
 row is created in the target workspace with ``linked_client_id`` pointing at
-the invitee's Client identity — so the invitee authenticates via their Client
+the invitee's Client identity, so the invitee authenticates via their Client
 ``X-API-Key`` plus ``X-Workspace-Id`` (see :mod:`app.api.auth`).
 
 Security guarantees
 -------------------
-* **Token opacity** — only the SHA-256 hex hash of the plaintext token is
+* **Token opacity**. Only the SHA-256 hex hash of the plaintext token is
   persisted. The plaintext appears exactly once (in the email link) and is
   never logged. Verification hashes the presented token and compares to the
   stored hash.
-* **Race safety** — seat-limit checks acquire a ``SELECT ... FOR UPDATE`` on
+* **Race safety**. Seat-limit checks acquire a ``SELECT ... FOR UPDATE`` on
   the workspace's active subscription so two concurrent invite creations
   can't both squeak past a limit boundary.
-* **Superadmin protection** — the target email is checked against superadmin
+* **Superadmin protection**, the target email is checked against superadmin
   Client rows; a superadmin can never be invited as an operator into a
   customer workspace.
-* **RBAC** — only Client identities holding an owner/admin role in the
+* **RBAC**. Only Client identities holding an owner/admin role in the
   workspace (either as the workspace's actual owner Client OR via a linked
   operator with role owner/admin) can send/revoke invites.
-* **Idempotent status transitions** — revoke on an already-resolved invite
+* **Idempotent status transitions**. Revoke on an already-resolved invite
   is a no-op; accept on a resolved invite raises a clear error.
 """
 
@@ -56,7 +56,7 @@ TOKEN_BYTES = 32
 
 INVITE_TTL = timedelta(days=7)
 
-# Hard cap on invite-scoped resend attempts. Not a rolling window — a bit
+# Hard cap on invite-scoped resend attempts. Not a rolling window, a bit
 # blunter than the plan doc's "3/hour" but keeps things stateless. Raise if
 # operators need repeated resends.
 MAX_RESEND_PER_INVITE = 5
@@ -93,7 +93,7 @@ def _hash_token(token: str) -> str:
 def _generate_invite_token() -> tuple[str, str]:
     """Return ``(plaintext, sha256_hash)``.
 
-    The plaintext travels ONCE — in the invite email link. The hash is the
+    The plaintext travels ONCE, in the invite email link. The hash is the
     persistent identifier. Callers must never log the plaintext.
     """
     plaintext = secrets.token_urlsafe(TOKEN_BYTES)
@@ -101,7 +101,7 @@ def _generate_invite_token() -> tuple[str, str]:
 
 
 def _normalize_email(email: str) -> str:
-    """Lowercase + strip — every email comparison and write must go through this."""
+    """Lowercase + strip. Every email comparison and write must go through this."""
     return email.strip().lower()
 
 
@@ -114,7 +114,7 @@ def _lock_active_subscription_for_workspace(session: Session, client_id: int) ->
     Returns the locked row, or ``None`` if no active subscription exists.
     Serializes concurrent invite-create transactions against the same
     workspace so the seat check + operator row insert are effectively a
-    critical section — no two concurrent invites can both slip past a limit
+    critical section, no two concurrent invites can both slip past a limit
     boundary. On workspaces with no subscription row we skip locking (the
     seat check will look at limits derived from the free tier).
     """
@@ -138,24 +138,24 @@ def _active_operator_count(session: Session, workspace_id: int, bot_id: int) -> 
     Operator seats are allocated **per bot**: each bot in the workspace has
     its own operator allowance (the plan's operator limit applies to every
     bot independently), so this counts only the active operators bound to
-    ``bot_id`` — not the workspace-wide total. Switching bots therefore shows
+    ``bot_id``, not the workspace-wide total. Switching bots therefore shows
     a distinct seat count and roster for each one.
 
     Every active operator row on the bot consumes exactly one of that bot's
     seats, including the workspace owner acting as their own operator.
     Rationale: per-seat pricing (Starter includes N seats) is undercut if the
-    owner gets a free +1 — every real SaaS with per-seat pricing (Slack,
+    owner gets a free +1. Every real SaaS with per-seat pricing (Slack,
     Intercom, Notion, Linear) counts the owner-as-agent. The frontend "Take
     chats yourself" CTA makes the trade-off explicit so the owner knows a
     self-add consumes a seat just like inviting a teammate.
 
     Excluded from the count:
-      * Pending invites — the invite row lives in ``operator_invites`` and
+      * Pending invites, the invite row lives in ``operator_invites`` and
         no ``Operator`` row exists until acceptance, so this filter needs
         no extra clause for that. Note this leaves a small over-invite
         window (create N pending invites when N-1 seats free); the
         acceptance path re-checks under lock to catch the tail.
-      * Deactivated operators — ``is_active=False`` rows are historical and
+      * Deactivated operators. ``is_active=False`` rows are historical and
         do not consume a seat. Reactivating (self-op reactivate, invite
         accept on a stale row) re-runs the seat check.
     """
@@ -176,12 +176,12 @@ def _require_seat_available(session: Session, workspace_id: int, bot_id: int) ->
 
     Seats are per-bot: the plan's operator limit applies to each bot
     independently, so the check counts only the target bot's active
-    operators — one bot being full never blocks adding operators to another.
+    operators, one bot being full never blocks adding operators to another.
 
     Acquires a ``SELECT ... FOR UPDATE`` lock on the workspace's active
     subscription so concurrent invite creations + self-op adds serialize.
     Two callers racing to grab the last seat on a bot will see one succeed
-    and the other reject with a clean error — no silent over-allocation.
+    and the other reject with a clean error, no silent over-allocation.
 
     Shared between :func:`create_invite` and the ``POST /me/self-operator``
     endpoint so both paths enforce the same per-seat semantics.
@@ -257,12 +257,12 @@ def _require_live_chat_feature(session: Session, workspace_id: int) -> None:
     Called by every path that creates or modifies an operator so a Free-tier
     workspace can't gain operators through any backdoor (invite CREATE,
     self-operator ADD, or a future bulk-import endpoint). Superadmins are
-    exempt — they can act in any workspace regardless of plan for support
+    exempt. They can act in any workspace regardless of plan for support
     and audit purposes.
     """
     from app.db.models import Client as _Client
 
-    # Superadmin exemption — check via the owner Client row.
+    # Superadmin exemption. Check via the owner Client row.
     owner_is_superadmin = session.execute(
         select(_Client.is_superadmin).where(_Client.id == workspace_id)
     ).scalar_one_or_none()
@@ -322,7 +322,7 @@ def create_invite(
     """Create a pending invite for ``email`` to join ``workspace_id`` as an operator.
 
     Returns ``(invite, plaintext_token)``. The plaintext is used exactly once
-    to build the email link — the caller must not persist or log it after
+    to build the email link, the caller must not persist or log it after
     handing it to the email service.
 
     Raises :class:`InviteError` for any guardrail failure (dup, RBAC, seat,
@@ -337,7 +337,7 @@ def create_invite(
             f"Role must be one of: {sorted(VALID_INVITE_ROLES)}.",
         )
 
-    # Validate the bot exists in this workspace — an invite scoped to a bot
+    # Validate the bot exists in this workspace, an invite scoped to a bot
     # in a different workspace would let the invitee accept into a bot they
     # were never authorised for. Reject at CREATE, not just at accept.
     target_bot = session.execute(
@@ -352,9 +352,9 @@ def create_invite(
 
     _require_manager_role(session, invited_by, workspace_id)
 
-    # Feature gate — ``live_chat`` is a paid-plan feature. Explicitly rejecting
+    # Feature gate. ``live_chat`` is a paid-plan feature. Explicitly rejecting
     # here gives a clearer error than the seat-limit fall-through (which on
-    # Free tier reads as "You've reached your 0/0 operator limit" — technically
+    # Free tier reads as "You've reached your 0/0 operator limit". Technically
     # correct but the reason is really the feature, not the count).
     _require_live_chat_feature(session, workspace_id)
 
@@ -367,7 +367,7 @@ def create_invite(
     if _target_is_workspace_owner(session, workspace_id, email):
         raise InviteError(
             "cannot_invite_owner",
-            "You already own this workspace — no invite needed.",
+            "You already own this workspace, no invite needed.",
         )
     if _has_active_operator_for_email(session, workspace_id, email):
         raise InviteError(
@@ -382,7 +382,7 @@ def create_invite(
             status_code=409,
         )
 
-    # Seat-limit check — shared with the self-op endpoint via a helper so
+    # Seat-limit check. Shared with the self-op endpoint via a helper so
     # both paths enforce identical per-seat semantics under the same
     # FOR UPDATE lock. Scoped to the invite's target bot: seats are per-bot,
     # so the check counts only that bot's operators. Pending invites
@@ -423,8 +423,8 @@ def create_invite(
 def get_invite_by_token(session: Session, plaintext_token: str) -> OperatorInvite | None:
     """Resolve an invite by presented plaintext token (hashed internally).
 
-    Returns ``None`` when no invite matches. Does NOT check status/expiry —
-    that's the caller's job so the airlock page can render a distinct
+    Returns ``None`` when no invite matches. Does NOT check status/expiry.
+    That's the caller's job so the airlock page can render a distinct
     "expired" / "revoked" state.
     """
     if not plaintext_token or not plaintext_token.strip():
@@ -467,7 +467,7 @@ def accept_invite(
     Re-fetches the invite under ``SELECT ... FOR UPDATE`` so a concurrent
     revoke can't race an accept. Without the lock, both transactions could
     read ``status='pending'`` in their MVCC snapshot, both proceed past the
-    status check, and the last commit would silently overwrite the first —
+    status check, and the last commit would silently overwrite the first,
     the invite could end up ``status='accepted'`` after a revoke that
     thought it succeeded, or a duplicate operator row could survive across
     two near-simultaneous accepts of the same token. The lock serialises
@@ -478,7 +478,7 @@ def accept_invite(
         select(OperatorInvite).where(OperatorInvite.id == invite.id).with_for_update()
     ).scalar_one_or_none()
     if invite is None:
-        # Row vanished between airlock lookup and now — treat as invalid so
+        # Row vanished between airlock lookup and now. Treat as invalid so
         # the frontend renders the "invalid invite" state.
         raise InviteError(
             "invite_not_found",
@@ -509,7 +509,7 @@ def accept_invite(
             status_code=403,
         )
 
-    # Idempotence for a rare race — if a linked-op row already exists here
+    # Idempotence for a rare race. If a linked-op row already exists here
     # (e.g. the invitee accepted twice near-simultaneously, or an earlier
     # invite was accepted then the operator was deactivated), reuse the row
     # rather than raising a partial-unique-index violation.
@@ -537,11 +537,11 @@ def accept_invite(
 
     # Every remaining branch flips an inactive/absent seat to active, so it
     # consumes one of the workspace's operator seats. Gate on the shared
-    # seat helper — same FOR UPDATE lock as the invite CREATE path, so a
+    # seat helper, same FOR UPDATE lock as the invite CREATE path, so a
     # concurrent race between two acceptances of two pending invites (or
     # an invite accept + a self-op add) resolves cleanly: one succeeds,
     # the other rejects with a structured ``seat_limit_reached`` error.
-    # Scoped to the invite's target bot — seats are allocated per-bot.
+    # Scoped to the invite's target bot. Seats are allocated per-bot.
     _require_seat_available(session, invite.client_id, invite.bot_id)
 
     if existing is not None:
@@ -549,15 +549,15 @@ def accept_invite(
         # Common on repeat cycles: user accepted, was later revoked
         # (soft delete), then invited again and accepts again.
         #
-        # Apply the NEW invite's role + department to the reactivated row —
-        # otherwise a re-invite with an intentional promotion (operator ->
+        # Apply the NEW invite's role + department to the reactivated row.
+        # Otherwise a re-invite with an intentional promotion (operator ->
         # admin) or a department reassignment would silently drop those
         # changes and the row would keep whatever it had before revoke.
         # Also refresh ``invited_email`` snapshot in case the invite went
         # to a different (but case-equivalent) email surface.
         existing.is_active = True
         existing.role = invite.role
-        # Re-invite may target a different bot than the previous run — apply
+        # Re-invite may target a different bot than the previous run. Apply
         # the current invite's binding so the reactivated row lands on the
         # bot the invite was actually sent for.
         existing.bot_id = invite.bot_id
@@ -590,10 +590,10 @@ def accept_invite(
         department_id=invite.department_id,
         is_active=True,
         is_accepting_chats=True,
-        # No hashed_password / operator_api_key — linked operators authenticate
+        # No hashed_password / operator_api_key. Linked operators authenticate
         # via their Client's X-API-Key plus X-Workspace-Id header. They cannot
         # log in through /auth/operator-login (which filters out rows with
-        # NULL hashed_password anyway — see auth_routes.py).
+        # NULL hashed_password anyway. See auth_routes.py).
     )
     session.add(operator)
     session.flush()
@@ -617,7 +617,7 @@ def accept_invite(
 def revoke_invite(session: Session, invite: OperatorInvite, actor: Client, workspace_id: int) -> None:
     """Mark a pending invite as revoked. No-op for already-resolved invites.
 
-    Enforces RBAC — only workspace owners/admins can revoke.
+    Enforces RBAC. Only workspace owners/admins can revoke.
 
     Re-fetches the invite under ``SELECT ... FOR UPDATE`` so a concurrent
     accept can't slip past the status check and produce an operator row on
@@ -637,7 +637,7 @@ def revoke_invite(session: Session, invite: OperatorInvite, actor: Client, works
         select(OperatorInvite).where(OperatorInvite.id == invite.id).with_for_update()
     ).scalar_one_or_none()
     if invite is None or invite.status != "pending":
-        # Idempotent — either gone entirely or already resolved (accepted /
+        # Idempotent, either gone entirely or already resolved (accepted /
         # revoked / expired). Silent no-op matches the pre-lock behaviour.
         return
     invite.status = "revoked"
@@ -649,7 +649,7 @@ def revoke_invite(session: Session, invite: OperatorInvite, actor: Client, works
 def resend_invite(session: Session, invite: OperatorInvite, actor: Client, workspace_id: int) -> str:
     """Rotate the invite's token and return the new plaintext.
 
-    Rotation makes the resend email a fresh magic link — the old link stops
+    Rotation makes the resend email a fresh magic link, the old link stops
     working immediately, which is the desired security posture. Rate-limited
     per invite (``MAX_RESEND_PER_INVITE``) to prevent abuse.
 

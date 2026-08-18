@@ -1,7 +1,7 @@
-"""Saved-instrument mirror — synced from Razorpay, never invented locally.
+"""Saved-instrument mirror. Synced from Razorpay, never invented locally.
 
 Razorpay is the source of truth. The mirror exists so the UI renders without a
-gateway round-trip; every rule here protects one invariant — the customer is
+gateway round-trip; every rule here protects one invariant, the customer is
 only ever shown an instrument that can actually be charged.
 """
 

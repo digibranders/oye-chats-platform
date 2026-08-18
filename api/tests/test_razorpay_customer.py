@@ -1,4 +1,4 @@
-"""Razorpay Customer identity — created once, reused, never duplicated.
+"""Razorpay Customer identity. Created once, reused, never duplicated.
 
 The customer is the anchor every saved payment instrument hangs off. Until it
 existed, ``razorpay_customer_id`` was only ever scraped passively off
@@ -27,7 +27,7 @@ class _FakeCustomerAPI:
 
     def fetch(self, customer_id):
         # A freshly-created id is always live on the gateway that just
-        # minted it — tests that don't care about the existence check
+        # minted it. Tests that don't care about the existence check
         # (idempotency, payload shape) get that for free.
         self.fetched.append(customer_id)
         return {"id": customer_id}
@@ -83,7 +83,7 @@ def test_reissues_when_the_stored_id_is_stale_on_the_gateway(db, monkeypatch):
     """A live→test key switch (or a gateway-side delete) leaves a
     syntactically-valid id the CURRENT key cannot see. Handing that to
     Razorpay Checkout is what surfaces mid-payment as "The id provided does
-    not exist" — ensure_customer must catch it before it ever reaches
+    not exist". Ensure_customer must catch it before it ever reaches
     checkout, not just create-on-empty.
     """
     from razorpay.errors import BadRequestError
@@ -158,7 +158,7 @@ def test_falls_back_to_account_name_when_legal_name_missing(db, monkeypatch):
 
 
 def test_gstin_is_omitted_when_absent(db, monkeypatch):
-    """Sending an empty GSTIN is worse than sending none — Razorpay stores it."""
+    """Sending an empty GSTIN is worse than sending none. Razorpay stores it."""
     from app.services import razorpay_customer_service as svc
 
     fake = _FakeClient()
@@ -199,7 +199,7 @@ def test_detached_client_is_rejected_not_silently_dropped(db, monkeypatch):
     """The failure mode this guards against is invisible without it.
 
     ``get_current_client`` hands routes a DETACHED Client. Assigning
-    ``razorpay_customer_id`` on a detached instance is a silent no-op — the id
+    ``razorpay_customer_id`` on a detached instance is a silent no-op, the id
     is created at Razorpay, never persisted, and re-created on every checkout.
     Tests that build their own attached rows would all pass while production
     quietly never saved a customer.
@@ -239,7 +239,7 @@ def test_sync_is_a_noop_without_a_customer_id(db, monkeypatch):
 
 
 def test_sync_never_raises_on_a_gateway_failure(db, monkeypatch):
-    """A billing-details save must not fail because Razorpay is down — the
+    """A billing-details save must not fail because Razorpay is down, the
     local row is authoritative for invoicing."""
     from app.services import razorpay_customer_service as svc
 

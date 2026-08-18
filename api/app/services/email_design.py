@@ -1,4 +1,4 @@
-"""Shared HTML-email design system — the single source of truth for how every
+"""Shared HTML-email design system, the single source of truth for how every
 transactional/lifecycle email looks.
 
 Monochrome + single-indigo-accent (Stripe/Linear inspired), 600px table layout,
@@ -27,7 +27,7 @@ from app.config import APP_URL, BRAND_NAME, MARKETING_URL
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
 MONO = "'SF Mono',ui-monospace,Menlo,Consolas,'Liberation Mono',monospace"
 
-# Light palette — never pure #fff / #000 (both trigger aggressive dark-mode inversion).
+# Light palette, never pure #fff / #000 (both trigger aggressive dark-mode inversion).
 PAGE = "#f4f5f7"
 CARD = "#ffffff"
 FILL = "#f3f4f6"  # neutral fill: code box, info tables, quotes
@@ -37,10 +37,10 @@ INK700 = "#33363d"  # strong body
 INK500 = "#5b616e"  # body
 INK400 = "#6b7280"  # labels
 INK300 = "#9ca3af"  # footer / faint
-ACCENT = "#4f46e5"  # indigo — the ONE accent
+ACCENT = "#4f46e5"  # indigo, the ONE accent
 ACCENT_TINT = "#eef2ff"
 
-# Semantic — used ONLY inside small chips / alert boxes, never as full-email theming.
+# Semantic. Used ONLY inside small chips / alert boxes, never as full-email theming.
 SEMANTIC: dict[str, dict[str, str]] = {
     "success": {"bg": "#ecfdf3", "border": "#a6f4c5", "text": "#067647"},
     "warning": {"bg": "#fffaeb", "border": "#fedf89", "text": "#b54708"},

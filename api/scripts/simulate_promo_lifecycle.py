@@ -123,7 +123,7 @@ def _make_sub(session, tag: str, rzp_id: str, now: datetime, free_until: datetim
 def _teardown(session) -> None:
     if not _created_client_ids:
         return
-    # ids are DB-generated integers we created this run — safe to inline.
+    # ids are DB-generated integers we created this run. Safe to inline.
     id_list = ", ".join(str(int(i)) for i in _created_client_ids)
     for table in ("credit_ledger", "invoices", "usage_records", "subscriptions", "bots"):
         session.execute(text(f"DELETE FROM {table} WHERE client_id IN ({id_list})"))
@@ -142,9 +142,9 @@ def main() -> None:
         print(f"Standard plan: {plan.name} | credits/mo={plan.credits_per_month} | grace={PAYMENT_FAILED_GRACE_DAYS}d")
 
         try:
-            # ── Scenario A — successful month-4 charge (conversion) ──
+            # ── Scenario A (successful month-4 charge (conversion) ──
             _rule("=")
-            print("SCENARIO A — free period ends, Razorpay charge SUCCEEDS")
+            print("SCENARIO A) free period ends, Razorpay charge SUCCEEDS")
             _rule("=")
             sub_a = _make_sub(session, "A", "sub_SIM_A_" + secrets.token_hex(4), now, free_until)
             _show(session, sub_a, "in free period")
@@ -158,9 +158,9 @@ def main() -> None:
             _show(session, sub_a, "after charge")
             print("  -> stays ACTIVE, paid month's credits granted, period advanced. Data untouched.")
 
-            # ── Scenario B — charge fails -> dunning -> grace elapses -> expired ──
+            # ── Scenario B (charge fails -> dunning -> grace elapses -> expired ──
             _rule("=")
-            print("SCENARIO B — free period ends, charge FAILS, dunning grace elapses")
+            print("SCENARIO B) free period ends, charge FAILS, dunning grace elapses")
             _rule("=")
             sub_b = _make_sub(session, "B", "sub_SIM_B_" + secrets.token_hex(4), now, free_until)
             _show(session, sub_b, "in free period")
@@ -190,9 +190,9 @@ def main() -> None:
                 f"documents still {doc_count}. Nothing deleted."
             )
 
-            # ── Scenario C — cancel DURING the free period (no charge ever) ──
+            # ── Scenario C (cancel DURING the free period (no charge ever) ──
             _rule("=")
-            print("SCENARIO C — customer cancels DURING the free period")
+            print("SCENARIO C) customer cancels DURING the free period")
             _rule("=")
             sub_c = _make_sub(session, "C", "sub_SIM_C_" + secrets.token_hex(4), now, free_until)
             _show(session, sub_c, "in free period")

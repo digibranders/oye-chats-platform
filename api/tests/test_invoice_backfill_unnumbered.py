@@ -1,7 +1,7 @@
 """Regression tests for the un-numbered-invoice self-heal + visibility (H-B).
 
-A charge whose ``finalize_invoice`` returned False — most commonly because the
-super-admin hadn't saved the seller profile yet — leaves a legacy ``Invoice``
+A charge whose ``finalize_invoice`` returned False (most commonly because the
+super-admin hadn't saved the seller profile yet) leaves a legacy ``Invoice``
 row with no ``invoice_number`` and no tax document. Before the fix nothing ever
 re-numbered it (the PDF sweep and every reconciliation query filter on
 ``invoice_number IS NOT NULL``), so the customer was charged with no legal
@@ -113,7 +113,7 @@ def test_reconciliation_surfaces_unnumbered_paid_charge(db, enabled):
 
 
 def test_backfill_heals_refunded_before_finalize_charge(db, enabled):
-    """P1-6c — a charge that missed finalize and was then (partially) refunded
+    """P1-6c, a charge that missed finalize and was then (partially) refunded
     must still be healed into a numbered document: the customer kept part of
     the supply, and create_credit_note refuses unnumbered originals, so
     without this the whole money movement drops out of every report."""

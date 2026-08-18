@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 def _record_bot_crawl_state(bot_id: int | None, status: str) -> None:
     """Persist the bot's durable ingestion ("trained") state after a terminal crawl.
 
-    Best-effort — a failure here must never fail or mask the crawl result.
+    Best-effort, a failure here must never fail or mask the crawl result.
 
     ``last_crawl_status`` records this ATTEMPT, so it is written on every
     terminal status including a hard failure (the frontend needs to tell "tried
@@ -68,7 +68,7 @@ def _record_bot_crawl_state(bot_id: int | None, status: str) -> None:
     while the bot keeps all of its prior content, and gating the stamp on this
     job's output left such a bot reading "Nothing learned yet" forever.
 
-    Recomputing on a failed crawl is deliberate too — a failure doesn't destroy
+    Recomputing on a failed crawl is deliberate too, a failure doesn't destroy
     previously ingested content, so the bot stays correctly marked as trained.
     """
     if not bot_id:
@@ -92,7 +92,7 @@ def _record_bot_crawl_state(bot_id: int | None, status: str) -> None:
 def _terminal_status(total_chunks: int, existing_count: int) -> str:
     """Decide a crawl's terminal status from new-chunk and existing-content counts.
 
-    ``no_content`` means the bot has NO usable knowledge after this crawl —
+    ``no_content`` means the bot has NO usable knowledge after this crawl,
     not merely that this particular crawl added nothing. A delta recrawl of an
     unchanged site legitimately produces ``total_chunks == 0`` (SHA-256 dedup
     skipped every page) while the bot still holds all its prior content; that
@@ -111,7 +111,7 @@ def _precompute_seed_questions(bot_id: int | None) -> None:
     Build Studio Prove step reads a cached value instead of paying that latency
     while the user waits. Best-effort; the on-demand endpoint stays as a fallback
     if this hasn't finished (or failed) by the time the user asks. Only caches an
-    authoritative result — mirrors the endpoint's guard so an empty list is never
+    authoritative result. Mirrors the endpoint's guard so an empty list is never
     persisted before content exists (documents do exist here, but stay defensive).
     """
     if not bot_id:
@@ -123,7 +123,7 @@ def _precompute_seed_questions(bot_id: int | None) -> None:
         with get_session() as session:
             bot = session.get(Bot, bot_id)
             if bot is None or bot.seed_questions is not None:
-                return  # already computed (or bot gone) — never recompute here
+                return  # already computed (or bot gone), never recompute here
             questions = build_seed_questions(session, bot)
             if questions or count_documents_for_bot(session, bot_id=bot.id, client_id=bot.client_id) > 0:
                 bot.seed_questions = questions
@@ -153,8 +153,8 @@ def _pick_services_url(valid_pages: list[dict]) -> str | None:
     Picks the URL whose path matches the highest-priority keyword in
     :data:`_SERVICES_URL_HINTS`. Prefers shorter paths (the canonical
     "/services" beats "/services/seo/checklist") so the admin lands on the
-    section root, not a deep page. Returns ``None`` when nothing matches —
-    callers leave the existing ``services_url`` untouched in that case.
+    section root, not a deep page. Returns ``None`` when nothing matches.
+    Callers leave the existing ``services_url`` untouched in that case.
     """
     from urllib.parse import urlparse
 
@@ -200,13 +200,13 @@ def _apply_crawl_metadata_to_bot(
     """
     overrides = set(bot_db.manual_field_overrides or [])
     written: list[str] = []
-    # Always refresh ``recommended_colors`` — even when the extractor came
+    # Always refresh ``recommended_colors``, even when the extractor came
     # back empty. A re-crawl of a site whose palette can no longer be
     # extracted MUST clear the stale colors from the previous site, otherwise
     # the widget keeps rendering with the wrong brand until the customer
     # notices and re-picks manually. There's no ``manual_field_overrides``
     # guard here because ``recommended_colors`` is a suggestion surface, not
-    # a user-editable field — customers pick from it into the actual color
+    # a user-editable field. Customers pick from it into the actual color
     # settings, which live on separate fields the helper never touches.
     normalized_colors = recommended_colors or []
     if bot_db.recommended_colors != normalized_colors:
@@ -229,7 +229,7 @@ def _apply_crawl_metadata_to_bot(
     return written
 
 
-# Absolute wall-clock budget for the whole favicon step — discovery, every
+# Absolute wall-clock budget for the whole favicon step. Discovery, every
 # candidate download, the R2 upload. Small on purpose: this runs after the
 # crawl is already complete and billed, so its only job is to not linger.
 _FAVICON_TOTAL_BUDGET_S = 25.0
@@ -238,7 +238,7 @@ _FAVICON_TOTAL_BUDGET_S = 25.0
 async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: str) -> None:
     """Set the site's favicon as the bot's avatar when none is chosen yet.
 
-    Best-effort and non-fatal — a failure here must never affect the crawl
+    Best-effort and non-fatal, a failure here must never affect the crawl
     result. Runs for any bot-scoped crawl, full or partial: the icon is read
     from the homepage, so which pages the customer ticked is irrelevant to it.
 
@@ -246,14 +246,14 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
     a re-crawl of a bot that fails any of them costs one indexed lookup and no
     network at all:
 
-    * ``bot_logo_source`` is NULL — nobody has ever set this avatar. A customer
+    * ``bot_logo_source`` is NULL. Nobody has ever set this avatar. A customer
       who uploaded one, or who REMOVED one, is stamped ``manual`` by both
       settings patches, and removal is the case ``bot_logo IS NULL`` alone
       cannot see: without provenance this step read a deliberate deletion as an
       empty slot and re-derived the picture on the next crawl.
-    * ``bot_logo`` is empty — belt and braces, and what makes this free for the
+    * ``bot_logo`` is empty. Belt and braces, and what makes this free for the
       overwhelmingly common re-crawl of an agent that already has an avatar.
-    * ``avatar_type`` is still ``upload`` — a customer who picked Orb or Mascot
+    * ``avatar_type`` is still ``upload``, a customer who picked Orb or Mascot
       has ``bot_logo`` NULL by design.
 
     The favicon bytes are pushed through the same logo pipeline as a manual
@@ -267,7 +267,7 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
     try:
         # Cheap pre-check: skip the network fetch entirely if an avatar exists.
         # Mirrors the authoritative post-fetch check below rather than being a
-        # weaker subset of it — an orb/mascot bot is never going to pass that
+        # weaker subset of it, an orb/mascot bot is never going to pass that
         # check, and now that this runs on every crawl rather than only full
         # ones, letting it fetch a homepage and upload to R2 first would burn
         # the budget on every re-crawl to reach a foregone conclusion.
@@ -276,10 +276,10 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
             if bot is None or bot.client_id != client_id or bot.bot_logo:
                 return
             if bot.bot_logo_source is not None:
-                logger.info("bot %s avatar was set by %s — not deriving one", bot_id, bot.bot_logo_source)
+                logger.info("bot %s avatar was set by %s, not deriving one", bot_id, bot.bot_logo_source)
                 return
             if (bot.avatar_type or "upload") != "upload":
-                logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
+                logger.info("bot %s uses the %s avatar. Leaving it alone", bot_id, bot.avatar_type)
                 return
 
         from app.services.favicon_extractor import fetch_favicon_image
@@ -308,16 +308,16 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
             # avatar (stamping `manual`) during the seconds the fetch takes,
             # and that removal has to win.
             if bot.bot_logo_source is not None:
-                logger.info("bot %s avatar was set by %s — not deriving one", bot_id, bot.bot_logo_source)
+                logger.info("bot %s avatar was set by %s, not deriving one", bot_id, bot.bot_logo_source)
                 return
             # `bot_logo` being empty is NOT the same as "no avatar chosen".
-            # `avatar_type` has three legal values — upload / orb / mascot —
+            # `avatar_type` has three legal values (upload / orb / mascot)
             # and a customer who picked Orb has bot_logo NULL. The old guard
             # checked only bot_logo, so it passed, then flipped avatar_type
             # from 'orb' to 'upload' and silently replaced a deliberate choice
             # with their favicon.
             if (bot.avatar_type or "upload") != "upload":
-                logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
+                logger.info("bot %s uses the %s avatar. Leaving it alone", bot_id, bot.avatar_type)
                 return
             bot.bot_logo = logo_key
             bot.bot_logo_source = AVATAR_SOURCE_DERIVED
@@ -361,15 +361,15 @@ async def _consume_ingest_stream(
     Shared mutable state (so the producer, the finish-signal helper, and the
     main flow all observe the same flags):
 
-    * ``totals`` — accumulates ``chunks`` / ``pages_charged`` /
+    * ``totals``. Accumulates ``chunks`` / ``pages_charged`` /
       ``credits_deducted`` across waves.
-    * ``state['billing_aborted']`` — set by a wave that couldn't bill, by the
+    * ``state['billing_aborted']``. Set by a wave that couldn't bill, by the
       cancel path, or by the finish helper; later pages are drained and dropped
       because embedding pages the user can't pay for wastes the quota.
-    * ``state['consumer_error']`` — set to the first ingest exception. This is
+    * ``state['consumer_error']``. Set to the first ingest exception. This is
       the deadlock-breaker: the moment an ingest wave raises we record the
-      error, log it, and switch to *drain mode* — keep ``get``-ing and
-      discarding pages until the sentinel — so the producer's bounded ``put``
+      error, log it, and switch to *drain mode* (keep ``get``-ing and
+      discarding pages until the sentinel) so the producer's bounded ``put``
       is always released instead of blocking forever on a full queue. The main
       flow then turns a non-null ``consumer_error`` into a fast crawl failure.
     """
@@ -388,15 +388,15 @@ async def _consume_ingest_stream(
 
         if not done:
             buffer.append(page)
-        # Stop embedding further waves the moment a cancel lands — the main
+        # Stop embedding further waves the moment a cancel lands, the main
         # flow raises CrawlCancelled at its next checkpoint; here we just avoid
         # spending the embed budget on a crawl that's being cancelled.
         if not state["billing_aborted"] and not done and cancel_requested():
             logger.info("Ingest consumer halting embeds (cancel requested) client=%s", client_id)
             state["billing_aborted"] = True
         if state["billing_aborted"]:
-            # Set either by a wave that couldn't bill or by the cancel path —
-            # drop everything buffered, including pages queued before the flag
+            # Set either by a wave that couldn't bill or by the cancel path.
+            # Drop everything buffered, including pages queued before the flag
             # flipped.
             buffer.clear()
         if buffer and (done or len(buffer) >= wave_pages):
@@ -409,7 +409,7 @@ async def _consume_ingest_stream(
                 # the producer on a full bounded queue (that was the ~27-minute
                 # "running" hang). Record the error, then fall into drain mode.
                 state["consumer_error"] = exc
-                logger.exception("Ingest wave failed during crawl (client=%s) — draining stream", client_id)
+                logger.exception("Ingest wave failed during crawl (client=%s). Draining stream", client_id)
                 if done:
                     return
                 continue
@@ -441,13 +441,13 @@ async def run_full_crawl(
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
     Always writes a terminal ``done`` or ``failed`` state to Redis and always
-    releases the per-client crawl lock — so callers don't need a try/finally
+    releases the per-client crawl lock, so callers don't need a try/finally
     of their own. Re-raises any underlying exception (the worker uses this to
     mark the job failed; the API surfaces it as a 5xx).
 
     Crawl knobs (``max_depth``, ``concurrency``) are plan-aware: the route
     layer resolves them from the client's plan and passes them through.
-    ``max_pages`` is also clamped at the route layer — for JS crawls the
+    ``max_pages`` is also clamped at the route layer, for JS crawls the
     route layer applies ``min(plan_max_pages, plan_js_max_pages)`` before
     forwarding, so a single capped ``max_pages`` is all the subprocess needs.
     ``None`` means "let the crawler subprocess fall back to its env defaults".
@@ -455,19 +455,19 @@ async def run_full_crawl(
     result_payload: dict | None = None
     started_at = time.time()
     # Denominator for the UI progress bar. Only ever a real, known page count
-    # (the explicit ordered-crawl list length) — never `max_pages`, which is
+    # (the explicit ordered-crawl list length), never `max_pages`, which is
     # a plan/credit-derived *ceiling*, not a discovered total. A small site
     # with no sitemap (ordered_urls empty) falls into the recursive crawl
     # below with no discovered count at all; showing that site's progress as
     # "1/2398 pages" because 2398 happens to be this account's crawl budget
     # reads as "we found 2398 pages on your 20-page site" and is just wrong.
-    # `None` here means "total unknown" — the UI shows pages crawled so far
+    # `None` here means "total unknown", the UI shows pages crawled so far
     # with no (fabricated) denominator instead.
     progress_max = len(ordered_urls) if ordered_urls else None
     crawled_urls: list[str] = []
 
     def _report_page(page_url: str, ok: bool) -> None:
-        """Live per-page progress for the fetch phase — this is what unfreezes
+        """Live per-page progress for the fetch phase. This is what unfreezes
         the UI's 'Discovering URLs… 0/N' and (via set_crawl_progress) refreshes
         the heartbeat so a long fetch is never falsely reaped."""
         if ok:
@@ -506,7 +506,7 @@ async def run_full_crawl(
     # is now async and awaited by the provider (spider_service.py /
     # jina_service.py) from inside its own per-page fetch coroutine, so
     # `await stream_queue.put(page)` naturally suspends just THAT page's
-    # fetch slot when the queue is full — other concurrent fetches (bounded
+    # fetch slot when the queue is full. Other concurrent fetches (bounded
     # by the provider's own semaphore) keep running, and the event loop is
     # never blocked.
     stream_queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=CRAWL_INGEST_WAVE_PAGES * 2)
@@ -520,7 +520,7 @@ async def run_full_crawl(
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
-        """Provider callback — awaited from inside the provider's per-page
+        """Provider callback. Awaited from inside the provider's per-page
         fetch coroutine (see spider_service.py/jina_service.py). Suspends
         (does not block the event loop) once the bounded queue is full,
         providing real producer-side backpressure."""
@@ -542,7 +542,7 @@ async def run_full_crawl(
             urls=list(crawled_urls),
             pages_crawled=len(crawled_urls),
             max_pages=progress_max,
-            phase=f"Embedding — {done_cum:,} chunks so far",
+            phase=f"Embedding - {done_cum:,} chunks so far",
             cancellable=True,
             started_at=started_at,
         )
@@ -591,13 +591,13 @@ async def run_full_crawl(
             return
         if discard_pending:
             ingest_state["billing_aborted"] = True
-        # await, not put_nowait — the queue is now bounded (AR-23) and could
+        # await, not put_nowait, the queue is now bounded (AR-23) and could
         # legitimately be full at this exact moment.
         await stream_queue.put(None)
         await consumer
 
     consumer_task: asyncio.Task | None = None
-    # Phase 1 footer harvest — runs in parallel with the main crawl. Only
+    # Phase 1 footer harvest. Runs in parallel with the main crawl. Only
     # fires for a URL crawl (ordered_urls is a partial re-scrape that already
     # has an explicit page list, so a site-wide footer pass would be off
     # topic there). Log-only for now: the awaited result is emitted to the
@@ -648,7 +648,7 @@ async def run_full_crawl(
         # Await the parallel footer harvest and log its findings. Bounded
         # wait so a hung Spider scrape here can never delay the crawl's
         # completion beyond the main scrape's own budget. Cancels and
-        # swallows on timeout — this is a diagnostic side channel.
+        # swallows on timeout. This is a diagnostic side channel.
         if footer_task is not None:
             try:
                 footer_media = await asyncio.wait_for(footer_task, timeout=30.0)
@@ -679,7 +679,7 @@ async def run_full_crawl(
         # The active crawl providers (Spider, Jina) return markdown, not HTML,
         # so their ``recommended_colors`` is always empty. Fetch the seed URL's
         # raw HTML once and extract the brand palette from its CSS/inline
-        # styles. Best-effort — a fetch failure keeps ``recommended_colors``
+        # styles. Best-effort, a fetch failure keeps ``recommended_colors``
         # empty, which then correctly clears any stale palette on the bot.
         if not recommended_colors:
             try:
@@ -689,7 +689,7 @@ async def run_full_crawl(
                 recommended_colors = []
 
         # A cancel that landed just as the scrape finished (so the provider
-        # returned normally instead of raising) still stops here — before we
+        # returned normally instead of raising) still stops here. Before we
         # spend the embed budget on the final sweep. Runs AFTER the color
         # fallback so a mid-cancel run still surfaces whatever palette we
         # managed to extract for the retry attempt.
@@ -726,7 +726,7 @@ async def run_full_crawl(
 
         # Flush the streaming consumer: waves already in flight finish, the
         # buffered tail is ingested, and the totals below reflect all of it.
-        # Heartbeat spans the wait — the tail wave can be a multi-minute embed.
+        # Heartbeat spans the wait, the tail wave can be a multi-minute embed.
         if consumer_task is not None:
             async with crawl_heartbeat(client_id):
                 await _finish_consumer(consumer_task)
@@ -747,7 +747,7 @@ async def run_full_crawl(
         sweep_offset = ingest_totals["chunks"]
 
         def _report_embed(done_chunks: int, total_chunks: int) -> None:
-            """Live embed progress — keeps the UI moving through the multi-minute
+            """Live embed progress. Keeps the UI moving through the multi-minute
             embedding phase (and refreshes the heartbeat) instead of sitting at
             'N pages scanned'. Counts are cumulative across the streamed waves."""
             set_crawl_progress(
@@ -765,11 +765,11 @@ async def run_full_crawl(
         # wave already ingested is skipped by the content-hash dedup, so this
         # only picks up stragglers (and is the sole ingest path for the
         # non-streaming / recursive-crawl cases). Skipped entirely after a
-        # billing abort — those pages can't be paid for.
+        # billing abort. Those pages can't be paid for.
         loop = asyncio.get_event_loop()
         if not ingest_state["billing_aborted"]:
             logger.info("Batch ingesting %d pages (%d chunks already streamed)", pages_processed, sweep_offset)
-            # Heartbeat spans the embed loop — CPU/network-bound and the phase
+            # Heartbeat spans the embed loop. CPU/network-bound and the phase
             # most likely to exceed the reaper's staleness window on a large crawl.
             async with crawl_heartbeat(client_id):
                 ingest_result = await loop.run_in_executor(
@@ -797,7 +797,7 @@ async def run_full_crawl(
         # Orphan sweep: remove chunks for pages that disappeared from the site.
         # Only valid for a FULL re-crawl. A partial (ordered_urls) crawl fetches
         # an intentional subset, so sweeping would delete pages the user still
-        # wants — skip it in that case.
+        # wants. Skip it in that case.
         if replace_source and total_chunks > 0 and not ordered_urls:
             newly_crawled_urls = [p["url"] for p in valid_pages]
             from sqlalchemy import func as sa_func
@@ -814,12 +814,12 @@ async def run_full_crawl(
 
             # Candidate stale pages: stored under this source but absent from the
             # current crawl. "Absent from this crawl" is NOT the same as "removed
-            # from the site" — a transient discovery shortfall (e.g. the sitemap
+            # from the site", a transient discovery shortfall (e.g. the sitemap
             # was briefly unreachable and we fell back to a shallower link/
             # recursive crawl) would otherwise mass-delete pages that still
             # exist. So we confirm each candidate is actually gone before
             # deleting; check_urls_alive is conservative (only a confirmed
-            # 404/410 counts as dead — timeouts, 5xx, and blocks are kept).
+            # 404/410 counts as dead. Timeouts, 5xx, and blocks are kept).
             with get_session() as del_session:
                 candidate_urls = [
                     row[0]
@@ -889,10 +889,10 @@ async def run_full_crawl(
         # Persist crawl metadata. For a bot-scoped crawl we ALWAYS run through
         # the helper (even when everything extracted was empty) so a re-crawl
         # that yields no palette resets the stale colors from a prior site
-        # instead of silently keeping them — see the ``recommended_colors``
+        # instead of silently keeping them. See the ``recommended_colors``
         # handling inside ``_apply_crawl_metadata_to_bot``. For the client-
         # fallback path (bot_id is None) we keep the original "only touch DB
-        # when there's data" behavior — nothing user-visible depends on
+        # when there's data" behavior, nothing user-visible depends on
         # clearing the client-level palette between crawls.
         should_persist = (
             bot_id is not None or recommended_colors or brand_tone_text or company_context or services_url_suggestion
@@ -925,7 +925,7 @@ async def run_full_crawl(
 
         # ``pages_dropped`` is the headline number for the UI: how many URLs
         # we found but couldn't ingest given the plan caps. Compute it
-        # defensively — never negative, even if the subprocess and the post-
+        # defensively, never negative, even if the subprocess and the post-
         # filter disagree by a page or two.
         pages_dropped = max(0, discovered_total - pages_processed) if discovered_total else queue_remaining
 
@@ -940,7 +940,7 @@ async def run_full_crawl(
             "recommended_colors": recommended_colors,
             "brand_tone": brand_tone_text,
             "brand_tone_preset": brand_tone_key,
-            # Coverage visibility — UI uses these to render
+            # Coverage visibility. UI uses these to render
             # "Ingested 200 pages. 347 more were discovered but didn't fit
             #  your plan's cap. Upgrade or split the crawl by section."
             "pages_discovered": discovered_total,
@@ -948,12 +948,12 @@ async def run_full_crawl(
         }
         # A crawl that fetched pages but extracted zero readable text (common on
         # JS-rendered sites where the HTTP-only fetch never sees the hydrated
-        # DOM) must NOT report success — there is no knowledge for the bot to
+        # DOM) must NOT report success. There is no knowledge for the bot to
         # answer from. But ``total_chunks == 0`` alone conflates two different
         # things: a fresh crawl that genuinely found no readable content vs. a
         # delta recrawl of an unchanged site where SHA-256 dedup skipped every
         # page while the bot still holds all its prior content. Use the bot's
-        # real indexed document count as the ground truth — ``no_content`` only
+        # real indexed document count as the ground truth. ``no_content`` only
         # when the bot has NO usable knowledge at all, never latching the
         # durable "trained" marker in that case (see the ``chunk_count`` guard
         # in ``_record_bot_crawl_state``).
@@ -970,7 +970,7 @@ async def run_full_crawl(
                     bot_id,
                     exc_info=True,
                 )
-                bot_content_count = 1  # fail safe toward "done" — never show a false no-content error
+                bot_content_count = 1  # fail safe toward "done", never show a false no-content error
         crawl_status = _terminal_status(total_chunks, bot_content_count)
         if crawl_status == "no_content":
             result_payload["message"] = (
@@ -988,11 +988,11 @@ async def run_full_crawl(
         if crawl_status == "done":
             # Warm the seed-question cache now (worker/background), so the Prove
             # step reads a cached value instead of paying LLM + embedding latency
-            # live. Skipped for a no-content crawl — there's nothing to seed from.
+            # live. Skipped for a no-content crawl. There's nothing to seed from.
             _precompute_seed_questions(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
-        # even if they navigated away. Best-effort — never fail the crawl on it.
+        # even if they navigated away. Best-effort, never fail the crawl on it.
         # Suppressed for zero-content: that isn't a "crawl completed
         # successfully" event and shouldn't read as one in the notification feed.
         if crawl_status == "done":
@@ -1019,8 +1019,8 @@ async def run_full_crawl(
         # the terminal status write, unbounded: a homepage with 300 <link
         # rel="icon"> tags produced 302 sequential candidates at up to 10s
         # each, far past the worker's job timeout. An ARQ cancellation raises
-        # CancelledError — a BaseException, so neither the `except Exception`
-        # here nor the "failed" handler below catches it — and the crawl was
+        # CancelledError (a BaseException, so neither the `except Exception`
+        # here nor the "failed" handler below catches it) and the crawl was
         # already fetched, ingested and BILLED. The customer's spinner hung
         # forever on completed work, and a retry re-ran the whole crawl.
         #
@@ -1034,7 +1034,7 @@ async def run_full_crawl(
         # this budget, and the crawl lock below is released in `finally`, so it
         # is held for that time too. That is a property of the shared SSRF
         # helpers rather than of this step, and it applies equally to the
-        # footer harvest and the colour extractor above — but it is the reason
+        # footer harvest and the colour extractor above, but it is the reason
         # this budget is a backstop, not a guarantee.
         #
         # NOT gated on `ordered_urls`, unlike the footer harvest above. That
@@ -1042,14 +1042,14 @@ async def run_full_crawl(
         # list, so re-running page-level site work would be off topic. The
         # favicon is SITE work: it is read from the homepage and has nothing
         # to do with which pages were ticked. Gating it on `ordered_urls` made
-        # it dead code for the flow that matters — the admin panel pre-ticks
+        # it dead code for the flow that matters, the admin panel pre-ticks
         # every discovered page, so `ordered_urls` is set on essentially every
         # crawl started from it, INCLUDING a customer's first one, which is
         # exactly when the bot has no avatar and this is worth anything.
         #
         # The real gate is "this bot has no avatar yet", which
         # `_maybe_apply_favicon_avatar` already applies as its first cheap
-        # pre-check — one indexed primary-key SELECT, before any network call.
+        # pre-check, one indexed primary-key SELECT, before any network call.
         # So a re-crawl of a bot that already has an avatar costs one query,
         # and only a bot still missing one pays for the homepage fetch, capped
         # at `_FAVICON_TOTAL_BUDGET_S` and after the terminal result is out.
@@ -1059,20 +1059,20 @@ async def run_full_crawl(
                 timeout=_FAVICON_TOTAL_BUDGET_S,
             )
         except TimeoutError:
-            logger.info("favicon avatar timed out for bot %s — crawl already complete", bot_id)
+            logger.info("favicon avatar timed out for bot %s. Crawl already complete", bot_id)
         except Exception:
             logger.warning("favicon avatar failed for bot %s (non-fatal)", bot_id, exc_info=True)
 
         return result_payload
     except CrawlCancelled as exc:
-        # User pressed Cancel — honour it FAST. We stop scraping, discard every
+        # User pressed Cancel. Honour it FAST. We stop scraping, discard every
         # page not yet ingested (``discard_pending=True`` drops the queued
         # buffer instead of embedding it), and only wait out a wave that is
-        # already mid-embed — that work is committed+billed atomically per page
+        # already mid-embed. That work is committed+billed atomically per page
         # and cannot be interrupted safely.
         #
         # Trade-off: with streaming, waves ingested *before* the cancel are
-        # kept and billed — that content is already live in the bot's knowledge
+        # kept and billed. That content is already live in the bot's knowledge
         # base and the charge matches delivered work. Pages crawled but not yet
         # ingested are discarded unbilled, same as before. The payload reports
         # the real partial totals so the UI never claims 0 for work that was
@@ -1126,7 +1126,7 @@ async def run_full_crawl(
     finally:
         # Never leak the consumer task: on any failure path, drop pending pages
         # and wait out at most one in-flight wave (already-committed work stays
-        # — it's billed atomically per page). suppress() keeps a consumer crash
+        # , it's billed atomically per page). suppress() keeps a consumer crash
         # from masking the original exception; its traceback is logged here.
         if consumer_task is not None:
             try:

@@ -1,4 +1,4 @@
-"""Razorpay subscription smoke test — end-to-end with test keys.
+"""Razorpay subscription smoke test. End-to-end with test keys.
 
 Tests the full subscription lifecycle:
   1. Create a Razorpay subscription via razorpay_service
@@ -19,7 +19,7 @@ Usage:
     python scripts/razorpay_subscription_smoke_test.py
     python scripts/razorpay_subscription_smoke_test.py --client-id 3 --plan-id 2
 
-This script is dev-only — never run against production keys.
+This script is dev-only, never run against production keys.
 """
 
 from __future__ import annotations
@@ -191,9 +191,9 @@ def main() -> None:
         total_granted = sum(r.delta for r in credit_rows)
         _ok(f"Credits granted: {total_granted} (expected {credits_per_month})")
         if total_granted != credits_per_month:
-            print(f"\033[33m  ⚠ Mismatch — check plan.credits_per_month ({credits_per_month})\033[0m")
+            print(f"\033[33m  ⚠ Mismatch. Check plan.credits_per_month ({credits_per_month})\033[0m")
 
-    # ── Step 5: Idempotency — replay the same webhook ────────────────────────
+    # ── Step 5: Idempotency. Replay the same webhook ────────────────────────
     _info("\n[5/5] Replaying the same webhook (must be a no-op)…")
     with Session(engine) as session:
         result2 = handle_webhook_event(session, event, event_id)
@@ -212,8 +212,8 @@ def main() -> None:
         )
         total_after_replay = sum(r.delta for r in credit_rows2)
         if total_after_replay != total_granted:
-            _bail(f"Idempotency FAILED — credits changed after replay: {total_granted} → {total_after_replay}")
-        _ok(f"Idempotent — credits unchanged after replay ({total_after_replay})")
+            _bail(f"Idempotency FAILED. Credits changed after replay: {total_granted} → {total_after_replay}")
+        _ok(f"Idempotent. Credits unchanged after replay ({total_after_replay})")
 
     print("\n\033[32m── Razorpay subscription smoke test PASSED ──\033[0m")
     print(f"  Subscription: {sub_id}")

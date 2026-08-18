@@ -1,4 +1,4 @@
-"""Finding L: a finalized (numbered) invoice is a legal document — its frozen tax
+"""Finding L: a finalized (numbered) invoice is a legal document, its frozen tax
 and identity columns must be immutable; only delivery/lifecycle fields may change.
 """
 

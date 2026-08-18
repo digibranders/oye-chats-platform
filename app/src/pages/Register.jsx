@@ -53,7 +53,7 @@ export default function Register() {
   const affiliateToken = searchParams.get('affiliate_token') || '';
   // Launch-promo code from the campaign link (?code=). Passed through to
   // registration so the offer is link-exclusive; unknown codes no-op server-side.
-  // Kept in sessionStorage as a fallback: the param is fragile — hopping to
+  // Kept in sessionStorage as a fallback: the param is fragile. Hopping to
   // Login and back, or any in-app navigation, drops the query string, and two
   // live campaign tests lost their attribution exactly that way. First-touch:
   // a fresh ?code= always wins over a stored one.
@@ -62,7 +62,7 @@ export default function Register() {
     try {
       sessionStorage.setItem('oyechats_promo_code', urlPromoCode);
     } catch {
-      /* storage unavailable (private mode) — the URL param still works */
+      /* storage unavailable (private mode), the URL param still works */
     }
   }
   let promoCode = urlPromoCode;

@@ -172,7 +172,7 @@ afterEach(() => {
   ].forEach((fn) => fn.mockReset());
 });
 
-describe('WelcomePlanStep — activation after payment', () => {
+describe('WelcomePlanStep. Activation after payment', () => {
   it('holds a persistent “activating” state and updates the card when the plan lands on the 4th poll', async () => {
     // Free for the initial load and the first three polls - well past the 3s
     // the old code waited - then the activation webhook lands.

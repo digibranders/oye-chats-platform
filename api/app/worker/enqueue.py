@@ -1,4 +1,4 @@
-"""Enqueue helper — adds tasks to the ARQ queue from the API process.
+"""Enqueue helper. Adds tasks to the ARQ queue from the API process.
 
 Usage:
     from app.worker.enqueue import enqueue
@@ -24,7 +24,7 @@ _pool_lock = threading.Lock()
 
 # Strong references to fire-and-forget enqueue tasks scheduled from sync
 # callers inside an async context. Without this, the event loop holds only
-# a weak reference and the task is garbage-collected mid-flight — the
+# a weak reference and the task is garbage-collected mid-flight, the
 # symptom is an "ERROR:asyncio:Task was destroyed but it is pending!" log
 # line and the Redis enqueue never completing. Tasks auto-remove themselves
 # via add_done_callback once finished.
@@ -95,17 +95,17 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
         task = loop.create_task(_do_enqueue())
         _pending_enqueue_tasks.add(task)
         task.add_done_callback(_pending_enqueue_tasks.discard)
-        # Don't block — return None and let the task fire async.
+        # Don't block. Return None and let the task fire async.
         # The job_id won't be available synchronously in this path.
         return None
     else:
-        # No running loop — safe to run synchronously. We deliberately do
+        # No running loop. Safe to run synchronously. We deliberately do
         # NOT reuse the module-level ``_pool`` here: ``asyncio.run`` creates
         # and closes a fresh event loop on every call, so a pool cached on
         # the first call's loop becomes a use-after-close hazard on every
         # subsequent call ("RuntimeError: Event loop is closed"). FastAPI
         # runs sync routes in a threadpool, which is exactly the path that
-        # triggers this — the affiliate-invite email, the trial-welcome
+        # triggers this, the affiliate-invite email, the trial-welcome
         # email, anything fired via ``send_email_async`` from a sync
         # endpoint. Building + closing a per-call pool costs one extra
         # round-trip but keeps the contract intact.

@@ -54,7 +54,7 @@ import {
 
 /**
  * Plan slugs that unlock delta ("updated pages only") recrawl. Mirrors
- * `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test —
+ * `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test.
  * NOT the `planIncludes` ladder in `lib/planGates`, whose rule 2 hands an
  * unrecognised (bespoke) slug the feature. A bespoke contract slug gets a full
  * recrawl here exactly as the server gives it one, so the UI can't promise a

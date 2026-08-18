@@ -56,7 +56,7 @@ async def _acquire_crawl_lock_or_preempt(client_id: int) -> str | None:
     A user-initiated crawl should not be blocked by an hourly auto-recrawl.
     If the lock is held by a ``recrawl:`` holder we signal it to cancel and wait
     (bounded) for it to release, then take the lock. A lock held by another
-    INTERACTIVE crawl is NOT preempted — that returns ``None`` so the caller
+    INTERACTIVE crawl is NOT preempted. That returns ``None`` so the caller
     429s. Returns the ownership token, or ``None`` if it could not be acquired
     in time.
     """
@@ -85,7 +85,7 @@ _MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
 
 # Cap on parts in one multipart body. The byte ceilings above bound total
 # volume but not part COUNT, and every part costs a filename check, a temp
-# path and (in the preview endpoint) an extraction attempt — so 50,000 empty
+# path and (in the preview endpoint) an extraction attempt, so 50,000 empty
 # parts inside a small body used to be a free per-part loop.
 _MAX_FILES_PER_REQUEST = 50
 
@@ -95,7 +95,7 @@ _SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".txt", ".md")
 
 # A safe stored file name: no separators, no traversal, no control bytes, and
 # short enough for any filesystem. The upload path also resolves the final
-# path and re-checks containment — this is the cheap first gate.
+# path and re-checks containment. This is the cheap first gate.
 _SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._\-()]{0,200}$")
 
 
@@ -104,7 +104,7 @@ def _safe_upload_filename(raw: str | None) -> str | None:
 
     Rejects rather than rewrites. A name mangled into something "safe" is
     stored under a name the customer never chose and cannot find again, and
-    two different rejects can collide onto one accepted name — so a bad name
+    two different rejects can collide onto one accepted name, so a bad name
     is skipped and reported, not repaired.
     """
     if not raw:
@@ -125,7 +125,7 @@ def _read_upload_bounded(upload: UploadFile, max_bytes: int) -> bytes:
     ``UploadFile.file.read()`` with no argument materialises the whole part
     before anything can object to its size, which is the exact ordering
     ``core.upload_guard`` was written to avoid. This is that helper's
-    synchronous twin — these two endpoints are sync ``def`` routes, so they
+    synchronous twin. These two endpoints are sync ``def`` routes, so they
     cannot await the async one. Returning one byte past the limit is enough
     for the caller to detect the breach without buffering the rest.
     """
@@ -219,7 +219,7 @@ def get_knowledge_state_endpoint(
 ):
     """Whether this bot's knowledge was deactivated by a plan lapse to Free.
 
-    ``deactivated`` is true when the bot has any inactive chunk — the signal the
+    ``deactivated`` is true when the bot has any inactive chunk, the signal the
     admin uses to show the "re-crawl / re-upload to reactivate on Free, or
     upgrade to restore" banner. A brand-new Free bot has 0 inactive chunks and
     therefore never sees it.
@@ -294,7 +294,7 @@ def delete_document_endpoint(
             # Snapshot the SOURCE-level char totals before delete so we can
             # decrement ``clients.kb_characters_used`` by the exact amount that
             # went away. ``DISTINCT ON (document_name, bot_id)`` collapses the
-            # replicated per-chunk values to one row per source — otherwise a
+            # replicated per-chunk values to one row per source. Otherwise a
             # 47-chunk doc would over-deduct by 47×. Same collapse logic as
             # ``knowledge_quota_service.sum_source_chars_for_client``.
             from sqlalchemy import text as _sql_text
@@ -353,7 +353,7 @@ def delete_document_endpoint(
                     fallback_filter.append(Document.bot_id == bot_id)
                 else:
                     fallback_filter.append(Document.client_id == client_id)
-                # Same fallback for the char snapshot — exact document_name match.
+                # Same fallback for the char snapshot. Exact document_name match.
                 if chars_to_free == 0:
                     try:
                         from app.services.knowledge_quota_service import chars_used_by_source
@@ -374,7 +374,7 @@ def delete_document_endpoint(
 
             # Reclaim the source's contribution from the per-account KB counter.
             # ``chars_to_free`` is 0 for pre-migration rows whose
-            # ``source_char_count`` was never backfilled — safe no-op in that
+            # ``source_char_count`` was never backfilled. Safe no-op in that
             # case; the drift-correcting recompute helper is the ultimate
             # source of truth if this ever under-reports.
             if chars_to_free > 0:
@@ -397,7 +397,7 @@ def delete_document_endpoint(
             delete_archived_copies(client_id, bot_id, document_name)
 
             # If this delete removed the last URL-typed document for the bot,
-            # the "Extracted from your Website" palette becomes stale — clear it
+            # the "Extracted from your Website" palette becomes stale. Clear it
             # so a fresh crawl starts from a clean slate instead of showing the
             # previous website's brand colors on the Appearance tab.
             if bot_id:
@@ -413,7 +413,7 @@ def delete_document_endpoint(
                         session.commit()
                         logger.info(f"Cleared recommended_colors for bot {bot_id} (no crawled sources remain)")
 
-            # Invalidate cached QA responses — knowledge base has changed
+            # Invalidate cached QA responses. Knowledge base has changed
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))
                 # Re-derive the bot's "trained" counters from what's left, so
@@ -424,7 +424,7 @@ def delete_document_endpoint(
             else:
                 # Client-scoped delete (no bot_id): rows were removed across an
                 # unknown set of this client's bots, so every one of them needs
-                # the same cache flush + counter re-derivation — otherwise
+                # the same cache flush + counter re-derivation. Otherwise
                 # ``indexed_chunk_count`` keeps claiming knowledge this request
                 # just deleted, the exact staleness the sync exists to prevent.
                 client_bot_ids = [row[0] for row in session.query(Bot.id).filter(Bot.client_id == client_id).all()]
@@ -463,17 +463,17 @@ def preview_ingest_cost(
     """Return the credit cost the customer will pay if they upload ``files``.
 
     Extracts each file in-memory, counts words, and returns the tiered credit
-    charge per file plus the grand total — **without** saving anything,
+    charge per file plus the grand total - **without** saving anything,
     charging credits, or touching the ingest pipeline. The admin UI calls
     this after the user picks files so we can render a
     "Upload for N credits" confirm button.
 
     Same size + type validation as ``/ingest`` so the preview matches what
     would actually happen. Files that fail extraction (scanned PDFs, empty
-    DOCX) show ``words: 0, credits: 0`` and a diagnostic ``reason`` — matching
+    DOCX) show ``words: 0, credits: 0`` and a diagnostic ``reason``. Matching
     the "not billed, will be quarantined" behavior of the real upload path.
 
-    No credit gate here — the goal is a *preview*, not a hold. Confirming
+    No credit gate here, the goal is a *preview*, not a hold. Confirming
     the upload runs the real deduction on POST /ingest, which is where the
     402 for insufficient credits fires.
     """
@@ -546,7 +546,7 @@ def preview_ingest_cost(
 
             # Write to a scratch temp path so the existing extractors (which
             # take file paths) can run. The whole tempdir is cleaned up when
-            # the ``with`` block exits — nothing persists to disk. ``fname``
+            # the ``with`` block exits, nothing persists to disk. ``fname``
             # passed ``_safe_upload_filename`` above, and the containment
             # check below is the belt to that braces.
             tmp_path = (tmp_dir / fname).resolve()
@@ -616,7 +616,7 @@ def ingest_documents(
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client.
 
-    Subscription-gated — uploading new content into the knowledge base is
+    Subscription-gated. Uploading new content into the knowledge base is
     a paid-feature action. Customers with an expired trial can still see
     and delete what they already uploaded, just not add more until they
     reactivate.
@@ -674,7 +674,7 @@ def ingest_documents(
         # ── Plan enforcement: KB character quota (pre-flight) ──
         # Exact enforcement happens inside the ingestion pipeline (which knows
         # the cleaned-text length), but if the account is already AT or OVER
-        # its char cap, fail fast — avoids a silent background failure where
+        # its char cap, fail fast. Avoids a silent background failure where
         # the widget just never sees the new document.
         from sqlalchemy import select as _sa_select
 
@@ -725,7 +725,7 @@ def ingest_documents(
     file_buffers: list[tuple[str, bytes]] = []
     for file in files:
         # ``UploadFile.filename`` is Optional, and the old
-        # ``file.filename.lower()`` raised ``AttributeError`` — a 500 — on a
+        # ``file.filename.lower()`` raised ``AttributeError`` (a 500) on a
         # part without one. It is also the string this endpoint builds a
         # destination path from, so it is validated, not merely read.
         filename = _safe_upload_filename(file.filename)
@@ -736,7 +736,7 @@ def ingest_documents(
             logger.warning(f"Skipping unsupported file: {filename}")
             continue
 
-        # Bounded read — the previous unbounded ``.read()`` buffered the whole
+        # Bounded read, the previous unbounded ``.read()`` buffered the whole
         # part in memory and only then compared it against the ceiling.
         content = _read_upload_bounded(file, _MAX_FILE_SIZE)
         file_size = len(content)
@@ -760,7 +760,7 @@ def ingest_documents(
     # ── Phase 1.5: Size-based credit pricing ──
     # Legacy flow charged a flat ``credit_cost.document_upload`` per file
     # before touching disk. The new model bills by *word count* so a 50-word
-    # FAQ and a 15,000-word manual don't cost the same — the second one
+    # FAQ and a 15,000-word manual don't cost the same, the second one
     # burns proportionally more embedding + storage. To know the word count
     # we must first extract the file, so ordering is now:
     #   1. Save file to tenant_dir on disk (extraction needs a real path).
@@ -770,7 +770,7 @@ def ingest_documents(
     #      surface a 402 with the required amount so the widget can prompt
     #      the user to top-up before retrying.
     # Files that fail extraction (scanned PDFs, empty DOCX) are skipped for
-    # billing entirely — no credits charged, no ingest attempted; the file
+    # billing entirely, no credits charged, no ingest attempted; the file
     # is quarantined by the background sweep on its next run.
     from app.db.models import Bot as _Bot
     from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
@@ -805,7 +805,7 @@ def ingest_documents(
     # Extraction is synchronous here (typically 10-100ms per file, worst-case
     # a few seconds for a 60 MB PDF). Anything slower already sits behind the
     # 10-minute request timeout. If extraction fails for a specific file we
-    # skip it in the cost calculation — the background ingest will quarantine
+    # skip it in the cost calculation, the background ingest will quarantine
     # it and no credits should be charged for content we can't store.
     def _extract_words_for_cost(path: Path, ext: str) -> int:
         try:
@@ -818,7 +818,7 @@ def ingest_documents(
         except ExtractionError as exc:
             logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
             return 0
-        except Exception:  # pragma: no cover — pypdf/docx surprise
+        except Exception:  # pragma: no cover. Pypdf/docx surprise
             logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
             return 0
         raw = " ".join(p.get("text", "") for p in pages)
@@ -845,8 +845,8 @@ def ingest_documents(
                     total_cost,
                     reason="document_upload",
                     reference_id=bot_id,
-                    bot_id=ledger_bot_id,  # scope — None when pooled
-                    attributed_bot_id=bot_id,  # attribution — always the real bot
+                    bot_id=ledger_bot_id,  # scope (None when pooled
+                    attributed_bot_id=bot_id,  # attribution) always the real bot
                 )
                 db.commit()
                 deducted_amount = total_cost
@@ -968,7 +968,7 @@ def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)
     client_id = auth["client_id"]
     payload = get_crawl_progress(client_id)
     # A cancel may have been requested between the orchestrator's last
-    # progress write and now — surface it immediately so the UI can flip
+    # progress write and now. Surface it immediately so the UI can flip
     # the toast to "Cancelling…" without waiting a full poll cycle.
     if payload.get("status") == "running" and is_cancellation_requested(client_id):
         payload = dict(payload)
@@ -1002,7 +1002,7 @@ def crawl_cancel_endpoint(
 
     progress = get_crawl_progress(client_id)
     if progress.get("status") not in {"running", "cancelling"}:
-        # Nothing to cancel — let the UI know so it doesn't get stuck in a
+        # Nothing to cancel. Let the UI know so it doesn't get stuck in a
         # "Cancelling…" state. Returns 200 with a clear message, not an error.
         return {"status": progress.get("status", "idle"), "message": "No crawl in progress."}
 
@@ -1060,7 +1060,7 @@ async def crawl_discover_endpoint(
         plan = plan_service.get_client_plan(db, client_id)
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
-        # Credit inputs — read before the long (network) discovery call so we
+        # Credit inputs. Read before the long (network) discovery call so we
         # never hold a DB connection across it. Resolve the SAME ledger bucket
         # the crawl will actually deduct from: a per-bot subscription drains the
         # bot ledger, but a client-level/Free bot drains the client pool. Using
@@ -1134,7 +1134,7 @@ async def crawl_diff_endpoint(
     ``removed_pages`` (stored but no longer in sitemap).
 
     Notes:
-    * URL-level diff only — actual content changes are detected per-page during
+    * URL-level diff only. Actual content changes are detected per-page during
       the crawl itself via the SHA-256 dedup hash in the ingestion pipeline. This
       endpoint is fast (no page fetches) and is purely for the pre-recrawl
       confirmation UI.
@@ -1158,7 +1158,7 @@ async def crawl_diff_endpoint(
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
         # Delta preview is a Standard+ feature. Free/Starter still see the
-        # button, but hitting the endpoint has to fail closed — the frontend
+        # button, but hitting the endpoint has to fail closed, the frontend
         # can't be the security boundary. Raised as a 403 with the same shape
         # ``plan_service.enforce_feature`` uses so the UI's shared upgrade
         # handler picks it up unchanged.
@@ -1168,9 +1168,9 @@ async def crawl_diff_endpoint(
         # Credit inputs for the pre-crawl warning surfaced in the confirmation
         # banner. Read inside the ``get_session`` block so we never hold a DB
         # connection across the later (network) discovery calls. Resolve the
-        # SAME ledger bucket the actual /crawl will drain — a per-bot
+        # SAME ledger bucket the actual /crawl will drain (a per-bot
         # subscription drains its own bucket, everything else drains the
-        # client pool — so the balance the user sees here matches what
+        # client pool) so the balance the user sees here matches what
         # gets charged. Mirrors the resolution in /crawl/discover:569-573.
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
         ledger_bot_id = None
@@ -1195,7 +1195,7 @@ async def crawl_diff_endpoint(
     # ── Step 1: pull every URL-typed Document for this scope ──────────────
     # Filter by hostname in Python. The legacy SQL ``domain_expr`` in the
     # orphan sweep extracts ``https://host`` and compares it against the
-    # bare-domain ``replace_source`` — that filter never matches in practice.
+    # bare-domain ``replace_source``. That filter never matches in practice.
     target_host = diff_request.replace_source.lower().removeprefix("www.")
     owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
     with get_session() as db:
@@ -1222,11 +1222,11 @@ async def crawl_diff_endpoint(
 
     # ── Steps 2 & 3 run concurrently with an overall budget ──────────────
     # HEAD-checking N stored URLs at concurrency=15 with an 8s per-request
-    # timeout is the dominant cost on large knowledge bases — for 500+ URLs
+    # timeout is the dominant cost on large knowledge bases, for 500+ URLs
     # against a slow origin the wall-clock can blow past the client's 30s
     # timeout. Two mitigations:
     #   (a) Run HEAD liveness AND sitemap discovery concurrently with
-    #       asyncio.gather — they share no state.
+    #       asyncio.gather. They share no state.
     #   (b) Cap the whole liveness pass at 20s. Anything not resolved in
     #       time inherits the existing "assume alive" fallback policy,
     #       which is conservative (never recommends deleting a page on a
@@ -1247,7 +1247,7 @@ async def crawl_diff_endpoint(
             )
         except TimeoutError:
             logger.warning(
-                "HEAD liveness check exceeded %.0fs budget for %s (%d URLs) — falling back to assume-alive",
+                "HEAD liveness check exceeded %.0fs budget for %s (%d URLs). Falling back to assume-alive",
                 HEAD_BUDGET_SECONDS,
                 diff_request.url,
                 len(raw_urls_to_check),
@@ -1300,7 +1300,7 @@ async def crawl_diff_endpoint(
         discovery_norm_to_raw.setdefault(_normalize(u), u)
 
     # "New" = discovered but not previously stored. Discovery's reach only
-    # affects how many net-new pages we can show — it cannot incorrectly
+    # affects how many net-new pages we can show, it cannot incorrectly
     # delete a page from the unchanged set.
     new_norm = set(discovery_norm_to_raw.keys()) - set(stored_norm_to_raw.keys())
 
@@ -1310,7 +1310,7 @@ async def crawl_diff_endpoint(
         # Show the raw URL the customer would recognise, sorted for stability.
         return sorted({lookup[n] for n in norm_set if n in lookup})[:_PREVIEW_CAP]
 
-    # Credit preview — surfaced in the confirmation banner. ``credits_required``
+    # Credit preview. Surfaced in the confirmation banner. ``credits_required``
     # is the exact upper bound the caller will be billed for a full recrawl
     # (sitemap_total × cost_per_page). For delta mode the true billed amount
     # depends on how many pages actually changed at ingest time, so we don't
@@ -1340,7 +1340,7 @@ async def crawl_diff_endpoint(
         # back to "assume alive" for some/all stored URLs. The UI uses this
         # to hint the removed-count may be undercounted.
         "head_partial": head_partial,
-        # Credit preview inputs — used by the frontend confirmation banner
+        # Credit preview inputs. Used by the frontend confirmation banner
         # to render "will charge X credits · you have Y" copy on the full
         # recrawl path. Emitted for both modes so the UI can show balance
         # in either flow; only the full-mode banner uses ``credits_required``.
@@ -1379,13 +1379,13 @@ async def crawl_endpoint(
     # pre-flight so an over-the-limit request is rejected with a clear
     # upgrade signal instead of a generic "out of credits" error. The
     # ceiling is also used to fill in ``max_pages`` when the request
-    # didn't specify one — that's how Free-tier callers get the full
+    # didn't specify one. That's how Free-tier callers get the full
     # 20-page allowance without sending a body field.
     #
     # Paid plans (Starter/Standard) carry ``max_crawl_pages == UNLIMITED``
     # (-1) because their crawl budget is set by credits, not a per-crawl
     # page cap. For those plans we skip the over-limit gate and derive a
-    # concrete ceiling from the available balance — the crawler subprocess
+    # concrete ceiling from the available balance, the crawler subprocess
     # always needs an integer, and we never want a runaway "max pages
     # left blank" request to enumerate a 100k-URL sitemap.
     from app.services import credit_service, plan_service
@@ -1401,16 +1401,16 @@ async def crawl_endpoint(
     # cap, since embed_rate_limiter.py only paces shared project-wide
     # throughput (latency), not per-tenant spend volume. Evaluated and
     # deferred, not built: (1) credits already are a real per-tenant cost
-    # ceiling — every page charges `cost_per_page` credits at ingestion
+    # ceiling. Every page charges `cost_per_page` credits at ingestion
     # time, so a customer literally cannot cause unbounded embedding spend
     # without first buying more credits; (2) AR-41 (pipeline.py,
     # _cap_crawled_page_content) now bounds the worst-case embed-call
-    # variance PER credit-charged page — the original concern ("1 page
+    # variance PER credit-charged page, the original concern ("1 page
     # charged, but that page silently balloons into thousands of embed
     # calls") is the gap AR-41 closes, not something a separate quota
     # mechanism is needed for on top. If real usage data ever shows credits
     # aren't tracking actual Gemini spend closely enough, revisit as a
-    # dedicated billing-period quota — but building one speculatively here
+    # dedicated billing-period quota, but building one speculatively here
     # would be a new billing/product surface without evidence it's needed.
     _UNLIMITED_PLAN_SAFETY_CEILING = 10_000
 
@@ -1425,7 +1425,7 @@ async def crawl_endpoint(
 
         # Delta ("updated pages only") mode is gated to Standard+. Free/Starter
         # see the option in the UI as an upsell, but the endpoint has to fail
-        # closed — the frontend can't be the security boundary. First-time
+        # closed, the frontend can't be the security boundary. First-time
         # crawls (no ``replace_source``) are always full-mode by definition
         # and skip this gate: there is nothing to diff against yet.
         if crawl_request.mode == "delta" and crawl_request.replace_source:
@@ -1434,7 +1434,7 @@ async def crawl_endpoint(
         requested_pages = crawl_request.max_pages
         # Hard plan cap rejection only fires for plans that actually have
         # a concrete cap (currently just Free). Unlimited-plan callers
-        # skip straight to the credit pre-flight below — that's the real
+        # skip straight to the credit pre-flight below. That's the real
         # gate on Starter/Standard.
         if not unlimited_pages and requested_pages is not None and int(requested_pages) > plan_max_pages:
             raise HTTPException(
@@ -1455,7 +1455,7 @@ async def crawl_endpoint(
             )
 
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
-        # Resolve the SAME ledger bucket the actual crawl will drain — a
+        # Resolve the SAME ledger bucket the actual crawl will drain, a
         # per-bot subscription drains its own bucket, everything else drains
         # the client pool. Both the unlimited-plan sizing fallback below and
         # the hard credit pre-flight gate must check this bucket, not the
@@ -1468,7 +1468,7 @@ async def crawl_endpoint(
         if bot_id is not None:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
         if unlimited_pages:
-            # No plan cap — let the caller request what they want, but
+            # No plan cap. Let the caller request what they want, but
             # always cap at the safety ceiling so a typo can't ignite a
             # runaway job. If ``max_pages`` is omitted, fall back to what
             # the caller's current balance can afford (one page = one
@@ -1482,7 +1482,7 @@ async def crawl_endpoint(
                 effective_max_pages = max(int(available_now) // per_page, 1)
             effective_max_pages = min(effective_max_pages, _UNLIMITED_PLAN_SAFETY_CEILING)
         else:
-            # Fixed-cap plan (Free): clamp to plan ceiling — covers the
+            # Fixed-cap plan (Free): clamp to plan ceiling. Covers the
             # None case so callers that didn't specify ``max_pages`` get
             # the full tier allowance.
             effective_max_pages = min(int(requested_pages or plan_max_pages), plan_max_pages)
@@ -1497,7 +1497,7 @@ async def crawl_endpoint(
         # pre-flight uses ``effective_max_pages * cost_per_page`` as an upper
         # bound. The real deduction happens per-page atomically inside
         # batch_web_ingestion. Using the post-clamp value keeps the
-        # pre-flight honest — without this, a customer on a high page-limit
+        # pre-flight honest, without this, a customer on a high page-limit
         # plan who passed ``max_pages=5000`` could be blocked here because we
         # mis-multiplied by the unclamped request.
         #
@@ -1508,7 +1508,7 @@ async def crawl_endpoint(
         # ``expected_new_pages`` (sourced from a server-authoritative
         # /crawl/diff call moments earlier), size the pre-flight against that
         # plus a small buffer. The atomic per-page deduction inside
-        # batch_web_ingestion remains the real safety net — if the diff was
+        # batch_web_ingestion remains the real safety net. If the diff was
         # stale or new pages appeared in between, ingestion stops cleanly on
         # InsufficientCredits at that point.
         # ``cost_per_page`` was already resolved above so we could derive
@@ -1532,7 +1532,7 @@ async def crawl_endpoint(
             # Initial crawl with a server-discovered sitemap count: size the
             # pre-flight to the actual page count rather than the plan ceiling,
             # so a small site (e.g. 13 pages) isn't gated at
-            # (plan_max × cost_per_page) — the bug where a 13-page crawl demanded
+            # (plan_max × cost_per_page), the bug where a 13-page crawl demanded
             # 100 credits (20 × 5) instead of 65 (13 × 5). Per-page atomic
             # deduction inside batch_web_ingestion stays the real safety net if
             # the live crawl finds more than the sitemap advertised.
@@ -1543,7 +1543,7 @@ async def crawl_endpoint(
             if precheck_is_recrawl:
                 message = (
                     f"This re-crawl needs up to {required} credits "
-                    f"({cost_per_page} per page × {precheck_pages} pages — "
+                    f"({cost_per_page} per page × {precheck_pages} pages. "
                     f"{crawl_request.expected_new_pages} new + buffer). "
                     f"You have {available}. Upgrade your plan or buy a top-up to proceed."
                 )
@@ -1564,7 +1564,7 @@ async def crawl_endpoint(
             )
 
     # Full-mode recrawl: bypass the ingestion pipeline's SHA-256 dedup so
-    # every discovered page is re-embedded and re-billed — the intended
+    # every discovered page is re-embedded and re-billed, the intended
     # behavior on Free/Starter, where "recrawl the entire website" must
     # charge the entire website even if only 2 pages actually changed.
     # First-time crawls (no ``replace_source``) never force-reingest: the
@@ -1585,7 +1585,7 @@ async def crawl_endpoint(
             raise HTTPException(status_code=400, detail={"error": "ordered_urls_off_domain"})
         ordered_urls = same_origin[:effective_max_pages]
 
-    # Per-client crawl lock — held in Redis so the ARQ worker and the API
+    # Per-client crawl lock. Held in Redis so the ARQ worker and the API
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
     # ``run_full_crawl``'s finally block, regardless of which process runs it.
@@ -1679,7 +1679,7 @@ async def crawl_endpoint(
             )
     except Exception as exc:
         # Enqueue failed before the orchestrator could take ownership of the
-        # lock — release it here (ownership-checked with our token) so the user
+        # lock. Release it here (ownership-checked with our token) so the user
         # isn't locked out indefinitely.
         release_crawl_lock(client_id, lock_token)
         set_crawl_progress(client_id, status="failed", error="Failed to start crawl.")

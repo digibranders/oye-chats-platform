@@ -10,7 +10,7 @@ import { type LeadDetail } from './useLeadDetail';
  * The API now decides employer-vs-network (`ip_intel_service` strips
  * `company_name` for hosting ranges, ISP ranges, carrier brands and subnet
  * labels). These tests pin the two shapes it can send and the distinct thing
- * each must render — a company card, or the network that routed the visitor,
+ * each must render, a company card, or the network that routed the visitor,
  * never one hedged with a disclaimer.
  */
 

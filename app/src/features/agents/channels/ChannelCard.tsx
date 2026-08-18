@@ -5,7 +5,7 @@ import { cn, IconTile, type TileIcon } from '../../../design-system';
 export type ChannelIconTone = 'accent' | 'success' | 'info' | 'neutral';
 
 export interface ChannelCardProps {
-  /** Channel glyph (Website / Meetings / WhatsApp …) — Lucide icon or brand glyph. */
+  /** Channel glyph (Website / Meetings / WhatsApp …). Lucide icon or brand glyph. */
   icon: TileIcon;
   /** Tint of the glyph. Defaults to `accent`. */
   iconTone?: ChannelIconTone;

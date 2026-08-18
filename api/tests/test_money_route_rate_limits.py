@@ -3,7 +3,7 @@
 Generous limits (10/min on mandate-minting routes) that a real customer can
 never feel, keyed on the API key so the ceiling is per account. Applied as a
 FastAPI dependency rather than @limiter.limit because these routes name their
-Pydantic BODY `request` — the decorator resolves the request by parameter
+Pydantic BODY `request`, the decorator resolves the request by parameter
 name and would hand the key function the body model.
 """
 

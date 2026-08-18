@@ -1,14 +1,14 @@
 """robots.txt Disallow/Allow compliance for both discovery paths (AR-24).
 
 Before this fix, the crawler was sitemap-aware only and never parsed
-robots.txt Disallow/User-agent rules — a site owner excluding e.g. /admin/*
+robots.txt Disallow/User-agent rules, a site owner excluding e.g. /admin/*
 via robots.txt had no guarantee that page wouldn't still be crawled,
 embedded, and later surfaced via RAG if a stale sitemap or internal link
 referenced it.
 
 These tests monkeypatch `fetch_text_safely` directly (the seam both
 discovery functions already call through) rather than mocking aiohttp
-itself — simpler and just as real a test of the actual filtering logic.
+itself. Simpler and just as real a test of the actual filtering logic.
 """
 
 import pytest
@@ -76,7 +76,7 @@ class TestDiscoverWebsiteUrlsRobotsCompliance:
     @pytest.mark.asyncio
     async def test_no_robots_txt_allows_everything(self, monkeypatch):
         """Absence of robots.txt (or a failed fetch) must not accidentally
-        block the crawl — RobotFileParser with no rules parsed defaults to
+        block the crawl. RobotFileParser with no rules parsed defaults to
         allow-all, which is correct."""
         monkeypatch.setattr(
             ud,

@@ -31,13 +31,13 @@ _LLM_NUM_RETRIES = int(os.getenv("LLM_NUM_RETRIES", "2"))
 # Exception classes that indicate a MISCONFIGURATION (bad/revoked key, malformed
 # request) rather than a transient provider hiccup. Retrying these is pointless
 # (they'll fail identically every time) and silently falling back masks an
-# incident that needs a human — these get a distinct log tag + Sentry alert.
+# incident that needs a human. These get a distinct log tag + Sentry alert.
 _LLM_CONFIG_ERROR_TYPES = (
     litellm.AuthenticationError,
     litellm.BadRequestError,
     litellm.PermissionDeniedError,
 )
-# Transient/retryable — same-model retry (via num_retries) already covers
+# Transient/retryable, same-model retry (via num_retries) already covers
 # these; distinguished here only for metric/log-tag purposes so an on-call
 # engineer can tell "quota exhaustion" apart from "someone revoked the key"
 # apart from "unknown error" at a glance.
@@ -49,7 +49,7 @@ _LLM_TRANSIENT_ERROR_TYPES = (
     litellm.InternalServerError,
 )
 # AR-20: captured at import time (like the tuples above), NOT looked up live
-# as `litellm.ContextWindowExceededError` inside an `except` clause — tests
+# as `litellm.ContextWindowExceededError` inside an `except` clause. Tests
 # that mock the whole `litellm` module (patch("...llm_service.litellm"))
 # would otherwise turn that live lookup into a Mock, and Python raises
 # TypeError for an `except` clause that isn't a real exception class.
@@ -62,7 +62,7 @@ def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
     those need a human, not a retry.
 
     AR-20: context-window overflow was previously indistinguishable from any
-    other config/bad-request error, and unrecoverable — the SAME prompt that
+    other config/bad-request error, and unrecoverable, the SAME prompt that
     just overflowed reproduces the identical failure on a naive retry, so a
     visitor who retries after seeing "please try again" gets stuck in a
     deterministic loop with no differentiating log signal. Checked BEFORE
@@ -88,8 +88,8 @@ def _meter_fallback_if_used(requested_model: str, response) -> None:
     """AR-16: detect and meter a silent primary->fallback degradation.
 
     When litellm's own ``fallbacks`` kwarg transparently recovers from a
-    primary-model failure, the caller sees a normal successful response —
-    there was previously no counter/log marker distinguishing "primary
+    primary-model failure, the caller sees a normal successful response.
+    There was previously no counter/log marker distinguishing "primary
     answered" from "primary was flaky and fallback quietly saved the turn".
     A primary provider degraded for an hour would recover silently on every
     request with zero visibility. Best-effort: compares the model litellm
@@ -110,13 +110,13 @@ def _meter_token_usage(response, metadata: dict | None) -> None:
     visibility, independent of credit charging.
 
     The credit ledger charges a flat 1 credit per ``ai_chat`` reply regardless
-    of actual token volume (a bot engineered for maximal context — verbose
-    custom prompt, near-CAG-lite-threshold KB, chatty visitor history — costs
+    of actual token volume (a bot engineered for maximal context (verbose
+    custom prompt, near-CAG-lite-threshold KB, chatty visitor history) costs
     several times more in real LLM spend than a minimal bot, charged
     identically). Whether to introduce a token-based cost tier is a pricing/
     product decision requiring business sign-off (it changes what every
     existing customer is billed), not something to change unilaterally in an
-    engineering pass — so this only adds the measurement half of the fix:
+    engineering pass, so this only adds the measurement half of the fix:
     real per-bot token counts, queryable the same way as the AR-13 safety-net
     metrics, so FinOps can decide from data whether cross-subsidization is
     actually a problem worth a pricing change.
@@ -156,7 +156,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Canned generation-failure messages ──────────────────────────────────────
-# ``generate_response`` never raises — on a config gap, an empty completion, or
+# ``generate_response`` never raises, on a config gap, an empty completion, or
 # an LLM/API error (both primary and fallback exhausted) it returns one of these
 # fixed strings so the widget always renders *something*. The credit-charged
 # chat path detects failure structurally via ``generate_response_checked`` (the
@@ -165,7 +165,7 @@ logger = logging.getLogger(__name__)
 LLM_CONFIG_ERROR_MESSAGE = "Configuration error: AI service is not configured. Please contact the administrator."
 LLM_EMPTY_RESPONSE_MESSAGE = "I'm sorry, I couldn't generate a response. Please try again."
 LLM_API_ERROR_MESSAGE = "I encountered an error generating the response. Please try again."
-# AR-20: deliberately does NOT say "please try again" — a context-window
+# AR-20: deliberately does NOT say "please try again", a context-window
 # overflow is deterministic for the same conversation; a naive retry
 # reproduces the identical failure, trapping the visitor in an unrecoverable
 # loop with no differentiating signal that "try again" won't help this time.
@@ -186,7 +186,7 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
     gpt-5 family models default to ``reasoning_effort="medium"``, which spends
     most of the output-token budget on hidden reasoning tokens before any
     visible content is produced. With our typical RAG prompts (≈25k chars of
-    context) this manifests as empty completions — Sentry: "LLM returned empty
+    context) this manifests as empty completions. Sentry: "LLM returned empty
     response". The two sub-families use different "no reasoning" sentinels:
 
     * gpt-5.4 family (gpt-5.4, gpt-5.4-mini, …): ``reasoning_effort="none"``
@@ -218,7 +218,7 @@ def _generate_response(
 ) -> tuple[str, bool]:
     """Core non-streaming LLM call. Returns ``(text, failed)``.
 
-    ``failed`` is True when no real answer was produced — missing key, empty
+    ``failed`` is True when no real answer was produced. Missing key, empty
     completion, or an API error with both primary and fallback exhausted. This
     is a **structural** signal derived from the call outcome, NOT from matching
     the returned text, so a caller that refunds a per-answer credit cannot be
@@ -227,17 +227,17 @@ def _generate_response(
 
     ``system_prompt``: when set, sent as a separate ``role: system`` message
     ahead of ``prompt`` (``role: user``) instead of folding everything into
-    one message (AR-27) — lets a provider's prefix-based prompt cache match
+    one message (AR-27). Lets a provider's prefix-based prompt cache match
     the stable system message turn over turn even as ``prompt`` (per-turn
     state/context/history/question) changes.
 
     ``model``: override the resolved primary model for this call only (e.g.
     ``runtime_config.get_gate_model()`` for non-generative classification/
-    rewrite tasks — AR-10: these don't need the expensive customer-facing
+    rewrite tasks. AR-10: these don't need the expensive customer-facing
     model tier, and routing them to the same cheap tier already proven
     adequate by the relevance gate cuts primary-model call volume with no
     quality loss). When set, no cross-provider fallback chain is attempted
-    (matching the gate's own single-model-no-fallback contract) — callers
+    (matching the gate's own single-model-no-fallback contract). Callers
     needing fallback protection should leave this unset.
     """
     resolved_model = model or _primary_model()
@@ -309,7 +309,7 @@ def generate_response(
 
     ``system_prompt``: see :func:`_generate_response` (AR-27).
 
-    ``model``: see :func:`_generate_response` — override for non-generative
+    ``model``: see :func:`_generate_response`. Override for non-generative
     (classification/rewrite) callers that should use a cheaper tier.
     """
     return _generate_response(
@@ -360,7 +360,7 @@ def classify_brand_tone(
 
     Uses the gate-tier model (AR-10): a constrained single-label classification,
     the same cheap-tier judging shape as the relevance gate. No cross-provider
-    fallback — the try/except below fails safe (returns None) on any error.
+    fallback, the try/except below fails safe (returns None) on any error.
 
     ``timeout``/``num_retries`` override the default LLM budget. Interactive
     request-path callers (the "detect tone" endpoint, where a user is waiting)
@@ -418,7 +418,7 @@ def generate_seed_questions(
     """Propose candidate onboarding "test" questions a real visitor would ask.
 
     Returns up to ``count`` short, natural questions derived from the company's
-    auto-extracted name + description. These are only *candidates* — the caller
+    auto-extracted name + description. These are only *candidates*, the caller
     (``seed_questions_service``) verifies each is actually answerable from the
     bot's indexed content before surfacing any, so a hallucinated or off-base
     question never reaches the user. Returns ``[]`` on any failure (non-blocking).
@@ -437,7 +437,7 @@ Company name: {name or "(unknown)"}
 What they do: {desc or "(no description available)"}
 
 Write {count} short, natural questions that a real visitor to this company's
-website would ask its support chatbot — the kind that should be answerable from
+website would ask its support chatbot, the kind that should be answerable from
 the company's own website content (services, pricing, hours, contact, how it
 works, etc.). Keep each question under 12 words, specific to THIS company (not
 generic filler), and phrased the way a customer actually types.
@@ -533,7 +533,7 @@ def extract_company_context(
     Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
     or *None* if extraction fails.
 
-    Uses the gate-tier model (AR-10) — see :func:`classify_brand_tone` for the
+    Uses the gate-tier model (AR-10). See :func:`classify_brand_tone` for the
     rationale; identical shape of task, identical fix.
 
     ``timeout`` / ``num_retries`` override the module defaults (60s × 3
@@ -542,7 +542,7 @@ def extract_company_context(
 
     ``strict=True`` re-raises provider errors instead of returning ``None``.
     Without it the caller cannot tell "this page describes no company" from
-    "the model was unreachable" — and a caller that PERSISTS the former would
+    "the model was unreachable", and a caller that PERSISTS the former would
     otherwise record a provider outage as a permanent fact about the content.
     """
     if not content_sample.strip():
@@ -654,7 +654,7 @@ async def _stream_from_model(
                 "stream": True,
                 # AR-26: ask the provider for a final usage-only chunk (empty
                 # ``choices``, populated ``usage``) so streamed replies can be
-                # token-metered the same as non-streaming ones — without this,
+                # token-metered the same as non-streaming ones, without this,
                 # a streaming response never reports token counts at all.
                 "stream_options": {"include_usage": True},
                 "metadata": metadata,
@@ -678,7 +678,7 @@ async def _stream_from_model(
                         break
                     except TimeoutError as exc:
                         raise TimeoutError(
-                            f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled"
+                            f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s. Upstream stalled"
                         ) from exc
                     usage = getattr(chunk, "usage", None)
                     if usage is not None:
@@ -710,12 +710,12 @@ async def generate_response_stream(
 ):
     """Async generator: stream text chunks via LiteLLM.
 
-    ``system_prompt``: see :func:`_generate_response` (AR-27) — sent as a
+    ``system_prompt``: see :func:`_generate_response` (AR-27). Sent as a
     separate ``role: system`` message on both the primary and fallback calls.
 
     Fallback chain:
-    1. Primary model (``LLM_MODEL`` — default: OpenAI gpt-5.4-mini)
-    2. Fallback model (``FALLBACK_MODEL`` — default: Gemini 2.5 Flash) if primary raises
+    1. Primary model (``LLM_MODEL``. Default: OpenAI gpt-5.4-mini)
+    2. Fallback model (``FALLBACK_MODEL``. Default: Gemini 2.5 Flash) if primary raises
     3. Generic error message if both fail
 
     Each chunk read uses ``asyncio.wait_for`` so a stalled upstream TCP connection
@@ -730,7 +730,7 @@ async def generate_response_stream(
     logger.info(f"Starting LLM stream | model={_primary_model()} | prompt_length={len(prompt)}")
     # Track whether the visitor has already received any text from the primary
     # model. If they have, falling back mid-stream would concatenate a brand-new
-    # complete answer from the fallback onto a half-finished primary answer —
+    # complete answer from the fallback onto a half-finished primary answer,
     # the SSE consumer cannot rewind, so the user sees two stitched-together
     # responses. In that case we end gracefully instead of falling back.
     primary_chunks_yielded = 0
@@ -750,14 +750,14 @@ async def generate_response_stream(
         if primary_chunks_yielded > 0:
             logger.warning(
                 f"Primary LLM stream failed mid-response after {primary_chunks_yielded} chunks "
-                f"({type(primary_err).__name__}): {primary_err} — suppressing fallback to avoid "
+                f"({type(primary_err).__name__}): {primary_err}. Suppressing fallback to avoid "
                 "concatenating two answers on the same SSE stream."
             )
             yield " [Response interrupted. Please try again.]"
             return
         logger.warning(
             f"Primary LLM stream failed before yielding any chunks ({type(primary_err).__name__}): "
-            f"{primary_err} — attempting fallback to {_fallback_model()}"
+            f"{primary_err}. Attempting fallback to {_fallback_model()}"
         )
 
     # Fallback to secondary model
@@ -777,7 +777,7 @@ async def generate_response_stream(
         logger.error(f"Fallback stream timed out: {e}")
         yield " [Response timed out. Please try again.]"
     except _LLM_CONTEXT_OVERFLOW_ERROR_TYPE as fallback_err:
-        # AR-20: both primary and fallback overflowed — same conversation
+        # AR-20: both primary and fallback overflowed, same conversation
         # reproduces this deterministically, so don't tell the visitor to
         # "try again" (see LLM_CONTEXT_OVERFLOW_MESSAGE for why).
         _classify_and_log_llm_error(fallback_err, context="stream-fallback")

@@ -15,7 +15,7 @@ from app.config import DB_URL
 # (worker_procs × worker_pool). Defaults below are safe for a single Gunicorn
 # worker (5 + 10 = max 15). Tune per process via env (the worker systemd unit
 # sets its OWN smaller DB_POOL_SIZE/DB_MAX_OVERFLOW so its pool is sized to
-# WORKER_MAX_JOBS, not the API's assumptions — audit F30):
+# WORKER_MAX_JOBS, not the API's assumptions. Audit F30):
 #   API, 1 gunicorn worker → pool_size=5, max_overflow=10  (max 15)
 #   API, 2 gunicorn workers → pool_size=3, max_overflow=5  (max 16)
 #   ARQ worker (WORKER_MAX_JOBS=5) → pool_size=5, max_overflow=5  (max 10)
@@ -54,7 +54,7 @@ else:
 def get_db():
     """Dependency for FastAPI routes to get a DB session."""
     if SessionLocal is None:
-        raise RuntimeError("DB_URL is not configured — cannot create database session.")
+        raise RuntimeError("DB_URL is not configured. Cannot create database session.")
     db = SessionLocal()
     try:
         yield db
@@ -66,7 +66,7 @@ def get_db():
 def get_session():
     """Helper for non-FastAPI contexts (like pipeline)."""
     if SessionLocal is None:
-        raise RuntimeError("DB_URL is not configured — cannot create database session.")
+        raise RuntimeError("DB_URL is not configured. Cannot create database session.")
     session = SessionLocal()
     try:
         yield session

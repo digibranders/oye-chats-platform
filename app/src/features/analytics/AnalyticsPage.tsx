@@ -141,11 +141,11 @@ export function AnalyticsPage(): ReactElement {
   const [range, setRange] = useState<TrendRange>('all');
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
-  // Leads is BANT-derived (Standard+) — Free / Starter see a lock chip on the
+  // Leads is BANT-derived (Standard+). Free / Starter see a lock chip on the
   // tab and the panel body swaps to the upgrade card.
   // Satisfaction is CSAT gathered from live-chat post-chat ratings, so it
   // travels with the `live_chat` feature (Starter and up). Only Free is
-  // locked here — Starter accumulates real ratings and should see them.
+  // locked here. Starter accumulates real ratings and should see them.
   const leadsUnlocked = hasFeature('bant');
   const satisfactionUnlocked = hasFeature('live_chat');
 

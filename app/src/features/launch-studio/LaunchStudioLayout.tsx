@@ -89,7 +89,7 @@ export function LaunchStudioLayout({
           <div className={cn("mx-auto h-full", hidePreview ? "max-w-6xl" : "max-w-xl")}>{children}</div>
         </main>
 
-        {/* Live widget preview — hidden on plan step */}
+        {/* Live widget preview. Hidden on plan step */}
         {!hidePreview && (
           <aside className="hidden shrink-0 flex-col border-l border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5 lg:flex">
             <p className="mb-4 px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">

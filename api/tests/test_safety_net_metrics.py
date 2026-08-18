@@ -1,6 +1,6 @@
 """Tests for the safety-net metrics counter + alerting layer (AR-13).
 
-Before this, `_safety_net_metric` only emitted a log line — no counter, no
+Before this, `_safety_net_metric` only emitted a log line, no counter, no
 consumer, no alert. These tests pin: (1) the Redis-backed rolling counter
 actually counts, (2) security-relevant events forward to Sentry, and (3) a
 Redis outage never breaks the caller (these are called from hot request
@@ -115,7 +115,7 @@ class TestForwardToSentryIfAlertable:
 
 
 class TestSafetyNetMetricsEndpoint:
-    """GET /superadmin/safety-net-metrics — the previously-missing consumer
+    """GET /superadmin/safety-net-metrics, the previously-missing consumer
     for _safety_net_metric's log lines."""
 
     def _client(self):

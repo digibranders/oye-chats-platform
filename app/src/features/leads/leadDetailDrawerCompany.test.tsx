@@ -7,8 +7,8 @@ import { type LeadDetail } from './useLeadDetail';
  * The company row as actually RENDERED.
  *
  * `companyDisplay` is unit-tested, but a review pointed the drawer back at
- * `detail.contact.company` — reverting the entire user-visible payoff of the
- * feature — and all 189 tests stayed green. A pure function with an untested
+ * `detail.contact.company` (reverting the entire user-visible payoff of the
+ * feature) and all 189 tests stayed green. A pure function with an untested
  * call site is the same defect this whole commit exists to fix, one level
  * down: something built, and nothing exercising it.
  */
@@ -60,7 +60,7 @@ describe('LeadDetailDrawer company row', () => {
 describe('the rest of what the resolver produces', () => {
   /* `company_description` and `company_logo_url` were stored, migrated,
      plan-gated, serialized on every leads response and typed in the frontend
-     — and rendered nowhere. Two thirds of the paid enrichment was invisible. */
+    , and rendered nowhere. Two thirds of the paid enrichment was invisible. */
   it('shows the description', () => {
     const c = drawerWith({
       company: 'infosys.com',
@@ -92,7 +92,7 @@ describe('the rest of what the resolver produces', () => {
       company_logo_url: 'https://infosys.com/gone.png',
     });
 
-    // `fireEvent`, not a raw dispatchEvent — React's onError is a synthetic
+    // `fireEvent`, not a raw dispatchEvent. React's onError is a synthetic
     // handler and does not see a natively dispatched event.
     fireEvent.error(c.querySelector('img') as HTMLImageElement);
     expect(c.querySelector('img')).toBeNull();

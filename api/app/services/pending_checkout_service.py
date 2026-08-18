@@ -10,12 +10,12 @@ with two Professional mandates 44 seconds apart.
 Note the 44 seconds. This is not a double-click, and a frontend submit latch
 does not reach it. The customer paid on the Launch Studio welcome screen, the
 plan card did not change, they waited for feedback that never came, and clicked
-Select again — the single most reasonable thing to do. Any fix that only
+Select again, the single most reasonable thing to do. Any fix that only
 tightens the button misses it entirely; the retry is legitimate and the server
 has to be the one that says "you already bought this".
 
-The idempotency mechanism already existed — ``clients.pending_checkout_*``,
-written by ``POST /subscriptions/checkout`` — but ``/subscriptions/change-plan``
+The idempotency mechanism already existed. ``clients.pending_checkout_*``,
+written by ``POST /subscriptions/checkout``, but ``/subscriptions/change-plan``
 Branch 3 mints exactly the same kind of first mandate (trial→paid, Free→paid,
 revive-in-place) and never consulted it. This module is that one mechanism,
 extracted so both routes share it rather than growing a second, competing one.
@@ -40,7 +40,7 @@ Three rules, and the differences between them are the whole point:
 Durability and concurrency are deliberately not this module's invention:
 
 * The marker is a DB column, so it survives a process restart and is visible to
-  every worker — an in-memory guard would only cover the one process that
+  every worker, an in-memory guard would only cover the one process that
   happened to serve the first click.
 * Both callers hold ``plan_service.lock_client_for_billing`` (a transaction-
   scoped Postgres advisory lock) for the whole read-decide-mint-write sequence,
@@ -66,17 +66,17 @@ from app.db.models import Client, Plan, Subscription
 logger = logging.getLogger(__name__)
 
 #: ``pending_checkout_bot_id`` for a mandate that funds a bot which does not
-#: exist yet — ``POST /bots/checkout``, where the agent is deliberately not
+#: exist yet. ``POST /bots/checkout``, where the agent is deliberately not
 #: created until the mandate is paid so a dismissed checkout leaves no orphan
 #: rows. NULL means account-level and a positive id means an existing bot
 #: (revive-in-place), so neither can express "a new bot" and the column would
-#: otherwise have to be NULL — which is exactly the wrong-ledger collision
+#: otherwise have to be NULL, which is exactly the wrong-ledger collision
 #: migration ``d5b1c8e2f394`` added it to prevent: an account-level in-flight
 #: mandate would match a per-agent purchase, and activating it would fund the
 #: account instead of creating the agent.
 #:
 #: Zero is safe as that third value because ``bots.id`` is a serial starting at
-#: 1, and the column is a bare Integer with no foreign key — it is a scope tag,
+#: 1, and the column is a bare Integer with no foreign key, it is a scope tag,
 #: not a reference. WHICH new bot is not encoded here at all; that lives in the
 #: gateway notes and is compared through ``required_notes`` below.
 NEW_BOT_SCOPE = 0
@@ -151,27 +151,27 @@ def reuse_or_supersede(
     """Resolve the in-flight mandate before a caller mints a new one.
 
     Returns the Checkout payload to hand straight back when the pending mandate
-    can serve this request. Returns ``None`` when the caller should mint — by
+    can serve this request. Returns ``None`` when the caller should mint, by
     which point any superseded mandate has already been cancelled at Razorpay
     and the marker cleared.
 
     ``required_notes`` narrows reuse for a caller whose purchase is not fully
     described by (plan, cycle, country, bot scope). ``POST /bots/checkout`` is
     the case: it buys an agent that does not exist yet, so WHICH agent lives
-    only in the mandate's gateway notes — see
+    only in the mandate's gateway notes. See
     ``razorpay_service.per_bot_checkout_identity``. Notes that describe a
     different agent make the mandate non-reusable, and it is superseded exactly
     as a different plan would be.
 
     ``cancel_failure_is_fatal`` decides what a Razorpay failure during the
     supersede-CANCEL means, and the two answers are both correct for their
-    caller — the question is only what the path did before it had a marker.
+    caller, the question is only what the path did before it had a marker.
     Default ``True``: the account-level routes refuse (502) rather than mint
     beside a mandate they could not retire. ``False`` for ``POST
     /bots/checkout``, matching ``reuse_pending_upgrade``: that path has never
     cancelled anything, so leaving the handle for Razorpay to expire is
     precisely today's behaviour and a failed cancel is no worse than the
-    attempt never having been made — while refusing would newly block agent
+    attempt never having been made. While refusing would newly block agent
     purchases during a gateway wobble that currently succeed. The safety
     property holds either way: ``checkout_already_paid`` read this same mandate
     moments earlier and said unpaid, so nothing is minted beside a mandate
@@ -186,7 +186,7 @@ def reuse_or_supersede(
 
     Raises ``razorpay_service.SubscriptionActivationConflict`` (→ a 409 that
     tells the customer their payment DID arrive) when the pending mandate turns
-    out to be already ACTIVE — paid, but not yet materialised locally.
+    out to be already ACTIVE. Paid, but not yet materialised locally.
     """
     from app.services import razorpay_service
 
@@ -199,7 +199,7 @@ def reuse_or_supersede(
     matches = _matches(client_row, plan_id=plan.id, billing_cycle=billing_cycle, country=country, bot_id=bot_id)
 
     # FIRST, before deciding anything else: has the customer already PAID this
-    # mandate? This is the reported prod sequence, and it is not a double-click —
+    # mandate? This is the reported prod sequence, and it is not a double-click,
     # the plan card never updated after payment, so the customer waited (44
     # seconds, for client 8) and clicked Select again.
     #
@@ -212,7 +212,7 @@ def reuse_or_supersede(
     # the alternative is charging the month twice.
     if razorpay_service.checkout_already_paid(pending_id):
         logger.info(
-            "Client %s re-submitted a plan while in-flight checkout %s is already PAID — "
+            "Client %s re-submitted a plan while in-flight checkout %s is already PAID. "
             "refusing to open another payment sheet",
             client.id,
             pending_id,
@@ -258,9 +258,9 @@ def reuse_or_supersede(
             client_row.pending_checkout_bot_id,
         )
 
-    # Both roads lead here — the pending mandate cannot serve this request,
+    # Both roads lead here, the pending mandate cannot serve this request,
     # either because it describes a different purchase or because it is no
-    # longer authorizable — so it must be retired before a replacement is minted.
+    # longer authorizable, so it must be retired before a replacement is minted.
     try:
         status = razorpay_service.cancel_superseded_checkout(pending_id)
     except razorpay_service.RazorpayBillingError:
@@ -272,7 +272,7 @@ def reuse_or_supersede(
         # its own supersede-cancel fails; see the parameter's docstring for why
         # this caller proceeds instead of refusing.
         logger.error(
-            "Could not cancel superseded checkout %s for client %s before minting its replacement — "
+            "Could not cancel superseded checkout %s for client %s before minting its replacement. "
             "the handle is STILL AUTHORIZABLE at Razorpay and can charge if the customer reopens that "
             "checkout. Proceeding with the purchase; needs manual cancellation.",
             pending_id,
@@ -283,7 +283,7 @@ def reuse_or_supersede(
         if status == "active":
             # Defence in depth: the paid check above already refuses this, but it
             # reads ``paid_count`` and this reads ``status``, and the two can move
-            # apart for a moment. Whichever notices first, the answer is the same —
+            # apart for a moment. Whichever notices first, the answer is the same,
             # nothing was cancelled (only the activation sweep may retire a live
             # mandate), so minting now would leave two CHARGED subscriptions for one
             # month.
@@ -302,7 +302,7 @@ def reuse_or_supersede(
 # customer's replacement mandate is parked on the Subscription row instead
 # (``upgrade_pending_subscription_id`` / ``upgrade_pending_plan_id``), written by
 # ``transition_service.execute_paid_upgrade`` and ``/subscriptions/resume``
-# Mode 2. Different column, identical hazard — and both sites had the same
+# Mode 2. Different column, identical hazard, and both sites had the same
 # defect this module was created to fix: they re-mint whenever
 # ``rebuild_upgrade_checkout`` answers ``None``, which it does just as readily
 # for a mandate the customer has already PAID as for one they abandoned.
@@ -313,11 +313,11 @@ def reuse_or_supersede(
 #
 # The supersede half is shared too: a retry the marker cannot serve retires the
 # mandate at Razorpay via ``cancel_superseded_checkout``, exactly as
-# ``reuse_or_supersede`` does. Leaving it to expire — the behaviour until now —
+# ``reuse_or_supersede`` does. Leaving it to expire (the behaviour until now)
 # leaves the customer holding a live payment handle for a plan they walked away
 # from, and Razorpay keeps a ``created`` subscription authorizable indefinitely:
 # a stale checkout reopened weeks later from an email or a back button still
-# charges. Nothing else retires it, either — no cron sweeps abandoned mandates,
+# charges. Nothing else retires it, either, no cron sweeps abandoned mandates,
 # and the activation handler's sibling sweep only knows the mandate named in the
 # new subscription's ``prev_razorpay_subscription_id``, which the superseded one
 # never is.
@@ -337,10 +337,10 @@ def reuse_pending_upgrade(
     """Resolve the in-flight REPLACEMENT mandate before a caller mints another.
 
     Returns the Checkout payload when the pending mandate can serve this
-    request, or ``None`` when the caller should mint — by which point the
+    request, or ``None`` when the caller should mint, by which point the
     superseded mandate has been cancelled at Razorpay (or the failure to do so
     logged at ERROR) and the marker cleared. Callers package the payload
-    themselves — ``/resume`` wraps it in a ``reauthorise_required`` envelope,
+    themselves. ``/resume`` wraps it in a ``reauthorise_required`` envelope,
     the upgrade path returns it directly.
 
     Raises ``razorpay_service.SubscriptionActivationConflict`` when the pending
@@ -349,11 +349,11 @@ def reuse_pending_upgrade(
     same position as one who re-asked for the same plan, and neither may be
     handed a fresh mandate while the paid one is still unmaterialised. It is
     raised again if the mandate turns out to be ``active`` at the moment it
-    would be cancelled — the two facts (``paid_count`` and ``status``) can move
+    would be cancelled, the two facts (``paid_count`` and ``status``) can move
     apart for a moment, and whichever notices first, the answer is the same.
 
     Raises ``razorpay_service.RazorpayBillingError`` if the gateway cannot be
-    READ — never guess. A failed CANCEL is different and does not raise; see
+    READ, never guess. A failed CANCEL is different and does not raise; see
     below.
     """
     from app.services import razorpay_service
@@ -364,7 +364,7 @@ def reuse_pending_upgrade(
 
     if razorpay_service.checkout_already_paid(pending_id):
         logger.info(
-            "Client %s re-submitted a plan change while pending mandate %s (sub %s) is already PAID — "
+            "Client %s re-submitted a plan change while pending mandate %s (sub %s) is already PAID. "
             "refusing to open another payment sheet",
             client.id,
             pending_id,
@@ -390,7 +390,7 @@ def reuse_pending_upgrade(
             return reused
         # Unpaid AND not reusable: abandoned, or minted on the other rail (an
         # annual pending against a monthly request). Either way it cannot serve
-        # this request — and the rail-mismatch shape is still authorizable, so
+        # this request, and the rail-mismatch shape is still authorizable, so
         # it is a live handle exactly like a different-plan pending.
         logger.info("Pending replacement mandate %s for client %s cannot serve this request", pending_id, client.id)
     else:
@@ -405,8 +405,8 @@ def reuse_pending_upgrade(
     # Both roads lead here, as in ``reuse_or_supersede``: the pending mandate
     # cannot serve this request, so it is retired at the gateway BEFORE its
     # replacement is minted. Left alone it stays authorizable indefinitely, and
-    # a customer who reopens that stale checkout weeks later — from the re-auth
-    # email, a back button, a tab they never closed — is charged for a plan they
+    # a customer who reopens that stale checkout weeks later (from the re-auth
+    # email, a back button, a tab they never closed) is charged for a plan they
     # never took. A redundant cancel is harmless:
     # ``cancel_superseded_checkout`` re-reads the mandate and only issues the
     # cancel from an authorizable state, so a webhook or a retry that already
@@ -417,12 +417,12 @@ def reuse_pending_upgrade(
         # NOT fatal here, unlike the first-mandate twin. The customer is trying
         # to give us money; a Razorpay 5xx while tidying up a handle they have
         # abandoned must not come back as a failed purchase. The safety property
-        # the twin protects is intact either way — ``checkout_already_paid``
+        # the twin protects is intact either way. ``checkout_already_paid``
         # read this same mandate successfully moments ago and said unpaid, so we
         # are not minting beside a mandate whose state was never confirmed, only
         # beside one whose cancel did not land. And the fallback is precisely
         # today's behaviour on this path (leave it for Razorpay to expire), so a
-        # failed cancel is no worse than not attempting one — whereas refusing
+        # failed cancel is no worse than not attempting one. Whereas refusing
         # would newly block upgrades during a gateway wobble that currently
         # succeed.
         #
@@ -432,7 +432,7 @@ def reuse_pending_upgrade(
         # when its own supersede-cancel fails.
         logger.error(
             "Could not cancel superseded replacement mandate %s for client %s (sub %s) before minting "
-            "its replacement — the handle is STILL AUTHORIZABLE at Razorpay and can charge if the "
+            "its replacement, the handle is STILL AUTHORIZABLE at Razorpay and can charge if the "
             "customer reopens that checkout. Proceeding with the purchase; needs manual cancellation.",
             pending_id,
             client.id,

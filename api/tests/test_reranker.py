@@ -3,7 +3,7 @@
 Zero test coverage existed for this module before this file. Investigating
 whether to A/B-enable ``RERANK_ENABLED`` surfaced a more fundamental bug
 first: the model name previously requested, ``ms-marco-MiniLM-L-2-v2``, is
-not a real FlashRank model — it isn't in flashrank's own ``model_file_map``,
+not a real FlashRank model, it isn't in flashrank's own ``model_file_map``,
 and the HuggingFace zip for it 404s. The reranker had been silently
 non-functional in every environment since it was added; `_get_ranker()`'s
 own well-designed transient-failure handling made this invisible (fails
@@ -25,7 +25,7 @@ class FakeDoc:
 
 class TestGetRankerRequestsCorrectModel:
     def test_requests_a_model_name_that_actually_exists_in_flashrank(self, monkeypatch):
-        """AR-39: the exact regression this test exists to catch — the
+        """AR-39: the exact regression this test exists to catch, the
         previous model name ('ms-marco-MiniLM-L-2-v2') doesn't exist in
         flashrank's model_file_map and always 404s. Any future edit to this
         model name must stay inside the real supported set."""
@@ -40,7 +40,7 @@ class TestGetRankerRequestsCorrectModel:
 
         requested_model = mock_ranker_cls.call_args.kwargs["model_name"]
         assert requested_model in model_file_map, (
-            f"{requested_model!r} is not a real FlashRank model — this is exactly the AR-39 bug"
+            f"{requested_model!r} is not a real FlashRank model. This is exactly the AR-39 bug"
         )
 
     def test_ranker_singleton_is_reused_across_calls(self, monkeypatch):
@@ -69,7 +69,7 @@ class TestGetRankerFailureHandling:
 
     def test_non_import_error_does_not_sticky_disable(self, monkeypatch):
         """A transient failure (model file missing, OOM, /tmp wipe) must NOT
-        permanently disable reranking for the process lifetime — the next
+        permanently disable reranking for the process lifetime, the next
         call should retry the load."""
         monkeypatch.setattr(reranker, "_ranker", None)
         monkeypatch.setattr(reranker, "_ranker_unavailable", False)

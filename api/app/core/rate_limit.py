@@ -27,14 +27,14 @@ if _REDIS_URL:
 else:
     _storage_uri = "memory://"
     if _APP_ENV == "production":
-        # config.py should have already raised — this is a defensive guard.
-        logger.error("Rate limiter: in-memory backend in production — Redis should be required!")
+        # config.py should have already raised. This is a defensive guard.
+        logger.error("Rate limiter: in-memory backend in production. Redis should be required!")
     else:
         logger.info("Rate limiter: in-memory backend (dev mode)")
 
 
 def key_from_bot_key(request: Request) -> str:
-    """Rate-limit key for widget traffic — composite ``<bot-key>:<client-ip>``.
+    """Rate-limit key for widget traffic. Composite ``<bot-key>:<client-ip>``.
 
     The X-Bot-Key is public (embedded in every embed script), so keying the
     limit on it *alone* puts every visitor of a bot into one shared bucket:
@@ -45,7 +45,7 @@ def key_from_bot_key(request: Request) -> str:
     visitors. Falls back to IP-only when the header is absent.
 
     Note: this bounds abuse per source IP; a distributed (many-IP) credit drain
-    still needs a per-bot daily budget ceiling — tracked as a §0.3 follow-up.
+    still needs a per-bot daily budget ceiling. Tracked as a §0.3 follow-up.
     """
     ip = get_remote_address(request)
     bot_key = request.headers.get("x-bot-key")
@@ -76,7 +76,7 @@ _FAILED_LOGIN_LIMIT = "10/15 minutes"
 def login_attempts_exhausted(identity: str) -> bool:
     """``True`` when ``identity`` has spent its failed-sign-in budget.
 
-    ``identity`` is the submitted e-mail address (lowercased by the caller) —
+    ``identity`` is the submitted e-mail address (lowercased by the caller),
     the only account handle an unauthenticated request carries. A pure read:
     it does not consume budget, so calling it on every attempt (including the
     successful ones) is free. Rides the same ``limits`` storage as every other
@@ -92,7 +92,7 @@ def login_attempts_exhausted(identity: str) -> bool:
     try:
         return not limiter.limiter.test(parse(_FAILED_LOGIN_LIMIT), "login", identity)
     except Exception:  # noqa: BLE001 - never let a counter outage become an outage
-        logger.warning("failed_login_counter_unavailable — allowing the attempt", exc_info=True)
+        logger.warning("failed_login_counter_unavailable. Allowing the attempt", exc_info=True)
         return False
 
 
@@ -103,7 +103,7 @@ def note_failed_login(identity: str) -> None:
     try:
         limiter.limiter.hit(parse(_FAILED_LOGIN_LIMIT), "login", identity)
     except Exception:  # noqa: BLE001 - see login_attempts_exhausted
-        logger.warning("failed_login_counter_unavailable — attempt not counted", exc_info=True)
+        logger.warning("failed_login_counter_unavailable. Attempt not counted", exc_info=True)
 
 
 def clear_failed_logins(identity: str) -> None:
@@ -120,7 +120,7 @@ def money_route_limit(scope: str, *limit_strings: str):
     """Per-client rate-limit DEPENDENCY for the money routes (M7, Wave 3.2).
 
     The ``@limiter.limit`` decorator resolves the request by finding a
-    parameter literally NAMED ``request`` — and on the billing routes that
+    parameter literally NAMED ``request``, and on the billing routes that
     name belongs to the Pydantic body, so decorating them would hand the body
     model to the key function. A FastAPI dependency gets the real ``Request``
     unambiguously, and hits the SAME shared storage (Redis in prod) through
@@ -128,9 +128,9 @@ def money_route_limit(scope: str, *limit_strings: str):
 
     Keys on the client's API key (falling back to IP pre-auth), so the ceiling
     is per account, not per office NAT. ``scope`` names the route family so
-    each route gets its OWN bucket — without it, equal limit strings across
+    each route gets its OWN bucket, without it, equal limit strings across
     /checkout and /topup share one storage key and ten failed checkout
-    attempts would 429 an unrelated top-up. Limits are deliberately generous —
+    attempts would 429 an unrelated top-up. Limits are deliberately generous,
     an abuse ceiling that real customers can never feel.
     """
     from fastapi import HTTPException
@@ -150,7 +150,7 @@ def money_route_limit(scope: str, *limit_strings: str):
                 retry_after = max(1, int(reset_at - _time.time()))
                 raise HTTPException(
                     status_code=429,
-                    detail="Too many billing requests — please wait a moment and try again.",
+                    detail="Too many billing requests. Please wait a moment and try again.",
                     headers={"Retry-After": str(retry_after)},
                 )
 

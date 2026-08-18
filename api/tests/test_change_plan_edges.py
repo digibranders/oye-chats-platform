@@ -1,11 +1,11 @@
 """Wave 4a: the change-plan/checkout edges that silently misbehaved.
 
-* ``coupon_code`` was accepted at checkout and silently IGNORED — the customer
+* ``coupon_code`` was accepted at checkout and silently IGNORED, the customer
   believed a discount applied and was charged full price. Unknown/inactive
   codes now 400; valid codes 400 with an honest "not redeemable online"
   message until a redemption realiser exists (product default: kill, not wire).
 * An equal-price plan change matched neither the upgrade (``>``) nor the
-  downgrade (``<``) branch and fell through to Branch 3 — a FRESH checkout
+  downgrade (``<``) branch and fell through to Branch 3, a FRESH checkout
   that minted a second mandate and immediately gateway-cancelled the old one,
   eating the customer's remaining paid days. Now an explicit 409.
 * A monthly↔annual switch on the SAME plan was rejected as "You are already on
@@ -208,7 +208,7 @@ def test_same_plan_same_cycle_still_a_friendly_400(db, monkeypatch):
 
 
 def test_cancel_pending_repick_hands_off_to_resume(db, monkeypatch):
-    # The customer is trying to STAY on their plan — "already on this plan" was
+    # The customer is trying to STAY on their plan. "already on this plan" was
     # a dead end. Hand off to the Reactivate flow instead.
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="edges-resume")
@@ -223,8 +223,8 @@ def test_cancel_pending_repick_hands_off_to_resume(db, monkeypatch):
 
 def test_per_bot_upgrade_threads_bot_notes_to_the_mint(db, monkeypatch):
     # P1-1: without purpose/oyechats_bot_id in the notes, the activation
-    # handler sweeps the ACCOUNT row and leaves the old per-bot mandate live —
-    # double billing.
+    # handler sweeps the ACCOUNT row and leaves the old per-bot mandate live.
+    # Double billing.
     from app.db.models import Bot
     from app.services import transition_service
 
@@ -251,7 +251,7 @@ def test_per_bot_upgrade_threads_bot_notes_to_the_mint(db, monkeypatch):
 
 def test_pending_upgrade_reuse_refuses_a_wrong_cycle_sub(db, monkeypatch):
     # P1-2: an abandoned ANNUAL checkout must never be handed to a customer
-    # who asked for MONTHLY — the rail check treats it as dead and re-mints.
+    # who asked for MONTHLY, the rail check treats it as dead and re-mints.
     from types import SimpleNamespace
 
     from app.services import razorpay_service
@@ -292,7 +292,7 @@ def test_scheduled_downgrade_repick_points_at_cancel_scheduled_change(db, monkey
 
 def test_cancel_pending_blocks_cycle_switch_too(db, monkeypatch):
     # P2-4: a cycle switch on a sub the customer explicitly cancelled would
-    # silently resurrect it — reactivation must be its own deliberate step.
+    # silently resurrect it. Reactivation must be its own deliberate step.
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="edges-ccs")
     _active_sub(db, client, plan, cycle="monthly", cancel_pending=True)

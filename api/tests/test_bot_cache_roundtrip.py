@@ -3,7 +3,7 @@
 `get_current_bot` serves a cache HIT by rebuilding a detached `Bot` from a
 dict (`_bot_from_cache_dict`), and that rebuild starts from a bare `Bot()`.
 SQLAlchemy's `default=True` is an INSERT-time default, NOT an attribute
-default, so any column `_bot_to_cache_dict` forgets comes back as `None` —
+default, so any column `_bot_to_cache_dict` forgets comes back as `None`,
 and `bool(None)` is `False`.
 
 That is not a stale value that a TTL eventually corrects. It is permanently
@@ -41,7 +41,7 @@ def _bot(**overrides) -> Bot:
 
 
 def test_a_bare_bot_has_no_attribute_default():
-    """The premise. If this ever stops being true the bug class disappears —
+    """The premise. If this ever stops being true the bug class disappears,
     but today an unserialized boolean column is None, not its column default."""
     assert Bot().company_lookup_enabled is None
     assert Bot().email_verification_enabled is None
@@ -76,19 +76,19 @@ def test_every_bot_field_the_settings_endpoint_publishes_is_cached():
     source = inspect.getsource(bot_routes.get_bot_settings_public)
     read_by_endpoint = set(re.findall(r"\bbot\.([a-z_][a-z0-9_]*)\b", source))
     cache_src = inspect.getsource(auth._bot_to_cache_dict)
-    # Two access forms are in use — `bot.x` and `getattr(bot, "x", default)`.
+    # Two access forms are in use. `bot.x` and `getattr(bot, "x", default)`.
     # Matching only the first made this test cry wolf about a field that was
     # cached all along.
     cached = set(re.findall(r'"([a-z_][a-z0-9_]*)":\s*[^,\n]*\bbot\.', cache_src))
     cached |= set(re.findall(r'getattr\(\s*bot\s*,\s*"([a-z_][a-z0-9_]*)"', cache_src))
 
-    # Only real mapped columns — the handler also calls helpers off `bot`.
+    # Only real mapped columns, the handler also calls helpers off `bot`.
     columns = {c.key for c in Bot.__table__.columns}
     missing = (read_by_endpoint & columns) - cached
 
     assert not missing, (
         f"/bot/settings reads {sorted(missing)} off the Bot, but _bot_to_cache_dict does not "
-        "serialize them. On a Redis cache hit these come back as None — a boolean reads as "
+        "serialize them. On a Redis cache hit these come back as None, a boolean reads as "
         "False, so a customer's enabled feature is published as disabled, permanently."
     )
 
@@ -110,6 +110,6 @@ def test_datetime_fields_round_trip_as_datetimes_not_strings():
 def test_an_uninstalled_widget_stays_none_through_the_cache():
     """The install-stamp branch in `get_bot_settings_public` keys on `is None`.
     If a cache hit turned that into the string "None" the branch would stop
-    firing for a genuinely uninstalled widget — the opposite failure."""
+    firing for a genuinely uninstalled widget, the opposite failure."""
     restored = auth._bot_from_cache_dict(auth._bot_to_cache_dict(_bot(widget_installed_at=None)))
     assert restored.widget_installed_at is None

@@ -19,7 +19,7 @@ import {
 // Read the "visitor has already seen the slash palette" flag for this bot.
 // sessionStorage-scoped so a fresh visit weeks later gets the hint again if
 // they've forgotten, and a current tab stops repeating the same nudge.
-// Safe against disabled storage (private mode, SecurityError) — treat as
+// Safe against disabled storage (private mode, SecurityError). Treat as
 // "not seen" and let the hint keep showing.
 function readSlashHintSeen() {
     try {
@@ -35,7 +35,7 @@ function persistSlashHintSeen() {
         if (typeof sessionStorage === 'undefined') return;
         sessionStorage.setItem(getSlashHintSeenKey(), '1');
     } catch {
-        /* storage disabled — the in-memory state still hides the hint for this session */
+        /* storage disabled, the in-memory state still hides the hint for this session */
     }
 }
 
@@ -85,7 +85,7 @@ const ChatInput = ({
     // the slash-command placeholder hint (`Write a message… or press / for
     // commands`) after the visitor is past the initial exchanges.
     userMessageCount = 0,
-    // Slash-command handlers. Bot mode only — the popover / interception
+    // Slash-command handlers. Bot mode only, the popover / interception
     // stay dormant in live and waiting modes to avoid stealing keystrokes
     // once a human operator is involved.
     onNewChat,
@@ -112,7 +112,7 @@ const ChatInput = ({
     const isLive = chatMode === 'live';
     const isBotMode = !isLive && !isWaiting;
 
-    // Handler lookup by registry key — lets the popover run any command
+    // Handler lookup by registry key. Lets the popover run any command
     // without a switch statement here. A command whose handler prop was
     // not provided (e.g. onHandoff omitted when live chat is disabled)
     // is filtered out of the palette entirely below.
@@ -120,7 +120,7 @@ const ChatInput = ({
     // A command is available when (a) its handler was actually wired by the
     // parent (e.g. onHandoff is dropped when live chat is disabled) AND
     // (b) its ``isAvailable`` predicate is satisfied for the current session
-    // context. The second gate hides no-op commands on a fresh chat —
+    // context. The second gate hides no-op commands on a fresh chat.
     // /clear and /new do nothing visible when the transcript only holds
     // the welcome bot message.
     const commandContext = { userMessageCount };
@@ -138,7 +138,7 @@ const ChatInput = ({
     // "Visitor has demonstrated they know about slash commands" state.
     // Seeded from sessionStorage so a mid-session widget close/reopen keeps
     // the flag; flipped on the first popoverOpen transition below. Silences
-    // the placeholder hint once discovered — repeat exposure past that
+    // the placeholder hint once discovered. Repeat exposure past that
     // point reads as nagging.
     const [slashHintSeen, setSlashHintSeen] = useState(() => readSlashHintSeen());
 
@@ -147,11 +147,11 @@ const ChatInput = ({
     // destructive command (currently `/new`) can never fire on a stray Enter.
     // `dismissedFor` remembers the exact input value at which the visitor
     // pressed Esc so the popover stays hidden until they type something new
-    // — otherwise every keystroke would re-open it.
+    //. Otherwise every keystroke would re-open it.
     const [popoverIndex, setPopoverIndex] = useState(0);
     const [pendingConfirm, setPendingConfirm] = useState(null);
     const [dismissedFor, setDismissedFor] = useState(null);
-    // ``originalQuery`` — the last raw text the visitor typed before they
+    // ``originalQuery``, the last raw text the visitor typed before they
     // started previewing rows via ArrowUp/ArrowDown. Filtering runs against
     // this, not against the previewed value, so arrowing to ``/human``
     // doesn't collapse the palette down to just ``/human`` and lock further
@@ -169,7 +169,7 @@ const ChatInput = ({
 
     const popoverOpen = filteredCommands.length > 0;
 
-    // First time the popover opens this session, mark the hint as seen —
+    // First time the popover opens this session, mark the hint as seen,
     // the visitor has clearly figured out slash commands exist, so the
     // "press / for commands" placeholder can stop nagging them. Guarded
     // against setState-during-render by running in an effect and by the
@@ -189,7 +189,7 @@ const ChatInput = ({
     }, [filteredCommands.length, popoverIndex]);
 
     // Reset the Esc-dismissal the moment the visitor edits the input to a
-    // different value — otherwise typing a new `/` after Esc wouldn't
+    // different value. Otherwise typing a new `/` after Esc wouldn't
     // re-open the palette.
     useEffect(() => {
         if (dismissedFor !== null && dismissedFor !== inputText) {
@@ -216,7 +216,7 @@ const ChatInput = ({
         const result = autocompleteSlashCommand(inputText, command);
         if (!result) return;
         setInputText(result.value);
-        // Tab / click commits the preview — the previewed value becomes the
+        // Tab / click commits the preview, the previewed value becomes the
         // new baseline for any further filtering, so clear originalQuery.
         setOriginalQuery(null);
         // Defer caret placement until React commits the new value.
@@ -228,7 +228,7 @@ const ChatInput = ({
                 el.setSelectionRange(result.caret, result.caret);
             } catch {
                 // Some environments throw on setSelectionRange for disabled
-                // or unmounted elements — safe to ignore.
+                // or unmounted elements. Safe to ignore.
             }
         }, 0);
     };
@@ -250,7 +250,7 @@ const ChatInput = ({
             try {
                 el.setSelectionRange(result.caret, result.caret);
             } catch {
-                // Ignore — same rationale as autocompleteFromPopover.
+                // Ignore, same rationale as autocompleteFromPopover.
             }
         }, 0);
     };
@@ -264,7 +264,7 @@ const ChatInput = ({
         userMessageCount >= SLASH_HINT_THRESHOLD;
     const slashHintPlaceholder = `${inputPlaceholder.replace(/\.\.\.$|…$/, '')} · press / for commands`;
 
-    // Inline slash-token highlight — the pill visible under the visitor's
+    // Inline slash-token highlight, the pill visible under the visitor's
     // text as they type. Only computed when a matched (or matching-prefix)
     // command exists so an unrecognised token like "/foo" renders as plain
     // text. Splits the input into { pre, token, post } for the mirror div.
@@ -294,7 +294,7 @@ const ChatInput = ({
     // the token subtly matches the send-button accent; fall back to a
     // neutral violet tint otherwise.
     const pillTint = primaryColor
-        ? `${primaryColor}22` // ~13% alpha via 8-digit hex — cross-browser safe
+        ? `${primaryColor}22` // ~13% alpha via 8-digit hex. Cross-browser safe
         : 'rgba(139, 92, 246, 0.14)';
 
     const runCommand = (command) => {
@@ -303,7 +303,7 @@ const ChatInput = ({
         if (!handler) return;
         setInputText('');
         // Clear preview-mode state too. Without this the frozen originalQuery
-        // (e.g. "/") keeps the palette open after the command runs — the
+        // (e.g. "/") keeps the palette open after the command runs, the
         // filter reads originalQuery instead of the now-empty inputText and
         // renders whatever's still available. The Esc dismissal for the
         // pre-run value is also stale now that the input is cleared, so
@@ -333,7 +333,7 @@ const ChatInput = ({
         setDismissedFor(null);
         setPopoverIndex(0);
         // Refocus the composer so the next keystroke lands where the visitor
-        // expects — the confirm bar just took focus for the Yes button.
+        // expects, the confirm bar just took focus for the Yes button.
         setTimeout(() => inputRef?.current?.focus?.(), 0);
     };
 
@@ -363,7 +363,7 @@ const ChatInput = ({
 
     const handleChange = (e) => {
         setInputText(e.target.value);
-        // Any real keystroke ends preview mode — this typed value becomes the
+        // Any real keystroke ends preview mode. This typed value becomes the
         // new baseline for filtering. Without this, the visitor would arrow to
         // /human (input previews `/human`), then start typing, and the filter
         // would still be running against their original `/` query.
@@ -397,7 +397,7 @@ const ChatInput = ({
                 return;
             }
             if (e.key === 'Escape') {
-                // Close the popover but preserve the input — a visitor writing
+                // Close the popover but preserve the input, a visitor writing
                 // "and/or" doesn't want Esc to erase their sentence. If a
                 // preview was in flight, restore the original typed query so
                 // Esc feels like a proper undo. Stays dismissed for the
@@ -414,7 +414,7 @@ const ChatInput = ({
             if (e.key === 'Tab') {
                 // Autocomplete IN PLACE at the active slash token so
                 // surrounding text is preserved. Never executes the command
-                // by itself — the visitor can review the result and press
+                // by itself, the visitor can review the result and press
                 // Enter with just `/<name>` to run it.
                 e.preventDefault();
                 autocompleteFromPopover(filteredCommands[popoverIndex]);
@@ -433,7 +433,7 @@ const ChatInput = ({
         // The textarea is intentionally NOT disabled during isTyping so that
         // the mobile keyboard stays open and users can type ahead.
         if (isTyping || isWaiting) return;
-        // Slash-command interception — deliberately WHOLE-INPUT-ONLY. A
+        // Slash-command interception. Deliberately WHOLE-INPUT-ONLY. A
         // mid-sentence match like "hello /human" is NOT intercepted: Enter
         // sends the text as a normal message so the visitor never silently
         // loses the sentence they typed. Only `/<name>` alone runs a command.
@@ -466,7 +466,7 @@ const ChatInput = ({
 
     return (
         <div className={`${currentTheme.inputArea} oyechats-safe-bottom`}>
-            {/* End chat link — live mode only */}
+            {/* End chat link. Live mode only */}
             {isLive && (
                 <div className="flex items-center justify-center mb-1.5">
                     <button
@@ -479,7 +479,7 @@ const ChatInput = ({
                 </div>
             )}
 
-            {/* Slash-command popover — floats above the composer so the
+            {/* Slash-command popover. Floats above the composer so the
                 highlighted row and the send button never overlap. */}
             {popoverOpen && (
                 <div
@@ -532,7 +532,7 @@ const ChatInput = ({
 
             <form onSubmit={handleSubmit}>
                 <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
-                    {/* File attachment — live mode only */}
+                    {/* File attachment. Live mode only */}
                     {isLive && fileSharing && (
                         <button
                             type="button"
@@ -547,7 +547,7 @@ const ChatInput = ({
                     )}
 
                     <div className="flex-1 min-w-0">
-                        {/* File upload progress bar — live mode only */}
+                        {/* File upload progress bar. Live mode only */}
                         {uploadProgress !== null && (
                             <div className="w-full h-1 bg-gray-100 rounded-full mb-1.5 overflow-hidden">
                                 <div
@@ -694,7 +694,7 @@ const ChatInput = ({
                 </div>
             )}
 
-            {/* Action bar — bot mode only. 3-column grid keeps the privacy
+            {/* Action bar. Bot mode only. 3-column grid keeps the privacy
                 link geometrically centered between the left icon cluster
                 (headphones / meeting) and the right "Powered by" credit,
                 regardless of how wide either side becomes. Hidden in

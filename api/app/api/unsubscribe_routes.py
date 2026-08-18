@@ -1,4 +1,4 @@
-"""Public unsubscribe endpoint. No auth — reached via a signed link in a
+"""Public unsubscribe endpoint. No auth. Reached via a signed link in a
 follow-up email, not the widget/API-key flow used elsewhere.
 
 The token is HMAC-signed (see ``app/services/unsubscribe_token.py``) so a
@@ -38,7 +38,7 @@ def _do_unsubscribe(bot_id: int, email: str, reason: str = "unsubscribe") -> Non
             session.commit()
             logger.info(f"Unsubscribed | bot={bot_id} | email={email[:3]}***")
         except IntegrityError:
-            session.rollback()  # race: another request inserted it first — fine, already suppressed
+            session.rollback()  # race: another request inserted it first. Fine, already suppressed
 
 
 @router.get("/unsubscribe")
@@ -53,7 +53,7 @@ def unsubscribe_get(
     bot_id, email = decoded
     _do_unsubscribe(bot_id, email)
 
-    # The address arrives inside an HMAC-signed token, so it is ours — but it
+    # The address arrives inside an HMAC-signed token, so it is ours, but it
     # originated as visitor-supplied lead data, and this is the one place the
     # platform renders it straight back into a document. Escaping costs
     # nothing and removes the question.

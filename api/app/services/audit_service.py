@@ -4,7 +4,7 @@
 mutate platform-wide state should call it on every successful change so the
 ``/superadmin/audit`` endpoint and dashboard can show who did what to whom.
 
-Failures inside this helper must never break the caller — auditing is a
+Failures inside this helper must never break the caller. Auditing is a
 secondary concern. We log and swallow errors so a transient DB issue can't
 cascade into a 500 on a successful business operation.
 """
@@ -120,6 +120,6 @@ def record_audit(
         session.add(entry)
         session.flush()
         return entry
-    except Exception:  # noqa: BLE001 — audit must never fail caller
+    except Exception:  # noqa: BLE001  Audit must never fail caller
         logger.exception("record_audit failed for action=%s", action)
         return None

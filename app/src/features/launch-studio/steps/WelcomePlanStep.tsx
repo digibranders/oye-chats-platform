@@ -76,7 +76,7 @@ async function loadPlanStepData(): Promise<PlanStepData> {
 // ─── WelcomePlanStep ──────────────────────────────────────────────────────────
 
 /**
- * Step 1 — Welcome + Choose Plan (combined).
+ * Step 1. Welcome + Choose Plan (combined).
  *
  * The top section gives a calm product intro (what the chatbot does, what this
  * flow achieves). Below it, the plan picker lets the user choose before they
@@ -255,7 +255,7 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
       // CTAs are disabled for exactly this reason; this is the belt to that
       // brace, so no path reopens checkout while the charge is settling.
       if (activationBlocking) return;
-      // Free — account is already on Free; advance immediately. The
+      // Free. Account is already on Free; advance immediately. The
       // `!isContactSales` clause is load-bearing: a bespoke, per-contract tier
       // is priced on request and so is `!isPaid`, and must NOT be treated as
       // Free.
@@ -265,7 +265,7 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
         return;
       }
       // Paid, trial, and bespoke contact-sales tiers all open the confirm
-      // modal — it short-circuits the quote for `isContactSales` and renders a
+      // modal, it short-circuits the quote for `isContactSales` and renders a
       // real "Contact sales" anchor in place of the pay button, so the hand-off
       // keeps link semantics (middle-click, copy address, link role). One
       // contact-sales surface instead of two, matching BillingPage.

@@ -15,7 +15,7 @@ def trial_days_remaining(trial_end: datetime | None, now: datetime | None = None
 
     The single source of truth for every "N days left" surface so the API,
     the dashboard banner, the billing badge, and the day-N reminder cron can
-    never disagree. ``ceil`` — a trial ending in 2 hours still reads as
+    never disagree. ``ceil``, a trial ending in 2 hours still reads as
     "1 day left", which is how customers count remaining time and matches
     :func:`app.worker.tasks` reminder cadence. The truncating
     ``timedelta.days`` is wrong here: it under-counts by one for any partial
@@ -46,12 +46,12 @@ def add_months(dt: datetime, months: int) -> datetime:
 
     DST (M5): the production money path passes UTC / fixed-offset datetimes
     (``timestamptz`` rolls + ``datetime.now(UTC)`` expiries), for which this
-    wall-clock arithmetic is exact — UTC has no DST. For a DST ``zoneinfo`` the
+    wall-clock arithmetic is exact. UTC has no DST. For a DST ``zoneinfo`` the
     offset is re-resolved for the new date and ``fold`` is preserved, so an
     ambiguous fall-back hour is handled deterministically rather than silently.
 
     Anniversary (N8): callers that roll a period MUST pass the original anchor,
-    not the previous period-end — otherwise a 31st anchor ratchets down
+    not the previous period-end. Otherwise a 31st anchor ratchets down
     (Jan 31 → Feb 28 → Mar 28 …) and never recovers. ``min(dt.day, …)`` only
     clamps; it cannot re-expand a day the caller already collapsed.
     """

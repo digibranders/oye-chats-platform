@@ -3,12 +3,12 @@
 The Build Studio's Prove step shows a couple of one-tap sample questions so a
 brand-new bot demonstrates itself immediately. The hard requirement (per the
 onboarding redesign) is that a seeded question must NEVER produce a weak or
-"I don't know" answer — a bad first answer damages trust more than no sample.
+"I don't know" answer, a bad first answer damages trust more than no sample.
 
 So this is a two-stage pipeline:
   1. GENERATE candidates from the bot's auto-extracted company context (LLM).
   2. VERIFY each candidate is actually answerable by running the SAME retrieval
-     the live bot uses, with a tighter distance cut than normal chat — only
+     the live bot uses, with a tighter distance cut than normal chat. Only
      questions with strong content backing survive.
 
 Anything uncertain is dropped; an empty result is expected and fine (the UI
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Answerability cut. Tighter than the live-chat retrieval default (0.78 cosine
 # distance) so we only ever surface a question with a genuinely on-topic chunk
-# behind it — high precision matters more than recall here.
+# behind it. High precision matters more than recall here.
 _VERIFY_MAX_DISTANCE = 0.60
 _VERIFY_MIN_CHUNKS = 1
 _MAX_SEED_QUESTIONS = 3
@@ -38,7 +38,7 @@ def _is_answerable(session, *, bot_id: int | None, client_id: int | None, questi
     """True when retrieval surfaces a strongly on-topic chunk for ``question``."""
     try:
         embs = embed_chunks([question])
-    except Exception as exc:  # embedding outage / rate-limit debt — treat as unverifiable
+    except Exception as exc:  # embedding outage / rate-limit debt. Treat as unverifiable
         logger.warning("seed-question verify embed failed (%s)", type(exc).__name__)
         return False
     query_embedding = embs[0] if embs else None

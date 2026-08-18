@@ -23,14 +23,14 @@ class TestIsEventsPage:
         assert event_extractor.is_events_page("https://acme.com/webinars/live", None, None) is True
 
     def test_title_keyword_matches(self):
-        assert event_extractor.is_events_page(None, "Upcoming Webinars — Acme", None) is True
+        assert event_extractor.is_events_page(None, "Upcoming Webinars. Acme", None) is True
 
     def test_body_needs_heading_and_multiple_signal_terms(self):
-        # Single body term with no heading — must NOT match.
+        # Single body term with no heading. Must NOT match.
         text = "Register now for our newsletter."
         assert event_extractor.is_events_page("https://acme.com/blog", None, text) is False
 
-        # Heading + two signal terms — matches.
+        # Heading + two signal terms. Matches.
         text = "## Upcoming Sessions\nRegister now.\nSpeaker: Alice.\nAgenda: 3pm."
         assert event_extractor.is_events_page("https://acme.com/community", None, text) is True
 
@@ -58,7 +58,7 @@ class TestParseIsoDatetime:
 
 
 class TestExtractEvents:
-    """The LLM call is mocked — we're testing the response-shaping code around it."""
+    """The LLM call is mocked. We're testing the response-shaping code around it."""
 
     def _fake_response(self, payload_json: str):
         message = SimpleNamespace(content=payload_json)

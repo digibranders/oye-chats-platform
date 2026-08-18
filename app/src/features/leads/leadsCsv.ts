@@ -3,7 +3,7 @@
  *
  * Its own module rather than a helper inside `LeadsPage`: a component file
  * that also exports a plain function breaks React Fast Refresh, and this is
- * the one path where a dropped field leaves the product for good — it needs
+ * the one path where a dropped field leaves the product for good, it needs
  * tests of its own.
  */
 import { csvField } from '../../lib/csvSafe';
@@ -23,7 +23,7 @@ import {
  * Drop the table's absence placeholder, which must not reach the file.
  *
  * A CSV says "no value" with an empty cell, not with a glyph meant for a table
- * cell — a CRM importing this would store a literal dash as the last-active
+ * cell, a CRM importing this would store a literal dash as the last-active
  * date. It also keeps `csvSafe` from quoting the placeholder: a bare `-` is a
  * formula trigger, so an absent timestamp would otherwise export as `'-`.
  *
@@ -39,7 +39,7 @@ function blankIfPlaceholder(formatted: string): string {
  * The same rule for the Location column's own placeholder.
  *
  * `formatLocation` answers the word "Unknown" when a session has no resolved
- * geography — right for a table cell, wrong for a file. The server export
+ * geography. Right for a table cell, wrong for a file. The server export
  * (`GET /leads/export`) writes an empty cell for exactly that case, so the two
  * downloads disagreed about the same lead: a customer merging them saw one row
  * with a blank Location and one with a country named Unknown, and a CRM import
@@ -63,7 +63,7 @@ export function buildSelectedLeadsCsv(
   tagsFor: (sessionId: string) => readonly string[],
 ): string {
   // 'Company' is the resolved identity when the paid lookup produced one, with
-  // the raw email domain kept in its own column — a CSV that silently swapped
+  // the raw email domain kept in its own column, a CSV that silently swapped
   // one for the other would break any sheet keyed on the domain.
   const header = [
     'Name',

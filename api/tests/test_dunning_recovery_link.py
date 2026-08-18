@@ -4,7 +4,7 @@ It must never mint a new Razorpay subscription: a halted subscription is still
 alive and recoverable through Razorpay's own hosted page, so a second mandate
 would double-charge a customer who authorises it while the original is still
 rescuable. (``/resume`` mints one only because an at-cycle-end cancellation is
-irreversible at the gateway — there is nothing left to authorise there.)
+irreversible at the gateway. There is nothing left to authorise there.)
 """
 
 import pytest
@@ -47,14 +47,14 @@ def test_recoverable_states_return_the_hosted_link(monkeypatch, state):
     assert result.recoverable is True
     assert result.url == "https://rzp.io/i/abc"
     assert result.gateway_status == state
-    # No new mandate — enforced for every case by _FakeSubAPI.create raising.
+    # No new mandate. Enforced for every case by _FakeSubAPI.create raising.
 
 
 @pytest.mark.parametrize("state", ["created", "authenticated"])
 def test_pre_first_charge_states_are_not_recoverable(monkeypatch, state):
     """Deliberate divergence from razorpay_service._AUTHORIZABLE_SUB_STATES.
 
-    Those states mean "this checkout can still be paid" — nothing has failed
+    Those states mean "this checkout can still be paid", nothing has failed
     yet. Treating them as recoverable would email "we couldn't collect payment"
     to someone who was never charged. Pinned so a future harmonisation of the
     two constants breaks a test instead of a customer.
@@ -82,7 +82,7 @@ def test_terminal_states_are_not_recoverable(monkeypatch, state):
 
 
 def test_active_subscription_is_not_recoverable(monkeypatch):
-    """Nothing to recover — and Razorpay cannot swap the instrument on a
+    """Nothing to recover, and Razorpay cannot swap the instrument on a
     healthy active subscription anyway (master plan D-1)."""
     from app.services import dunning_service as svc
 
@@ -93,8 +93,8 @@ def test_active_subscription_is_not_recoverable(monkeypatch):
 
 
 def test_missing_short_url_is_not_recoverable(monkeypatch):
-    """A recoverable state with no hosted link is useless to the customer —
-    report it rather than emailing a button that goes nowhere."""
+    """A recoverable state with no hosted link is useless to the customer.
+    Report it rather than emailing a button that goes nowhere."""
     from app.services import dunning_service as svc
 
     fake = _FakeClient({"id": "sub_1", "status": "halted", "short_url": None})
@@ -118,7 +118,7 @@ def test_status_is_compared_case_insensitively(monkeypatch):
 
 
 def test_gateway_failure_raises_rather_than_reporting_unrecoverable(monkeypatch):
-    """A transient fetch failure must not be reported as 'unrecoverable' — that
+    """A transient fetch failure must not be reported as 'unrecoverable'. That
     would tell a paying customer their subscription is dead."""
     from app.services import dunning_service as svc
 

@@ -3,7 +3,7 @@ unique ``idempotency_key``, so an ARQ retry / SSE reconnect / duplicated
 ingestion event carrying the same key can't double-charge.
 
 Existing callers that pass no key (or only a coarse ``reference_id`` label) keep
-the exact prior behaviour — they charge once per call.
+the exact prior behaviour. They charge once per call.
 """
 
 import os
@@ -30,7 +30,7 @@ def test_repeat_deduction_same_key_is_noop(db):
     client = _seed(db)
     b1 = credit_service.check_and_deduct(db, client.id, 5, reason="ai_chat", idempotency_key="chat:abc")
     db.commit()
-    # Same key again — a retry. Must NOT deduct twice.
+    # Same key again, a retry. Must NOT deduct twice.
     b2 = credit_service.check_and_deduct(db, client.id, 5, reason="ai_chat", idempotency_key="chat:abc")
     db.commit()
 
@@ -53,7 +53,7 @@ def test_distinct_keys_still_deduct(db):
 
 
 def test_no_key_is_not_deduped(db):
-    """Legacy callers (no idempotency_key) keep charging per call — even when the
+    """Legacy callers (no idempotency_key) keep charging per call, even when the
     coarse reference_id label repeats. This is what protects chat/ingestion from
     silently going free."""
     client = _seed(db)

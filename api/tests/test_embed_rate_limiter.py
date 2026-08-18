@@ -13,7 +13,7 @@ def _reset_local_bucket(monkeypatch):
     rl._local_bucket = None
 
 
-# ── Pure token-bucket math (deterministic — no sleeping) ─────────────────────
+# ── Pure token-bucket math (deterministic, no sleeping) ─────────────────────
 
 
 def test_bucket_allows_burst_up_to_capacity_without_wait():

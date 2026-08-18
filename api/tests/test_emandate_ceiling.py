@@ -1,8 +1,8 @@
 """RBI E-mandate Framework 2026: recurring debit above Rs 15,000 per
 transaction requires AFA on every charge, which breaks silent auto-renewal.
 
-The catalogue is already across the line — Professional annual is Rs 28,188
-and Enterprise annual Rs 57,588 — and it got there through
+The catalogue is already across the line (Professional annual is Rs 28,188
+and Enterprise annual Rs 57,588) and it got there through
 ``scripts/seed_plans.py``, which ran no check at all. So this file pins two
 things: the rule itself, and the fact that BOTH writers of a plan price (the
 super-admin editor and the seed) run that rule off the same constant.
@@ -130,7 +130,7 @@ def test_the_banner_is_absent_when_nothing_crosses(capsys):
 
 
 def _stub_empty_database(monkeypatch) -> None:
-    """A session with no plan rows — enough for a dry-run over the matrix."""
+    """A session with no plan rows. Enough for a dry-run over the matrix."""
 
     class _Result:
         def all(self):

@@ -1,6 +1,6 @@
 """Razorpay service tests.
 
-These tests stay fully offline — every external Razorpay SDK call is mocked
+These tests stay fully offline. Every external Razorpay SDK call is mocked
 via ``unittest.mock``. They lock down the contract our code expects from the
 SDK so any future SDK upgrade or refactor surfaces immediately.
 
@@ -12,7 +12,7 @@ What we cover here:
 * Webhook dispatcher routing (every supported event type lands in the
   matching handler).
 * Webhook idempotency (duplicate ``x-razorpay-event-id`` is a no-op).
-* Failure paths — ``ValueError`` for missing plan IDs / missing pack amounts.
+* Failure paths. ``ValueError`` for missing plan IDs / missing pack amounts.
 
 Live API + signature crypto are exercised separately by
 ``scripts/razorpay_smoke_test.py`` once the user pastes test keys.
@@ -30,7 +30,7 @@ import pytest
 def _razorpay_keys(monkeypatch):
     """Provide dummy keys so ``RAZORPAY_ENABLED`` flips on for service init.
 
-    The Razorpay SDK itself is mocked elsewhere — we only need
+    The Razorpay SDK itself is mocked elsewhere. We only need
     ``app.config.RAZORPAY_ENABLED`` to be ``True`` so :func:`_get_razorpay`
     proceeds past its env-var guard.
     """
@@ -116,7 +116,7 @@ def test_create_topup_order_sends_paise_inr_and_notes():
 def test_create_topup_order_reads_inr_key_and_never_charges_usd():
     """Regression: packs carry the INR price under ``inr`` (config schema), with
     ``usd`` as a display-only figure. The order must charge the INR rupees as
-    paise — never the USD number — and stamp the USD price in notes."""
+    paise (never the USD number) and stamp the USD price in notes."""
     from app.services import razorpay_service
 
     fake_client = MagicMock()
@@ -217,7 +217,7 @@ def test_create_subscription_rejects_missing_plan_id():
     """A missing plan id refuses as ``PlanNotCheckoutable``, NOT as a ValueError.
 
     The type is the contract. A tier with no gateway plan id stays listed and
-    quotes contact-sales, so the charge path has to refuse in that same shape —
+    quotes contact-sales, so the charge path has to refuse in that same shape,
     and the money routes' ``except ValueError -> 400 str(exc)`` handlers would
     have handed the buyer the operator instruction verbatim. Staying outside
     ``ValueError`` is what routes it to the app-level 409 handler instead.
@@ -446,7 +446,7 @@ def test_create_subscription_auto_resolves_referral_discount(monkeypatch):
     )
 
     referred = SimpleNamespace(id=55, name="Ref", email="r@e.com", referral_code_id=99)
-    # No discount_bps passed — mirrors the change-plan / upgrade / per-bot calls.
+    # No discount_bps passed. Mirrors the change-plan / upgrade / per-bot calls.
     result = rs.create_subscription(MagicMock(), referred, _make_plan(), "monthly")
 
     sent = rzp.subscription.create.call_args.kwargs["data"]
@@ -456,7 +456,7 @@ def test_create_subscription_auto_resolves_referral_discount(monkeypatch):
 
 def test_create_subscription_explicit_zero_skips_auto_discount(monkeypatch):
     """An explicit ``discount_bps=0`` forces full price even for a referred
-    client — auto-resolution only triggers on the ``None`` default, so callers
+    client. Auto-resolution only triggers on the ``None`` default, so callers
     can still opt out deliberately.
     """
     from app.services import razorpay_service as rs
@@ -500,7 +500,7 @@ def test_webhook_dispatcher_routes_known_events_to_handlers():
 
     def _capture(name):
         # ``**_kwargs`` because the dispatcher hands ``event_id`` to the
-        # activation handler specifically — it is the only one that can refuse an
+        # activation handler specifically, it is the only one that can refuse an
         # already-charged event without persisting anything, and it needs the key
         # to release it (``_release_idempotency_key``). Routing is what's under
         # test here, so the fakes accept whatever the dispatcher passes.
@@ -618,16 +618,16 @@ def test_payment_captured_grants_topup_when_purpose_marker_present():
     # grant_topup(session, client_id, amount, note=...)
     assert args[1] == 9
     assert args[2] == 2000
-    # The description names the SUPPLY, not the marketing SKU — no price in
+    # The description names the SUPPLY, not the marketing SKU, no price in
     # the label at all (see the invoice-presentation review).
-    assert "Credits top-up — 2,000 credits" in kwargs.get("note", "")
+    assert "Credits top-up - 2,000 credits" in kwargs.get("note", "")
 
 
 def test_payment_captured_topup_never_puts_a_display_price_on_the_document():
     """``notes.display_price`` must NOT reach the invoice description.
 
-    This previously rendered "Credits top-up — $249 pack" on an INR tax invoice
-    charging ₹19,999 — a figure that is neither the taxable value, nor the
+    This previously rendered "Credits top-up ($249 pack" on an INR tax invoice
+    charging ₹19,999) a figure that is neither the taxable value, nor the
     total, nor the currency of supply. On a Rule 46 document that invites
     exactly one question in an audit or a customer dispute: what was supplied,
     and for how much? The amount column already carries the price, so the
@@ -665,10 +665,10 @@ def test_payment_captured_topup_never_puts_a_display_price_on_the_document():
     # The ledger note appends the Razorpay reference for reconciliation;
     # what matters is that no display price appears in either string.
     note = kwargs.get("note", "")
-    assert note.startswith("Credits top-up — 32,500 credits")
+    assert note.startswith("Credits top-up - 32,500 credits")
     assert "$" not in note and "249" not in note
     invoice = session.add.call_args[0][0]
-    assert invoice.description == "Credits top-up — 32,500 credits"
+    assert invoice.description == "Credits top-up - 32,500 credits"
     assert "$" not in invoice.description
     assert invoice.amount_cents == 1999900  # legal value stays INR paise
 

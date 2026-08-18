@@ -1,4 +1,4 @@
-"""Google OAuth 2.0 helpers — authorize URL, code exchange, ID-token parsing.
+"""Google OAuth 2.0 helpers. Authorize URL, code exchange, ID-token parsing.
 
 This module is deliberately small: it speaks Google's OAuth 2.0 dance and
 exposes a single ``GoogleProfile`` dataclass that the route layer maps
@@ -39,7 +39,7 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
-# Google OAuth endpoints — pinned so a typo in env doesn't redirect users
+# Google OAuth endpoints. Pinned so a typo in env doesn't redirect users
 # to an attacker-controlled IdP. These are stable, documented values.
 GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -48,11 +48,11 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 # inside the OAuth dance anyway.
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 
-# Scopes — minimum needed to identify the user. ``openid`` triggers the
+# Scopes. Minimum needed to identify the user. ``openid`` triggers the
 # id_token response that carries the ``sub`` claim (Google's stable user id).
 GOOGLE_OAUTH_SCOPES = ("openid", "email", "profile")
 
-# State cookie lifetime — OAuth round-trip should finish in seconds; 10
+# State cookie lifetime. OAuth round-trip should finish in seconds; 10
 # minutes is generous for slow MFA flows.
 STATE_MAX_AGE_SECONDS = 600
 
@@ -70,7 +70,7 @@ class OAuthError(Exception):
 class GoogleProfile:
     """The minimal user identity returned by Google's id_token + userinfo.
 
-    ``subject`` is the stable user id (the ``sub`` claim) — keyed lookups
+    ``subject`` is the stable user id (the ``sub`` claim). Keyed lookups
     use this, never ``email``. ``email_verified`` defaults to True because
     Google only returns False for unusual Workspace configurations; we
     surface it so the route can decide whether to trust the address for
@@ -108,21 +108,21 @@ def issue_state_token(
 
     Payload carries:
 
-    * ``n`` — a 32-byte random nonce that goes into both the cookie and
+    * ``n``, a 32-byte random nonce that goes into both the cookie and
       the URL; Google echoes the URL copy back unchanged, the route
       checks the cookie copy matches.
-    * ``next`` — relative path inside the admin app the user should land
+    * ``next``. Relative path inside the admin app the user should land
       on after success (used by deep-linked sign-ins).
-    * ``mode`` — ``"login"`` or ``"register"``, purely for telemetry; the
+    * ``mode``. ``"login"`` or ``"register"``, purely for telemetry; the
       backend behaviour is identical.
-    * ``ts`` — issuance time, enforced against ``STATE_MAX_AGE_SECONDS``.
-    * ``promo`` / ``ref`` — optional campaign/affiliate codes captured on the
+    * ``ts``. Issuance time, enforced against ``STATE_MAX_AGE_SECONDS``.
+    * ``promo`` / ``ref``. Optional campaign/affiliate codes captured on the
       register page. The OAuth dance is a full-page round trip through
       Google, so any attribution the page knew about is otherwise LOST by
-      the time the callback creates the account — this is the only carrier.
+      the time the callback creates the account. This is the only carrier.
       Signed with the rest of the payload, so a user can't self-grant a
       code the page never had.
-    * ``cl`` — which surface started the flow (``"web"`` or ``"mobile"``).
+    * ``cl``, which surface started the flow (``"web"`` or ``"mobile"``).
       The callback reads this to pick the final redirect target (the admin
       web app vs. the mobile app's custom URL scheme), since Google's
       round trip loses whatever page initiated the request otherwise.
@@ -130,7 +130,7 @@ def issue_state_token(
     The token is signed with HMAC-SHA256 using ``OAUTH_STATE_SECRET`` and
     delivered as a single opaque string (payload.signature). The route
     stores this same token in a short-lived HttpOnly cookie and includes
-    it in the ``state`` URL parameter — the callback rejects the request
+    it in the ``state`` URL parameter, the callback rejects the request
     if either is missing or they don't match.
     """
     payload = {
@@ -177,7 +177,7 @@ def verify_state_token(token: str) -> dict:
 def build_authorize_url(state_token: str) -> str:
     """Build the Google consent screen URL.
 
-    ``access_type=online`` because we don't need a refresh token — we only
+    ``access_type=online`` because we don't need a refresh token. We only
     use OAuth to identify the user once, then our own ``api_key`` takes
     over for the session. ``prompt=select_account`` always shows the
     account picker so a logged-in Google user can switch accounts on

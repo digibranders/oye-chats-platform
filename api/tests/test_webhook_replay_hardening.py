@@ -2,7 +2,7 @@
 
 The Razorpay HMAC covers only the request BODY; the event id is a header. A
 replayed signed body with a FRESH header id passed both the signature check
-and the event-id dedup — and was processed twice (double grants, duplicate
+and the event-id dedup, and was processed twice (double grants, duplicate
 invoices). ``processed_webhooks.payload_digest`` (sha256 of the raw body) is
 the second unique key; distinct real events never share an exact body.
 """
@@ -43,7 +43,7 @@ def test_legacy_null_digests_do_not_collide(db):
 @pytest.mark.parametrize("missing_id", [None, ""])
 def test_missing_event_id_is_rejected(db, missing_id):
     """A webhook with no ``x-razorpay-event-id`` must be treated as NOT
-    processable (return False) — the event id is the primary dedup key, so
+    processable (return False), the event id is the primary dedup key, so
     accepting an id-less delivery would let a signed body be replayed and
     double-processed under a fresh (absent) id. Every existing test passed a
     concrete id; nothing pinned the id-less branch (mutation WHS2)."""

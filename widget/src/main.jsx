@@ -30,7 +30,7 @@ if (botKey) {
   console.warn(`${PREFIX} dev: no bot key set. Set window.OYECHATS_BOT_KEY in console or add data-bot-key on <script>.`)
 }
 
-// Minimal stub registration — main.jsx in dev IS the app entry,
+// Minimal stub registration. Main.jsx in dev IS the app entry,
 // so we call init() with a context that registers the public API directly.
 const ctx = {
   baseUrl: '',
@@ -44,11 +44,11 @@ const ctx = {
 }
 
 if (typeof window !== 'undefined' && window.OYECHATS_ASYNC_INIT === true) {
-  // Match prod loader behavior — wait for OyeChats.init().
+  // Match prod loader behavior. Wait for OyeChats.init().
   window.OyeChats = {
     init: () => init(ctx),
   }
-  console.log(`${PREFIX} dev: deferred init — call OyeChats.init() to mount`)
+  console.log(`${PREFIX} dev: deferred init. Call OyeChats.init() to mount`)
 } else {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => init(ctx))

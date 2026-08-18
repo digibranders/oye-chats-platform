@@ -1,17 +1,17 @@
-"""BL-3 — /subscriptions/cancel and /resume must be truthful (real Postgres).
+"""BL-3 - /subscriptions/cancel and /resume must be truthful (real Postgres).
 
 ``cancel_at_period_end`` is a reversible customer INTENT; the irreversible
 Razorpay cancel is a separate FACT recorded by ``gateway_cancel_executed_at``.
 Everything in this module turns on keeping those two apart.
 
-**Mode 1 — the mandate is still live** (``gateway_cancel_executed_at IS NULL``).
+**Mode 1, the mandate is still live** (``gateway_cancel_executed_at IS NULL``).
 ``/cancel`` no longer touches Razorpay, so a customer who changes their mind
 before ``task_execute_pending_cancellations`` runs is un-cancelled by clearing a
 flag: no checkout, no payment, no lost credits. ``/resume`` still confirms
-liveness with the gateway first — the local marker is not proof, and promising a
+liveness with the gateway first, the local marker is not proof, and promising a
 renewal that silently never comes is the exact BL-3 lie this module guards.
 
-**Mode 2 — the mandate is already dead.** Razorpay has NO un-cancel for an
+**Mode 2, the mandate is already dead.** Razorpay has NO un-cancel for an
 at-cycle-end cancellation, so ``/resume`` must re-authorise: mint a FRESH
 subscription for the same plan/cycle (tagging the predecessor via
 ``prev_razorpay_subscription_id``) and return ``mandate_action:
@@ -97,8 +97,8 @@ def _make_sub(
 ) -> Subscription:
     """A cancel-pending subscription.
 
-    ``gateway_cancelled`` defaults True — i.e. the irreversible Razorpay cancel
-    has already been issued — because that is the state the re-authorisation
+    ``gateway_cancelled`` defaults True. I.e. the irreversible Razorpay cancel
+    has already been issued. Because that is the state the re-authorisation
     path exists for. Pass False to build the far more common Mode 1 row, where
     the customer has cancelled but the mandate is still live.
     """
@@ -149,7 +149,7 @@ def test_cancel_leaves_the_mandate_live_for_the_rest_of_the_period(db):
 
     The old behaviour issued ``cancel_at_cycle_end=1`` on click. Razorpay has no
     un-cancel, so from that instant the customer could only "reactivate" by
-    buying a whole new mandate — which then billed immediately, a second time,
+    buying a whole new mandate, which then billed immediately, a second time,
     for days they already owned. Recording intent locally keeps that reversible.
     """
     client = _make_client(db, email="cancel-defer@e.com")
@@ -180,7 +180,7 @@ def test_cancel_leaves_the_mandate_live_for_the_rest_of_the_period(db):
 
     assert resp.status_code == 200, resp.text
     gateway_cancel.assert_not_called()
-    # Paid seats survive too — cancelling used to strip them on click while the
+    # Paid seats survive too. Cancelling used to strip them on click while the
     # plan itself kept running to period end.
     seat_cancel.assert_not_called()
 
@@ -194,7 +194,7 @@ def test_cancel_voids_an_in_flight_reactivation_checkout(db):
     """Razorpay leaves a ``created`` subscription authorizable indefinitely.
 
     A customer who opened a reactivation checkout, walked away, then cancelled
-    could click that stale link weeks later — its activation webhook would mint
+    could click that stale link weeks later, its activation webhook would mint
     a fresh active subscription and restart billing after they explicitly said
     stop. Cancelling has to void it.
     """
@@ -333,7 +333,7 @@ def test_resume_reauthorises_when_gateway_mandate_cancelled(db):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Truthful re-auth response — mirrors cancel_scheduled_change_endpoint.
+    # Truthful re-auth response. Mirrors cancel_scheduled_change_endpoint.
     assert body["mandate_action"] == "reauthorise_required"
     assert body.get("status") == "reauthorise_required"
     # The fresh gateway subscription payload is surfaced for checkout.
@@ -353,7 +353,7 @@ def test_resume_after_sweep_defers_first_charge_to_the_paid_period_end(db):
     paid for. ``/resume`` must pass ``start_at = current_period_end``.
 
     And because a deferred start never resets the plan allowance, there is
-    nothing to roll over — ``upgrade_credit_pending_cents`` must stay 0 rather
+    nothing to roll over. ``upgrade_credit_pending_cents`` must stay 0 rather
     than queueing a duplicate re-grant on top of credits that were never wiped.
     """
     client = _make_client(db, email="bl3-startat@e.com")
@@ -479,7 +479,7 @@ def test_resume_per_bot_names_the_bot_so_the_right_row_is_retired(db):
 def test_resume_before_the_sweep_clears_the_flag_without_any_checkout(db):
     """The common case after the deferred-cancel change: the customer cancelled,
     the sweep hasn't run, the mandate is untouched at Razorpay. Reactivating must
-    be a flag flip — no fresh subscription, no checkout, no payment."""
+    be a flag flip, no fresh subscription, no checkout, no payment."""
     client = _make_client(db, email="bl3-live@e.com")
     plan = _make_plan(db, slug="std-bl3-live")
     period_end = datetime.now(UTC) + timedelta(days=20)
@@ -520,7 +520,7 @@ def test_resume_before_the_sweep_clears_the_flag_without_any_checkout(db):
 
 
 def test_resume_falls_back_to_reauth_when_the_gateway_contradicts_the_marker(db):
-    """The marker says the mandate is live but Razorpay disagrees — the customer
+    """The marker says the mandate is live but Razorpay disagrees, the customer
     cancelled from Razorpay's own email, or a sweep half-completed. Clearing the
     flag here would promise a renewal that never happens, so we self-heal the
     marker and re-authorise instead."""
@@ -657,7 +657,7 @@ def test_resume_double_submit_reuses_pending_checkout_no_second_mint(db):
         ) as rebuild,
         # The reuse path now asks the gateway whether the pending mandate has
         # already been PAID before it considers reusing or re-minting. Unpaid
-        # here — the paid case has its own test below.
+        # here, the paid case has its own test below.
         patch("app.services.razorpay_service.checkout_already_paid", return_value=False),
     ):
         first = api.post("/subscriptions/resume", json={})
@@ -681,7 +681,7 @@ def test_resume_refuses_to_re_mint_over_an_already_paid_reauth(db):
     """The /resume twin of the reported defect.
 
     Mode 2 mints a fresh mandate because Razorpay has no un-cancel, and it
-    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None`` — which it
+    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None``, which it
     does for a mandate the customer has ALREADY authorised and paid exactly as
     it does for an abandoned one. A customer who re-authorised and then clicked
     Reactivate again (the emailed re-auth link is clickable twice) would get a
@@ -715,7 +715,7 @@ def test_resume_refuses_to_re_mint_over_an_already_paid_reauth(db):
     assert not create_sub.called
     assert not rebuild.called
     db.refresh(sub)
-    # The marker survives — the activation still has to consume it.
+    # The marker survives, the activation still has to consume it.
     assert sub.upgrade_pending_subscription_id == "sub_reauth_paid"
 
 

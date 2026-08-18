@@ -4,14 +4,14 @@ These cover the two defects that shipped despite a green unit suite, both
 caused by tests asserting an INVENTED payload shape instead of the real one:
 
 1. ``fetch_ip_intel`` returned ipapi.is's nested ``company``/``asn`` objects
-   verbatim, while the Leads UI read them as plain strings — so every lead
+   verbatim, while the Leads UI read them as plain strings, so every lead
    rendered "no company signal" even when the data was present.
 2. The widget's blur check and the background enrichment used two different
    definitions of "valid email", so a catch-all corporate address could be
    accepted at capture and then be permanently un-emailable.
 
 The fixtures below are VERBATIM ipapi.is / Reoon responses captured from the
-live APIs — do not "simplify" them.
+live APIs. Do not "simplify" them.
 """
 
 import json
@@ -60,7 +60,7 @@ class TestFetchIpIntelFlattening:
 
         It used to be proved on the hosting fixture below, asserting
         ``company_name == "Google LLC"``. That expectation is now wrong by
-        design — a hosting range is not an employer — but flattening still
+        design (a hosting range is not an employer) but flattening still
         needs a guard, so it moved to a payload where a name is legitimately
         returned.
         """
@@ -115,7 +115,7 @@ class TestSharedValidityPredicate:
 
     def test_catch_all_corporate_domain_is_deliverable(self):
         """The case that broke follow-up: Reoon can't PROVE deliverability on a
-        catch-all, so is_safe_to_send is False — but the address is real and
+        catch-all, so is_safe_to_send is False, but the address is real and
         must stay contactable."""
         catch_all = {
             "status": "catch_all",
@@ -158,7 +158,7 @@ class TestSharedValidityPredicate:
 
 class TestIpCompanyNameSanityFilter:
     """ipapi.is returns a company object for ISP-owned ranges too, and its
-    ``type`` classification is not reliable — production returned
+    ``type`` classification is not reliable. Production returned
     ``type=business`` for ``TSBB pool2``, a subnet label. Only names that could
     plausibly be an employer may ever reach an operator.
 
@@ -170,7 +170,7 @@ class TestIpCompanyNameSanityFilter:
     @pytest.mark.parametrize(
         "name",
         [
-            # Infrastructure labels — the type field called the first of these
+            # Infrastructure labels, the type field called the first of these
             # `business` in production.
             "TSBB pool2",
             "dynamic-pool-42",
@@ -211,7 +211,7 @@ class TestIpCompanyNameSanityFilter:
         "name",
         [
             # Every one of these is rejected by a naive substring blocklist of
-            # network vocabulary, and every one is a real B2B employer — the
+            # network vocabulary, and every one is a real B2B employer, the
             # exact leads this product exists to surface. "network" alone kills
             # four of the best-known names in enterprise infrastructure.
             "Juniper Networks",
@@ -291,7 +291,7 @@ class TestIpCompanyNameFilterHardening:
     def test_a_non_string_name_does_not_raise(self, name):
         """`.strip()` on an int raised AttributeError straight out of
         `fetch_ip_intel`, which sits BEFORE the geolocation lookup inside its
-        caller's try block — so one malformed vendor field cost the session its
+        caller's try block, so one malformed vendor field cost the session its
         city and country as well as its company."""
         assert self._ok(name) is False
 
@@ -318,7 +318,7 @@ class TestIpCompanyNameFilterHardening:
         ],
     )
     def test_jio_is_caught_in_every_spelling(self, name):
-        """India's largest ISP was matched by the substring `"jio "` — with a
+        """India's largest ISP was matched by the substring `"jio "`, with a
         trailing space. That caught exactly one spelling, the one under test,
         and leaked every other including the real ASN-style org string."""
         assert self._ok(name) is False
@@ -365,7 +365,7 @@ class TestIpCompanyNameFilterHardening:
         ["Liverpool Victoria", "Whirlpool Corporation", "Blackpool Council", "Poolside AI"],
     )
     def test_pool_inside_a_longer_word_is_not_a_pool(self, name):
-        """The anchoring case that actually matters for the shipped word list —
+        """The anchoring case that actually matters for the shipped word list,
         the original tests only anchored words that had been removed from it."""
         assert self._ok(name) is True
 
@@ -399,7 +399,7 @@ class TestIpCompanyNameFilterHardening:
         ["Acme Internet Service", "Dynamic IP Ltd", "Static IP Solutions", "Leased Line Co", "Address Pool 4"],
     )
     def test_the_phrase_list_is_load_bearing(self, phrase_name):
-        """The phrase list had ZERO coverage — disabling it entirely left the
+        """The phrase list had ZERO coverage. Disabling it entirely left the
         suite green, because the only phrase any test touched was also caught
         by the word rule."""
         assert self._ok(phrase_name) is False
@@ -407,8 +407,8 @@ class TestIpCompanyNameFilterHardening:
     @pytest.mark.parametrize("company_type", ["education", "government"])
     def test_universities_and_government_are_employers(self, company_type):
         """Originally excluded along with hosting and isp, which was an
-        oversight: a procurement officer at IIT Bombay is a legitimate — often
-        the most valuable — B2B lead, and their range is exactly as
+        oversight: a procurement officer at IIT Bombay is a legitimate (often
+        the most valuable) B2B lead, and their range is exactly as
         employer-owned as a company's."""
         payload = {
             "company": {

@@ -21,7 +21,7 @@ frees the caller from those sessions' lifetimes.
 
 ## Whose fault was it?
 
-The table is a CROSS-TENANT cache — one row per domain, read by every
+The table is a CROSS-TENANT cache, one row per domain, read by every
 customer. So the single most damaging thing this module can do is write "no
 company here" against a domain that is fine, because *we* were broken. An
 expired Spider key would otherwise blacklist every domain it saw, and the
@@ -29,17 +29,17 @@ exponential backoff would compound that to 90 days.
 
 Every failure is therefore classified before it is stored:
 
-* **The target's fault** — the target itself answered 404/410, or a page we
+* **The target's fault**, the target itself answered 404/410, or a page we
   genuinely read describes no company. Cached with compounding backoff, which
   is the point of the cache.
-* **Ours, or nobody's** — *everything else*. No API key, an expired key, quota
+* **Ours, or nobody's** - *everything else*. No API key, an expired key, quota
   exhausted, Spider down, its endpoint moved, our request malformed, a proxy
   error page, the target 5xx'ing today, the model unreachable. Never
   attributed to the domain. It gets a short :data:`INDETERMINATE_COOLDOWN`
   instead, which bounds the retry storm during an outage without poisoning
   anything: the cache self-heals within minutes of the outage ending.
 
-The classification is **fail-closed** — a lasting verdict requires positive
+The classification is **fail-closed**, a lasting verdict requires positive
 evidence, and anything unrecognised lands in the second bucket. That asymmetry
 is deliberate, because the two mistakes do not cost the same: wrongly blaming
 ourselves costs one repeated crawl, while wrongly blaming a real company
@@ -52,7 +52,7 @@ impossible to recover.
 
 ## Order of work
 
-1. Cache read, in its own short transaction. A stored name wins immediately —
+1. Cache read, in its own short transaction. A stored name wins immediately,
    including over a later failure flag, so one transient 503 cannot hide a good
    profile for a whole backoff window. A profile past ``refresh_after`` is
    re-resolved, falling back to the stale value if the re-crawl fails.
@@ -129,7 +129,7 @@ _PROMPT_ECHOES = {"company name", "company_name", "name", "unknown", "n/a", "non
 
 @dataclass(frozen=True)
 class ResolvedCompany:
-    """A detached snapshot — safe to read after this module's session closes."""
+    """A detached snapshot. Safe to read after this module's session closes."""
 
     domain: str
     name: str
@@ -144,7 +144,7 @@ class _Fetched:
     """Crawl outcome.
 
     ``infrastructure_ok`` separates "the site had nothing for us" from "OUR
-    crawler could not run" — see the module docstring. It is derived from what
+    crawler could not run". See the module docstring. It is derived from what
     Spider actually reported, not inferred from a bare ``None``.
     """
 
@@ -163,7 +163,7 @@ def _fetch_site_html(domain: str) -> _Fetched:
     Which backend goes first is a runtime setting (``crawl.provider_primary``,
     written by the super-admin Models & RAG page), and this must respect it: an
     operator switching to Jina *because Spider is having an outage* would
-    otherwise still have every uncached lead hit Spider first — the wrong
+    otherwise still have every uncached lead hit Spider first, the wrong
     behaviour at precisely the wrong moment.
 
     Attribution is a separate question from content. Only Spider can tell us
@@ -200,7 +200,7 @@ def _fetch_site_html(domain: str) -> _Fetched:
                 return _Fetched(content=_capped(outcome.content), is_html=True, infrastructure_ok=True)
         except TimeoutError:
             # We could not get an answer in time. That is OUR failure to
-            # observe, not a fact about the domain — Spider's own API may be
+            # observe, not a fact about the domain. Spider's own API may be
             # the thing hanging, and we cannot tell from here.
             logger.warning("spider fetch timed out for %s", domain)
         except Exception:
@@ -214,7 +214,7 @@ def _fetch_site_html(domain: str) -> _Fetched:
             if pages and pages[0].get("content"):
                 # Jina returns MARKDOWN, not HTML. Flagged so the markup reader
                 # is skipped rather than run against content it can never match
-                # — which previously meant every Jina-served domain silently
+                # , which previously meant every Jina-served domain silently
                 # took the LLM path and never got a logo.
                 return _Fetched(content=_capped(pages[0]["content"]), is_html=False, infrastructure_ok=True)
         except TimeoutError:
@@ -243,7 +243,7 @@ def _capped(content: str) -> str:
 
     Measured in BYTES, not characters. ``len()`` on a ``str`` counts code
     points, so a page carrying astral-plane characters is held at 4 bytes each
-    internally — a "2 MB" character cap would admit up to 8 MB of RSS.
+    internally, a "2 MB" character cap would admit up to 8 MB of RSS.
     """
     encoded = content.encode("utf-8", errors="ignore")
     if len(encoded) <= MAX_CONTENT_BYTES:
@@ -266,7 +266,7 @@ def _valid_name(name: object) -> bool:
 def _record_failure(session: Session, domain: str) -> None:
     """Mark a domain unresolvable, with backoff that GROWS per attempt.
 
-    Only for failures attributable to the TARGET — see the module docstring.
+    Only for failures attributable to the TARGET. See the module docstring.
     Upsert, not read-then-insert. Flat backoff would leave a permanently-dead
     domain re-crawled on a fixed cadence forever, which is the per-domain cost
     leak this cache exists to prevent.
@@ -389,7 +389,7 @@ def _snapshot(row: CompanyProfile | None) -> ResolvedCompany | None:
 class _CacheRead:
     """What the cache had to say. Exactly one of these is acted on."""
 
-    # Serve this and stop — either fresh, or backing off a failed refresh.
+    # Serve this and stop, either fresh, or backing off a failed refresh.
     hit: ResolvedCompany | None
     # Nothing to serve and we are inside a backoff window: spend nothing.
     blocked: bool
@@ -402,7 +402,7 @@ def _read_cache(domain: str) -> _CacheRead:
 
     Deliberately not folded into the write session. ``session.get`` autobegins
     a transaction, so holding one session across the crawl and the LLM pinned a
-    pooled connection ``idle in transaction`` for the whole window — measured
+    pooled connection ``idle in transaction`` for the whole window. Measured
     at one connection per in-flight resolution, against a pool of 5 shared with
     request handling. Three concurrent resolutions could starve the API.
     """
@@ -422,8 +422,8 @@ def _read_cache(domain: str) -> _CacheRead:
             # hand-inserted row), which is stale, not fresh-forever.
             if row.refresh_after and row.refresh_after > now:
                 return _CacheRead(hit=_snapshot(row), blocked=False, stale_fallback=None)
-            # Past its refresh horizon. Re-resolve — this already runs on a
-            # background thread, so nothing user-facing is waiting — but keep
+            # Past its refresh horizon. Re-resolve (this already runs on a
+            # background thread, so nothing user-facing is waiting) but keep
             # the old value to serve if the re-crawl fails.
             #
             # A failed refresh sets `retry_after`, and it must be honoured HERE
@@ -466,7 +466,7 @@ def _extract(fetched: _Fetched, domain: str) -> tuple[dict, str, str | None]:
     except Exception as exc:
         # The model was unreachable / out of quota / erroring. That says
         # nothing about the content, so it must not be cached against the
-        # domain — the same rule as the crawl leg.
+        # domain, the same rule as the crawl leg.
         raise _ProviderUnavailable(f"company-context extraction failed: {exc}") from exc
 
     if not llm_result or not _valid_name(llm_result.get("name")):
@@ -539,7 +539,7 @@ def _resolve(domain: str) -> ResolvedCompany | None:
 def resolve_company(domain: str | None) -> ResolvedCompany | None:
     """Return a cached or freshly-resolved company, or None.
 
-    ``None`` means "no company could be identified" — never an error the caller
+    ``None`` means "no company could be identified", never an error the caller
     must handle. This function does not raise.
 
     **Call this from a worker thread, not from async code.** It is synchronous
@@ -556,7 +556,7 @@ def resolve_company(domain: str | None) -> ResolvedCompany | None:
     one, and wiring it into lead capture meant this function committed the
     caller's transaction: a half-built ``LeadInfo`` became durable and the
     caller's own ``rollback()`` turned into a no-op. Opening its own sessions is
-    not merely the default — it is the only option, so that regression cannot
+    not merely the default, it is the only option, so that regression cannot
     be reintroduced by a call site.
     """
     try:

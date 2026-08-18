@@ -57,7 +57,7 @@ from app.services.plan_service import (
 logger = logging.getLogger(__name__)
 
 # Absolute safety ceiling on operator seats when a plan defines no
-# ``limits.operators`` — stops an unbounded seat delta from minting hundreds of
+# ``limits.operators``. Stops an unbounded seat delta from minting hundreds of
 # seat charges in a single call (§5).
 _MAX_OPERATOR_SEATS_ABSOLUTE = 100
 
@@ -87,7 +87,7 @@ ACTIVATION_POLL_SECONDS = 5
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
-# monthly | annual — the only two cycles the plan catalog and the gateway
+# monthly | annual, the only two cycles the plan catalog and the gateway
 # plan ids are built for. Previously a bare ``str``: an unrecognised cycle
 # fell through to the monthly branch instead of being refused.
 BillingCycle = Literal["monthly", "annual"]
@@ -99,7 +99,7 @@ CouponCode = Annotated[
 ]
 
 # Seats added or removed in one request. Each unit is a real charge against
-# the customer's mandate, so the delta is bounded — an unbounded one is an
+# the customer's mandate, so the delta is bounded, an unbounded one is an
 # unbounded invoice. Well above any realistic single adjustment.
 _MAX_SEAT_DELTA = 500
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
@@ -111,7 +111,7 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     When ``bot_id`` is given, target that bot's own subscription so a client with
     several per-bot subscriptions can cancel/resume/reseat a specific one. An
     agent with NO subscription of its own draws on the account plan, so we fall
-    back to it — matching ``get_current_subscription`` and
+    back to it. Matching ``get_current_subscription`` and
     ``_resolve_invoice_scope``.
 
     That fallback is the whole point: without it the READ path fell back while
@@ -123,7 +123,7 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
 
     The fallback goes through ``get_account_subscription`` (``bot_id IS NULL``)
     and NOT ``get_client_subscription``. The latter spans per-bot rows and
-    returns the highest-PRICED one — correct for entitlements (H2), disastrous
+    returns the highest-PRICED one. Correct for entitlements (H2), disastrous
     as a mutation target: with an unpaid agent selected it would resolve to a
     DIFFERENT agent's subscription, and ``/cancel`` would cancel that agent's
     Razorpay mandate. Razorpay has no un-cancel, so that is not customer
@@ -131,7 +131,7 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     """
     if bot_id is not None:
         # Ownership first. Without this a bot_id the caller does NOT own falls
-        # straight through to their own account subscription — so a mistyped or
+        # straight through to their own account subscription, so a mistyped or
         # copied id silently retargets a destructive action (cancel, seat
         # change) onto something the caller never named. There is no
         # cross-tenant leak either way (both resolvers filter by client_id);
@@ -152,10 +152,10 @@ def _pooled_plan_scope_error(plan: Plan) -> HTTPException:
     credits are granted and reset into that single bot's ISOLATED ledger
     (``credit_service.resolve_bot_ledger_bot_id``) while every further agent the
     tier entitles holds no subscription of its own and drains the shared pool the
-    purchase never funded — one working agent and N silent ones.
+    purchase never funded, one working agent and N silent ones.
     Raised only where the mutation would land the plan on an EXISTING bot-scoped
-    subscription — ``POST /subscriptions/change-plan`` Branches 1/2a/2b and
-    ``POST /subscriptions/resume`` — plus ``POST /bots/checkout``, whose whole
+    subscription. ``POST /subscriptions/change-plan`` Branches 1/2a/2b and
+    ``POST /subscriptions/resume``, plus ``POST /bots/checkout``, whose whole
     contract is per-agent. Where no subscription exists yet (``/change-plan``
     Branch 3) the request is DEMOTED to account scope instead: an account-scoped
     mandate is what the customer is buying, and refusing there simply made the
@@ -177,7 +177,7 @@ def _pooled_plan_scope_error(plan: Plan) -> HTTPException:
             "message": (
                 f"The {plan.name} plan includes unlimited AI agents and is billed for your whole "
                 "account, so it can't be bought for a single agent. Contact support and we'll move "
-                f"your account onto {plan.name} — your existing agents keep working."
+                f"your account onto {plan.name}. Your existing agents keep working."
             ),
         },
     )
@@ -195,14 +195,14 @@ def effective_resets_at(sub: Subscription | None) -> datetime | None:
 
     The renewal cron rolls ``current_period_end`` forward when it fires, but
     if the worker has been down (or hasn't caught up yet) the stored value
-    can be in the past — which makes the UI's "Resets …" label show
+    can be in the past, which makes the UI's "Resets …" label show
     *yesterday*, which is obviously wrong.
 
     This helper computes the next reset *on read*: if the stored end is in
     the future we use it as-is; otherwise we advance by whole months (based
     on the original cycle length, default 1 month) until we land in the
-    future. The DB row isn't mutated — the cron stays the source of truth
-    for the actual renewal — we just make sure the user-facing label never
+    future. The DB row isn't mutated (the cron stays the source of truth
+    for the actual renewal) we just make sure the user-facing label never
     lies.
     """
     if sub is None or sub.current_period_end is None:
@@ -224,7 +224,7 @@ def effective_resets_at(sub: Subscription | None) -> datetime | None:
         cycle_months = max(1, approx_months)
     candidate = end
     # Cap the walk at a sane horizon (10 years) so a truly malformed row
-    # can't loop forever — at that point we just return the latest computed
+    # can't loop forever, at that point we just return the latest computed
     # date and let the UI render whatever's there.
     for _ in range(120):
         if candidate > now:
@@ -264,8 +264,8 @@ def list_plans():
                 "monthly_price_usd_cents": p.monthly_price_usd_cents,
                 "annual_price_usd_cents": p.annual_price_usd_cents,
                 "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
-                # Derived from this payload's own prices, NOT the stored column —
-                # see core.pricing.annual_saving_percent. The admin app derives
+                # Derived from this payload's own prices, NOT the stored column.
+                # See core.pricing.annual_saving_percent. The admin app derives
                 # the same figure client-side (billingModel.annualSavingPercent);
                 # serving the derived value is what keeps the two in agreement.
                 "annual_discount_percent": annual_saving_percent(p.monthly_price_cents, p.annual_price_cents),
@@ -290,8 +290,8 @@ def get_active_promotion(client: Client = Depends(get_current_client)):
     """The launch promotion the current client qualifies for, for billing display.
 
     Returns ``{"active": false}`` when none applies, else a display projection
-    (``free_cycles``, ``ends_at``, ``eligible_plan_ids``). This is DISPLAY ONLY —
-    checkout independently re-validates eligibility server-side before deferring
+    (``free_cycles``, ``ends_at``, ``eligible_plan_ids``). This is DISPLAY ONLY.
+    Checkout independently re-validates eligibility server-side before deferring
     any charge, so a stale or forged response can never grant the offer.
     """
     from app.services import promotion_service
@@ -312,7 +312,7 @@ class StartTrialRequest(BaseModel):
 
     The slug is the public plan identifier the pricing page renders against
     (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0`` — the free plan is intentionally excluded.
+    ``trial_days > 0``, the free plan is intentionally excluded.
     """
 
     plan_slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_\-]+$")
@@ -413,7 +413,7 @@ def get_current_subscription(
     invited operator presenting their own ``X-API-Key`` together with the
     switched workspace's ``X-Workspace-Id`` reads the WORKSPACE OWNER's plan,
     not their own personal Free plan. The LiveChat UI feature-gates on this
-    response — reading the wrong client's plan is what made "Live chat isn't
+    response. Reading the wrong client's plan is what made "Live chat isn't
     included in your plan" appear on the operator's Support surface even
     though the workspace owner is on Standard.
 
@@ -430,7 +430,7 @@ def get_current_subscription(
             if sub is not None:
                 plan = sub.plan if sub.plan_id else None
             else:
-                # The agent has no subscription of its own — it draws from the
+                # The agent has no subscription of its own, it draws from the
                 # shared account plan, so surface that instead of an empty panel.
                 sub = get_client_subscription(session, client_id)
                 plan = get_client_plan(session, client_id)
@@ -441,7 +441,7 @@ def get_current_subscription(
         sub_data = None
         if sub:
             # Inline the queued change so the Billing page can render its
-            # banner ("Switching to Starter on Aug 15 — Cancel") off a single
+            # banner ("Switching to Starter on Aug 15. Cancel") off a single
             # call instead of fetching plans separately to resolve the name.
             scheduled_plan = None
             if sub.scheduled_plan_id:
@@ -488,8 +488,8 @@ def get_current_subscription(
         # downgrade cutover, the customer sits on a short-lived ``past_due``
         # grace row on the TARGET plan (``transition_service.promote_scheduled_change``)
         # while they still owe the one-time authorization of the new UPI mandate.
-        # ``sub.status`` reads ``past_due`` — which the billing UI would otherwise
-        # render as a failed-payment banner — so surface a distinct signal the
+        # ``sub.status`` reads ``past_due`` (which the billing UI would otherwise
+        # render as a failed-payment banner) so surface a distinct signal the
         # frontend can turn into a "finish your downgrade" prompt instead. Only
         # populated for the grace row; ``None`` in every ordinary state.
         from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
@@ -510,7 +510,7 @@ def get_current_subscription(
             reauth_data = {
                 "required": True,
                 "reason": "downgrade_reauth",
-                # ``plan`` here IS the grace row's plan — i.e. the tier the
+                # ``plan`` here IS the grace row's plan. I.e. the tier the
                 # customer downgraded TO and will keep if they re-authorize.
                 "target_plan_name": plan.name if plan is not None else None,
                 # Wall-clock deadline after which the grace row expires to Free
@@ -525,7 +525,7 @@ def get_current_subscription(
             # Non-null only during a downgrade re-auth grace window (see above).
             "reauth": reauth_data,
             # ``plan`` can be None in the per-agent view when the selected agent
-            # has no subscription of its own yet — the frontend renders that as
+            # has no subscription of its own yet, the frontend renders that as
             # "no paid subscription", so emit null rather than dereferencing it.
             "plan": (
                 {
@@ -537,7 +537,7 @@ def get_current_subscription(
                     "currency": plan.currency,
                     "monthly_price_cents": plan.monthly_price_cents,
                     "annual_price_cents": plan.annual_price_cents,
-                    # USD headline columns — the dashboard renders prices in USD,
+                    # USD headline columns, the dashboard renders prices in USD,
                     # so these must travel with every plan payload (mirrors the
                     # /plans endpoint). Omitting them makes the UI read them as
                     # undefined and fall through to "No paid subscription".
@@ -571,14 +571,14 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
     """Return the geo / currency profile the UI should render against.
 
     Single call so the Billing page and PlanModal don't have to fan out a
-    per-plan quote — the frontend converts INR paise to its local USD with
+    per-plan quote, the frontend converts INR paise to its local USD with
     the returned ``display_rate`` (a paid plan's INR price is the source of
     truth; USD is informational until international payments is live).
 
     Includes the Razorpay public key so the React layer doesn't have to
     re-stuff it from a separate env / endpoint when opening the modal.
 
-    ``display_currency`` is NOT unconditionally the charge currency — the four
+    ``display_currency`` is NOT unconditionally the charge currency, the four
     cases, and what keeps each of them honest:
 
     * ``stored`` IN → INR shown, INR charged.
@@ -588,7 +588,7 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
       unless ``INTL_PAYMENTS_ENABLED`` puts it on the USD rail.
     * ``detected`` (IP geo) non-IN → USD shown while the charge path would
       confirm IN. This divergence is DELIBERATE: an IP signal is display-grade
-      only — the frontend never echoes it back as ``billing_country``
+      only, the frontend never echoes it back as ``billing_country``
       (``usePlanCheckout.ts``) and ``_resolve_confirmed_billing_country_or_409``
       never resolves on it. It cannot turn into a wrong charge because that same
       gate 409s ``billing_country_required`` whenever a foreign IP is the ONLY
@@ -617,7 +617,7 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
         "country": ctx.country,
         # Trust grade for the frontend: a "detected" (IP geo) country is
         # DISPLAY-ONLY and must never be echoed back into a money route's
-        # billing_country param — that would launder the IP signal into the
+        # billing_country param. That would launder the IP signal into the
         # charge-grade request-confirmation slot and defeat the server's
         # refusal to charge on it (Wave 1.2). "unresolved" is reported as null
         # so the wire contract stays 'stored' | 'detected' | null.
@@ -647,37 +647,37 @@ def verify_razorpay_subscription(
 ):
     """Verify the Razorpay Checkout return signature for a subscription.
 
-    Razorpay's ``subscription.activated`` webhook is the canonical reconciler
-    — this endpoint only exists so the UI can flip to a "Subscription
-    active" state the moment the modal closes, without waiting for the
-    out-of-band webhook round-trip.
+     Razorpay's ``subscription.activated`` webhook is the canonical reconciler
+    . This endpoint only exists so the UI can flip to a "Subscription
+     active" state the moment the modal closes, without waiting for the
+     out-of-band webhook round-trip.
 
-    Response contract — read ``status`` carefully, it is the narrowest field:
+     Response contract. Read ``status`` carefully, it is the narrowest field:
 
-    * ``status: "verified"`` refers to the SIGNATURE, and nothing else. It says
-      Razorpay signed this payment for this subscription. It does NOT say a
-      subscription exists locally, and misreading it as "active" is how a
-      caller ends up asserting a plan the app cannot see.
-    * ``subscription_known`` — whether a local ``Subscription`` row exists yet.
-      The long-standing flag; unchanged, and callers built against it keep
-      working exactly as before.
-    * ``activation_pending`` — the same fact stated in the affirmative, added
-      because "``status`` is about the signature" is a distinction a reader has
-      to notice, and the cost of not noticing it is a double charge. ``True``
-      means: the money is fine, the plan is not visible yet, keep polling.
-    * ``retry_after_seconds`` — how long to wait before re-reading
-      ``GET /subscriptions/current``. Present only while activation is pending.
-      It is a CADENCE, not a deadline: poll until ``activation_pending`` clears
-      rather than giving up after a fixed number of attempts. The old frontend
-      re-fetched twice (immediately, then at 3s) and stopped — the prod mandate
-      was still non-billable well past that, so the customer saw no plan change
-      and bought it a second time.
+     * ``status: "verified"`` refers to the SIGNATURE, and nothing else. It says
+       Razorpay signed this payment for this subscription. It does NOT say a
+       subscription exists locally, and misreading it as "active" is how a
+       caller ends up asserting a plan the app cannot see.
+     * ``subscription_known``. Whether a local ``Subscription`` row exists yet.
+       The long-standing flag; unchanged, and callers built against it keep
+       working exactly as before.
+     * ``activation_pending``, the same fact stated in the affirmative, added
+       because "``status`` is about the signature" is a distinction a reader has
+       to notice, and the cost of not noticing it is a double charge. ``True``
+       means: the money is fine, the plan is not visible yet, keep polling.
+     * ``retry_after_seconds``. How long to wait before re-reading
+       ``GET /subscriptions/current``. Present only while activation is pending.
+       It is a CADENCE, not a deadline: poll until ``activation_pending`` clears
+       rather than giving up after a fixed number of attempts. The old frontend
+       re-fetched twice (immediately, then at 3s) and stopped, the prod mandate
+       was still non-billable well past that, so the customer saw no plan change
+       and bought it a second time.
 
-    Failure modes (caller-facing):
-      * 400 — signature mismatch (replay / tampering).
-      * 409 — ``subscription_activation_conflict``: the money arrived but the
-        local row collided with another active subscription in this scope.
-      * 502 — Razorpay SDK error (network / quota).
+     Failure modes (caller-facing):
+       * 400. Signature mismatch (replay / tampering).
+       * 409. ``subscription_activation_conflict``: the money arrived but the
+         local row collided with another active subscription in this scope.
+       * 502. Razorpay SDK error (network / quota).
     """
     from app.services import razorpay_service
 
@@ -695,7 +695,7 @@ def verify_razorpay_subscription(
 
     # Idempotently reconcile the local Subscription row. The webhook is the
     # canonical path, but it can be delayed (Razorpay retries, worker outage,
-    # network blip) — without a reconcile here a paying customer would see
+    # network blip), without a reconcile here a paying customer would see
     # "no plan" in the UI until the webhook eventually fires. The reconcile
     # helper is gated by a synthetic event id in ``processed_webhooks`` so
     # this path and the webhook can't double-grant.
@@ -717,18 +717,18 @@ def verify_razorpay_subscription(
                 )
                 session.commit()
             except razorpay_service.RazorpayBillingError:
-                # Reconcile failed — the webhook may still arrive. Don't fail
+                # Reconcile failed, the webhook may still arrive. Don't fail
                 # verify; the UI will poll /subscriptions/current and pick up
                 # the row whenever it lands.
                 logger.warning(
-                    "Razorpay reconcile failed for client %s, subscription %s — falling back to webhook",
+                    "Razorpay reconcile failed for client %s, subscription %s. Falling back to webhook",
                     client.id,
                     payload.razorpay_subscription_id,
                 )
             except IntegrityError as exc:
                 # "One active subscription per scope" is a constraint this
-                # endpoint can PREDICT — a second in-flight mandate collides with
-                # the first active row — and a predictable constraint must not
+                # endpoint can PREDICT (a second in-flight mandate collides with
+                # the first active row) and a predictable constraint must not
                 # reach a paying customer as a raw 500 mid-checkout. Any OTHER
                 # integrity failure is a real bug and is re-raised untouched.
                 session.rollback()
@@ -755,7 +755,7 @@ def verify_razorpay_subscription(
 
         # Create the first-charge invoice synchronously too. The
         # ``subscription.charged`` webhook is the canonical creator, but it
-        # can't reach a local dev box and can lag in prod — without this a
+        # can't reach a local dev box and can lag in prod, without this a
         # paying customer sees an active plan with no invoice. Idempotent on
         # the payment id, so the eventual webhook never duplicates it.
         if sub is not None:
@@ -763,7 +763,7 @@ def verify_razorpay_subscription(
             session.commit()
             invoice_service.request_pdf_render_soon()
         # Additive only. ``status`` and ``subscription_known`` keep their exact
-        # meanings and values — a caller polling on ``subscription_known`` is
+        # meanings and values, a caller polling on ``subscription_known`` is
         # unaffected. The two new fields exist so a caller does not have to
         # infer the pending state from the ABSENCE of something.
         response: dict[str, object] = {
@@ -805,7 +805,7 @@ def _resolve_invoice_scope(session: Session, client_id: int, bot_id: int | None)
     Mirrors ``get_current_subscription``'s fallback exactly: an agent with no
     subscription of its own draws on the ACCOUNT plan, so it must show the
     account's invoices. Without this the Billing page renders an account
-    subscription beside an agent-scoped (empty) invoice list — the two panels
+    subscription beside an agent-scoped (empty) invoice list, the two panels
     can never agree, which is what made a paying customer see "No invoices yet"
     while their plan showed Active.
 
@@ -825,8 +825,8 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
     When ``bot_id`` is given AND that agent has its own subscription, the
     history is scoped to that agent's invoices (``Invoice.bot_id``). An agent
     without its own subscription falls back to the account-wide history,
-    matching how ``/current`` resolves the subscription it is shown beside —
-    see ``_resolve_invoice_scope``. Omit ``bot_id`` for the account-wide
+    matching how ``/current`` resolves the subscription it is shown beside.
+    See ``_resolve_invoice_scope``. Omit ``bot_id`` for the account-wide
     history.
     """
     with get_session() as session:
@@ -849,12 +849,12 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
                 "currency": inv.currency,
                 "status": inv.status,
                 # Description on numbered rows can carry serials ("Credit note
-                # against DB/26-27/000001") — gated like the other v2 fields.
+                # against DB/26-27/000001"). Gated like the other v2 fields.
                 "description": (
                     inv.description if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None
                 ),
                 # v2 documents (numbered rows) follow the same customer-facing
-                # kill switch as the tax fields below — a rendered PDF must
+                # kill switch as the tax fields below, a rendered PDF must
                 # never leak while delivery is disabled. Unnumbered legacy rows
                 # pass their provider URLs through untouched.
                 "invoice_url": (
@@ -866,7 +866,7 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
                 "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
                 "created_at": inv.created_at.isoformat() if inv.created_at else None,
                 # Invoicing v2 tax-document fields (null on legacy rows).
-                # Nulled while invoices run in SHADOW mode — customers must not
+                # Nulled while invoices run in SHADOW mode. Customers must not
                 # see (and book against) invoice numbers that are still under
                 # verification. INVOICE_EMAILS_ENABLED is the customer-facing
                 # switch (Phase 4/6); keys stay present so the schema is stable.
@@ -906,22 +906,22 @@ class BillingAddress(BaseModel):
 
 
 class BillingDetailsBody(BaseModel):
-    # All optional — PATCH semantics via exclude_unset: omitted fields keep
+    # All optional. PATCH semantics via exclude_unset: omitted fields keep
     # their stored value; an explicit null clears the field.
     legal_name: Name | None = None
     # Indian GSTIN. Format AND mod-36 checksum are verified in the handler by
-    # ``is_valid_gstin`` (which also has to distinguish "" — clear the field —
+    # ``is_valid_gstin`` (which also has to distinguish "" (clear the field)
     # from an invalid value), so this only bounds the length: 15 characters
     # plus room for the spacing people paste in.
     gstin: str | None = Field(default=None, max_length=32)
-    # Printed on the invoice. Allow-listed keys, each a bounded string — it
+    # Printed on the invoice. Allow-listed keys, each a bounded string, it
     # used to be ``dict[str, str]``, which accepted any number of keys of any
     # length.
     billing_address: BillingAddress | None = None
     # ISO-2 country code; length-capped so a free-text value ("India") is a
     # clean 422 rather than a varchar(2) overflow → 500 at commit.
     billing_country: str | None = Field(default=None, max_length=2)
-    # ISO 3166-2 subdivision suffix — decides intra- vs inter-state GST.
+    # ISO 3166-2 subdivision suffix. Decides intra- vs inter-state GST.
     billing_state_code: str | None = Field(default=None, max_length=8)
     billing_email: EmailAddress | None = None
 
@@ -950,27 +950,27 @@ _RULE_46F_THRESHOLD_MINOR = 50_000 * 100
 def _missing_billing_fields(client: Client, *, amount_minor: int | None = None) -> list[str]:
     """Which statutory buyer fields are absent for THIS buyer, in display order.
 
-    Mandatory-fields matrix (CGST Rule 46 + Circular 242) — ask only for what
+    Mandatory-fields matrix (CGST Rule 46 + Circular 242). Ask only for what
     the law requires from each kind of buyer, so payment stays open to
     everyone, registered or not, Indian or foreign:
 
-    * **Registered buyer (GSTIN on record)** — registered legal name and
+    * **Registered buyer (GSTIN on record)**. Registered legal name and
       address are mandatory: the recipient details must match the GST
       registration or the buyer's GSTR-2B reconciliation fails and they lose
       the input tax credit. State derives from the GSTIN.
-    * **Foreign buyer (export invoice)** — Rule 46's export proviso wants the
+    * **Foreign buyer (export invoice)**. Rule 46's export proviso wants the
       recipient's name, address and destination country on the document. The
       country is already on record (it is what routed them here); the name
       falls back to the account name; only the address is asked for.
-    * **Unregistered domestic buyer (B2C)** — nothing, below ₹50,000. Rule
+    * **Unregistered domestic buyer (B2C)**, nothing, below ₹50,000. Rule
       46(f) only demands name/address/state on invoices of ₹50,000+ to
       unregistered persons; below that the invoice is valid without recipient
       details, the name falls back to the account name, and the place of
-      supply falls back to the supplier's state (Circular 242 — implemented in
+      supply falls back to the supplier's state (Circular 242. Implemented in
       ``finalize_invoice``). Asking anyway was blocking legitimate B2C
       payments for details the law never required from them.
 
-    A GSTIN itself is never required — it matters only for input tax credit,
+    A GSTIN itself is never required, it matters only for input tax credit,
     and the buyer can add it later.
     """
     has_gstin = bool((client.gstin or "").strip())
@@ -1014,7 +1014,7 @@ def payment_recovery(client: Client = Depends(get_current_client), bot_id: int |
 
     Drives the app-wide past-due banner and its CTA. Read-only and safe to
     poll: it resolves Razorpay's EXISTING hosted page and never mutates
-    anything — in particular it never mints a second mandate, which would
+    anything, in particular it never mints a second mandate, which would
     double-charge a customer whose original subscription is still recoverable
     (see ``dunning_service``).
 
@@ -1035,7 +1035,7 @@ def payment_recovery(client: Client = Depends(get_current_client), bot_id: int |
 
         # A downgrade re-auth grace row is ``past_due`` but is NOT a failed
         # payment: it has no gateway mandate and awaits a first authorization,
-        # not a rescue. Surfacing it in the dunning "payment failed — recover"
+        # not a rescue. Surfacing it in the dunning "payment failed. Recover"
         # banner would be wrong (and there is no mandate to build a recovery
         # link from). The re-auth CTA reaches the customer via the cutover email
         # instead, so this endpoint treats the grace row as not-past-due.
@@ -1064,8 +1064,8 @@ def payment_recovery(client: Client = Depends(get_current_client), bot_id: int |
         try:
             link = get_recovery_link(sub.razorpay_subscription_id)
         except DunningError:
-            # Gateway hiccup. Still tell the customer they are past due — that
-            # part is locally known and true — but ``recoverable: None`` says
+            # Gateway hiccup. Still tell the customer they are past due (that
+            # part is locally known and true) but ``recoverable: None`` says
             # "we couldn't check", which must not be rendered as a dead button
             # or as "your subscription is gone".
             return {
@@ -1122,7 +1122,7 @@ def update_billing_details(
         # classifies every invoice from it, so flipping it under a live INR
         # mandate turns subsequent renewals into self-declared zero-rated
         # exports (P0-2). While any active-set subscription carries a Razorpay
-        # mandate the *classification* country is frozen — writes that keep the
+        # mandate the *classification* country is frozen. Writes that keep the
         # classification (IN→IN, NULL→IN) still pass so a subscribed customer
         # can complete their billing details. Rail change = churn event;
         # genuine relocations go through the audited superadmin override.
@@ -1149,7 +1149,7 @@ def update_billing_details(
                 )
             eff_state = eff_gstin[:2]
             # An Indian GST registration cannot belong to a foreign-billed
-            # buyer — that combination would mint an export invoice carrying a
+            # buyer. That combination would mint an export invoice carrying a
             # domestic GSTIN (and lets a customer self-declare out of IGST).
             if eff_country not in (None, "IN"):
                 raise HTTPException(
@@ -1160,7 +1160,7 @@ def update_billing_details(
             # A registered buyer must name themselves. The recipient name on a
             # tax invoice has to match the GST registration or the buyer's
             # GSTR-2B reconciliation fails and they cannot claim the input tax
-            # credit — so a GSTIN without a legal name is an incomplete
+            # credit, so a GSTIN without a legal name is an incomplete
             # registration, not merely a cosmetic gap. (No GSTIN is fine: that
             # is an unregistered B2C buyer.)
             #
@@ -1173,7 +1173,7 @@ def update_billing_details(
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "legal_name is required when a GSTIN is provided — it must match the "
+                        "legal_name is required when a GSTIN is provided, it must match the "
                         "registered business name on your GST certificate."
                     ),
                 )
@@ -1193,7 +1193,7 @@ def update_billing_details(
         if "billing_email" in fields:
             row.billing_email = (fields["billing_email"] or "").strip() or None
         # An ACCEPTED foreign-country write (no live mandate → allowed) from an
-        # IN-detected request is the P0-2 signal shape — record it durably even
+        # IN-detected request is the P0-2 signal shape. Record it durably even
         # though the write itself is legitimate, so a later export
         # classification for this account has a review trail.
         if country_provided and new_country and http_request is not None:
@@ -1249,7 +1249,7 @@ class BillingFunnelEventBody(BaseModel):
 )
 def record_billing_funnel_event(body: BillingFunnelEventBody, client: Client = Depends(get_current_client)):
     """Record a detected payment-funnel drop-off (customer closed the Razorpay
-    sheet, or the gateway declined). Telemetry only — nothing downstream
+    sheet, or the gateway declined). Telemetry only, nothing downstream
     depends on these rows, so the write is simple and unconditional; the app
     calls this fire-and-forget and ignores failures."""
     from app.db.models import BillingFunnelEvent
@@ -1310,7 +1310,7 @@ def checkout_quote(
     """Single source of truth for what the checkout button will charge.
 
     The admin UI calls this before opening any payment modal so it can
-    render the right currency, amount, payment methods, and CTA — without
+    render the right currency, amount, payment methods, and CTA, without
     the frontend having to know provider routing rules.
 
     Response shape (always 200 unless inputs are invalid):
@@ -1346,9 +1346,9 @@ def checkout_quote(
         # explicit param (this checkout's country-confirmation) → the account's
         # saved country → IP geo (display-grade) → unresolved. The confirmed
         # country overrides IP so an Indian resident mis-detected abroad is
-        # never routed to USD — and vice-versa (FEMA-safe). An UNRESOLVED buyer
+        # never routed to USD, and vice-versa (FEMA-safe). An UNRESOLVED buyer
         # is domestic, matching charge_currency's rule for every legacy account
-        # (NULL country, INR mandate) — previously this quote treated unknown
+        # (NULL country, INR mandate). Previously this quote treated unknown
         # as foreign and dead-ended a brand-new customer at Contact-sales
         # whenever the geo lookup failed.
         ctx = resolve_billing_context(
@@ -1359,7 +1359,7 @@ def checkout_quote(
         country = ctx.country
         is_domestic = ctx.currency == "INR"
 
-        # INR price is the canonical amount — use it as the free-plan test so a
+        # INR price is the canonical amount. Use it as the free-plan test so a
         # missing USD column on a foreign quote can't misread a paid plan as free.
         inr_minor = _amount_for_cycle(plan, billing_cycle)
         currency = ctx.currency
@@ -1390,14 +1390,14 @@ def checkout_quote(
         # Foreign buyer, paid plan: charge on the USD rail only when the account
         # is enabled for international payments AND this tier actually has a USD
         # Razorpay plan wired for the cycle. Checking the id here (not just the
-        # flag) keeps the quote honest — promising a checkout the charge path
+        # flag) keeps the quote honest. Promising a checkout the charge path
         # would reject with "no USD Razorpay plan id" is worse than the CTA.
         usd_plan_id = (
             plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
         )
         # amount_minor > 0 (F6): a wired USD plan id with a NULL/0 *_usd_cents
-        # column would otherwise advertise "$0" with checkout_supported=true —
-        # while the immutable Razorpay plan bills its real amount. A tier whose
+        # column would otherwise advertise "$0" with checkout_supported=true.
+        # While the immutable Razorpay plan bills its real amount. A tier whose
         # USD price isn't configured is intl-pending, not free.
         if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id and amount_minor > 0:
             return {
@@ -1407,7 +1407,7 @@ def checkout_quote(
                 "amount_display": amount_display,
                 "billing_cycle": billing_cycle,
                 "provider": "razorpay",
-                # Cards only — UPI is a domestic rail and cannot settle a USD charge.
+                # Cards only. UPI is a domestic rail and cannot settle a USD charge.
                 "methods": list(_RAZORPAY_METHODS_USD),
                 "checkout_supported": True,
                 "contact_sales": None,
@@ -1432,12 +1432,12 @@ def checkout_quote(
                 "source": ctx.source,
             }
 
-        # Domestic paid plan: the live INR rail — but only when this tier
+        # Domestic paid plan: the live INR rail, but only when this tier
         # actually has an INR Razorpay plan wired for the cycle. Same principle
         # as the USD branch above, and it applies to every plan, not just newly
         # seeded ones. A tier with no INR plan id is LISTED on purpose (a
-        # contact-sales tier needs no gateway id to appear on the pricing page —
-        # see ``plan_service.plan_checkout_is_wired``), so this branch is the
+        # contact-sales tier needs no gateway id to appear on the pricing page.
+        # See ``plan_service.plan_checkout_is_wired``), so this branch is the
         # only thing standing between the buyer and a checkout that cannot
         # complete. ``POST /subscriptions/checkout`` refuses in the SAME shape:
         # ``create_subscription`` raises ``PlanNotCheckoutable``, which the
@@ -1480,7 +1480,7 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     The checkout disclosure quotes ``plan.monthly_price_cents``; if it drifts
     from the amount configured on the live Razorpay plan, the UI quotes a rupee
     figure the mandate will not debit. This surfaces drift per plan/cycle. A
-    Razorpay error on any plan yields ``in_sync: null`` + an error string — a
+    Razorpay error on any plan yields ``in_sync: null`` + an error string, a
     diagnostic must never 500.
     """
     if not client.is_superadmin:
@@ -1526,13 +1526,13 @@ def _geo_mismatch_detail(confirmed_country: str, detected_country: str | None) -
 
     Bidirectional, because both directions are tax signals:
 
-    * claims **IN**, detected foreign — a domestic INR/GST classification from
+    * claims **IN**, detected foreign, a domestic INR/GST classification from
       abroad (FEMA / place-of-supply review);
-    * claims **foreign**, detected IN — a zero-rated export classification from
+    * claims **foreign**, detected IN, a zero-rated export classification from
       inside India: the exact self-declared flip that turns a domestic supply
       into GST leakage.
 
-    Unknown detection (``None`` — geo lookups legitimately fail) is never
+    Unknown detection (``None``. Geo lookups legitimately fail) is never
     suspicious, and a foreign claim from a *different* foreign country is a
     curiosity (travel, VPN), not a tax signal.
     """
@@ -1548,8 +1548,8 @@ def _geo_mismatch_detail(confirmed_country: str, detected_country: str | None) -
 def _flag_geo_mismatch(session, client_id: int, detail: str) -> None:
     """Stamp the persistent geo-mismatch columns on the account (newest wins).
 
-    The WARN log is the alert; these columns are the durable review trail —
-    log retention is shorter than a GST assessment window.
+    The WARN log is the alert; these columns are the durable review trail.
+    Log retention is shorter than a GST assessment window.
     """
     logger.warning("Billing geo mismatch: client=%s %s", client_id, detail)
     row = session.get(Client, client_id)
@@ -1584,20 +1584,20 @@ def _resolve_confirmed_billing_country_or_409(
     non-IN buyer, and defaults to False so a new money path is gated until it
     proves otherwise. Subscription checkout passes ``INTL_PAYMENTS_ENABLED``
     (the USD rail bills against the plan's USD Razorpay ids); top-up passes
-    False because ``razorpay_service.create_topup_order`` is still INR-only —
-    letting it through would charge a foreign buyer rupees on a supply
+    False because ``razorpay_service.create_topup_order`` is still INR-only.
+    Letting it through would charge a foreign buyer rupees on a supply
     ``invoice_service`` classifies as an export (GST mis-classification /
     short-payment). When USD is not allowed, a confirmed non-IN buyer 409s with
     the ``intl_usd_pending`` contract the frontend already renders as a
     Contact-sales CTA.
 
-    Resolution is ``resolve_billing_context`` — the SAME order the quote uses
-    (request-confirmed → stored → detected) — with the charge path's trust
+    Resolution is ``resolve_billing_context`` (the SAME order the quote uses
+    (request-confirmed → stored → detected)) with the charge path's trust
     rules layered on top (Wave 1.2):
 
     * The ``detected`` (IP geo) signal is never *charged on*. But when it is
-      the ONLY signal and it says foreign, the old behavior — silently
-      defaulting to IN and minting an INR mandate a USD quote never promised —
+      the ONLY signal and it says foreign, the old behavior (silently
+      defaulting to IN and minting an INR mandate a USD quote never promised)
       is replaced by a 409 ``billing_country_required``: the customer confirms
       their country and checkout proceeds on the right rail.
     * A GSTIN on record with a confirmed non-IN country is a contradiction (a
@@ -1606,7 +1606,7 @@ def _resolve_confirmed_billing_country_or_409(
     * Unresolved with no foreign signal stays the domestic default (every
       legacy account: NULL country, INR mandate).
 
-    The geo cross-check stays advisory (see ``_geo_mismatch_detail``) — a
+    The geo cross-check stays advisory (see ``_geo_mismatch_detail``), a
     charge-grade country that contradicts the IP signal is flagged, not
     blocked.
     """
@@ -1623,7 +1623,7 @@ def _resolve_confirmed_billing_country_or_409(
             detail={
                 "reason": "billing_country_required",
                 "message": (
-                    "Please confirm your billing country before checkout — "
+                    "Please confirm your billing country before checkout. "
                     "it determines the currency you are charged in."
                 ),
             },
@@ -1659,7 +1659,7 @@ def _resolve_confirmed_billing_country_or_409(
 
 def _billing_country_locked_409() -> HTTPException:
     """The one 409 every surface raises when a tax-classification country
-    change is attempted under a live mandate — PUT /billing-details, checkout,
+    change is attempted under a live mandate. PUT /billing-details, checkout,
     and top-up must speak the same contract or the freeze has side doors."""
     return HTTPException(
         status_code=409,
@@ -1668,7 +1668,7 @@ def _billing_country_locked_409() -> HTTPException:
             "message": (
                 "Your billing country is locked while a subscription mandate is "
                 "active, because it determines how your invoices are taxed. "
-                "If you have genuinely relocated, contact support — the change "
+                "If you have genuinely relocated, contact support, the change "
                 "requires re-pointing your payment mandate to the new billing rail."
             ),
             "contact": "developer@oyechats.com",
@@ -1677,7 +1677,7 @@ def _billing_country_locked_409() -> HTTPException:
 
 
 def _has_live_gateway_mandate(session, client_id: int) -> bool:
-    """Any active-set subscription (account OR per-bot — deliberately no
+    """Any active-set subscription (account OR per-bot. Deliberately no
     ``bot_id`` filter) carrying a Razorpay mandate. The freeze must span
     per-bot mandates: a client whose only live mandate is bot-scoped can
     otherwise flip the account's tax country through a side door."""
@@ -1702,7 +1702,7 @@ def _persist_confirmed_country(session, client: Client, confirmed_country: str) 
     The persist writes at checkout and top-up used to bypass the freeze
     entirely (review finding): a client with only a per-bot INR mandate could
     flip IN→US via ``POST /checkout {billing_country}``, and a stored-US
-    client could flip US→IN via a top-up — both exactly the writes the PUT
+    client could flip US→IN via a top-up, both exactly the writes the PUT
     endpoint 409s. Classification-preserving writes (IN→IN, NULL→IN) still
     pass so a confirmed country can land on a legacy NULL row.
     """
@@ -1732,19 +1732,19 @@ def _require_precharge_gates(
     amount_minor: int | None = None,
 ) -> str:
     """The shared pre-charge gate for EVERY route that can mint a new Razorpay
-    mandate (Wave 1.3): /checkout, /change-plan Branch 3, /resume Mode 2, and
-    top-ups.
+     mandate (Wave 1.3): /checkout, /change-plan Branch 3, /resume Mode 2, and
+     top-ups.
 
-    Runs the billing-country resolution with its trust rules
-    (``billing_country_required`` / GSTIN⇒IN / ``intl_usd_pending`` / geo
-    flagging) and then the Rule 46 billing-identity check. Before this,
-    /change-plan and /resume created real gateway mandates with none of these
-    — a trial→paid conversion through change-plan skipped identity collection
-    entirely, so its activation webhook issued an invoice with no buyer.
+     Runs the billing-country resolution with its trust rules
+     (``billing_country_required`` / GSTIN⇒IN / ``intl_usd_pending`` / geo
+     flagging) and then the Rule 46 billing-identity check. Before this,
+     /change-plan and /resume created real gateway mandates with none of these
+    , a trial→paid conversion through change-plan skipped identity collection
+     entirely, so its activation webhook issued an invoice with no buyer.
 
-    ``allow_usd`` defaults to the intl rail flag (plan mandates); top-up passes
-    ``False`` because its order path is INR-only. Returns the resolved country
-    for callers that need the rail.
+     ``allow_usd`` defaults to the intl rail flag (plan mandates); top-up passes
+     ``False`` because its order path is INR-only. Returns the resolved country
+     for callers that need the rail.
     """
     country = _resolve_confirmed_billing_country_or_409(
         request_country=request_country,
@@ -1765,8 +1765,8 @@ def create_checkout(
 ):
     """Create a Razorpay checkout session for a paid plan.
 
-    Returns ``{provider, subscription_id, key_id, name, description, prefill, theme}``
-    — frontend opens ``new Razorpay({subscription_id, ...}).open()``.
+     Returns ``{provider, subscription_id, key_id, name, description, prefill, theme}``
+    . Frontend opens ``new Razorpay({subscription_id, ...}).open()``.
     """
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
@@ -1776,7 +1776,7 @@ def create_checkout(
     # sales while it is off. Unknown (no confirm + no stored country) defaults
     # to domestic; a country already on the client is honoured as the fallback.
     # Shared with /credits/topup, which passes allow_usd=False because its order
-    # path is still INR-only — see _resolve_confirmed_billing_country_or_409.
+    # path is still INR-only. See _resolve_confirmed_billing_country_or_409.
     # Country trust rules + Rule 46 buyer identity, shared with every other
     # mandate-minting route (Wave 1.3). Identity is collected BEFORE the
     # charge: the invoice is issued from the payment webhook, so this is the
@@ -1806,7 +1806,7 @@ def create_checkout(
 
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
         # FIRST purchase. A subscribed customer hitting it again would mint a
-        # SECOND Razorpay subscription + second UPI mandate — Razorpay can't
+        # SECOND Razorpay subscription + second UPI mandate. Razorpay can't
         # swap a UPI plan in place, so both mandates would debit the customer
         # (double-charge). Plan changes must go through ``/change-plan``, which
         # orchestrates the cancel+recreate+re-authorize re-auth flow. Only an
@@ -1816,7 +1816,7 @@ def create_checkout(
         # The guard is ACCOUNT-scoped (``bot_id IS NULL``). ``/checkout`` only
         # ever creates account-level subscriptions, so a per-bot subscription
         # (bot_id NOT NULL) must not block a legitimate first account purchase.
-        # Deliberately NOT using ``get_client_subscription`` here — that spans
+        # Deliberately NOT using ``get_client_subscription`` here. That spans
         # per-bot subs, which would wrongly 409 a per-bot-only client.
         existing_account_sub = session.execute(
             select(Subscription)
@@ -1834,8 +1834,8 @@ def create_checkout(
                 detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
             )
 
-        # Persist the confirmed billing country for invoice place-of-supply —
-        # through the freeze-honouring helper: a classification change under a
+        # Persist the confirmed billing country for invoice place-of-supply.
+        # Through the freeze-honouring helper: a classification change under a
         # live mandate (including a PER-BOT one) 409s here exactly like
         # PUT /billing-details. Only writes when the caller explicitly
         # confirmed a country (an omitted field must not overwrite a stored
@@ -1850,8 +1850,8 @@ def create_checkout(
         # authorizable subscription, not mint a sibling mandate. Placed BEFORE
         # the promo/discount work so a reuse never burns a second promo slot.
         # Gateway state decides staleness, and a request under a DIFFERENT key
-        # (plan / cycle / rail) cancels the superseded mandate before minting —
-        # see pending_checkout_service.
+        # (plan / cycle / rail) cancels the superseded mandate before minting.
+        # See pending_checkout_service.
         client_row = session.get(Client, client.id)
         try:
             reused = pending_checkout_service.reuse_or_supersede(
@@ -1881,7 +1881,7 @@ def create_checkout(
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
         # a non-Razorpay path is ever added before its coupon realiser exists, the
-        # discount is not silently dropped (customer over-charged) — it's simply
+        # discount is not silently dropped (customer over-charged), it's simply
         # not resolved until the provider can honour it.
         provider = _resolve_provider()
         if provider == "razorpay":
@@ -1890,7 +1890,7 @@ def create_checkout(
             discount_bps = 0
 
         # Launch-promo: a time-boxed free period realised by deferring the first
-        # charge (Razorpay ``start_at``). Only resolved on Razorpay — the sole
+        # charge (Razorpay ``start_at``). Only resolved on Razorpay, the sole
         # provider that can honour ``start_at`` today. A promo and a referral
         # discount do NOT stack: the promo already gives 100% off for its free
         # cycles, and billing must resume at FULL price afterwards, so we force
@@ -1901,7 +1901,7 @@ def create_checkout(
         promo_start_at: int | None = None
         promo_extra_notes: dict[str, str] | None = None
         # Monthly-only: "3 months free" on an ANNUAL cycle would defer the first
-        # charge 3 months and then bill the ENTIRE year at once — a nasty surprise
+        # charge 3 months and then bill the ENTIRE year at once, a nasty surprise
         # that does not match the offer. Annual checkouts are charged normally
         # (no promo). The frontend also hides the offer on the annual cycle.
         if provider == "razorpay" and request.billing_cycle == "monthly":
@@ -1930,12 +1930,12 @@ def create_checkout(
 
         # Park the referral snapshot in the subscription notes instead of
         # inserting a ReferralConversion here (Wave 1.4). Recording at
-        # checkout-create credited the affiliate for ABANDONED checkouts —
-        # mandates never authorised, money never moved. The
+        # checkout-create credited the affiliate for ABANDONED checkouts.
+        # Mandates never authorised, money never moved. The
         # ``subscription.charged`` handler now records the conversion from
         # these notes on the first real payment (unique-per-client, so replays
         # and later cycles no-op). Snapshot terms still freeze at subscribe
-        # time — they travel in the immutable notes. Covers ANY attributed
+        # time. They travel in the immutable notes. Covers ANY attributed
         # code, not just discount-bearing ones (finding MED-2 preserved).
         conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
         extra_notes: dict[str, str] = dict(promo_extra_notes or {})
@@ -1996,11 +1996,11 @@ def change_plan(
 ):
     """Upgrade or downgrade the client's subscription to a different plan.
 
-    Response shape — the frontend branches on which key is present:
+    Response shape, the frontend branches on which key is present:
 
-    * ``{"status": "checkout_required", ...}`` — Razorpay subscription auth required
-    * ``{"status": "downgrade_scheduled", ...}`` — scheduled for next cycle
-    * ``{"status": "downgraded", "message": "..."}`` — Free downgrade
+    * ``{"status": "checkout_required", ...}``. Razorpay subscription auth required
+    * ``{"status": "downgrade_scheduled", ...}``. Scheduled for next cycle
+    * ``{"status": "downgraded", "message": "..."}``. Free downgrade
     """
     with get_session() as session:
         # Serialize this client's billing mutations (H1) before reading state.
@@ -2013,14 +2013,14 @@ def change_plan(
 
         # Target the subscription the customer is actually looking at (N3).
         # ``_resolve_target_subscription`` targets the selected bot's own row,
-        # falling back to the ACCOUNT subscription (``bot_id IS NULL``) — NOT
+        # falling back to the ACCOUNT subscription (``bot_id IS NULL``). NOT
         # ``get_client_subscription``, which spans per-bot rows and returns the
         # highest-priced one. Using the latter here meant a downgrade/upgrade
         # from a per-agent Billing view mutated (and cancelled the Razorpay
         # mandate of) a DIFFERENT, pricier bot's subscription.
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
 
-        # Guard 1 of 2 — the IN-PLACE branches (1, 2a, 2b) all act on ``sub``,
+        # Guard 1 of 2, the IN-PLACE branches (1, 2a, 2b) all act on ``sub``,
         # so the scope that matters is the RESOLVED subscription's, never the
         # request parameter's. Branch 2a hands ``sub`` to
         # ``transition_service.execute_paid_upgrade``, which stamps
@@ -2033,7 +2033,7 @@ def change_plan(
         # the case the resolver exists for: an agent with no subscription of its
         # own falls back to the ACCOUNT row, where the very same upgrade is
         # account-scoped and entirely correct. Branch 3 is the one place a
-        # ``request.bot_id`` still creates bot scope on its own — guarded there.
+        # ``request.bot_id`` still creates bot scope on its own. Guarded there.
         if (
             sub is not None
             and sub.bot_id is not None
@@ -2041,26 +2041,26 @@ def change_plan(
         ):
             raise _pooled_plan_scope_error(new_plan)
 
-        # Universal precheck — same plan + SAME CYCLE is a no-op UNLESS the
+        # Universal precheck, same plan + SAME CYCLE is a no-op UNLESS the
         # current subscription is a trial that hasn't been paid for yet (a
         # trialing customer picking their own plan is a valid trial→paid
         # conversion and falls through to Branch 3), or the plan is
-        # cancel-pending (the customer is trying to STAY — hand off to the
+        # cancel-pending (the customer is trying to STAY. Hand off to the
         # Reactivate flow instead of a dead-end 400). A same-plan DIFFERENT-
         # cycle request is a real billing change (Wave 4a): monthly→annual is
         # an upgrade-now (bigger commitment, charged via the upgrade path),
-        # annual→monthly schedules at period end like any downgrade — plan-id
+        # annual→monthly schedules at period end like any downgrade. Plan-id
         # equality alone used to reject both as "already on this plan".
         current_cycle = (sub.billing_cycle or "monthly") if sub is not None else "monthly"
         requested_cycle = request.billing_cycle or current_cycle
         same_plan = sub is not None and sub.plan_id == request.plan_id and sub.status != "trialing"
         if same_plan:
             # Re-picking the current plan while a DOWNGRADE is queued means
-            # "I changed my mind — keep my plan". The cure is cancelling the
+            # "I changed my mind. Keep my plan". The cure is cancelling the
             # scheduled change, NOT /resume: schedule_paid_downgrade also sets
             # cancel_at_period_end + gateway_cancel_executed_at, so the
             # resume_required hand-off below would route the customer into
-            # Mode 2, mint a re-auth checkout — and leave scheduled_plan_id
+            # Mode 2, mint a re-auth checkout, and leave scheduled_plan_id
             # set, so the promotion cron would STILL execute the downgrade
             # they walked away from (review P2-1).
             if sub.scheduled_plan_id:
@@ -2077,7 +2077,7 @@ def change_plan(
             # A cancel-pending sub blocks BOTH the same-cycle re-pick and a
             # cycle switch (review P2-4): executing a billing change on a
             # subscription the customer explicitly cancelled would silently
-            # resurrect it — reactivation must be its own deliberate step.
+            # resurrect it. Reactivation must be its own deliberate step.
             if sub.cancel_at_period_end:
                 raise HTTPException(
                     status_code=409,
@@ -2085,7 +2085,7 @@ def change_plan(
                         "code": "resume_required",
                         "message": (
                             "Your plan is scheduled to cancel at the end of the period. "
-                            "Use Reactivate first — then you can change the billing cycle."
+                            "Use Reactivate first, then you can change the billing cycle."
                         ),
                     },
                 )
@@ -2107,7 +2107,7 @@ def change_plan(
                 # ``get_client_subscription`` only returns rows in the
                 # active-set (active/trialing/past_due). A customer whose
                 # trial has already expired lands here with sub=None even
-                # though they hold a real ``trial_expired`` row — that row
+                # though they hold a real ``trial_expired`` row. That row
                 # is what makes them locked out of their workspace. Treat
                 # "downgrade to Free" as the legitimate way to reactivate:
                 # cancel the expired row (clearing ``data_retention_until``
@@ -2126,7 +2126,7 @@ def change_plan(
                 if expired_sub is None:
                     raise HTTPException(
                         status_code=400,
-                        detail="You're already on Free — nothing to downgrade.",
+                        detail="You're already on Free, nothing to downgrade.",
                     )
 
                 now = datetime.now(UTC)
@@ -2167,11 +2167,11 @@ def change_plan(
             if sub.razorpay_subscription_id:
                 # Without this branch the local row would flip to Free while
                 # Razorpay's UPI mandate kept debiting the customer at the
-                # next cycle — real "still charging after cancellation"
+                # next cycle. Real "still charging after cancellation"
                 # support tickets and chargeback risk.
                 #
                 # Skip the provider call if our DB already shows the mandate
-                # as cancelled/expired — it means the webhook already fired
+                # as cancelled/expired, it means the webhook already fired
                 # and Razorpay would reject a second cancel with a 400.
                 already_cancelled = sub.status in ("canceled", "cancelled", "expired", "completed")
                 if not already_cancelled:
@@ -2189,9 +2189,9 @@ def change_plan(
                             status_code=502,
                             detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
                         ) from exc
-                    # The mandate is dead at Razorpay. Unlike ``/cancel`` — which
+                    # The mandate is dead at Razorpay. Unlike ``/cancel`` (which
                     # now defers the gateway call so the customer can change
-                    # their mind for free — a downgrade to Free must stop the
+                    # their mind for free) a downgrade to Free must stop the
                     # debit right away. Record it so ``/resume`` knows a fresh
                     # mandate is required rather than clearing the flag against a
                     # subscription Razorpay will never charge again.
@@ -2200,7 +2200,7 @@ def change_plan(
                 # Abandon any queued paid→paid downgrade: the customer is now
                 # heading to Free, so a leftover ``scheduled_plan_id`` would let
                 # the cancelled webhook / cron promote a downgrade they walked
-                # away from — an unwanted checkout + re-auth email (Fix C).
+                # away from, an unwanted checkout + re-auth email (Fix C).
                 from app.services import transition_service
 
                 transition_service.cancel_scheduled_change(session, sub)
@@ -2227,7 +2227,7 @@ def change_plan(
             return {"status": "downgraded", "message": msg}
 
         # ── Branch 2a: paid → paid via Razorpay → upgrade-now, credit rollover ──
-        # Razorpay can't modify a subscription's plan in place — we must
+        # Razorpay can't modify a subscription's plan in place. We must
         # cancel the current mandate and open a fresh one. Upgrades take
         # effect immediately because the customer wants the new features
         # now; we roll the customer's unused plan credits into the new
@@ -2243,7 +2243,7 @@ def change_plan(
             from app.services import razorpay_service, transition_service
 
             billing_cycle = request.billing_cycle or sub.billing_cycle or "monthly"
-            # Upgrade-now mints a REAL replacement mandate — same pre-charge
+            # Upgrade-now mints a REAL replacement mandate, same pre-charge
             # gates as every other mint (identity fields are freely clearable
             # after the original checkout, so "they had identity once" is not
             # a guarantee they still do).
@@ -2341,7 +2341,7 @@ def change_plan(
         # Equal-price, different plan (Wave 4a): matches neither the upgrade
         # (>) nor the downgrade (<) branch, and the old fall-through to Branch
         # 3 minted a SECOND mandate while immediately gateway-cancelling the
-        # current one — eating the customer's remaining paid days. There is no
+        # current one. Eating the customer's remaining paid days. There is no
         # meaningful billing action to take between equal-priced tiers, so
         # refuse explicitly and let support handle the rare genuine ask.
         if (
@@ -2367,12 +2367,12 @@ def change_plan(
         # ── Branch 3: paid target → Razorpay checkout ──
         # Reached when the targeted bot has no active subscription: a downgraded
         # (Free) bot returning to paid, or a first Free bot going paid. When a
-        # bot_id is targeted (per-agent Billing), revive THAT bot in place —
-        # carry its id so activation reattaches the new sub and reactivates its
+        # bot_id is targeted (per-agent Billing), revive THAT bot in place.
+        # Carry its id so activation reattaches the new sub and reactivates its
         # knowledge, keeping the same bot_key/embed. Without a bot_id it is an
         # account-level purchase.
         #
-        # DEMOTION, not refusal — this is the one branch whose scope comes from
+        # DEMOTION, not refusal. This is the one branch whose scope comes from
         # the REQUEST rather than from ``sub``: ``create_bot_resubscription``
         # stamps ``request.bot_id`` onto the new subscription whatever
         # ``_resolve_target_subscription`` returned, so the account-row fallback
@@ -2380,7 +2380,7 @@ def change_plan(
         #
         # But refusing here was wrong. Branch 3 is reached WITH a ``bot_id``
         # whenever the resolved subscription is the account row carrying no
-        # Razorpay mandate — every Free, manual, and trialing account. The
+        # Razorpay mandate. Every Free, manual, and trialing account. The
         # trial→paid conversion documented above falls through to exactly this
         # branch, so a refusal made a pooled tier unbuyable by the customers
         # most likely to buy it.
@@ -2389,12 +2389,12 @@ def change_plan(
         # An ACCOUNT-scoped mandate is precisely the product a pooled plan
         # sells, so mint one and drop the agent scope the UI happened to carry.
         # Migrating an agency's EXISTING per-agent subscriptions onto a pooled
-        # tier is a separate, unresolved product question — the demotion applies
+        # tier is a separate, unresolved product question, the demotion applies
         # only to the new mandate minted below.
         route_bot_id = None if plan_entitlements_service.plan_grants_unlimited_bots(new_plan) else request.bot_id
         if route_bot_id != request.bot_id:
             logger.info(
-                "Client %s picked pooled plan %s from agent %s's Billing view — minting the mandate "
+                "Client %s picked pooled plan %s from agent %s's Billing view. Minting the mandate "
                 "at ACCOUNT scope (bot_id NULL), which is what the tier sells",
                 client.id,
                 new_plan.slug,
@@ -2405,8 +2405,8 @@ def change_plan(
         from app.services import pending_checkout_service, razorpay_service
 
         # Same pre-charge gates as /checkout (Wave 1.3): this branch mints a
-        # REAL authorizable mandate, so it must refuse — for a missing buyer
-        # identity or an untrusted/foreign country — BEFORE subscription.create,
+        # REAL authorizable mandate, so it must refuse (for a missing buyer
+        # identity or an untrusted/foreign country) BEFORE subscription.create,
         # not discover the gap at invoice time. The resolved country is also
         # half of the in-flight-checkout reuse key below.
         confirmed_country = _require_precharge_gates(client, http_request)
@@ -2414,7 +2414,7 @@ def change_plan(
         # This branch mints the SAME kind of first mandate /checkout does, so it
         # shares /checkout's idempotency marker (``clients.pending_checkout_*``).
         # Without it a retry here minted a SECOND authorizable subscription and
-        # the customer paid two full cycles for one month — prod client 18,
+        # the customer paid two full cycles for one month. Prod client 18,
         # sub_TPaGNnEfFML4Lr + sub_TPaHBPNyYV3tfe, ₹11,998 for one ₹5,999 plan.
         # Serialised by the ``lock_client_for_billing`` taken at the top of this
         # route, so a concurrent retry reads the committed marker rather than
@@ -2485,7 +2485,7 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
 
     Idempotent: returns ``{"status": "no_change_pending"}`` when nothing is
     queued. When a change WAS queued, this resets ``scheduled_*`` to NULL and
-    leaves ``cancel_at_period_end`` alone — the gateway mandate was cancelled
+    leaves ``cancel_at_period_end`` alone, the gateway mandate was cancelled
     at-cycle-end when the downgrade was scheduled, so the customer must
     re-authorise to keep the current plan past cycle end. We surface that as
     ``mandate_action`` in the response so the frontend can prompt accordingly.
@@ -2510,7 +2510,7 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
         )
         # The mandate was cancelled at the gateway when the downgrade was
         # scheduled; tell the UI so it can show a "Re-authorise to stay on
-        # current plan" CTA. We don't auto-resume — the customer should make
+        # current plan" CTA. We don't auto-resume, the customer should make
         # an explicit choice rather than being silently re-billed.
         return {
             "status": "scheduled_change_cancelled",
@@ -2530,7 +2530,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
     """Cancel the client's subscription at the end of the current billing period.
 
     Records the customer's INTENT to churn (``cancel_at_period_end=True``) and
-    — deliberately — touches nothing at Razorpay yet. The irreversible gateway
+    (deliberately) touches nothing at Razorpay yet. The irreversible gateway
     cancel is executed by ``task_execute_pending_cancellations`` a couple of
     days before ``current_period_end`` (or inline below when the customer
     cancels inside that window).
@@ -2544,7 +2544,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
     instant flag flip (see ``/subscriptions/resume``).
 
     The operator-seat add-on rides along with the deferred cancel for the same
-    reason — cancelling it here took away seats the customer had paid for
+    reason. Cancelling it here took away seats the customer had paid for
     through period end while the plan itself kept running.
 
     Pass ``bot_id`` to cancel a specific bot's subscription under the per-bot
@@ -2566,7 +2566,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         sub.cancel_at_period_end = True
         sub.canceled_at = datetime.now(UTC)
         sub.cancel_reason = request.reason
-        # Clear any queued paid→paid downgrade — an outright cancel supersedes
+        # Clear any queued paid→paid downgrade, an outright cancel supersedes
         # it. Left set, the cancelled webhook / cron backstop would promote the
         # abandoned downgrade into a fresh checkout + re-auth email (Fix C).
         transition_service.cancel_scheduled_change(session, sub)
@@ -2574,7 +2574,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         # Kill any in-flight replacement checkout (from a reactivation or an
         # abandoned upgrade). Razorpay leaves a `created` subscription
         # authorizable indefinitely, so a customer who opened one, walked away,
-        # and then cancelled could authorise that stale link weeks later — its
+        # and then cancelled could authorise that stale link weeks later, its
         # activation webhook would mint a fresh active subscription and RESTART
         # billing after an explicit cancellation. Best-effort: the cancellation
         # the customer asked for must not fail because a dead checkout wouldn't
@@ -2599,7 +2599,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
             sub.upgrade_pending_plan_id = None
 
         # Cancelling on (or after) the last days of the cycle leaves no room for
-        # the daily sweep — Razorpay would debit the next cycle before it ran.
+        # the daily sweep. Razorpay would debit the next cycle before it ran.
         # Execute inline instead. A gateway failure here IS fatal: the customer
         # asked to stop being billed and we could not make that true.
         provider = (sub.payment_provider or "razorpay").lower()
@@ -2638,22 +2638,22 @@ def resume_subscription(
     Two modes, decided by whether the IRREVERSIBLE gateway cancel has been
     issued yet (``gateway_cancel_executed_at``).
 
-    **Mode 1 — the mandate is still live.** ``/cancel`` now records only the
+    **Mode 1, the mandate is still live.** ``/cancel`` now records only the
     customer's intent and leaves Razorpay alone until
     ``task_execute_pending_cancellations`` runs near period end, so for almost
     every customer who changes their mind there is nothing to re-authorise:
     clear the flags and the subscription simply keeps renewing. No checkout, no
     payment. We confirm liveness with the gateway first rather than trusting the
-    local marker — if the customer cancelled from Razorpay's own emails, or a
+    local marker. If the customer cancelled from Razorpay's own emails, or a
     sweep half-completed, clearing the flag would promise a renewal that never
     comes, which is the BL-3 lie this endpoint exists to avoid.
 
-    **Mode 2 — the mandate is already dead.** Razorpay has NO un-cancel API for
+    **Mode 2, the mandate is already dead.** Razorpay has NO un-cancel API for
     an at-cycle-end cancellation, so we re-authorise by minting a FRESH
     subscription for the same plan/cycle (tagging the predecessor via
     ``prev_razorpay_subscription_id`` so it is retired at the new sub's
     activation webhook) and return ``mandate_action: "reauthorise_required"``
-    with the checkout payload. The local cancel flags are NOT cleared here — the
+    with the checkout payload. The local cancel flags are NOT cleared here, the
     row must not pretend the cancellation was undone until the customer actually
     re-authorises and the activation webhook lands.
 
@@ -2713,19 +2713,19 @@ def resume_subscription(
                     "status": "resumed",
                     "mandate_action": "none",
                     "message": (
-                        f"Subscription reactivated — it will keep renewing on {renews_on}."
+                        f"Subscription reactivated, it will keep renewing on {renews_on}."
                         if renews_on
-                        else "Subscription reactivated — it will keep renewing."
+                        else "Subscription reactivated, it will keep renewing."
                     ),
                     "renews_on": renews_on,
                 }
 
             # The gateway disagrees with our marker. Self-heal so the sweep
             # doesn't try to cancel a dead mandate, then fall through to
-            # re-authorisation — which is genuinely what this customer needs.
+            # re-authorisation, which is genuinely what this customer needs.
             logger.warning(
                 "Subscription %s (client %s) has no gateway_cancel_executed_at but Razorpay "
-                "reports mandate %s is not live — self-healing the marker and re-authorising",
+                "reports mandate %s is not live. Self-healing the marker and re-authorising",
                 sub.id,
                 client.id,
                 sub.razorpay_subscription_id,
@@ -2733,10 +2733,10 @@ def resume_subscription(
             sub.gateway_cancel_executed_at = datetime.now(UTC)
             session.flush()
 
-        # ── Mode 2: the mandate is dead — re-authorise ────────────────────────
+        # ── Mode 2: the mandate is dead. Re-authorise ────────────────────────
 
-        # A bot-scoped resume of a POOLED plan is refused HERE — before the
-        # gateway call — because Mode 2 stamps ``oyechats_bot_id`` +
+        # A bot-scoped resume of a POOLED plan is refused HERE. Before the
+        # gateway call. Because Mode 2 stamps ``oyechats_bot_id`` +
         # ``purpose=per_bot_subscription`` into the replacement mandate's notes
         # whenever ``sub.bot_id is not None`` (below), with no plan check of its
         # own. Authorising that mandate would land a pooled plan on a bot-scoped
@@ -2746,7 +2746,7 @@ def resume_subscription(
         # Refused rather than demoted, unlike Branch 3 of /change-plan: this
         # path REPLACES an existing subscription rather than opening a new one,
         # so silently re-scoping it to the account would move that agent's
-        # credit ledger — and could collide with the client's existing account
+        # credit ledger, and could collide with the client's existing account
         # row on ``ix_subscriptions_client_bot_active``. Only reachable for a
         # subscription that got into this shape before the sink guard shipped;
         # support has to move it deliberately.
@@ -2759,14 +2759,14 @@ def resume_subscription(
             raise _pooled_plan_scope_error(plan)
 
         # Mode 2 mints a REAL new mandate, so it runs the same pre-charge gates
-        # as /checkout (Wave 1.3). Deliberately NOT applied to Mode 1 above —
-        # that path only clears a flag on a live mandate, and an identity gap
+        # as /checkout (Wave 1.3). Deliberately NOT applied to Mode 1 above.
+        # That path only clears a flag on a live mandate, and an identity gap
         # must not block a customer from un-cancelling their own subscription.
         _require_precharge_gates(client, http_request)
 
         # Bill the replacement from the moment the paid period actually runs
         # out. Omitted, Razorpay starts the subscription at authorization and
-        # captures a full cycle immediately — charging the customer a second
+        # captures a full cycle immediately. Charging the customer a second
         # time for days they already own, with no proration or refund anywhere
         # in the flow to give it back.
         start_at = int(sub.current_period_end.timestamp()) if sub.current_period_end else None
@@ -2776,12 +2776,12 @@ def resume_subscription(
             _reauth_message = (
                 "The previous mandate was cancelled at the payment provider and cannot be "
                 "un-cancelled, so a new one has to be authorised. You keep everything you've "
-                f"already paid for — the first charge on the new mandate is {first_charge_at}."
+                f"already paid for, the first charge on the new mandate is {first_charge_at}."
             )
 
         # Finding H1: in-flight idempotency. /resume mints a FRESH Razorpay
         # subscription (Razorpay has no un-cancel), so a sequential double
-        # /resume — two open modals, or an emailed re-auth link clicked twice —
+        # /resume (two open modals, or an emailed re-auth link clicked twice)
         # would mint TWO mandates; if the customer authorises both, both first
         # cycles charge and Razorpay does NOT refund the sibling the activation
         # sweep retires. lock_client_for_billing only serialises CONCURRENT
@@ -2827,7 +2827,7 @@ def resume_subscription(
             # plan allowance. Snapshot the unused credits the way the upgrade
             # path does so ``apply_pending_proration`` re-grants them as a top-up
             # instead of letting the reset silently destroy them. Scoped to the
-            # subscription being resumed — a per-bot resume must snapshot that
+            # subscription being resumed, a per-bot resume must snapshot that
             # bot's own pool, not the account pool.
             sub.upgrade_credit_pending_cents = transition_service.remaining_plan_credits(
                 session, client.id, bot_id=sub.bot_id
@@ -2877,7 +2877,7 @@ def resume_subscription(
 class SeatChangeRequest(BaseModel):
     # +1 to add a seat, -1 to remove. Must keep the total at or above the
     # plan's included floor (checked against the subscription below). Bounded
-    # here because each unit is a real charge on the customer's mandate — an
+    # here because each unit is a real charge on the customer's mandate, an
     # unbounded delta is an unbounded invoice.
     delta: int = Field(..., ge=-_MAX_SEAT_DELTA, le=_MAX_SEAT_DELTA)
     bot_id: RowId | None = None  # target a specific bot's subscription (N3); None = account
@@ -2895,7 +2895,7 @@ def change_seat_count(
     Each seat above ``plan.included_operator_seats`` is billed through a
     SEPARATE Razorpay add-on subscription (``RAZORPAY_SEAT_PLAN_ID``, whose
     plan amount IS the per-seat price). The main plan subscription is never
-    edited for seats — Razorpay ``quantity`` multiplies the WHOLE plan
+    edited for seats. Razorpay ``quantity`` multiplies the WHOLE plan
     amount, which would overcharge the customer (P0-3). The local
     ``operator_quantity`` mirror is updated immediately so live-chat seat
     enforcement sees the new limit without webhook latency.
@@ -2904,7 +2904,7 @@ def change_seat_count(
         raise HTTPException(status_code=400, detail="Delta must be non-zero.")
 
     # Adding seats mints (or edits) a real seat-addon mandate whose charges are
-    # invoiced — same pre-charge gates as every other mint. Removing seats
+    # invoiced, same pre-charge gates as every other mint. Removing seats
     # charges nothing and stays ungated.
     if request.delta > 0:
         _require_precharge_gates(client, http_request)
@@ -2925,7 +2925,7 @@ def change_seat_count(
             # real, charged seat mandate for capacity the plan already grants.
             raise HTTPException(
                 status_code=400,
-                detail="Your plan includes unlimited operator seats — seats cannot be added or removed.",
+                detail="Your plan includes unlimited operator seats. Seats cannot be added or removed.",
             )
 
         new_total = (sub.operator_quantity or floor) + request.delta
@@ -2938,7 +2938,7 @@ def change_seat_count(
         # Mirror the floor check with a ceiling check: a client should never
         # be able to pay for more seats than the plan allows them to
         # actually use. `operator_routes.create_operator` caps operator
-        # *creation* at this same value — without this check here, billing
+        # *creation* at this same value, without this check here, billing
         # would happily sell seats past that cap, charging for capacity
         # the client could never activate.
         ceiling = (plan.limits or {}).get("operators")
@@ -2958,12 +2958,12 @@ def change_seat_count(
             )
 
         # Seats above the plan's included floor are billed via a SEPARATE
-        # add-on subscription — the main plan's quantity is never touched
+        # add-on subscription, the main plan's quantity is never touched
         # (P0-3). extra_seats is clamped at 0 inside the helper.
         extra_seats = new_total - floor
 
         # Finding H3/J: all extra seats bill against the single global seat plan,
-        # so the amount charged is the canonical seat price — NOT a plan's own
+        # so the amount charged is the canonical seat price. NOT a plan's own
         # ``extra_seat_price_cents``. Resolve the charged price in the customer's
         # currency (₹449 INR / $5 international) so the displayed price always
         # equals what the add-on bills. Log any per-plan divergence so a
@@ -2976,7 +2976,7 @@ def change_seat_count(
         )
         if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS:
             logger.warning(
-                "Plan %s extra_seat_price_cents=%s but the seat add-on charges %s — "
+                "Plan %s extra_seat_price_cents=%s but the seat add-on charges %s. "
                 "displaying the charged price; fix the plan config to match.",
                 plan.id,
                 plan.extra_seat_price_cents,
@@ -2988,7 +2988,7 @@ def change_seat_count(
 
             checkout = razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
         except razorpay_service.IntlPaymentsDisabled:
-            # Policy refusal, not a gateway fault — propagate to the app-level
+            # Policy refusal, not a gateway fault. Propagate to the app-level
             # handler so /seats renders the 409 intl_usd_pending contact-sales
             # contract instead of a "try again" 502.
             raise
@@ -3101,7 +3101,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
 
         period_start, usage_dict = _scope_period_and_usage(session, client.id, None)
 
-        # Per-bot ledgers — one entry per bot that has its own paid
+        # Per-bot ledgers, one entry per bot that has its own paid
         # subscription. Frontend renders one card per entry so the
         # customer sees an isolated balance + usage panel for each bot.
         bot_rows = (
@@ -3113,7 +3113,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         for bot in bot_rows:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(bot)
             if ledger_bot_id is None:
-                continue  # legacy / Free bot — its usage rolls up to the account pool
+                continue  # legacy / Free bot, its usage rolls up to the account pool
             bot_plan = bot.plan if bot.plan_id else None
             bot_breakdown = credit_service.get_balance_breakdown(session, client.id, bot_id=ledger_bot_id)
             bot_period_start, bot_usage = _scope_period_and_usage(session, client.id, ledger_bot_id)
@@ -3190,7 +3190,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
                 }
             )
 
-        # Count of bots that still drain from the account pool — drives
+        # Count of bots that still drain from the account pool. Drives
         # whether the UI shows the "Account credits" card. When zero (a
         # paid-only account whose only bot has its own subscription) the
         # account pool is hidden entirely.
@@ -3205,7 +3205,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             "company_name": int(pricing.get("credit_cost.company_name", 10) or 0),
         }
 
-        # Stored country first, IP geo as display fallback (Wave 1.2) — the
+        # Stored country first, IP geo as display fallback (Wave 1.2), the
         # old IP-only rule rendered $ on a rupee account whenever the geo
         # lookup failed, and ignored the account's own tax fact entirely.
         currency_code = resolve_billing_context(
@@ -3287,7 +3287,7 @@ def get_credit_history(
 # in sync with the four usage buckets the balance breakdown reports, so the
 # trend and the breakdown agree on what "credits used" means. Deliberately
 # excludes plan_grant (grants + monthly resets), topup, refund, expiry, and
-# manual_adjust — none of which are consumption.
+# manual_adjust. None of which are consumption.
 _CONSUMPTION_REASONS = (
     "ai_chat",
     "url_scan",
@@ -3307,8 +3307,8 @@ def get_credit_daily(
     """Daily credit consumption for the last ``days`` days (zero-filled).
 
     Sums the magnitude of consumption debits per calendar day (UTC) so the
-    Usage page can render a trend line. Returns a complete ascending series —
-    one entry per day in the window, ``credits_used = 0`` on quiet days — so
+    Usage page can render a trend line. Returns a complete ascending series
+    (one entry per day in the window, ``credits_used = 0`` on quiet days) so
     the client can render without gap-filling.
     """
     days = max(min(int(days or 30), 90), 1)
@@ -3351,10 +3351,10 @@ class TopupRequest(BaseModel):
 
     ``amount`` is the pack amount matching one of the configured packs in
     ``pricing_config.topup_packs``. ``pack_usd`` is kept as a backward-compat
-    alias for older admin builds — at least one of the two must be provided.
+    alias for older admin builds, at least one of the two must be provided.
 
     ``bot_id`` scopes the purchase to a specific per-bot ledger. Omit
-    (or pass null) to top up the account-level client pool — that's the
+    (or pass null) to top up the account-level client pool. That's the
     correct shape for Free / legacy-pooled bots whose usage drains
     shared credits. Per-bot subscriptions must always pass their bot_id
     so the credits land in the right isolated bucket.
@@ -3378,7 +3378,7 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     """
     for pack in packs:
         # round(), not int(): pack prices come from operator-edited JSON in
-        # pricing_config and can arrive as floats — int() truncation turned a
+        # pricing_config and can arrive as floats. Int() truncation turned a
         # "1599.99" pack into 1599 and silently failed every match.
         if int(round(float(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0))) == requested_amount:
             return pack
@@ -3388,7 +3388,7 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
 def _validate_coupon_or_400(session, coupon_code: str | None) -> None:
     """Refuse any coupon we cannot actually honour (Wave 4a).
 
-    ``coupon_code`` used to be accepted and silently IGNORED — the customer
+    ``coupon_code`` used to be accepted and silently IGNORED, the customer
     believed a discount applied and was charged full price. There is a
     ``coupons`` table (superadmin CRUD) but no online redemption realiser, so
     the honest behaviour is: unknown/inactive/expired → "invalid"; a genuinely
@@ -3414,7 +3414,7 @@ def _validate_coupon_or_400(session, coupon_code: str | None) -> None:
     raise HTTPException(
         status_code=400,
         detail=(
-            "Coupon codes can't be redeemed online yet — contact developer@oyechats.com "
+            "Coupon codes can't be redeemed online yet. Contact developer@oyechats.com "
             "and we'll apply it to your account."
         ),
     )
@@ -3444,14 +3444,14 @@ def initiate_topup(
 ):
     """Initiate a top-up purchase via Razorpay.
 
-    Returns a Razorpay order payload:
-    ``{provider, order_id, amount, currency, key_id, name, description, prefill, theme}``
-    — frontend opens ``new Razorpay({order_id, ...}).open()``.
+     Returns a Razorpay order payload:
+     ``{provider, order_id, amount, currency, key_id, name, description, prefill, theme}``
+    . Frontend opens ``new Razorpay({order_id, ...}).open()``.
 
-    Credits are granted asynchronously via the Razorpay webhook on payment
-    capture; the frontend should also call ``/credits/topup/verify`` so the
-    success modal is signature-verified server-side before showing confetti
-    (defence-in-depth against tampered callbacks).
+     Credits are granted asynchronously via the Razorpay webhook on payment
+     capture; the frontend should also call ``/credits/topup/verify`` so the
+     success modal is signature-verified server-side before showing confetti
+     (defence-in-depth against tampered callbacks).
     """
     requested_amount = request.amount or request.pack_usd
     if not requested_amount:
@@ -3461,7 +3461,7 @@ def initiate_topup(
     # also a Razorpay charge, and razorpay_service.create_topup_order hard-codes
     # the INR rail. Without this gate a confirmed/stored non-IN buyer's top-up
     # would be silently charged in INR and later invoiced as an export by
-    # invoice_service (which classifies supply from buyer.billing_country) —
+    # invoice_service (which classifies supply from buyer.billing_country).
     # GST mis-classified / short-paid. Gate BEFORE opening a session so a
     # rejected buyer never reaches Razorpay at all.
     confirmed_country = _resolve_confirmed_billing_country_or_409(
@@ -3499,7 +3499,7 @@ def initiate_topup(
                     "code": "topup_not_allowed",
                     "plan_slug": ents.plan_slug,
                     "message": (
-                        f"Credit top-ups aren't available on the {ents.plan_name} plan — "
+                        f"Credit top-ups aren't available on the {ents.plan_name} plan. "
                         "upgrade to a paid plan to buy extra credits."
                     ),
                 },
@@ -3511,7 +3511,7 @@ def initiate_topup(
         # country (don't overwrite a stored value with the IN default of an
         # omitted field).
         if request.billing_country:
-            # Freeze-honouring persist — a top-up must not be a side door for
+            # Freeze-honouring persist, a top-up must not be a side door for
             # flipping the tax country under a live mandate (review finding).
             _persist_confirmed_country(session, client, confirmed_country)
 
@@ -3524,13 +3524,13 @@ def initiate_topup(
         # NOTE: referral discounts intentionally do NOT apply to top-ups.
         # The customer-facing discount fires only on plan checkout
         # (subscription_routes.create_checkout). This keeps the affiliate
-        # incentive tied to recurring revenue rather than a one-off pack —
-        # affiliates earn from the customer's subscription, so the discount
+        # incentive tied to recurring revenue rather than a one-off pack.
+        # Affiliates earn from the customer's subscription, so the discount
         # also lives there. Referral *attribution* still happens via
         # /affiliate/apply-referral (unchanged); we just don't honour the
         # discount on the top-up checkout amount.
 
-        # Validate per-bot top-up target — the bot must belong to this
+        # Validate per-bot top-up target, the bot must belong to this
         # client AND have its own paid subscription (per-bot ledger).
         # Topping up a legacy/Free bot via bot_id is silently coerced to
         # an account-pool top-up because those bots drain the pool anyway.
@@ -3568,7 +3568,7 @@ def initiate_topup(
                 result["customer_id"] = customer_id
             return result
 
-        # Unreachable while _resolve_provider only knows Razorpay — but a
+        # Unreachable while _resolve_provider only knows Razorpay, but a
         # future provider slipping past that guard used to fall off the end of
         # this function and return an implicit 200 with a null body, which the
         # frontend would open as a broken checkout. Fail loudly instead.
@@ -3582,7 +3582,7 @@ class TopupVerifyRequest(BaseModel):
     we verify the HMAC server-side to make sure the success was genuinely
     signed by Razorpay (defence against tampered modal responses).
 
-    The credit grant itself happens via the Razorpay webhook — this
+    The credit grant itself happens via the Razorpay webhook. This
     endpoint just confirms the modal closure to the user.
     """
 
@@ -3627,10 +3627,10 @@ def verify_topup_payment(
             session.commit()
             invoice_service.request_pdf_render_soon()
         except razorpay_service.RazorpayBillingError:
-            # Reconcile failed (e.g. Razorpay fetch blip) — the webhook may still
+            # Reconcile failed (e.g. Razorpay fetch blip), the webhook may still
             # arrive. Don't fail verify; the UI polls /credits/balance.
             logger.warning(
-                "Top-up reconcile failed for client %s, order %s — falling back to webhook",
+                "Top-up reconcile failed for client %s, order %s. Falling back to webhook",
                 client.id,
                 body.razorpay_order_id,
             )

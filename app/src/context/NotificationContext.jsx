@@ -58,8 +58,8 @@ function resolveWsBase() {
 
 function buildAuthSubprotocol() {
     // Never open this socket from an impersonated tab. The only credential
-    // available here is the shared localStorage `admin_token` — the
-    // super-admin's OWN key — so connecting would stream the admin's
+    // available here is the shared localStorage `admin_token` (the
+    // super-admin's OWN key) so connecting would stream the admin's
     // notifications into a tab whose banner says "Viewing <Account>", mixing
     // two identities in one list. The server also cannot revalidate an
     // impersonation token on this channel, so revoke/expiry would not close it.

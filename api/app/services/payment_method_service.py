@@ -1,4 +1,4 @@
-"""Saved payment instruments — a mirror of Razorpay's per-customer token list.
+"""Saved payment instruments, a mirror of Razorpay's per-customer token list.
 
 Razorpay is authoritative. This module never invents an instrument locally; it
 reflects ``GET /v1/customers/{id}/tokens`` into ``payment_methods`` so the UI
@@ -6,13 +6,13 @@ renders without a gateway round-trip, and prunes anything the gateway no longer
 returns (a token revoked in the issuer's portal must disappear here too).
 
 RBI card-on-file rules cap what may be persisted at last4 + network + issuer.
-``_row_from_token`` is the single place that decides this — keep it that way,
+``_row_from_token`` is the single place that decides this. Keep it that way,
 and if you find yourself adding a column for expiry or cardholder name, that is
 the bug, not the missing column.
 
 Scope note: these are instruments for ONE-OFF payments (credit top-ups). The
 instrument funding a subscription is its MANDATE, which Razorpay cannot swap in
-place — replacing that runs the re-mandate flow in ``transition_service``, not
+place. Replacing that runs the re-mandate flow in ``transition_service``, not
 anything here.
 """
 
@@ -105,7 +105,7 @@ def sync_payment_methods(session: Session, client: Client) -> list[PaymentMethod
     """Refresh this client's instrument mirror from Razorpay.
 
     A client with no ``razorpay_customer_id`` has never paid, so it has no
-    tokens by definition — return empty rather than calling the gateway.
+    tokens by definition. Return empty rather than calling the gateway.
     """
     customer_id = client.razorpay_customer_id
     if not customer_id:
@@ -113,7 +113,7 @@ def sync_payment_methods(session: Session, client: Client) -> list[PaymentMethod
 
     try:
         page = _client().token.all(customer_id) or {}
-    except Exception as exc:  # noqa: BLE001 — normalised into our own error type
+    except Exception as exc:  # noqa: BLE001  Normalised into our own error type
         logger.warning("token list failed for client %s: %s", client.id, exc)
         raise PaymentMethodError(str(exc)) from exc
 

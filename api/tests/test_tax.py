@@ -1,4 +1,4 @@
-"""GST tax engine — pure computation, integer paise.
+"""GST tax engine. Pure computation, integer paise.
 
 Golden cases come from the plan doc §1c (the ₹1,799 / ₹4,599 money-flow
 diagrams); every scenario asserts the reconciliation invariants.
@@ -132,7 +132,7 @@ def test_101_paisa_inclusive_intra():
 
 
 def test_exact_integer_quotient_no_rounding():
-    # 5900 * 10000 / 11800 = 5000.0 exactly — every rounding mode agrees, so
+    # 5900 * 10000 / 11800 = 5000.0 exactly. Every rounding mode agrees, so
     # this proves the carve-out arithmetic but NOT the rounding direction.
     b = compute_tax(5900, 1800, inclusive=True, kind="intra")
     assert b.taxable_minor == 5000
@@ -182,7 +182,7 @@ def test_zero_amount_yields_zero_tax():
 
 
 def test_zero_rate_intra_is_taxless_but_not_export():
-    # A genuine 0%-rate domestic supply — distinct from a zero-rated export.
+    # A genuine 0%-rate domestic supply. Distinct from a zero-rated export.
     b = compute_tax(179900, 0, inclusive=True, kind="intra")
     assert b.total_tax_minor == 0
     assert b.taxable_minor == 179900
@@ -233,7 +233,7 @@ def test_cgst_equals_sgst_at_whole_rupee_bases():
 @pytest.mark.parametrize("lut", [True, False])
 def test_invariants_hold_everywhere(amount, rate, inclusive, kind, lut):
     b = compute_tax(amount, rate, inclusive=inclusive, kind=kind, lut_active=lut)
-    # Core reconciliation — always exact.
+    # Core reconciliation. Always exact.
     assert b.taxable_minor + b.total_tax_minor == b.total_minor
     assert b.cgst_minor + b.sgst_minor + b.igst_minor == b.total_tax_minor
     assert b.taxable_minor >= 0 and b.total_tax_minor >= 0

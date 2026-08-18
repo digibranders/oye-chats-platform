@@ -11,7 +11,7 @@ import { canonicalCrawlUrls } from './CrawlPageTree';
 
 describe('canonicalCrawlUrls', () => {
   it('keeps discovery order rather than the tree’s folders-first sort', () => {
-    /* The tree sorts folders before leaves, then alphabetically — so `/blog`
+    /* The tree sorts folders before leaves, then alphabetically, so `/blog`
        (a folder) would outrank the `/about` and `/pricing` leaves. On a site
        whose budget covers only the first few pages, that spends the whole
        allowance on blog posts and leaves an agent that cannot answer a pricing

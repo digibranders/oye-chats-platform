@@ -1,4 +1,4 @@
-"""Plan entitlements — the single source of truth for "what can this client do?"
+"""Plan entitlements, the single source of truth for "what can this client do?"
 
 This service answers every gate question across the platform:
 * Does this client have ``live_chat``? → ``has_feature(client_id, "live_chat")``
@@ -14,14 +14,14 @@ from this module. Behavior cannot diverge between them.
 The plan now attaches to the **Bot**, not the Client. A single client can
 hold many active subscriptions, one per paid bot, each with its own
 credit allowance. Account-level entitlements still resolve via this
-module — features (live_chat, BANT, webhooks) remain per-account because
+module. Features (live_chat, BANT, webhooks) remain per-account because
 they describe the **dashboard** the customer logs into, not any single
 bot. Limits that *do* vary per bot (credit allowance, future per-bot
 flags) should resolve through :func:`get_bot_entitlements` instead.
 
 Two helpers govern bot creation:
 
-* :func:`can_client_add_new_bot` — gate for ``POST /bots``. A client may
+* :func:`can_client_add_new_bot`. Gate for ``POST /bots``. A client may
   create their first bot for free; subsequent bots require an active
   paid subscription somewhere in the account so the checkout step has a
   funded counterpart.
@@ -32,7 +32,7 @@ Two helpers govern bot creation:
 ## Resolution order
 
 1. Look up the client's active subscription (``plan_service.get_client_subscription``).
-2. If none, fall back to the **Free plan** (slug ``free``) — every client
+2. If none, fall back to the **Free plan** (slug ``free``). Every client
    gets Free's limits by default; this also covers the auth path during
    trial transitions when the subscription row may briefly be absent.
 3. Merge the plan's ``limits`` and ``features`` JSONB into a typed dataclass.
@@ -56,7 +56,7 @@ Cache is invalidated explicitly on:
 
 Every method degrades gracefully:
 * Redis down → cache miss → DB query → no harm (just slower).
-* Plan row missing → fall back to Free limits (most restrictive — safe default).
+* Plan row missing → fall back to Free limits (most restrictive. Safe default).
 * Subscription row missing → fall back to Free.
 * DB query fails → return Free with a logged warning (better to lock down
   than to grant unlimited).
@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 60
 
-# Sentinel meaning "no limit" / "unlimited" — used as the JSONB value for
+# Sentinel meaning "no limit" / "unlimited". Used as the JSONB value for
 # unlimited plan limits and as the return value for "this limit doesn't apply".
 UNLIMITED = -1
 
@@ -146,12 +146,12 @@ class PlanEntitlements:
         """Plain dict for JSON serialization to the frontend."""
         return asdict(self)
 
-    # ── Convenience helpers — used by FastAPI dependencies + frontend hook ──
+    # ── Convenience helpers. Used by FastAPI dependencies + frontend hook ──
 
     def has_feature(self, feature_name: str) -> bool:
         """True if the named feature is enabled for this client.
 
-        Unknown features default to ``False`` — safer to lock down than to
+        Unknown features default to ``False``, safer to lock down than to
         accidentally expose a paid feature because of a typo. Pair with the
         ``require_feature`` dependency for canonical enforcement.
         """
@@ -185,7 +185,7 @@ class PlanEntitlements:
         """True if ``current_value`` is below the configured limit.
 
         Returns True for ``UNLIMITED`` regardless of current value. Returns
-        False if the limit is unknown — same defensive default as
+        False if the limit is unknown, same defensive default as
         ``has_feature``.
         """
         limit = self.limit_for(limit_name)
@@ -285,7 +285,7 @@ def get_entitlements(
 
     Hot path: 1 Redis call on cache hit (~1 ms). On miss, 2 DB queries
     (subscription join + plan row). With ``include_usage=True`` an extra
-    credit ledger sum runs to populate the usage dict — pass False on
+    credit ledger sum runs to populate the usage dict. Pass False on
     feature/limit-check hot paths so the gate cost stays minimal.
     """
     if use_cache:
@@ -308,7 +308,7 @@ def get_bot_entitlements(
     """Resolve entitlements for a SINGLE bot from that bot's own subscription.
 
     Unlike :func:`get_entitlements` (account view, highest-priced sub across all
-    bots), this follows the subscription funding ``bot_id`` — falling back to the
+    bots), this follows the subscription funding ``bot_id``. Falling back to the
     account-level subscription when the bot has none. Use it for gates whose
     behaviour is inherently per-bot (a bot's widget, its RAG qualification, its
     outbound webhooks), so a bot downgraded to Starter loses its features even
@@ -319,7 +319,7 @@ def get_bot_entitlements(
     """
     client_id = db_session.execute(select(Bot.client_id).where(Bot.id == bot_id)).scalar_one_or_none()
     if client_id is None:
-        # Unknown/deleted bot — never inherit features. Recompute a Free result
+        # Unknown/deleted bot, never inherit features. Recompute a Free result
         # off a client_id of 0 (no subscription rows → Free fallback in _compute).
         return _compute(0, db_session, include_usage=include_usage, bot_id=None)
 
@@ -381,7 +381,7 @@ def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> b
 
     Uses the same cached ``get_entitlements`` path as every other gate so
     a fresh subscription upgrade takes effect within the 60s TTL. Falls
-    back to ``False`` on any resolver error — the defensive default,
+    back to ``False`` on any resolver error, the defensive default,
     matching the "lock everything down on failure" policy elsewhere in
     this module.
     """
@@ -389,7 +389,7 @@ def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> b
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "lead_source_attribution: entitlements lookup failed for client=%s — denying",
+            "lead_source_attribution: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -402,7 +402,7 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
 
     Per-bot companion to :func:`is_lead_source_attribution_enabled`. Leads are
     captured per bot, so attribution snapshotting at capture should follow that
-    bot's own subscription (account fallback) — a bot on Starter shouldn't get
+    bot's own subscription (account fallback), a bot on Starter shouldn't get
     durable attribution just because a sibling bot is on Standard/Professional.
     Denies on any resolver error.
     """
@@ -410,7 +410,7 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "lead_source_attribution: entitlements lookup failed for bot=%s — denying",
+            "lead_source_attribution: entitlements lookup failed for bot=%s. Denying",
             bot_id,
             exc_info=True,
         )
@@ -418,7 +418,7 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
     return entitlements.plan_slug in LEAD_SOURCE_ATTRIBUTION_SLUGS
 
 
-# Journey Analytics — the Journeys view under Analytics (top pages, paths
+# Journey Analytics, the Journeys view under Analytics (top pages, paths
 # that convert, post-chat destinations). Widget always collects the raw
 # journey data regardless of plan (an upgrade should surface immediate
 # history); this gate controls only whether the READ endpoints under
@@ -437,7 +437,7 @@ def is_journey_analytics_enabled(client_id: int, db_session: Session) -> bool:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "journey_analytics: entitlements lookup failed for client=%s — denying",
+            "journey_analytics: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -450,13 +450,13 @@ def is_journey_analytics_enabled_for_bot(bot_id: int, db_session: Session) -> bo
 
     Per-bot companion to :func:`is_journey_analytics_enabled`. The Journeys
     view is scoped per-bot, so gating follows the bot's own subscription
-    (account fallback) — mirrors the lead source attribution model.
+    (account fallback). Mirrors the lead source attribution model.
     """
     try:
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "journey_analytics: entitlements lookup failed for bot=%s — denying",
+            "journey_analytics: entitlements lookup failed for bot=%s. Denying",
             bot_id,
             exc_info=True,
         )
@@ -467,21 +467,21 @@ def is_journey_analytics_enabled_for_bot(bot_id: int, db_session: Session) -> bo
 def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
     """True iff this client can open the Leads dashboard at all.
 
-    Every plan — Free included — reaches the dashboard: Free gets the
+    Every plan (Free included) reaches the dashboard: Free gets the
     conversation view (contact + transcript), while the lead-intelligence
     layer (score, tier, BANT breakdown, location/device, CSV export) is a
     paid capability gated separately by ``is_lead_intelligence_enabled``.
     Per-plan lead quotas are enforced via the ``limits.leads`` counter,
     not this gate.
 
-    Deny-by-default on entitlements lookup failure — same policy as every
+    Deny-by-default on entitlements lookup failure, same policy as every
     other gate in this module.
     """
     try:
         get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "leads_dashboard_gate: entitlements lookup failed for client=%s — denying",
+            "leads_dashboard_gate: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -501,14 +501,14 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
     response for Free, so a curl against the API cannot bypass the
     frontend's locked cells.
 
-    Deny-by-default on entitlements lookup failure — same policy as every
+    Deny-by-default on entitlements lookup failure, same policy as every
     other gate in this module.
     """
     try:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "lead_intelligence_gate: entitlements lookup failed for client=%s — denying",
+            "lead_intelligence_gate: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -521,7 +521,7 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 # Visitor Intelligence is the IP-based company/threat signal
 # (``ChatSession.visitor_metadata``), the Reoon-validated email display
 # (``LeadInfo.is_valid_email`` / ``email_score``), and the manual "Send
-# Follow-up" action — the top-tier slice, narrower than the general
+# Follow-up" action, the top-tier slice, narrower than the general
 # lead-intelligence layer (score/tier/BANT), which is Starter+. Standard
 # and below are excluded; Enterprise is listed because it is Professional
 # plus unlimited agents/seats, so every Professional feature carries over.
@@ -531,7 +531,7 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional", "enterprise"})
 
 # The slugs `seed_plans.py` creates. Anything else is a BESPOKE plan a
-# super-admin provisioned for an individual deal — the seed script's own
+# super-admin provisioned for an individual deal, the seed script's own
 # docstring says unknown slugs are left untouched precisely because they exist.
 #
 # NOTE: "enterprise" is a SEEDED ladder tier, not a bespoke deal. Bespoke
@@ -547,8 +547,8 @@ def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
     allow-list silently removed a paid feature from enterprise customers.
 
     1. A slug on the standard ladder gets exactly what the ladder says.
-    2. A slug OFF the ladder is bespoke — an enterprise deal at a negotiated
-       price — and gets the feature. The comment guarding this was deleted
+    2. A slug OFF the ladder is bespoke (an enterprise deal at a negotiated
+       price) and gets the feature. The comment guarding this was deleted
        when the gate narrowed to ``{"standard", "professional"}``; it said "a
        custom paid slug provisioned for an enterprise deal is a paid plan and
        must not silently lose the feature."
@@ -556,14 +556,14 @@ def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
     The failure modes are not symmetric, which is what decides rule 2. Wrongly
     granting costs one vendor call on a tier that should not have had it.
     Wrongly denying leaves a customer on a bespoke contract without a feature
-    they pay for AND — because ``LeadInfo.is_valid_email`` stays NULL — tripping
+    they pay for AND. Because ``LeadInfo.is_valid_email`` stays NULL. Tripping
     the 409 soft gate on every manual follow-up, with no setting anywhere that
     would re-enable it.
 
     A newly SEEDED tier is not covered by rule 2: adding it to
     ``_SEEDED_PLAN_SLUGS`` is part of adding the tier, which forces a
     deliberate choice per feature rather than a silent grant. The seeded
-    ``enterprise`` tier made that choice explicitly — it is named in every
+    ``enterprise`` tier made that choice explicitly, it is named in every
     ladder above, because it is Professional plus unlimited agents/seats and
     must not lose a feature by moving onto the ladder. Rule 2 still covers
     the per-contract slugs (``enterprise-acme`` and friends).
@@ -576,21 +576,21 @@ def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
 def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool:
     """True iff ANY of this client's subscriptions includes Visitor Intelligence.
 
-    Account-level view — resolves to the HIGHEST-priced plan across every bot
+    Account-level view. Resolves to the HIGHEST-priced plan across every bot
     the client owns. Use this ONLY for account-wide questions ("should the
     workspace see this feature exist at all?"). For anything scoped to a
-    specific bot's data — which is every ``/leads`` response, since leads
-    belong to a bot — use :func:`is_visitor_intelligence_enabled_for_bot`
+    specific bot's data (which is every ``/leads`` response, since leads
+    belong to a bot) use :func:`is_visitor_intelligence_enabled_for_bot`
     instead, or a Free bot's leads inherit a sibling bot's paid plan.
 
-    Denies on any resolver error — same deny-by-default policy as every other
+    Denies on any resolver error, same deny-by-default policy as every other
     gate in this module.
     """
     try:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "visitor_intelligence_gate: entitlements lookup failed for client=%s — denying",
+            "visitor_intelligence_gate: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -615,7 +615,7 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "visitor_intelligence_gate: entitlements lookup failed for bot=%s — denying",
+            "visitor_intelligence_gate: entitlements lookup failed for bot=%s. Denying",
             bot_id,
             exc_info=True,
         )
@@ -629,7 +629,7 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
 # (``POST /chat/validate-email``) and the background lead-enrichment check that
 # persists ``LeadInfo.is_valid_email`` / ``email_score``. It is a metered,
 # credit-costing feature (``credit_cost.email_verification``), so it is scoped
-# to the Standard, Professional and Enterprise tiers — Free and Starter are
+# to the Standard, Professional and Enterprise tiers. Free and Starter are
 # excluded and skip the Reoon call entirely (rather than paying for a check
 # they can't act on). A slug allow-list (not "not free") keeps this boundary
 # explicit so a future Starter change can't silently switch the paid feature on.
@@ -640,8 +640,8 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
     """True iff the plan funding THIS bot includes email verification.
 
     Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
-    because the gated call sites — ``POST /chat/validate-email`` and the
-    background lead-enrichment Reoon check — are both authenticated via
+    because the gated call sites (``POST /chat/validate-email`` and the
+    background lead-enrichment Reoon check) are both authenticated via
     ``X-Bot-Key``, not a client session. Restricted to the Standard,
     Professional and Enterprise tiers (see :data:`EMAIL_VERIFICATION_SLUGS`).
     Denies on any resolver error.
@@ -650,7 +650,7 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "email_validation_gate: entitlements lookup failed for bot=%s — denying",
+            "email_validation_gate: entitlements lookup failed for bot=%s. Denying",
             bot_id,
             exc_info=True,
         )
@@ -662,7 +662,7 @@ def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:
     """Days of chat history the client's active plan lets them see.
 
     Returns the value straight from ``limits.chat_history_days`` on the
-    active plan. ``UNLIMITED`` (``-1``) means "no retention cap" — the
+    active plan. ``UNLIMITED`` (``-1``) means "no retention cap", the
     admin dashboard shows every conversation ever recorded. Any positive
     integer caps the visible window: a Free customer with a 7-day plan
     limit sees only chats from the last 7 days, regardless of how far
@@ -679,7 +679,7 @@ def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "chat_history_retention: entitlements lookup failed for client=%s — defaulting to unlimited",
+            "chat_history_retention: entitlements lookup failed for client=%s. Defaulting to unlimited",
             client_id,
             exc_info=True,
         )
@@ -689,7 +689,7 @@ def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:
         return int(value)
     except (TypeError, ValueError):
         logger.warning(
-            "chat_history_retention: non-integer limit for client=%s: %r — defaulting to unlimited",
+            "chat_history_retention: non-integer limit for client=%s: %r. Defaulting to unlimited",
             client_id,
             value,
         )
@@ -705,7 +705,7 @@ def is_bant_enabled_for_plan(client_id: int, db_session: Session) -> bool:
     (Standard / Professional) to one without it (Free / Starter), this flips
     to False on the next entitlements cache cycle (≤60s) and every new
     chat runs without qualification. Historical BANT signals stay visible
-    in Insights — this gate only stops NEW scoring.
+    in Insights. This gate only stops NEW scoring.
 
     Falls back to False on any resolver error to match the deny-by-default
     policy used elsewhere in this module: a broken cache read must never
@@ -715,7 +715,7 @@ def is_bant_enabled_for_plan(client_id: int, db_session: Session) -> bool:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "bant_plan_gate: entitlements lookup failed for client=%s — denying",
+            "bant_plan_gate: entitlements lookup failed for client=%s. Denying",
             client_id,
             exc_info=True,
         )
@@ -727,7 +727,7 @@ def is_bant_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
     """True iff the plan funding THIS bot exposes BANT qualification.
 
     Per-bot companion to :func:`is_bant_enabled_for_plan`. The rag pipeline runs
-    per bot, so it should gate on that bot's own subscription — otherwise a bot
+    per bot, so it should gate on that bot's own subscription. Otherwise a bot
     downgraded to Starter keeps running BANT extraction whenever a sibling bot is
     still on a BANT tier (the account-level resolver returns the highest tier).
     Falls back to False on any resolver error (deny-by-default).
@@ -736,7 +736,7 @@ def is_bant_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "bant_bot_gate: entitlements lookup failed for bot=%s — denying",
+            "bant_bot_gate: entitlements lookup failed for bot=%s. Denying",
             bot_id,
             exc_info=True,
         )
@@ -750,11 +750,11 @@ def _compute(
     """Build the entitlements dataclass from primary sources. Internal.
 
     ``bot_id`` selects the subscription source. When ``None`` (account view),
-    entitlements follow ``get_client_subscription`` — the HIGHEST-priced active
+    entitlements follow ``get_client_subscription``, the HIGHEST-priced active
     subscription across all the client's bots (remediation H2, so a cheap second
     bot never downgrades the account UI). When a ``bot_id`` is given (per-bot
     gate), they follow THAT bot's own subscription, falling back to the
-    account-level subscription when the bot has none — so a bot on Starter no
+    account-level subscription when the bot has none, so a bot on Starter no
     longer inherits a sibling bot's Professional features.
     """
     # 1. Look up the subscription. ``get_client_subscription`` returns the
@@ -770,7 +770,7 @@ def _compute(
             subscription = get_client_subscription(db_session, client_id)
     except Exception:
         logger.warning(
-            "entitlements: failed to load subscription for client=%s bot=%s — defaulting to Free",
+            "entitlements: failed to load subscription for client=%s bot=%s. Defaulting to Free",
             client_id,
             bot_id,
             exc_info=True,
@@ -791,7 +791,7 @@ def _compute(
         # fallback so the application doesn't crash and the client still
         # gets the most-restrictive default.
         logger.error(
-            "entitlements: no Free plan row found — using hardcoded fallback for client=%s",
+            "entitlements: no Free plan row found. Using hardcoded fallback for client=%s",
             client_id,
         )
         result = PlanEntitlements(
@@ -812,11 +812,11 @@ def _compute(
     features = dict(plan.features or {})
 
     # ``limits["operators"]`` is the hard CEILING an account can never
-    # exceed even with paid extra seats — it is NOT how many operators the
+    # exceed even with paid extra seats, it is NOT how many operators the
     # client is currently entitled to create for free. That entitlement is
     # whichever is higher: the plan's included seats (always free) or the
     # seat count they've explicitly paid for via POST /subscription/seats
-    # (``subscription.operator_quantity``) — capped at the ceiling. Without
+    # (``subscription.operator_quantity``). Capped at the ceiling. Without
     # this adjustment, `operator_routes.py`'s create-operator gate reads
     # ``limits["operators"]`` directly and would let anyone add operators
     # up to the ceiling for free, since it never looks at what was paid for.
@@ -884,7 +884,7 @@ def can_client_add_new_bot(client_id: int, db_session: Session) -> AddBotDecisio
     2. ≥1 active bot → blocked with ``must_subscribe=True``. The
        dashboard pops the upgrade modal so the customer can mint another
        subscription. Holding a paid subscription does **not** grant a
-       free second bot — each bot's subscription funds exactly one bot.
+       free second bot. Each bot's subscription funds exactly one bot.
 
     This rule applies uniformly across all plans. Legacy pooled accounts
     that hold unlimited bots under one master subscription are handled
@@ -930,17 +930,17 @@ def plan_grants_unlimited_bots(plan: Plan) -> bool:
     why it lives here rather than in any one route module. They split into three
     responses, by whether a subscription already exists to protect:
 
-    * REFUSE — the mutation would land the plan on an EXISTING bot-scoped row:
+    * REFUSE, the mutation would land the plan on an EXISTING bot-scoped row:
       ``POST /bots/checkout`` (per-agent by contract),
       ``POST /subscriptions/change-plan`` Branches 1/2a/2b,
       ``POST /subscriptions/resume`` Mode 2,
       ``PUT /superadmin/subscriptions/{id}`` (manual plan override), and
       ``transition_service.promote_scheduled_change`` (the downgrade cutover
       cron, which copies ``sub.bot_id`` onto its grace row).
-    * DEMOTE to ``bot_id=None`` — no subscription exists yet, so an
+    * DEMOTE to ``bot_id=None``, no subscription exists yet, so an
       account-scoped mandate is simply what the customer is buying:
       ``POST /subscriptions/change-plan`` Branch 3.
-    * SINK — ``razorpay_service._handle_subscription_activated`` refuses the
+    * SINK. ``razorpay_service._handle_subscription_activated`` refuses the
       INSERT whichever door the mandate came through, including one authorised
       before the route guards shipped.
 
@@ -968,11 +968,11 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
     UI never crashes because of a missing index or a temporary DB hiccup.
 
     Counters returned:
-    * ``bots``           — active bot rows owned by this client
-    * ``operators``      — active operator rows
-    * ``documents``      — distinct document_names ingested
-    * ``page_scraping``  — pages crawled this billing period
-    * ``leads``          — lead_info rows created this period
+    * ``bots``           (active bot rows owned by this client
+    * ``operators``) active operator rows
+    * ``documents``      (distinct document_names ingested
+    * ``page_scraping``) pages crawled this billing period
+    * ``leads``         . Lead_info rows created this period
     """
     from sqlalchemy import distinct
 
@@ -983,12 +983,12 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         "operators": 0,
         "documents": 0,
         "leads": 0,
-        # KB char counter is a single-row read off ``clients`` — cheap enough
+        # KB char counter is a single-row read off ``clients``. Cheap enough
         # to include on every entitlements lookup so the UI can render a
         # "words used / limit" progress bar without a second round trip.
         "knowledge_characters": 0,
         # ``page_scraping`` and ``credits`` are derived from the credit
-        # ledger and require a separate query — left to callers that need
+        # ledger and require a separate query. Left to callers that need
         # them so we don't slow every entitlements lookup.
     }
 
@@ -1038,7 +1038,7 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         logger.debug("entitlements: document usage query failed", exc_info=True)
 
     try:
-        # ``leads`` is scoped to the CURRENT billing period (M6) — counting all
+        # ``leads`` is scoped to the CURRENT billing period (M6). Counting all
         # leads ever would permanently over-report on any finite-leads plan.
         from app.db.models import Subscription
 

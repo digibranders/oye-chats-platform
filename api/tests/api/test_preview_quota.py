@@ -1,7 +1,7 @@
 """Preview-mode chats must be capped by a per-bot daily quota.
 
 ``bot._is_preview`` (stamped by ``get_bot_for_chat`` for an owner-authenticated
-Build Studio request — see ``app/api/auth.py``) makes ``/chat`` and
+Build Studio request. See ``app/api/auth.py``) makes ``/chat`` and
 ``/chat/stream`` skip ``ai_chat`` credit deduction entirely. Left unbounded,
 that's a free-LLM bypass: a bot owner can proxy real visitor traffic through
 preview and never pay. ``check_and_increment_preview`` (app/services/
@@ -33,7 +33,7 @@ from app.services import preview_quota
 
 
 class _FakeRedis:
-    """Minimal INCR/EXPIRE double — enough surface for check_and_increment_preview."""
+    """Minimal INCR/EXPIRE double. Enough surface for check_and_increment_preview."""
 
     def __init__(self) -> None:
         self.store: dict[str, int] = {}
@@ -61,7 +61,7 @@ class _ExplodingRedis:
 
 @pytest.fixture(autouse=True)
 def _isolate_local_counts():
-    """The in-process fallback dict is module-global — isolate it per test."""
+    """The in-process fallback dict is module-global. Isolate it per test."""
     preview_quota._local_counts.clear()
     yield
     preview_quota._local_counts.clear()
@@ -114,7 +114,7 @@ def test_redis_error_mid_call_fails_open(monkeypatch, _limit_of_3):
     (documented fail-open choice), not silently block every preview chat."""
     monkeypatch.setattr(preview_quota, "get_redis", lambda: _ExplodingRedis())
 
-    for _ in range(10):  # far beyond the limit — fail-open never flips to False
+    for _ in range(10):  # far beyond the limit. Fail-open never flips to False
         assert preview_quota.check_and_increment_preview(404) is True
 
 
@@ -135,7 +135,7 @@ def test_counter_resets_on_a_new_day(monkeypatch, _limit_of_3):
     monkeypatch.setattr(preview_quota, "get_redis", lambda: fake)
 
     # First 4 calls land on "today" (3 allowed + 1 over-limit), the 5th lands
-    # on "tomorrow" — proving a fresh day bucket starts a fresh count.
+    # on "tomorrow". Proving a fresh day bucket starts a fresh count.
     day_sequence = ["20260721"] * 4 + ["20260722"]
     bucket_calls: list[str] = []
 

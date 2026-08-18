@@ -1,4 +1,4 @@
-"""Tests for app.ingestion.extraction — PDF, DOCX, TXT extraction."""
+"""Tests for app.ingestion.extraction. PDF, DOCX, TXT extraction."""
 
 from unittest.mock import MagicMock, mock_open, patch
 

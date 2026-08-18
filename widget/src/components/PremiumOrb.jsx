@@ -81,7 +81,7 @@ const PremiumOrb = ({ color, size = 48, className = '', style = {} }) => {
         orbRenderer.poke(orb);
     }, [color, size]);
 
-    // WebGL unavailable — static, quiet fallback. Not the same visual quality,
+    // WebGL unavailable. Static, quiet fallback. Not the same visual quality,
     // but preserves layout and hue.
     if (!orbRenderer.available) {
         const safe = sanitizeColor(color);

@@ -1,7 +1,7 @@
 """Report clients holding more than one live Razorpay subscription in one scope.
 
 READ-ONLY. This script never writes to the database and never calls a mutating
-Razorpay endpoint — it cannot cancel anything. Duplicates are a money problem
+Razorpay endpoint, it cannot cancel anything. Duplicates are a money problem
 in both directions (a stranded mandate keeps debiting; the "wrong" one of a
 pair may be the one the customer actually authorised), so the decision stays
 with a human. The report gives them the facts.
@@ -11,7 +11,7 @@ no idempotency marker, so a retry while the first was still ``created`` minted a
 SECOND authorizable subscription. Prod client 18 authorised both and paid
 ₹11,998 for one ₹5,999 month. The mint path is fixed (``pending_checkout_service``
 now reuses the in-flight mandate and cancels a superseded one), but any pair
-created BEFORE the fix — in Live as well as Test — is still out there, and a
+created BEFORE the fix (in Live as well as Test) is still out there, and a
 duplicate is invisible locally at the moment it is most dangerous: seconds after
 minting, neither subscription has a local row yet.
 
@@ -22,15 +22,15 @@ What counts as a duplicate: two non-terminal subscriptions for the same client
 IN THE SAME BILLING SCOPE. Scope matters because concurrency is legitimate in
 some shapes and never in others:
 
-* ``account``   — ``bot_id IS NULL``. At most one, ever
+* ``account``  . ``bot_id IS NULL``. At most one, ever
                   (``ix_subscriptions_client_legacy_active``). Two = CONFIRMED.
-* ``bot:<id>``  — a named existing agent (resume / revive-in-place). One per
+* ``bot:<id>`` , a named existing agent (resume / revive-in-place). One per
                   agent. Two = CONFIRMED.
-* ``bot:new``   — a per-bot purchase that has not yet minted its Bot row, so it
+* ``bot:new``  , a per-bot purchase that has not yet minted its Bot row, so it
                   names no agent. Two of these are indistinguishable from a
                   customer legitimately buying two agents in the same minute →
                   reported as REVIEW, not asserted as a defect.
-* ``seat_addon`` — billed on its own mandate alongside the plan by design.
+* ``seat_addon``. Billed on its own mandate alongside the plan by design.
                   Excluded entirely.
 
 Usage:
@@ -123,7 +123,7 @@ def _collect_gateway_groups(max_pages: int) -> dict[tuple[int, str], list[dict[s
 
 
 def _local_view(session, client_id: int, razorpay_ids: list[str]) -> dict[str, Any]:
-    """What our own DB believes about these ids — never the source of truth here."""
+    """What our own DB believes about these ids, never the source of truth here."""
     client = session.get(Client, client_id)
     rows = (
         session.execute(select(Subscription).where(Subscription.razorpay_subscription_id.in_(razorpay_ids)))
@@ -213,7 +213,7 @@ def main() -> int:
         print("No client holds more than one live Razorpay subscription in a single billing scope.")
         return 0
 
-    print(f"{len(findings)} duplicate group(s) — {len(confirmed)} confirmed:\n")
+    print(f"{len(findings)} duplicate group(s) - {len(confirmed)} confirmed:\n")
     for f in findings:
         print(f"── [{f['severity']}] client {f['client_id']} <{f['client_email']}> · scope {f['scope']}")
         for s in f["subscriptions"]:
@@ -226,7 +226,7 @@ def main() -> int:
                 f"plan={s['plan_id']} cycle={s['billing_cycle']} · {local_txt}"
             )
         if f["charged_count"] > 1:
-            print(f"   !! {f['charged_count']} of these have ALREADY CHARGED — expect a refund, not just a cancel")
+            print(f"   !! {f['charged_count']} of these have ALREADY CHARGED. Expect a refund, not just a cancel")
         for inv in f["recent_paid_invoices"]:
             print(
                 f"   invoice #{inv['id']} sub={inv['subscription_id']} "

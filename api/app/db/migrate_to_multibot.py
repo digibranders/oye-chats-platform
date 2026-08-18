@@ -8,7 +8,7 @@ Usage:
     python -m app.db.migrate_to_multibot          # live run
     python -m app.db.migrate_to_multibot --dry-run # preview only
 
-What it does (DATA only — schema is handled by Alembic):
+What it does (DATA only. Schema is handled by Alembic):
 1. For each Client without a Bot, creates a default Bot copying that client's settings
 2. Backfills bot_id on all documents and chat_sessions that still have NULL bot_id
 3. Reports results
@@ -17,7 +17,7 @@ Prerequisites:
   - Alembic migration 7416036ea87e ("Added multiple bots") must be applied first
   - The 'bots' table must exist
 
-This script is IDEMPOTENT — safe to run multiple times.
+This script is IDEMPOTENT. Safe to run multiple times.
 """
 
 import logging
@@ -188,9 +188,9 @@ def _print_summary():
         if orphan_docs == 0 and orphan_sessions == 0:
             logger.info("All data successfully migrated!")
         elif total_docs == 0 and total_sessions == 0:
-            logger.info("No existing data to migrate — fresh database")
+            logger.info("No existing data to migrate. Fresh database")
         else:
-            logger.warning("Some records still have no bot_id — investigate manually")
+            logger.warning("Some records still have no bot_id. Investigate manually")
 
 
 def run_migration(dry_run=False):

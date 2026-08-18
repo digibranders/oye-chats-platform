@@ -190,7 +190,7 @@ export interface KnowledgeSource {
 /** Response of `GET /documents/knowledge-state`.
  *
  * `deactivated` is the server's own verdict (`inactive_count > 0`), not
- * something the client should re-derive — a plan lapse to Free marks chunks
+ * something the client should re-derive, a plan lapse to Free marks chunks
  * inactive, and this drives the "re-crawl / re-upload to reactivate" banner.
  */
 export interface KnowledgeState {
@@ -249,7 +249,7 @@ export interface LeadContact {
   email_score?: number | null;
   /**
    * The company behind `company`, resolved from the domain's own declared
-   * identity — "infosys.com" becomes "Infosys Limited". Professional-gated,
+   * identity. "infosys.com" becomes "Infosys Limited". Professional-gated,
    * like the rest of visitor intelligence, because the same paid enrichment
    * produces it. `company` above stays the raw domain on every plan.
    */
@@ -265,7 +265,7 @@ export interface LeadDimensionScore {
 }
 
 /**
- * One captured qualification signal — an append-only evidence row. A visitor
+ * One captured qualification signal, an append-only evidence row. A visitor
  * who states a need (or budget/authority/timeline) several times produces one
  * of these per mention, so the detail view can show every value, not just the
  * single rolling high-water-mark kept in ``LeadDimensionScore``. Returned by the
@@ -297,7 +297,7 @@ export interface Lead {
   dimensions_assessed?: number;
   bant?: Record<string, LeadDimensionScore>;
   /**
-   * Full evidence trail — every captured value across all dimensions. Present
+   * Full evidence trail. Every captured value across all dimensions. Present
    * only on the single-lead detail response, and only on intelligence plans.
    */
   signals?: LeadSignal[];

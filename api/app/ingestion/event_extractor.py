@@ -8,10 +8,10 @@ the chat pipeline answer date questions with a plain SQL query.
 
 Two-stage design so we never pay for an LLM call we don't need:
 
-1. ``is_events_page`` — a cheap keyword filter over URL, title, and body
+1. ``is_events_page``, a cheap keyword filter over URL, title, and body
    text. Skips pricing pages, blog posts, and other content that happens
    to contain a date but is not an event listing.
-2. ``extract_events`` — calls Gemini with a strict JSON schema. Any event
+2. ``extract_events``. Calls Gemini with a strict JSON schema. Any event
    the model can't attach a real day+month+year to is silently dropped by
    the schema, so a wrong verdict is preferred over a made-up date.
 
@@ -104,7 +104,7 @@ def is_events_page(url: str | None, title: str | None, text: str | None) -> bool
 class _ExtractedEvent(BaseModel):
     """One event as returned by the LLM.
 
-    Every optional field is truly optional — pages routinely list an event
+    Every optional field is truly optional. Pages routinely list an event
     with only a title + date and no URL, and we still want that row.
     ``starts_at`` uses a permissive ISO 8601 string so the model doesn't
     have to guess about timezone offsets it can't infer; we normalize on
@@ -144,7 +144,7 @@ _EXTRACTION_PROMPT_TEMPLATE = (
 
 
 def _extraction_model() -> str:
-    """Prefer the CRAG gate model (Gemini Flash) — cheap, fast, JSON-strict.
+    """Prefer the CRAG gate model (Gemini Flash). Cheap, fast, JSON-strict.
 
     Falls back to the primary LLM if the gate model isn't configured so a
     misconfigured environment degrades gracefully instead of silently
@@ -159,7 +159,7 @@ def _extraction_model() -> str:
 def _parse_iso_datetime(raw: str) -> datetime | None:
     """Parse an ISO 8601 date or datetime into a timezone-aware UTC datetime.
 
-    Bare dates ('2026-08-18') are anchored at 00:00 UTC — good enough for
+    Bare dates ('2026-08-18') are anchored at 00:00 UTC. Good enough for
     PAST/UPCOMING comparisons at day granularity, which is all the chat
     pipeline needs. Anything the parser can't handle is returned as None
     so the caller can drop the row (never guess).
@@ -195,7 +195,7 @@ def extract_events(
     Returns a list of ``{title, starts_at, ends_at, url, location}`` dicts
     ready for ``repository.upsert_events``. Never raises: on any LLM error,
     JSON error, or timeout, returns ``[]`` so ingestion is never blocked by
-    extraction failures — the page still gets chunked and embedded as
+    extraction failures, the page still gets chunked and embedded as
     normal, we just miss the structured rows for that crawl.
     """
     if not text or not text.strip():
@@ -230,7 +230,7 @@ def extract_events(
         response = litellm.completion(**kwargs)
         raw = (response.choices[0].message.content or "").strip()
         parsed = _ExtractedEvents.model_validate_json(raw)
-    except Exception as exc:  # noqa: BLE001 — never block ingestion on LLM error
+    except Exception as exc:  # noqa: BLE001  never block ingestion on LLM error
         logger.info("event_extractor: LLM call failed for %s (%s)", source_url, exc)
         return []
 

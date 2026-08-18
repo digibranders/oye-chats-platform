@@ -1,4 +1,4 @@
-"""Customer billing-details endpoints — read, update, validation."""
+"""Customer billing-details endpoints. Read, update, validation."""
 
 import os
 from contextlib import contextmanager

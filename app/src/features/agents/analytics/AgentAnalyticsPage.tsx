@@ -106,10 +106,10 @@ export function AgentAnalyticsPage(): ReactElement {
   const [panel, setPanel] = useState<PanelKey>('engagement');
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
-  // "Leads" reads BANT-derived pipeline stages — Standard+ only. Free / Starter
+  // "Leads" reads BANT-derived pipeline stages. Standard+ only. Free / Starter
   // see a locked chip on the tab and the panel body swaps to the upgrade teaser.
   // "Satisfaction" reads CSAT + resolution from live-chat post-chat ratings, so
-  // it travels with `live_chat` (Starter and up). Only Free is locked here —
+  // it travels with `live_chat` (Starter and up). Only Free is locked here.
   // Starter accumulates real ratings and should see them.
   const leadsUnlocked = hasFeature('bant');
   const satisfactionUnlocked = hasFeature('live_chat');

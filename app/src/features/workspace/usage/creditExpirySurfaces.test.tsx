@@ -11,13 +11,13 @@ import {
 
 /**
  * "Top-up credits never expire" is a TERM OF SALE, true only when
- * `pricing_config.topup_expiry_months = 0` — a server value no endpoint
+ * `pricing_config.topup_expiry_months = 0`, a server value no endpoint
  * exposes. The only evidence the client holds is the customer's own ledger.
  *
  * These surfaces asserted it unconditionally, in different words ("Roll over",
  * "Top-ups roll over"), directly above a section that states a real expiry
  * date. A review mutated both lines back and the whole 166-test suite stayed
- * green — neither had any coverage at all, which is how one commit fixed the
+ * green, neither had any coverage at all, which is how one commit fixed the
  * bottom of a screen and left the top of it claiming the opposite.
  */
 

@@ -77,7 +77,7 @@ class TestResolvePinnedPublicIp:
     def test_fails_closed_when_any_resolved_address_is_private(self, monkeypatch):
         """This is the exact rebinding scenario: a hostname that resolves to
         BOTH a public and a private address must be rejected entirely, not
-        silently pinned to the public one — a DNS response ordering quirk
+        silently pinned to the public one, a DNS response ordering quirk
         or a genuinely multi-homed rebinding attacker could put the private
         address anywhere in the list."""
         monkeypatch.setattr(
@@ -126,7 +126,7 @@ class TestPinnedResolver:
 class TestFetchTextSafelyUsesPinnedConnection:
     @pytest.mark.asyncio
     async def test_end_to_end_fetch_through_pinned_resolver(self, monkeypatch):
-        """Real local aiohttp server + real TCPConnector/resolver wiring —
+        """Real local aiohttp server + real TCPConnector/resolver wiring,
         not just unit-testing the pieces in isolation. Bypasses the
         public-IP requirement (the test server is on loopback) purely to
         exercise the CONNECTION mechanism; validate_public_url's own
@@ -172,7 +172,7 @@ class TestFetchTextSafelyUsesPinnedConnection:
 #
 # Every fetch in this module used to pass `ssl=False`, so an https:// URL was
 # retrieved with no certificate check at all. Pinning the resolved IP never
-# required that — `_PinnedResolver` reports the real hostname, so SNI and
+# required that. `_PinnedResolver` reports the real hostname, so SNI and
 # hostname verification still work against the name in the URL. Pinning decides
 # WHERE we connect; TLS decides WHETHER the thing that answered is who the URL
 # said it would be. Without the second one, an on-path attacker substitutes the
@@ -241,7 +241,7 @@ class TestTlsVerificationOnPinnedFetches:
         app = web.Application()
         app.router.add_get("/", handler)
         server = TestServer(app)
-        # `ssl` is consumed by start_server, not by the constructor — passing
+        # `ssl` is consumed by start_server, not by the constructor. Passing
         # it to TestServer(...) silently yields a PLAIN HTTP server, and then
         # every assertion below passes for the wrong reason.
         await server.start_server(ssl=ctx)
@@ -267,7 +267,7 @@ class TestTlsVerificationOnPinnedFetches:
     @pytest.mark.asyncio
     async def test_the_body_is_reachable_once_verification_is_switched_off(self, monkeypatch, tmp_path):
         """Proves the previous test failed on the CERTIFICATE and not on the
-        harness — same server, same pinning, only the flag differs. Also pins
+        harness, same server, same pinning, only the flag differs. Also pins
         the kill switch itself: it has to actually restore service, or it is
         not the stopgap it is documented as."""
         import aiohttp
@@ -333,7 +333,7 @@ class TestTlsVerificationOnPinnedFetches:
 
     def test_the_verifying_context_actually_verifies(self):
         """`create_default_context` is only the right choice if it is checking
-        both the chain and the hostname — a context with either turned off
+        both the chain and the hostname, a context with either turned off
         would satisfy every test above that asserts a refusal, for the wrong
         reason."""
         import ssl as ssl_mod
@@ -349,8 +349,8 @@ class TestTlsVerificationOnPinnedFetches:
         """`probe_url_alive` feeds the orphan sweep, which DELETES a
         customer's ingested pages for URLs it reports gone. Turning
         verification on must not turn a certificate problem into data loss:
-        only a confirmed 404/410 means gone, and everything else — including a
-        refused certificate — stays conservatively alive."""
+        only a confirmed 404/410 means gone, and everything else (including a
+        refused certificate) stays conservatively alive."""
         import aiohttp
 
         from app.core.ssrf import probe_url_alive

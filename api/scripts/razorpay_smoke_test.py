@@ -2,7 +2,7 @@
 
 Run this once you've pasted real test keys into ``platform/api/.env`` to
 confirm the integration talks to Razorpay's test API end-to-end. It does
-NOT hit the database — it only exercises the Razorpay SDK calls in
+NOT hit the database, it only exercises the Razorpay SDK calls in
 isolation.
 
 Usage:
@@ -19,7 +19,7 @@ Output:
 * Optionally fakes a signature with the SDK utility to confirm
   ``verify_payment_signature`` works locally.
 
-This script is dev-only — never run against production keys.
+This script is dev-only, never run against production keys.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def main() -> None:
                 "razorpay_signature": sig,
             }
         )
-        print("\033[32m✓ Local signature roundtrip OK — verify_payment_signature accepts our HMAC.\033[0m")
+        print("\033[32m✓ Local signature roundtrip OK. Verify_payment_signature accepts our HMAC.\033[0m")
     except Exception as exc:
         _bail(f"Signature roundtrip failed: {exc}")
 

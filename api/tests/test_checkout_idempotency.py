@@ -7,14 +7,14 @@ Two related holes in ``POST /checkout``:
   tabs, a re-opened modal) minted a fresh authorizable Razorpay subscription
   each time; a customer who authorised two got two live mandates. /resume and
   the upgrade path already solved this (finding H1) by recording the in-flight
-  checkout and reusing it — first checkout now does the same via
+  checkout and reusing it. First checkout now does the same via
   ``clients.pending_checkout_*``, verified against the gateway through
   ``rebuild_upgrade_checkout`` (gateway state, not a TTL, decides staleness).
 
 * **ReferralConversion was recorded at checkout-create.** An abandoned
   checkout (never authorised, never charged) still accrued the affiliate a
   conversion row. The insert now happens in the ``subscription.charged``
-  handler — actual money — from a snapshot carried in the subscription notes,
+  handler (actual money) from a snapshot carried in the subscription notes,
   with a unique-per-client constraint making webhook replays and later cycles
   no-ops.
 """
@@ -90,7 +90,7 @@ def _mint_payload(sub_id="sub_idem_1"):
 
 @pytest.fixture(autouse=True)
 def _pending_mandate_is_unpaid():
-    """Default every test here to an UNPAID in-flight mandate — the reuse path
+    """Default every test here to an UNPAID in-flight mandate, the reuse path
     now asks the gateway ``checkout_already_paid`` first, and the PAID case is
     covered in test_change_plan_checkout_idempotency."""
     with patch.object(rzp, "checkout_already_paid", return_value=False):
@@ -140,7 +140,7 @@ def test_checkout_for_a_different_plan_mints_fresh(db, monkeypatch):
     assert first.status_code == 200 and second.status_code == 200
     assert mint.call_count == 2
     # The superseded mandate is left authorizable at Razorpay unless it is
-    # explicitly killed — a customer could authorise the abandoned plan-A
+    # explicitly killed, a customer could authorise the abandoned plan-A
     # checkout later and be billed for a plan they walked away from.
     cancel.assert_called_once_with("sub_idem_a")
     db.refresh(client)
@@ -171,7 +171,7 @@ def test_dead_pending_checkout_is_replaced(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert res.json()["subscription_id"] == "sub_idem_new"
     assert mint.call_count == 1
-    # "Not reusable" and "dead" are different facts — only the second makes a
+    # "Not reusable" and "dead" are different facts. Only the second makes a
     # fresh mint safe, so the gateway status is checked before minting.
     cancel.assert_called_once_with("sub_idem_dead")
     db.refresh(client)
@@ -338,7 +338,7 @@ def test_checkout_different_cycle_mints_fresh(db, monkeypatch):
 def test_checkout_country_change_never_reuses_wrong_rail(db, monkeypatch):
     # Click 1 confirms IN (INR pending). Click 2 confirms US (no live mandate,
     # so the change is legitimate). Reusing the INR checkout would hand a
-    # stored-US account an INR mandate — the divergence Wave 1.2 kills — so
+    # stored-US account an INR mandate, the divergence Wave 1.2 kills, so
     # the country is part of the reuse key and a fresh USD mint happens.
     monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
     api, client = _mk(db, monkeypatch)
@@ -394,7 +394,7 @@ def test_rebuild_failure_is_a_502_not_a_sibling_mint(db, monkeypatch):
 
 def test_dangling_referral_snapshot_never_fails_the_payment_handler(db):
     # Affiliates/codes are hard-deletable; the ids frozen in gateway notes can
-    # dangle. The insert must be savepoint-guarded — an FK error here would
+    # dangle. The insert must be savepoint-guarded, an FK error here would
     # dead-letter the whole subscription.charged event on every retry.
     client = Client(name="D", email="idem-dangle@test.example", api_key="key-idem-dangle")
     db.add(client)

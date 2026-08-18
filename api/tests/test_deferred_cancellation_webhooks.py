@@ -15,7 +15,7 @@ mandate mints a replacement with ``start_at = current_period_end``, so the
 customer is not billed twice for overlapping days. The activation that follows
 must respect that: it may not grant a new period (their existing credits are
 still running), it must carry the paid-through date onto the replacement, and it
-must retire the predecessor at cycle end rather than immediately — otherwise the
+must retire the predecessor at cycle end rather than immediately. Otherwise the
 paid remainder is destroyed at the gateway too.
 """
 
@@ -67,7 +67,7 @@ def _activation_payload(*, razorpay_sub_id, client_id, plan_id, period_start, pe
     ``authenticated`` subscription actually carries: ``current_start`` and
     ``current_end`` are null until the first charge, and the schedule lives in
     ``start_at`` / ``charge_at``. The deferred-start handlers must work
-    against the latter — keying on ``current_start`` alone silently ignores
+    against the latter. Keying on ``current_start`` alone silently ignores
     every real deferred authentication.
     """
     entity = {
@@ -133,7 +133,7 @@ def test_charge_past_a_pending_cancellation_is_cancelled_and_not_granted(db, mon
     db.commit()
 
     assert "refund required" in result
-    # Cancelled NOW — the period they paid for has just rolled over, so there is
+    # Cancelled NOW, the period they paid for has just rolled over, so there is
     # nothing left to protect by waiting.
     assert cancels == [False]
 
@@ -151,7 +151,7 @@ def test_charge_past_a_pending_cancellation_is_cancelled_and_not_granted(db, mon
 def test_backstop_also_retires_the_seat_addon_mandate(db, monkeypatch):
     """The backstop is the last code that ever sees this row (the status flip
     removes it from the sweep's match set), so it must cancel the SEPARATE
-    per-seat mandate too and park the count — otherwise the add-on keeps
+    per-seat mandate too and park the count. Otherwise the add-on keeps
     debiting monthly with no retry path anywhere."""
     client = _client(db, "backstop-seats@e.com")
     plan = _plan(db, "std-backstop-seats")
@@ -201,7 +201,7 @@ def test_backstop_also_retires_the_seat_addon_mandate(db, monkeypatch):
     assert seat_cancels == [sub.id]
     assert sub.status == "canceled"
     assert sub.gateway_cancel_executed_at is not None
-    # The seats the customer had bought are parked, not lost — a reactivation
+    # The seats the customer had bought are parked, not lost, a reactivation
     # re-mints the add-on from this count.
     assert sub.seat_addon_pending_quantity == 3
 
@@ -304,7 +304,7 @@ def test_failed_emergency_cancel_stays_active_so_the_sweep_retries(db, monkeypat
     db.refresh(sub)
     assert sub.status == "active", "must stay in the sweep's match set"
     assert sub.gateway_cancel_executed_at is None
-    assert sub.current_period_end == period_end, "period must not roll — it is what re-matches the sweep"
+    assert sub.current_period_end == period_end, "period must not roll, it is what re-matches the sweep"
     # Still no credits: the customer cancelled and this charge is refundable.
     assert db.query(CreditLedger).filter_by(client_id=client.id, reason="plan_grant").all() == []
 
@@ -342,8 +342,8 @@ def test_authenticated_with_a_future_start_materialises_the_row(db, monkeypatch)
     nothing until the first charge, so without it the local row never appears
     and the "won't renew" banner never clears on a paid reactivation.
 
-    Uses the REAL authenticated wire shape — ``current_start`` null, the
-    future start only in ``start_at`` — so a regression back to keying on
+    Uses the REAL authenticated wire shape (``current_start`` null, the
+    future start only in ``start_at``) so a regression back to keying on
     ``current_start`` fails here instead of in production."""
     client = _client(db, "auth-future@e.com")
     plan = _plan(db, "std-auth-future")
@@ -395,7 +395,7 @@ def test_normal_renewal_is_untouched_by_the_backstop(db, monkeypatch):
     monkeypatch.setattr(rzp, "cancel_subscription", lambda s, **kw: pytest.fail("must not cancel a live renewal"))
 
     # Razorpay carries whole-second epochs, so the row lands on the truncated
-    # instant — compare against that, not the microsecond-precision local value.
+    # instant. Compare against that, not the microsecond-precision local value.
     new_end = (period_end + timedelta(days=30)).replace(microsecond=0)
     rzp._handle_subscription_charged(
         db,
@@ -452,7 +452,7 @@ def test_future_start_activation_carries_the_paid_period_and_grants_nothing(db, 
             razorpay_sub_id="sub_new_deferred",
             client_id=client.id,
             plan_id=plan.id,
-            period_start=paid_through,  # future — this is the deferred start
+            period_start=paid_through,  # future. This is the deferred start
             period_end=paid_through + timedelta(days=30),
             notes={"prev_razorpay_subscription_id": "sub_old_deferred"},
             charged=False,  # pre-charge shape: the future start is in start_at only
@@ -466,7 +466,7 @@ def test_future_start_activation_carries_the_paid_period_and_grants_nothing(db, 
     assert new.current_period_end == paid_through
     assert new.last_granted_period_end == paid_through
     assert db.query(CreditLedger).filter_by(client_id=client.id, reason="plan_grant").all() == []
-    # The banner clears — that is the whole point of the reactivation.
+    # The banner clears. That is the whole point of the reactivation.
     assert new.cancel_at_period_end is False
     assert new.status == "active"
 
@@ -552,7 +552,7 @@ def test_per_bot_resume_retires_the_bots_own_subscription(db, monkeypatch):
     assert old.status == "canceled", "the bot's own row must be retired"
 
     new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_perbot_wh").one()
-    assert new.bot_id == bot.id, "the replacement funds the SAME bot — no new bot minted"
+    assert new.bot_id == bot.id, "the replacement funds the SAME bot, no new bot minted"
     assert new.cancel_at_period_end is False
     db.refresh(bot)
     assert bot.subscription_id == new.id, "the bot must point at the subscription that now funds it"

@@ -5,7 +5,7 @@ work: the ``PlanEntitlements`` dataclass helpers, the resolver's plan
 selection logic (with subscription / without / catastrophic fallback), and
 the cache invalidation surface.
 
-These are unit tests — the Redis cache and the ``get_client_subscription``
+These are unit tests, the Redis cache and the ``get_client_subscription``
 dependency are both mocked so the test suite stays fast and doesn't
 require a live database for the service layer.
 """
@@ -58,13 +58,13 @@ class TestPlanEntitlementsHelpers:
         assert ent.has_feature("live_chat") is False
 
     def test_has_feature_false_when_missing(self):
-        """Unknown features default to False — lock down rather than expose."""
+        """Unknown features default to False. Lock down rather than expose."""
         ent = self._make(features={})
         assert ent.has_feature("nonexistent_feature") is False
 
     def test_has_feature_handles_string_values(self):
         """String features like ``integrations`` return True when set to any
-        meaningful value so the generic check stays simple — string-level
+        meaningful value so the generic check stays simple. String-level
         gating ("all" vs "reply_to_only") happens at the caller."""
         ent = self._make(features={"integrations": "all"})
         assert ent.has_feature("integrations") is True
@@ -82,7 +82,7 @@ class TestPlanEntitlementsHelpers:
         assert ent.limit_for("bots") == UNLIMITED
 
     def test_limit_for_zero_when_missing(self):
-        """Unknown limits default to 0 — conservative."""
+        """Unknown limits default to 0. Conservative."""
         ent = self._make(limits={})
         assert ent.limit_for("nonexistent") == 0
 
@@ -116,7 +116,7 @@ class TestPlanEntitlementsHelpers:
     def test_remaining_unlimited_returns_huge(self):
         ent = self._make(limits={"documents": UNLIMITED})
         # Must be big enough that ``min(remaining, batch_size)`` works
-        # without special-casing — 1e9 is the documented contract.
+        # without special-casing. 1e9 is the documented contract.
         assert ent.remaining("documents", 0) >= 10**9
 
     def test_to_json_dict_roundtrips(self):
@@ -165,7 +165,7 @@ class TestComputeEntitlements:
         signups before their first plan grant has fired."""
         free_plan = self._make_plan(slug="free", name="Free")
         session = MagicMock()
-        # session.get(Plan, plan_id) is irrelevant here — no sub means no plan_id
+        # session.get(Plan, plan_id) is irrelevant here, no sub means no plan_id
         # session.execute(...).scalar_one_or_none() returns Free
         execute_result = MagicMock()
         execute_result.scalar_one_or_none.return_value = free_plan
@@ -182,7 +182,7 @@ class TestComputeEntitlements:
 
     def test_uses_hardcoded_fallback_when_free_plan_missing(self):
         """Catastrophic: even the Free plan row is gone (super admin error).
-        Falls back to the hardcoded constants so we never crash — most
+        Falls back to the hardcoded constants so we never crash. Most
         restrictive defaults applied."""
         session = MagicMock()
         execute_result = MagicMock()
@@ -217,13 +217,13 @@ class TestComputeEntitlements:
         ):
             result = _compute(client_id=1, db_session=session, include_usage=False)
 
-        # Did NOT crash — degraded to Free.
+        # Did NOT crash. Degraded to Free.
         assert result.plan_slug == "free"
 
 
 class TestOperatorSeatEntitlement:
     """``limits["operators"]`` on the Plan row is the hard ceiling (never
-    exceeded even with paid extras) — the actual entitlement a client gets
+    exceeded even with paid extras), the actual entitlement a client gets
     is ``max(included_operator_seats, subscription.operator_quantity)``,
     capped at that ceiling. Without this, a client could add operators up
     to the ceiling for free without ever paying for extra seats via
@@ -252,7 +252,7 @@ class TestOperatorSeatEntitlement:
 
     def test_defaults_to_included_seats_when_nothing_purchased(self):
         """A client who never touched billing gets exactly their plan's
-        included seats for free — not the full ceiling."""
+        included seats for free, not the full ceiling."""
         plan = self._make_plan(operators_ceiling=5, included_operator_seats=1)
         result = self._compute_with(plan, operator_quantity=1)
         assert result.limits["operators"] == 1
@@ -272,7 +272,7 @@ class TestOperatorSeatEntitlement:
 
     def test_stale_low_operator_quantity_never_drops_below_included_seats(self):
         """Guards against the known subscription-creation quirk where
-        operator_quantity can be initialized to 1 regardless of plan —
+        operator_quantity can be initialized to 1 regardless of plan,
         the client must never get fewer than their included seats."""
         plan = self._make_plan(operators_ceiling=10, included_operator_seats=2)
         result = self._compute_with(plan, operator_quantity=1)
@@ -401,7 +401,7 @@ class TestBuildUsage:
         session = MagicMock()
 
         def side_effect(*args, **kwargs):
-            # Reproducible — first call (bots) throws, others succeed
+            # Reproducible. First call (bots) throws, others succeed
             if not hasattr(side_effect, "call_count"):
                 side_effect.call_count = 0
             side_effect.call_count += 1
@@ -481,8 +481,8 @@ class TestIsBantEnabledForPlan:
 
 # ── Leads dashboard plan-gate helper ─────────────────────────────────────────
 #
-# ``is_leads_dashboard_enabled`` now grants every resolved plan — Free
-# included — access to the leads dashboard (Free sees a reduced, chat-only
+# ``is_leads_dashboard_enabled`` now grants every resolved plan (Free
+# included) access to the leads dashboard (Free sees a reduced, chat-only
 # surface in the UI). The gate only denies on an entitlements lookup failure.
 
 
@@ -573,8 +573,8 @@ class TestIsLeadIntelligenceEnabled:
 # ── Visitor intelligence plan-gate helper ────────────────────────────────────
 #
 # Visitor Intelligence (IP-based company/threat signal, validated-email
-# display, manual follow-up action) is a Professional-only deliverable —
-# strictly narrower than ``is_lead_intelligence_enabled`` (Starter+).
+# display, manual follow-up action) is a Professional-only deliverable.
+# Strictly narrower than ``is_lead_intelligence_enabled`` (Starter+).
 
 
 class TestIsVisitorIntelligenceEnabled:
@@ -643,7 +643,7 @@ class TestGetChatHistoryRetentionDays:
 
     def test_missing_key_defaults_to_unlimited(self):
         """A plan without a ``chat_history_days`` key at all mustn't
-        suddenly hide the customer's dashboard — default open, not closed."""
+        suddenly hide the customer's dashboard. Default open, not closed."""
         session = MagicMock()
         with patch(
             "app.services.plan_entitlements_service.get_entitlements",
@@ -660,7 +660,7 @@ class TestGetChatHistoryRetentionDays:
             assert get_chat_history_retention_days(1, session) == UNLIMITED
 
     def test_lookup_failure_defaults_to_unlimited(self):
-        """Deliberately generous — a transient resolver crash must not
+        """Deliberately generous, a transient resolver crash must not
         empty out the customer's chat history in the UI."""
         session = MagicMock()
         with patch(

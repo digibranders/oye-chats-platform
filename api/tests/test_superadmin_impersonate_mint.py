@@ -5,10 +5,10 @@ Covers the two controls added to ``POST /superadmin/clients/{id}/impersonate``:
 1. The customer-app host in ``redirect_url`` comes from the shared ``APP_URL``
    setting (``app/config.py``), so impersonation also works against localhost
    and staging. It deliberately does NOT introduce a second env var for the
-   same concept — see ``test_redirect_url_uses_the_shared_app_url_setting``.
+   same concept. See ``test_redirect_url_uses_the_shared_app_url_setting``.
 2. A Client whose ``is_superadmin`` is true can never be impersonated. The
    super-admin UI already filters those rows out, but a UI filter is not a
-   control — the backend enforces it and mints nothing.
+   control, the backend enforces it and mints nothing.
 
 Existing mint behaviour (token id, audit trail, read-only gating) is pinned
 here too so the hardening cannot silently regress it.

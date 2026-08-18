@@ -13,13 +13,13 @@ import { useBotContext } from '../context/BotContext';
  * workspace can hold a Professional agent and a Free agent at the same time.
  * The account-level `entitlements.plan_slug` deliberately reports the
  * HIGHEST-priced plan across all agents, so gating agent-scoped data on it
- * would unlock paid UI for a Free agent's leads — the backend would then strip
+ * would unlock paid UI for a Free agent's leads, the backend would then strip
  * the fields anyway, leaving an empty panel and a button that 403s.
  *
  * The slug comes from `Bot.plan_slug`, resolved server-side by `bot_plan_slug()`
  * in `bot_routes.py` via the same `get_bot_entitlements` the server's own gates
  * use. This hook previously derived it from the credit-balance payload instead,
- * which lists only bots holding their own ledger — a Free agent has none, so it
+ * which lists only bots holding their own ledger, a Free agent has none, so it
  * was absent from the map and silently fell back to the account slug, unlocking
  * paid UI on exactly the agent the fallback was meant to protect.
  *

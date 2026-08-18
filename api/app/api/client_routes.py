@@ -196,7 +196,7 @@ class PlatformFeedbackCreate(BaseModel):
         """Normalize to ``[{url, name?, content_type?}]``, rejecting bad rows.
 
         The URL is rendered as a link in the super-admin feedback triage view,
-        so it is scheme-checked here rather than merely stringified — the old
+        so it is scheme-checked here rather than merely stringified, the old
         ``str(item["url"])`` accepted ``javascript:`` and any length.
         """
         if not v:
@@ -279,8 +279,8 @@ async def upload_feedback_attachment(
     MAX_SIZE = 10 * 1024 * 1024
     try:
         # Cheap declared-type reject, matching the two sibling upload routes in
-        # this module. The header is forgeable, so it is not the boundary —
-        # ``upload_chat_file`` still neutralizes the stored content type — but
+        # this module. The header is forgeable, so it is not the boundary
+        # (``upload_chat_file`` still neutralizes the stored content type) but
         # there is no reason to accept a declared ``text/html`` at all.
         ensure_allowed_type(file, FEEDBACK_ATTACHMENT_TYPES)
         content = await read_bounded(file, MAX_SIZE)
@@ -308,7 +308,7 @@ async def upload_logo_endpoint(
     """Upload a logo image to R2 and return its URL.
 
     This endpoint previously read the whole body with no cap and passed
-    arbitrary bytes to ``Image.open`` — a decompression-bomb and Pillow-CVE
+    arbitrary bytes to ``Image.open``, a decompression-bomb and Pillow-CVE
     surface reachable by any authenticated customer, bounded only by nginx's
     50 MB body limit. Two sibling endpoints already had size and type checks;
     this one had neither.
@@ -324,7 +324,7 @@ async def upload_logo_endpoint(
     try:
         file_key = upload_to_b2(content, file.filename, file.content_type)
     except UnsupportedImage as e:
-        # The customer's file is wrong, not our service — 400, and say why.
+        # The customer's file is wrong, not our service. 400, and say why.
         # The declared content type is forgeable, so this is the check that
         # actually decided, having decoded the bytes.
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -370,7 +370,7 @@ def update_client_profile(
 ):
     """Update the authenticated client's display name, company name, and website.
 
-    Email changes go through /client/change-email/* instead — that flow
+    Email changes go through /client/change-email/* instead. That flow
     requires the current password and confirms ownership of the new inbox
     via OTP before the login email actually moves.
     """
@@ -421,7 +421,7 @@ def change_client_password(
 
     Rotates ``api_key`` in the same transaction. That key IS the session
     credential (the dashboard stores it and sends it as ``X-API-Key``), it never
-    expires, and there is no server-side session table — so without rotation a
+    expires, and there is no server-side session table, so without rotation a
     password change revoked nothing: a key lifted from a shared machine, a
     browser backup, or an XSS payload kept working forever, and the "change your
     password" advice every incident response gives would have been false here.
@@ -429,7 +429,7 @@ def change_client_password(
     The new key is returned so the caller's own tab can keep working; every
     OTHER holder of the old key is logged out on their next request. Callers
     that ignore the field simply get bounced to /login by the 401 interceptor,
-    which is also an acceptable outcome — the important half is the revocation.
+    which is also an acceptable outcome, the important half is the revocation.
     """
     with get_session() as session:
         row = session.get(Client, client.id)
@@ -474,7 +474,7 @@ def request_client_email_change(
 ):
     """Start an email change: verify the current password, then OTP-verify the new inbox.
 
-    The login email is NOT updated here — it only moves once
+    The login email is NOT updated here, it only moves once
     ``/change-email/confirm`` validates the code sent to ``new_email``. The
     current (old) address also gets a notice, so an attacker who has
     hijacked the session can't quietly redirect account recovery without
@@ -569,7 +569,7 @@ def cancel_client_email_change(client: Client = Depends(get_current_client_stric
 
 
 def _mask_key(key: str | None) -> str:
-    return ("••••••" + key[-4:]) if key else "—"
+    return ("••••••" + key[-4:]) if key else "-"
 
 
 @router.get("/api-key")

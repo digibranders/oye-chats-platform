@@ -57,7 +57,7 @@ def sent(monkeypatch):
 def test_day_three_sends_action_required_and_marks_the_right_column(db, sent):
     """Asserts on ``dunning_emails_sent`` BY NAME. A marker helper hardcoded to
     ``trial_emails_sent`` would write there silently and the cadence would
-    never advance — no exception, no type error."""
+    never advance, no exception, no type error."""
     from app.worker import tasks
 
     sub = _past_due_sub(db, days_ago=3, email="d3@test.dev")
@@ -158,8 +158,8 @@ def test_expiry_commits_even_when_the_suspension_email_fails(db, monkeypatch):
 
     Asserts DURABILITY, not just in-memory attributes: ``db.rollback()`` before
     the assertions discards anything uncommitted, so this fails if the expiry is
-    only committed after the network I/O (or not at all). Mutation-tested —
-    deleting the commit makes this test fail.
+    only committed after the network I/O (or not at all). Mutation-tested.
+    Deleting the commit makes this test fail.
     """
     from app.services import email_service
     from app.worker import tasks
@@ -187,7 +187,7 @@ def test_a_poisoned_notification_does_not_starve_the_rest_of_the_batch(db, monke
     """create_notification flushes internally. A failed flush leaves the session
     rollback-required, so swallowing it without rollback() makes the NEXT
     iteration's session.get raise PendingRollbackError and every remaining
-    subscription go unserved — silently."""
+    subscription go unserved. Silently."""
     from app.db.models import Notification
     from app.worker import tasks
 
@@ -199,8 +199,8 @@ def test_a_poisoned_notification_does_not_starve_the_rest_of_the_batch(db, monke
 
         A plain ``raise`` never touches the session, so it cannot prove the
         rollback is needed. create_notification flushes internally, so the
-        genuine hazard is a flush that violates a constraint — here an FK to a
-        client that does not exist — which leaves the session rollback-required.
+        genuine hazard is a flush that violates a constraint (here an FK to a
+        client that does not exist) which leaves the session rollback-required.
         """
         session.add(Notification(client_id=999_999_999, type="payment_failed", title="x"))
         session.flush()

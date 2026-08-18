@@ -11,12 +11,12 @@ import { UserJourneyFlow } from './UserJourneyFlow';
  * Plan slugs allowed to view the Journey surface. Mirrors
  * ``JOURNEY_ANALYTICS_SLUGS`` in ``plan_entitlements_service.py`` so a
  * gated visitor sees the upgrade teaser BEFORE any endpoint fires and
- * responds 402 — one clean LockedFeatureCard instead of two stacked
+ * responds 402, one clean LockedFeatureCard instead of two stacked
  * ones (UserJourneyFlow and PageInfluence each have their own gated
  * fallback for defence in depth on lower-tier plans that somehow hit
  * this page directly).
  *
- * A bare membership test, like the server's — NOT the `planIncludes`
+ * A bare membership test, like the server's. NOT the `planIncludes`
  * ladder in `lib/planGates`, which additionally hands an unrecognised
  * (bespoke) slug the feature. Every seeded tier from Standard up is
  * listed explicitly, Enterprise included: it is Professional plus
@@ -26,14 +26,14 @@ import { UserJourneyFlow } from './UserJourneyFlow';
 const JOURNEY_PLAN_SLUGS = new Set<string>(['standard', 'professional', 'enterprise']);
 
 /**
- * JourneyPage — the visitor-journey surface for one agent. Stacks the
+ * JourneyPage, the visitor-journey surface for one agent. Stacks the
  * source → chatbot → destination flow diagram on top and a ranked
  * "Page Influence" panel underneath; both are scoped to the current
  * agent from the shell BotSwitcher. When nothing is picked, each
  * section renders its own empty state.
  *
  * Free / Starter plans see a full-page LockedFeatureCard instead of
- * the sections — data collection still runs on those plans, so an
+ * the sections. Data collection still runs on those plans, so an
  * upgrade surfaces prior history immediately.
  */
 export function JourneyPage(): ReactElement {

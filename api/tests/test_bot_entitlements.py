@@ -126,7 +126,7 @@ def test_lead_source_attribution_is_per_bot(db):
 
 def test_email_validation_is_enabled_only_on_standard_and_professional(db):
     """Email verification is a metered feature scoped to Standard + Professional
-    on the standard ladder — and granted to bespoke enterprise slugs.
+    on the standard ladder, and granted to bespoke enterprise slugs.
 
     Starter is excluded deliberately: it is a cheaper LADDER tier, and the
     allow-list keeps that boundary explicit so a future Starter change cannot
@@ -134,7 +134,7 @@ def test_email_validation_is_enabled_only_on_standard_and_professional(db):
 
     A custom slug is the opposite case. It is provisioned by a super-admin for
     an individual deal at a negotiated price, and this test used to assert it
-    was DENIED — the inverse of what the guarding comment said before the gate
+    was DENIED, the inverse of what the guarding comment said before the gate
     was narrowed: "a custom paid slug provisioned for an enterprise deal is a
     paid plan and must not silently lose the feature." Denying it leaves that
     customer without a feature they pay for and, because `is_valid_email`
@@ -192,7 +192,7 @@ def test_visitor_intelligence_is_per_bot_not_account_highest(db):
     assert ent.is_visitor_intelligence_enabled_for_bot(bot_pro.id, db) is True
     assert ent.is_visitor_intelligence_enabled_for_bot(bot_free.id, db) is False
 
-    # The account-level resolver still reports True (highest plan wins) —
+    # The account-level resolver still reports True (highest plan wins),
     # which is exactly why lead-scoped surfaces must not use it.
     assert ent.is_visitor_intelligence_enabled(client.id, db) is True
 
@@ -218,7 +218,7 @@ def test_a_bespoke_slug_also_gets_visitor_intelligence(db):
 
 def test_a_new_seeded_ladder_tier_is_not_granted_by_accident(db):
     """The guard on rule 2. Bespoke slugs get paid features; a tier added to
-    the standard ladder must NOT — adding it to `_SEEDED_PLAN_SLUGS` is part
+    the standard ladder must NOT. Adding it to `_SEEDED_PLAN_SLUGS` is part
     of adding the tier, which forces a deliberate per-feature choice."""
     assert "starter" in ent._SEEDED_PLAN_SLUGS
     assert ent._paid_tier_includes("starter", ent.EMAIL_VERIFICATION_SLUGS) is False

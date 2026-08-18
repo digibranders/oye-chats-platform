@@ -1,6 +1,6 @@
 """Promo/referral attribution must survive the Google OAuth round trip.
 
-The campaign link lands on /register?code=… — but "Continue with Google" is a
+The campaign link lands on /register?code=…, but "Continue with Google" is a
 full-page redirect through Google, and the callback used to create the account
 knowing nothing about the code: a promo-link signup via Google silently lost
 its promotion (found live in prod: client had an EMPTY signup_promo_code

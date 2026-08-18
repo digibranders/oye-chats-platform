@@ -1,4 +1,4 @@
-"""BL-2 + BL-4 remediation — re-auth model for UPI plan changes (real Postgres).
+"""BL-2 + BL-4 remediation. Re-auth model for UPI plan changes (real Postgres).
 
 Razorpay's Update Subscription API is blocked for UPI mandates, so plan changes
 must cancel+recreate+re-authorize. The design decision is the "re-auth model":
@@ -7,14 +7,14 @@ retired only at the new sub's activation webhook via a REAL gateway cancel.
 
 Covered here:
 
-* BL-4 guard — a client with an active Razorpay subscription that hits
+* BL-4 guard, a client with an active Razorpay subscription that hits
   ``/checkout`` again is rejected with 409 (directed to ``/change-plan``); no
   second Razorpay subscription / UPI mandate is minted.
-* Sibling gateway-cancel — when ``subscription.activated`` fires for a new sub,
+* Sibling gateway-cancel. When ``subscription.activated`` fires for a new sub,
   the predecessor sibling (active, has a razorpay id) is cancelled AT THE
   GATEWAY (``at_period_end=False``), not merely flipped to canceled locally.
   The just-activated row is never cancelled.
-* BL-2 abandonment — the paid upgrade path must NOT hard-cancel the old mandate
+* BL-2 abandonment, the paid upgrade path must NOT hard-cancel the old mandate
   before the new one authorizes. An abandoned checkout modal leaves the customer
   on the OLD active plan with rollover credits intact.
 
@@ -270,7 +270,7 @@ def test_activation_gateway_cancel_failure_does_not_abort(db):
     LIVE at Razorpay. The partial unique index
     ``ix_subscriptions_client_legacy_active`` forbids two active client-level
     rows, so the old row cannot stay ``active`` without failing the new row's
-    INSERT — instead it is flipped canceled but stamped with a DISTINCT
+    INSERT. Instead it is flipped canceled but stamped with a DISTINCT
     ``cancel_reason`` (``gateway_cancel_failed_mandate_live``) so the still-live
     mandate is queryable for reconcile/retry, and the failure is logged at ERROR
     naming the old razorpay id + client id. This is materially safer than the
@@ -305,10 +305,10 @@ def test_activation_gateway_cancel_failure_does_not_abort(db):
         assert "sub_old_sibfail" in error_blob
         assert str(client.id) in error_blob
 
-    # Resilience preserved — activation completed, the new sub is active.
+    # Resilience preserved. Activation completed, the new sub is active.
     new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_sibfail").one()
     assert new.status == "active"
-    # Truthfulness — the old row carries the distinct reconcile marker so it is
+    # Truthfulness, the old row carries the distinct reconcile marker so it is
     # NOT indistinguishable from a clean cancel (the original silent lie).
     db.refresh(old)
     assert old.cancel_reason == "gateway_cancel_failed_mandate_live"
@@ -447,7 +447,7 @@ def test_upgrade_does_not_immediately_gateway_cancel_old(db):
 
 def test_change_plan_free_reactivates_trial_expired_customer(db):
     """A trial_expired customer picking Free must land on an active Free sub
-    (not a 400) — and the old trial_expired row must be canceled with
+    (not a 400), and the old trial_expired row must be canceled with
     ``data_retention_until`` nulled so the hard-delete cron never fires on
     what is now a legitimate Free-tier account."""
     from datetime import timedelta

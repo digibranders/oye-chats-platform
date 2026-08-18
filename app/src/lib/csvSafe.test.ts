@@ -30,7 +30,7 @@ describe('csvSafe', () => {
     // of the cell as literal text rather than as an expression.
     expect(escaped, why).toBe(`'${payload}`);
     expect(TRIGGERS.some((t) => escaped.startsWith(t))).toBe(false);
-    // Nothing is silently dropped — the value stays fully recoverable.
+    // Nothing is silently dropped, the value stays fully recoverable.
     expect(escaped.slice(1)).toBe(payload);
   });
 
@@ -45,7 +45,7 @@ describe('csvSafe', () => {
   it.each(['Priya Sharma', 'Acme, Inc. "Main"', '', 'Café ☕', '2026 lead', 'priya@infosys.com'])(
     'leaves %j alone',
     (value) => {
-      /* The escape is targeted — commas and quotes are the CSV writer's job.
+      /* The escape is targeted. Commas and quotes are the CSV writer's job.
          `priya@infosys.com` is the case worth naming: the trigger is a
          *leading* '@', so an ordinary email must survive untouched or every
          lead export grows a stray quote. */
@@ -54,7 +54,7 @@ describe('csvSafe', () => {
   );
 
   it('only looks at the leading position', () => {
-    // A trigger further into the string is inert — Excel decides at cell start.
+    // A trigger further into the string is inert. Excel decides at cell start.
     expect(csvSafe('Budget is =1+1 per seat')).toBe('Budget is =1+1 per seat');
   });
 
@@ -66,8 +66,8 @@ describe('csvSafe', () => {
   it('escapes an E.164 phone number, which is intended', () => {
     /* Pinned so nobody "fixes" it later. '+91 98000 00000' starts with '+', so
        it picks up a quote like any other triggering cell. Exempting values that
-       "look like" a phone number is not an option — '+1+1' looks exactly as
-       numeric as '+91' — and every published bypass of this defence lives in
+       "look like" a phone number is not an option ('+1+1' looks exactly as
+       numeric as '+91') and every published bypass of this defence lives in
        precisely that kind of heuristic. Matches `csv_safe` on the backend. */
     expect(csvSafe('+91 98000 00000')).toBe("'+91 98000 00000");
   });
@@ -76,7 +76,7 @@ describe('csvSafe', () => {
 /**
  * The cell funnel every export routes through.
  *
- * It was written twice — once in `leadsCsv.ts`, once in the feedback helpers —
+ * It was written twice. Once in `leadsCsv.ts`, once in the feedback helpers,
  * and the two had already drifted on their signatures before being merged back
  * into this one. These pin the wider behaviour that survived, because that is
  * the part a future edit can silently drop: the escaping half is loudly covered

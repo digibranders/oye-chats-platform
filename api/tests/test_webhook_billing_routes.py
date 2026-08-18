@@ -1,11 +1,11 @@
-"""Razorpay inbound webhook route — failure handling (remediation C1).
+"""Razorpay inbound webhook route. Failure handling (remediation C1).
 
 A verified webhook whose processing raises must NOT be ACKed with 200 (that
 tells Razorpay to stop retrying and silently loses the paid event). Instead:
 
 * the raw signed event is dead-lettered (persisted) in a separate transaction
   that survives the handler's rollback, and
-* the route returns 5xx so Razorpay retries (safe — event-id idempotency makes
+* the route returns 5xx so Razorpay retries (safe. Event-id idempotency makes
   the retry a no-op once processing eventually succeeds).
 
 When ``WEBHOOK_RETRY_ON_ERROR`` is off, the legacy 200-on-error behaviour is
@@ -171,7 +171,7 @@ def _seat_addon_event(event_name: str) -> dict:
     """Build a Razorpay subscription webhook event for the seat add-on sub.
 
     The add-on subscription is stamped ``notes.purpose == "seat_addon"`` by
-    ``create_seat_addon_subscription`` and carries NO ``oyechats_plan_id`` —
+    ``create_seat_addon_subscription`` and carries NO ``oyechats_plan_id``,
     it must never be mistaken for a plan renewal that grants monthly credits.
     """
     return {

@@ -1,17 +1,17 @@
-"""Footer-only media harvest (Phase 1 — log-only).
+"""Footer-only media harvest (Phase 1. Log-only).
 
 Runs a targeted scrape of the crawl root to isolate the page's ``<footer>``
 and ``[role=contentinfo]`` regions, then extracts any YouTube channel URLs,
 individual video URLs, and downloadable file URLs that live there. Almost
 every business site puts its channel link, brochure PDF, or social handles
-in the footer — but the main crawl passes markdown through
+in the footer, but the main crawl passes markdown through
 ``readability: true``, which heuristically drops those regions on many
 pages. This side channel guarantees they are inspected even when the main
 crawl's markdown scrubs them out.
 
 Phase 1 is log-only: the returned media dict is emitted to the crawl log
 so we can eyeball a few real customer sites before wiring it into the
-ingest pipeline. Every failure mode returns an empty dict silently — this
+ingest pipeline. Every failure mode returns an empty dict silently. This
 must never abort a real crawl, and the orchestrator's 30s wait cap keeps
 a hung Spider scrape from ever delaying the crawl's completion.
 """
@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 # see in the wild. Ordered from strongest signal to weakest so the seen-set
 # dedup below can't be tricked by a broad class matching before the semantic
 # element does.
-#   * ``footer`` / ``[role=contentinfo]`` — HTML5-native + ARIA landmark
-#   * ``.site-footer`` / ``#site-footer`` — convention on modern themes
-#   * ``#footer`` / ``.footer`` — generic legacy
-#   * ``#colophon`` — WordPress default (baked into the Twenty-* themes and
+#   * ``footer`` / ``[role=contentinfo]``. HTML5-native + ARIA landmark
+#   * ``.site-footer`` / ``#site-footer``. Convention on modern themes
+#   * ``#footer`` / ``.footer`` (generic legacy
+#   * ``#colophon``) WordPress default (baked into the Twenty-* themes and
 #     inherited by a huge share of the WP long tail)
-#   * ``.site-info`` — Genesis / older WordPress starter themes
-#   * ``#SITE_FOOTER`` — Wix
-#   * ``#page-footer`` / ``.page-footer`` — Bootstrap-derived layouts
+#   * ``.site-info`` (Genesis / older WordPress starter themes
+#   * ``#SITE_FOOTER``) Wix
+#   * ``#page-footer`` / ``.page-footer``. Bootstrap-derived layouts
 _FOOTER_SELECTORS = (
     "footer",
     "[role=contentinfo]",
@@ -106,14 +106,14 @@ async def harvest_footer_media(root_url: str) -> dict:
     """Fetch the footer of ``root_url`` and return the media URLs it references.
 
     Return shape mirrors :func:`extract_media_urls` (``youtube``, ``files``,
-    ``youtube_channels`` keys — omitted when empty) with YouTube channels
+    ``youtube_channels`` keys. Omitted when empty) with YouTube channels
     already expanded into per-video entries via
     :func:`enrich_media_urls_with_channel_videos` and each video annotated
     with title/duration via :func:`enrich_media_urls_with_metadata`.
 
     Returns an empty dict on any failure (missing API key, HTTP error, HTML
     parse failure, no footer region found, no media URLs in the footer).
-    Never raises — the caller is a background task and a footer scrape must
+    Never raises, the caller is a background task and a footer scrape must
     never abort or fail a real crawl.
     """
     if not root_url:
@@ -136,7 +136,7 @@ async def harvest_footer_media(root_url: str) -> dict:
     # filled in. Both helpers are best-effort and mutate ``media`` in place.
     #
     # Off-thread via ``asyncio.to_thread`` because the underlying enrichers
-    # use synchronous ``urllib.urlopen`` — up to 1 channel-page fetch plus
+    # use synchronous ``urllib.urlopen``. Up to 1 channel-page fetch plus
     # 50 per-video watch-page fetches, each bounded by ``_TIMEOUT_SECONDS``.
     # Running that on the event loop would freeze the concurrent main
     # crawl's per-page callbacks, its ``crawl_heartbeat`` ticks (the

@@ -4,7 +4,7 @@ chunk_overlap combination that would crash ingestion.
 chunk_size and chunk_overlap are independently range-validated by
 ModelConfigPatch's Field(ge=..., le=...), but two separately-valid PUTs (one
 admin changes chunk_size, another later changes chunk_overlap) could leave
-overlap >= size persisted — RecursiveCharacterTextSplitter then raises an
+overlap >= size persisted. RecursiveCharacterTextSplitter then raises an
 uncaught ValueError on the next ingestion (upload or crawl), a platform-wide
 outage. The route must validate the EFFECTIVE post-patch values (new value if
 patched, else the currently-stored one) before writing anything.
@@ -33,7 +33,7 @@ def client(db, monkeypatch):
     monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
     # runtime_config.get_chunk_size()/get_chunk_overlap() (used by the route's
     # cross-validation) load their cache via app.services.runtime_config's own
-    # get_session — point that at the same test DB, or reads would silently
+    # get_session. Point that at the same test DB, or reads would silently
     # hit the real app database instead of this test's throwaway one.
     monkeypatch.setattr(runtime_config, "get_session", lambda: _ctx(db))
     runtime_config.invalidate_runtime_config_cache()
@@ -84,7 +84,7 @@ def test_accepts_valid_combo_across_two_patches(client):
 
 
 def test_rejected_patch_writes_nothing(client, db):
-    """A 400 must not partially commit — the overlap value must not land in
+    """A 400 must not partially commit, the overlap value must not land in
     pricing_config even though it individually passed Field validation."""
     from app.db.models import PricingConfig
 

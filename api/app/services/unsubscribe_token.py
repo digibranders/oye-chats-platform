@@ -1,8 +1,8 @@
-"""Signed unsubscribe tokens — HMAC-SHA256, mirrors the state-token pattern
+"""Signed unsubscribe tokens. HMAC-SHA256, mirrors the state-token pattern
 in ``oauth_service.py``.
 
 Without a signature, ``/leads/unsubscribe`` would take a bare
-``bot_id`` + ``email`` and suppress it — anyone could hit the endpoint
+``bot_id`` + ``email`` and suppress it. Anyone could hit the endpoint
 with an arbitrary address and silently block a competitor's leads from
 ever receiving a follow-up. Signing the pair closes that off.
 """

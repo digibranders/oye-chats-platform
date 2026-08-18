@@ -1,10 +1,10 @@
-"""Build the transactional-email gallery — rendered from the REAL senders.
+"""Build the transactional-email gallery. Rendered from the REAL senders.
 
 Renders every email the platform actually sends into ``api/emails/gallery/`` (plus a
 browsable ``index.html``) by calling the production ``send_*`` functions in
 ``app.services.email_service`` with sample data and capturing the HTML they hand to
 Brevo. Because it exercises the real code path, the gallery cannot drift from what
-customers receive — regenerate it whenever an email changes.
+customers receive. Regenerate it whenever an email changes.
 
 Usage:
     cd platform/api && uv run python scripts/build_email_gallery.py
@@ -52,7 +52,7 @@ def _render(thunk) -> str:
 # ── Sample data ──────────────────────────────────────────────────────────────
 _BANT = {
     "bant_need": "Bilingual chatbot for Spanish-speaking customers",
-    "bant_budget": "$2,000–$5,000 / month confirmed",
+    "bant_budget": "$2,000-$5,000 / month confirmed",
     "bant_authority": "Director of Customer Experience",
     "bant_timeline": "Wants to launch within 30 days",
 }
@@ -67,7 +67,7 @@ _MESSAGES = [
     {"role": "user", "content": "Hi! Do you support Spanish-language chatbots?", "created_at": "2026-07-09T11:32:14Z"},
     {
         "role": "bot",
-        "content": "Yes — our bots are **multilingual** out of the box. Upload knowledge in any language and "
+        "content": "Yes. Our bots are **multilingual** out of the box. Upload knowledge in any language and "
         "the bot replies in the visitor's language automatically.",
         "created_at": "2026-07-09T11:32:16Z",
     },
@@ -78,7 +78,7 @@ _MESSAGES = [
     },
     {
         "role": "operator",
-        "content": "Hi Carlos — happy to walk you through team pricing. Are you free for a 15-minute call this week?",
+        "content": "Hi Carlos. Happy to walk you through team pricing. Are you free for a 15-minute call this week?",
         "created_at": "2026-07-09T11:33:48Z",
     },
     {"role": "system", "content": "Chat ended", "created_at": "2026-07-09T11:36:12Z"},
@@ -175,7 +175,7 @@ TEMPLATES = [
             "Fynix Digital",
             "Anika Sharma",
             "anika@fynix.digital",
-            "Hi — I'm evaluating chat widgets for our support site and wanted to know if you support handoff to a human agent during business hours. Also, do you have a WordPress plugin?",
+            "Hi. I'm evaluating chat widgets for our support site and wanted to know if you support handoff to a human agent during business hours. Also, do you have a WordPress plugin?",
         ),
     ),
     (
@@ -228,7 +228,7 @@ def render_index(entries: list[tuple[str, str]]) -> str:
   .head a{{font-size:12px;color:{ed.ACCENT};text-decoration:none;font-weight:600;}}
   iframe{{width:100%;height:680px;border:0;display:block;background:{ed.PAGE};}}
 </style></head><body>
-<header><h1>{html.escape(ed.BRAND_NAME)} — transactional email gallery</h1>
+<header><h1>{html.escape(ed.BRAND_NAME)}. Transactional email gallery</h1>
 <p>{len(entries)} templates, rendered from the real senders in app.services.email_service.
 Toggle your OS to dark mode to preview inversion behavior.</p></header>
 {"".join(sections)}

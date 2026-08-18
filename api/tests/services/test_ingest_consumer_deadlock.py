@@ -4,7 +4,7 @@
 to a single consumer that embeds them in waves. The producer's
 ``await queue.put(page)`` suspends when the queue is full (backpressure). If an
 embed/ingest wave raised, the consumer used to die with the exception and stop
-draining — the producer then blocked on ``put()`` *forever* once the queue
+draining, the producer then blocked on ``put()`` *forever* once the queue
 filled, so the crawl hung "running" until the ARQ job timeout (~27 min) with the
 UI stuck on the spinner.
 
@@ -13,12 +13,12 @@ to *drain mode*: it keeps ``get``-ing and discarding pages until the ``None``
 sentinel, so the producer's bounded ``put`` is always released. These tests pin
 that behaviour:
 
-* :func:`test_consumer_drains_queue_when_ingest_fails` — the deadlock test. The
+* :func:`test_consumer_drains_queue_when_ingest_fails`, the deadlock test. The
   producer emits far more pages than the queue can hold, and the first ingest
   wave raises. Everything must finish inside a hard timeout. Against the
   *unfixed* code (no try/except, no drain) the consumer dies, the producer
   blocks on a full queue, and this test hangs → fails via the timeout.
-* :func:`test_consumer_accumulates_totals_on_success` — happy path: totals
+* :func:`test_consumer_accumulates_totals_on_success`. Happy path: totals
   accumulate across waves and no error is recorded.
 """
 
@@ -44,7 +44,7 @@ def _page(i: int) -> dict:
 async def _drive(queue: asyncio.Queue, count: int) -> None:
     """Producer: emit ``count`` pages then the end-of-stream sentinel.
 
-    ``put`` suspends whenever the bounded queue is full — it only makes forward
+    ``put`` suspends whenever the bounded queue is full, it only makes forward
     progress if the consumer keeps draining.
     """
     for i in range(count):
@@ -86,7 +86,7 @@ async def test_consumer_drains_queue_when_ingest_fails() -> None:
     assert isinstance(state["consumer_error"], RuntimeError)
     # Only the first wave attempted ingestion; the rest were drained + dropped.
     assert calls["n"] == 1
-    # Queue fully drained — nothing stranded, no leaked backpressure.
+    # Queue fully drained, nothing stranded, no leaked backpressure.
     assert queue.empty()
     # No partial totals credited for a failed ingest.
     assert totals == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}

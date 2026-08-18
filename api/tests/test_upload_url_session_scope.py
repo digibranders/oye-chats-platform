@@ -2,11 +2,11 @@
 
 ``POST /chat/upload-url`` mints a presigned CDN PUT URL. The bot key is public,
 so the URL must be bound to a chat session that belongs to the authenticated bot
-— otherwise anyone could host arbitrary content on cdn.oyechats.com under a
+- otherwise anyone could host arbitrary content on cdn.oyechats.com under a
 victim's key. A session_id that is missing or belongs to another bot -> 404, and
 no presigned URL is issued.
 
-MagicMock session — no Postgres; the R2 presign helpers are patched.
+MagicMock session, no Postgres; the R2 presign helpers are patched.
 """
 
 from contextlib import contextmanager, suppress

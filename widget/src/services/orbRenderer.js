@@ -1,5 +1,5 @@
 /**
- * OyeChats premium orb — shared WebGL renderer.
+ * OyeChats premium orb. Shared WebGL renderer.
  *
  * Architecture: ONE WebGL context, ONE compiled shader program, N registered
  * orbs. Each orb owns a small visible <canvas> in the DOM. Every animation
@@ -17,7 +17,7 @@
  *   selective bloom → color mapping (deep↔light lerp) → gamma.
  *
  * The only creative input is `color` per orb. `uTime` drives every clock:
- * core drift 12 s, energy 18 s, glow 6 s, shadow 14 s — all coprime, so
+ * core drift 12 s, energy 18 s, glow 6 s, shadow 14 s. All coprime, so
  * nothing ever visibly loops.
  */
 
@@ -79,7 +79,7 @@ float fbm(vec2 p) {
     return sum;
 }
 
-// Radial gradient primitive — smooth falloff from 1 at center to 0 at
+// Radial gradient primitive. Smooth falloff from 1 at center to 0 at
 // radius R. Returns a pure smooth function of distance; no noise inside.
 float radial(vec2 p, vec2 c, float r) {
     return 1.0 - smoothstep(0.0, r, length(p - c));
@@ -98,13 +98,13 @@ void main() {
     float softHalo = 1.0 - smoothstep(1.0, 1.15, d);
     if (softHalo < 0.001) discard;
 
-    // Core drift — the two bright centers slowly orbit ~2px each,
+    // Core drift, the two bright centers slowly orbit ~2px each,
     // 12s period. Nothing else in the shader moves in position.
     float driftPx = 2.0 / uSize.x;
     vec2 drift = vec2(sin(uTime * TAU / 12.0), cos(uTime * TAU / 12.0)) * driftPx;
 
     // UV domain warp. TWO independent low-frequency fBm samples give a
-    // 2D displacement. Amplitude ~0.03 — small enough that gradients
+    // 2D displacement. Amplitude ~0.03. Small enough that gradients
     // still look like gradients, large enough that they slowly flow.
     // The noise itself never contributes to color: it only moves p.
     float warpBreath = 0.85 + 0.15 * sin(uTime * TAU / 18.0);
@@ -114,7 +114,7 @@ void main() {
     );
     vec2 pw = p + warp * 0.03 * warpBreath;
 
-    // Fixed gradient centers — deliberate yin-yang composition.
+    // Fixed gradient centers. Deliberate yin-yang composition.
     // c1 upper-left, c2 lower-right form the S; c3 is a wide atmospheric
     // fill that ties them together and softens the void between.
     vec2 c1 = vec2(-0.35, -0.30) + drift;
@@ -122,7 +122,7 @@ void main() {
     vec2 c3 = vec2( 0.00,  0.00);
 
     // Three soft radials at WARPED coordinates. Each is a pure smooth
-    // function — no noise texture ever visible.
+    // function, no noise texture ever visible.
     float g1 = radial(pw, c1, 1.05);
     float g2 = radial(pw, c2, 1.05);
     float g3 = radial(pw, c3, 1.30);
@@ -135,7 +135,7 @@ void main() {
     float density = g1 * 0.58 + g2 * 0.58 + g3 * 0.22 * shadowBreath;
     density = clamp(density, 0.0, 1.0);
 
-    // Radial falloff — keeps the light away from the rim, which is
+    // Radial falloff. Keeps the light away from the rim, which is
     // what produces the dark ring the reference has just inside the
     // silhouette.
     float radialFalloff = 1.0 - smoothstep(0.55, 1.0, d);
@@ -144,16 +144,16 @@ void main() {
     // Glow breathing (~6s)
     density *= 0.92 + 0.08 * sin(uTime * TAU / 6.0);
 
-    // Color mapping — one hue lerped from deep to light by density.
+    // Color mapping, one hue lerped from deep to light by density.
     vec3 deep  = mix(orbColor, vec3(0.0), 0.86);
     vec3 light = mix(orbColor, vec3(1.0), 0.40);
     vec3 base  = mix(deep, light, clamp(density, 0.0, 1.0));
 
-    // Fresnel rim — ~10% intensity, gently responds to interior light.
+    // Fresnel rim - ~10% intensity, gently responds to interior light.
     float fres = pow(smoothstep(0.72, 1.0, d), 2.8);
     vec3 rim = vec3(fres * 0.10 * (0.6 + 0.4 * density));
 
-    // Selective bloom — only the brightest ~15% contributes, bleeds
+    // Selective bloom. Only the brightest ~15% contributes, bleeds
     // outside the shell via softHalo so the outer glow tracks the
     // internal energy instead of being a symmetric circle.
     float bloomMask = pow(smoothstep(0.55, 0.95, density), 2.2);
@@ -197,14 +197,14 @@ class OrbRenderer {
             this._compile();
             this.available = true;
         } catch {
-            // Shader compile / link failure — leave `available` false; the
+            // Shader compile / link failure. Leave `available` false; the
             // React component will fall back to a static CSS gradient.
             return;
         }
 
         this.startTime = performance.now();
 
-        // Respect prefers-reduced-motion — render exactly one frame per
+        // Respect prefers-reduced-motion. Render exactly one frame per
         // property change instead of animating.
         if (typeof matchMedia !== 'undefined') {
             const mq = matchMedia('(prefers-reduced-motion: reduce)');

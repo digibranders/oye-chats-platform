@@ -34,7 +34,7 @@ MARKED_UP = (
     '<html><head><meta property="og:site_name" content="Acme Corp">'
     '<meta property="og:description" content="Acme Corp does logistics."></head></html>'
 )
-# No og:site_name and no schema.org — the markup pass gives up, forcing the LLM.
+# No og:site_name and no schema.org, the markup pass gives up, forcing the LLM.
 NO_MARKUP = "<html><head><title>Best logistics software in India for growing teams</title></head></html>"
 
 
@@ -86,7 +86,7 @@ def test_second_lead_on_same_domain_does_not_crawl(db):
 
 
 def test_case_differing_domains_share_one_row(db):
-    """CITEXT key — Acme.COM and acme.com are one company, one crawl."""
+    """CITEXT key. Acme.COM and acme.com are one company, one crawl."""
     with _crawled(), _extracted():
         svc.resolve_company("acme.com")
     with _crawled() as crawl2, _extracted():
@@ -169,7 +169,7 @@ def test_failed_domain_is_retried_after_backoff_expires(db):
 
 def test_backoff_grows_with_consecutive_failures(db):
     """Flat backoff means a permanently-dead domain is re-crawled at a fixed
-    rate forever — the per-domain cost leak this cache exists to prevent.
+    rate forever, the per-domain cost leak this cache exists to prevent.
 
     Calls the writer directly: going through ``resolve_company`` cannot produce
     consecutive failures, because after the first one the backoff guard
@@ -331,13 +331,13 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
         try:
             profiles[idx] = svc.resolve_company("race.com")
             results[idx] = "OK"
-        except Exception as exc:  # noqa: BLE001 — an empty result set IS the assertion
+        except Exception as exc:  # noqa: BLE001  an empty result set IS the assertion
             results[idx] = f"{type(exc).__name__}: {exc}"
 
     # Patched ONCE, around both threads. patch.object is not thread-safe:
     # entering it per-thread makes T2 record T1's mock as the "original" and
     # restore it on exit, leaving a MagicMock installed for the rest of the
-    # session — an ordering-dependent flake.
+    # session, an ordering-dependent flake.
     with patch.object(svc, "_fetch_site_html", side_effect=gated_fetch), _extracted():
         threads = [threading.Thread(target=worker, args=(i,)) for i in (1, 2)]
         for t in threads:
@@ -346,8 +346,8 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
             t.join(timeout=30)
 
     assert set(results.values()) == {"OK"}, results
-    # The real cost of losing this race is not an exception — `resolve_company`
-    # swallows those — it is a lead silently getting no company. Both threads
+    # The real cost of losing this race is not an exception (`resolve_company`
+    # swallows those) it is a lead silently getting no company. Both threads
     # must come back with the profile.
     assert [p and p.name for p in profiles.values()] == ["Acme Corp", "Acme Corp"], profiles
     # And exactly one row, not two.
@@ -423,7 +423,7 @@ def test_our_own_outage_is_not_cached_against_the_domain(db):
 
     db.expire_all()
     row = db.get(CompanyProfile, "innocent.com")
-    # A row IS written — but as a short cooldown, not a verdict. Writing no row
+    # A row IS written, but as a short cooldown, not a verdict. Writing no row
     # at all would mean re-crawling this domain on every single lead for the
     # whole duration of our outage.
     assert row is not None
@@ -478,7 +478,7 @@ def test_a_www_host_and_its_apex_share_one_row(db):
 
 def test_jina_markdown_skips_the_markup_reader(db):
     """Jina returns MARKDOWN. Running the HTML markup reader over it can only
-    ever miss, so the LLM is the correct — and only — path for that content."""
+    ever miss, so the LLM is the correct (and only) path for that content."""
     markdown = "# Acme Corp\n\nAcme Corp does logistics."
     with (
         _crawled(markdown, is_html=False),
@@ -498,7 +498,7 @@ def test_a_stale_profile_whose_refresh_fails_backs_off(db):
 
     Only a SUCCESS moves ``refresh_after``, so a stale row stays stale. The
     cached-name branch returns before the backoff check, which meant the
-    failure's ``retry_after`` was recorded and then ignored — one dead domain
+    failure's ``retry_after`` was recorded and then ignored, one dead domain
     with steady traffic re-crawling forever, which is precisely the per-domain
     cost leak this cache exists to prevent.
     """
@@ -520,7 +520,7 @@ def test_a_stale_profile_whose_refresh_fails_backs_off(db):
 
     with _crawl_failed() as second:
         assert svc.resolve_company("gone-dark.com").name == "Gone Dark Ltd"
-    assert second.call_count == 0, "the recorded backoff was ignored — every lead re-crawls"
+    assert second.call_count == 0, "the recorded backoff was ignored. Every lead re-crawls"
 
 
 # ── The fetch seam itself ────────────────────────────────────────────────────
@@ -553,7 +553,7 @@ def test_an_expired_spider_key_is_not_blamed_on_the_domain():
     """The regression that made the first fix inert.
 
     `spider_service.fetch_html` returns None for a missing key, a 401, an HTTP
-    error AND a genuine 404 — so a caller that persists "nothing here" would
+    error AND a genuine 404, so a caller that persists "nothing here" would
     blacklist every domain it saw the moment the key expired. This asserts the
     outcome the resolver actually keys on.
     """
@@ -631,7 +631,7 @@ def test_a_giant_response_body_is_capped_before_anything_parses_it():
 def test_the_llm_is_called_with_a_bound_far_below_the_module_default(db):
     """`extract_company_context` defaults to 60s x 3 attempts (~180s), sized for
     the request path. Three of those on the 3-worker background pool is the
-    starvation H2 was raised about — the crawl bound alone does not close it."""
+    starvation H2 was raised about, the crawl bound alone does not close it."""
     from app.services import llm_service
 
     captured = {}
@@ -684,7 +684,7 @@ def test_resolve_company_refuses_to_run_inside_an_event_loop():
 
     Asserting only `is None` would be vacuous: WITHOUT the guard the return is
     also None (asyncio.run raises, that becomes _ProviderUnavailable, a
-    cooldown is written and the stale fallback — None — is returned). So this
+    cooldown is written and the stale fallback (None) is returned). So this
     asserts the guard's observable effect instead: it bails out BEFORE
     touching the database at all.
     """
@@ -706,7 +706,7 @@ def test_resolve_company_refuses_to_run_inside_an_event_loop():
 def test_a_spider_exception_is_not_blamed_on_the_domain(db):
     """The `answered = False` initialiser. Every other fetch test lets
     `fetch_html_outcome` return normally, so the initialiser is immediately
-    overwritten and the exception paths go unexercised — which is how the
+    overwritten and the exception paths go unexercised, which is how the
     first version of this fix shipped inert."""
     from app.services import spider_service
 
@@ -761,7 +761,7 @@ def test_our_cooldown_never_shortens_a_backoff_the_domain_earned(db):
 
     500 long-dead domains sitting on 30-90 day retries, all knocked back to 15
     minutes by one Spider outage and then re-crawled every quarter hour for its
-    duration — the cost leak the backoff exists to prevent, triggered by the
+    duration, the cost leak the backoff exists to prevent, triggered by the
     mechanism meant to protect against a different one.
     """
     earned = datetime.now(UTC) + timedelta(days=60)
@@ -795,8 +795,8 @@ def test_a_cooldown_still_applies_when_it_is_the_longer_wait(db):
 def test_a_good_stale_profile_survives_a_database_failure_on_the_write(db):
     """The write blocks used to sit outside the handler.
 
-    A pool timeout on `_store_success` — on the very pool this module contends
-    for — discarded BOTH the freshly resolved name and the perfectly good stale
+    A pool timeout on `_store_success` (on the very pool this module contends
+    for) discarded BOTH the freshly resolved name and the perfectly good stale
     one, returning None for a company we already knew.
     """
     db.add(
@@ -840,7 +840,7 @@ def test_the_configured_primary_provider_is_honoured(db):
 
 def test_spider_remains_the_attribution_oracle_under_either_order(db):
     """Jina reports nothing about WHY it failed, so it can never supply
-    evidence for caching a failure — but it must not suppress Spider's either."""
+    evidence for caching a failure, but it must not suppress Spider's either."""
     from app.services import runtime_config
     from app.services.spider_service import ScrapeOutcome
 

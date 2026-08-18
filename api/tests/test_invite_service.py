@@ -1,4 +1,4 @@
-"""Integration tests for ``app.services.invite_service`` — real Postgres.
+"""Integration tests for ``app.services.invite_service``. Real Postgres.
 
 Operator invites are auth-adjacent and security-sensitive: token opacity, RBAC,
 seat limits, the live-chat feature gate, and idempotent state transitions. All
@@ -9,7 +9,7 @@ Postgres ``db`` fixture from ``conftest.py`` rather than mocks.
 
 Invites are BOT-SCOPED: ``operators.bot_id`` is NOT NULL, so acceptance builds
 an ``Operator`` bound to a specific bot, and the invite carries that binding
-(``operator_invites.bot_id``) end to end — the create path validates the bot
+(``operator_invites.bot_id``) end to end, the create path validates the bot
 belongs to the workspace, seat limits count per-bot, and acceptance provisions
 the operator on ``invite.bot_id``. These tests cover the full lifecycle
 including the create/accept SUCCESS paths and cross-bot / cross-workspace
@@ -121,7 +121,7 @@ def make_invite(
 ):
     """Insert an OperatorInvite directly, mirroring the persisted shape.
 
-    Invites are bot-scoped, so ``bot_id`` is always set — defaulting to the
+    Invites are bot-scoped, so ``bot_id`` is always set. Defaulting to the
     workspace's own bot (``ws.bot``) and overridable via ``bot`` for the
     cross-bot isolation tests.
     """
@@ -145,7 +145,7 @@ def make_invite(
 
 
 def make_ws(db):
-    """Owner + bot only — for lifecycle tests that don't consult entitlements."""
+    """Owner + bot only, for lifecycle tests that don't consult entitlements."""
     owner = make_client(db)
     bot = make_bot(db, owner)
     return SimpleNamespace(owner=owner, bot=bot, workspace_id=owner.id)
@@ -182,7 +182,7 @@ class TestTokenHelpers:
     def test_generate_returns_plaintext_and_its_hash(self):
         plaintext, token_hash = svc._generate_invite_token()
         assert token_hash == hashlib.sha256(plaintext.encode()).hexdigest()
-        # The stored value is opaque — never equal to the pre-image.
+        # The stored value is opaque, never equal to the pre-image.
         assert plaintext != token_hash
         assert len(token_hash) == 64
 
@@ -353,7 +353,7 @@ class TestGetInviteByToken:
     def test_token_lookup_is_hash_based(self, db):
         ws = make_ws(db)
         _, plaintext = make_invite(db, ws, email="tok2@example.com")
-        # Presenting the stored hash itself must NOT resolve — only the pre-image.
+        # Presenting the stored hash itself must NOT resolve. Only the pre-image.
         stored_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         assert svc.get_invite_by_token(db, stored_hash) is None
 
@@ -367,7 +367,7 @@ class TestGetInviteByToken:
         assert svc.get_invite_by_token(db, bad) is None
 
 
-# ── accept_invite — branches reachable without invite.bot_id ─────────────────
+# ── accept_invite. Branches reachable without invite.bot_id ─────────────────
 
 
 class TestAcceptInviteGuards:
@@ -432,7 +432,7 @@ class TestAcceptInviteGuards:
 
 class TestCreateAcceptSuccess:
     """Happy paths reachable now that ``operator_invites`` has a ``bot_id``
-    column — the binding the whole flow depends on. Each asserts the bot scope
+    column, the binding the whole flow depends on. Each asserts the bot scope
     is carried through, not merely that the call didn't raise."""
 
     def test_create_persists_bot_scoped_pending_invite(self, db):
@@ -490,7 +490,7 @@ class TestCreateAcceptSuccess:
 
     def test_reactivation_reassigns_to_the_new_invite_bot(self, db):
         # Invitee operated bot A, was revoked (soft-deleted), and is re-invited
-        # to bot B. Accepting reactivates the SAME row and moves it to bot B —
+        # to bot B. Accepting reactivates the SAME row and moves it to bot B,
         # the re-invite's binding wins, and no duplicate operator is created.
         ws = setup_workspace(db, operators_ceiling=5)
         bot_b = make_bot(db, ws.owner)
@@ -508,7 +508,7 @@ class TestCreateAcceptSuccess:
 
     def test_seat_limit_is_enforced_per_bot(self, db):
         # Bot A is full (ceiling 1, one operator); bot B has room. Inviting to A
-        # is refused while inviting to B succeeds — seats are counted per-bot,
+        # is refused while inviting to B succeeds. Seats are counted per-bot,
         # so the binding is not cosmetic.
         ws = setup_workspace(db, operators_ceiling=1, included_seats=1, operator_quantity=1)
         bot_b = make_bot(db, ws.owner)

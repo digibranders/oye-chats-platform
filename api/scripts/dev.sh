@@ -8,7 +8,7 @@
 #   URL:    https://nuclei-rundown-okay.ngrok-free.dev/webhooks/razorpay
 #   Secret: RAZORPAY_WEBHOOK_SECRET from api/.env
 # If ngrok fails to establish (auth/network/outage), the script falls back to a
-# cloudflared quick tunnel — that URL rotates per run, so the script prints it
+# cloudflared quick tunnel. That URL rotates per run, so the script prints it
 # and the Razorpay dashboard URL must be updated for that session.
 # Ctrl+C stops all processes.
 
@@ -21,11 +21,11 @@ PY=".venv/bin/python"
 export DYLD_FALLBACK_LIBRARY_PATH="${DYLD_FALLBACK_LIBRARY_PATH:-/opt/homebrew/lib}"
 
 if [ ! -x "$PY" ]; then
-  echo "error: $PY not found — run from api/ with the venv set up" >&2
+  echo "error: $PY not found, run from api/ with the venv set up" >&2
   exit 1
 fi
 
-echo "==> alembic upgrade head (keeps dev DB in sync — skipping this breaks invoice writes)"
+echo "==> alembic upgrade head (keeps dev DB in sync. Skipping this breaks invoice writes)"
 "$PY" -m alembic upgrade head
 
 PIDS=()
@@ -76,11 +76,11 @@ start_cloudflared() {
 }
 
 if start_ngrok; then
-  TUNNEL_KIND="ngrok (static domain — Razorpay dashboard needs no update)"
+  TUNNEL_KIND="ngrok (static domain. Razorpay dashboard needs no update)"
 elif start_cloudflared; then
-  TUNNEL_KIND="cloudflared quick tunnel — URL ROTATES PER RUN"
+  TUNNEL_KIND="cloudflared quick tunnel. URL ROTATES PER RUN"
   echo ""
-  echo "    !! ngrok failed (see api/.ngrok.log) — using cloudflared instead."
+  echo "    !! ngrok failed (see api/.ngrok.log). Using cloudflared instead."
   echo "    !! Update the Razorpay dashboard webhook URL for this session:"
   echo "    !!   ${TUNNEL_URL}/webhooks/razorpay"
   echo ""

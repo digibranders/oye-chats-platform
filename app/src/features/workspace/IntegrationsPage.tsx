@@ -1395,15 +1395,15 @@ export function IntegrationsPage(): ReactElement {
   const { isFree, hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   // Webhooks + CRM are Standard+ features (`hasFeature('webhooks')` is only
-  // true there). Starter has integrations = "all" — so Meetings + Email
-  // stay accessible — but the outbound webhook rail (and its CRM sibling,
+  // true there). Starter has integrations = "all" (so Meetings + Email
+  // stay accessible) but the outbound webhook rail (and its CRM sibling,
   // which is webhook-driven push) is gated at the plan level. Locked tabs
   // render a lock chip in the label, intercept the click into the upgrade
   // modal, and the panel body swaps to a LockedFeatureCard.
   const webhooksUnlocked = hasFeature('webhooks');
 
   // Default landing tab: on Starter, Webhooks is locked, so open Meetings
-  // instead — the customer shouldn't land on a wall the moment they click
+  // instead, the customer shouldn't land on a wall the moment they click
   // "Integrations". Standard+ keeps Webhooks as the default.
   const [tab, setTab] = useState<TabKey>(webhooksUnlocked ? 'webhooks' : 'meetings');
   // Scoped to the selected agent - integrations are configured per agent, so a
@@ -1496,7 +1496,7 @@ export function IntegrationsPage(): ReactElement {
         value={tab}
         onChange={(key) => {
           // Locked tabs (Starter without webhooks) route the click to the
-          // upgrade modal instead of switching — no hollow panel to see.
+          // upgrade modal instead of switching, no hollow panel to see.
           if ((key === 'webhooks' || key === 'crm') && !webhooksUnlocked) {
             openUpgradeModal('webhooks_integration');
             return;

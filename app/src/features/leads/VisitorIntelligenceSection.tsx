@@ -67,7 +67,7 @@ function LockedTeaser(): ReactElement {
  * that column is shared with the operator console's user-agent fields.
  */
 /** Is there anything worth rendering in this IP signal? Kept separate from the
- * component so the caller can pick between the signal and its empty state — a
+ * component so the caller can pick between the signal and its empty state, a
  * component that returns `null` is still a truthy JSX element to the caller,
  * so `<CompanySignal/> ?? fallback` would silently never show the fallback. */
 function hasCompanySignal(intel: Record<string, unknown>): boolean {
@@ -92,12 +92,12 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
   // hosting range, ISP range, carrier brand and subnet label, so anything that
   // reaches this component is a range someone can actually be employed by.
   // `ip_intel_service.fetch_ip_intel` is the ONLY sanctioned writer of
-  // `visitor_metadata.ip_intel` — anything else writing that key must apply
+  // `visitor_metadata.ip_intel`. Anything else writing that key must apply
   // the same gates, or this component starts asserting something it cannot
   // back up. (An alembic backfill was a second, unfiltered writer until it was
   // made to share the gates.)
   // That is why there is no longer an "is this really an employer?" test here
-  // — the old inline disclaimer was deciding, in the UI, a question the API
+  //, the old inline disclaimer was deciding, in the UI, a question the API
   // now answers. Two DIFFERENT things are rendered, never one thing hedged:
   // a company, or the network that routed them.
   return (
@@ -124,7 +124,7 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
         <div className="flex items-start gap-2 text-[12px]">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
           <span className="text-[var(--ds-warning)]">
-            Connecting via VPN/proxy — company signal is unreliable
+            Connecting via VPN/proxy. Company signal is unreliable
           </span>
         </div>
       )}
@@ -164,13 +164,13 @@ interface FollowUpActionProps {
   isValidEmail: boolean | null | undefined;
 }
 
-/** The manual "Send Follow-up" button — the only send path in this system;
+/** The manual "Send Follow-up" button, the only send path in this system;
  * there is no automatic/timed send anywhere.
  *
  * The button is ALWAYS rendered (unless there is literally no address to
  * send to). It previously returned nothing whenever `is_valid_email` wasn't
  * exactly `true`, which silently hid the feature on every lead captured
- * before validation existed — indistinguishable, to the operator, from the
+ * before validation existed. Indistinguishable, to the operator, from the
  * feature being broken. A disabled button with a reason is honest; an
  * invisible one is not.
  *
@@ -192,7 +192,7 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Could not send the follow-up.';
       const status = (err as { status?: number } | undefined)?.status;
-      // 409 is the server's "are you sure?" — a cooldown that hasn't elapsed,
+      // 409 is the server's "are you sure?", a cooldown that hasn't elapsed,
       // or an address Reoon never got to validate. Both are recoverable with
       // an explicit confirm, so offer that instead of a dead end.
       setState(status === 409 ? 'confirm' : 'error');
@@ -219,7 +219,7 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
       )}
       {!blockedByValidation && isValidEmail !== true && state === 'idle' && (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          This address hasn&rsquo;t been validated — you&rsquo;ll be asked to confirm.
+          This address hasn&rsquo;t been validated. You&rsquo;ll be asked to confirm.
         </p>
       )}
 
@@ -245,7 +245,7 @@ export function VisitorIntelligenceSection({
 }): ReactElement {
   if (!unlocked) return <LockedTeaser />;
 
-  // IP intel lives under a namespaced key — `visitor_metadata` itself is a
+  // IP intel lives under a namespaced key. `visitor_metadata` itself is a
   // shared blob (the operator console stores user-agent fields alongside).
   const intel = asRecord(asRecord(detail.visitor_metadata).ip_intel);
   const isValidEmail = detail.contact?.is_valid_email;

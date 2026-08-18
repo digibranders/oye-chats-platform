@@ -1,7 +1,7 @@
 """The durable "trained" state must describe what a bot actually knows.
 
 ``Bot.indexed_chunk_count`` drives every "is my AI trained?" surface in the
-dashboard, so it has to answer that question — not describe whichever crawl
+dashboard, so it has to answer that question, not describe whichever crawl
 happened to run last. Two failure directions matter:
 
 * **Never latch a fake "trained" state.** A crawl that fetches pages but
@@ -118,7 +118,7 @@ def test_delta_recrawl_adding_nothing_keeps_bot_trained(db, monkeypatch) -> None
     """The reported bug: a recrawl that ingests zero NEW chunks must not un-train.
 
     SHA-256 dedup skips every page of an unchanged site, so the crawl's own
-    output is zero — but the bot still holds all its prior content. Gating the
+    output is zero, but the bot still holds all its prior content. Gating the
     marker on that output left a trained agent reading "Nothing learned yet".
     """
     monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
@@ -183,7 +183,7 @@ class TestTerminalStatus:
     """Exhaustive truth table for ``_terminal_status(total_chunks, existing_count)``.
 
     ``no_content`` is reserved for the case where the bot has NO usable
-    knowledge at all — both this crawl's new chunks and its pre-existing
+    knowledge at all, both this crawl's new chunks and its pre-existing
     indexed content are zero. Any other combination is a success.
     """
 

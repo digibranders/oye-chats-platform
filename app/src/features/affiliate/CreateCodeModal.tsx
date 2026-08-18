@@ -132,7 +132,7 @@ export function CreateCodeModal({ open, onClose, poolPct, onCreated }: CreateCod
             aria-invalid={codeError ? true : undefined}
           />
           <p className="text-[12px] text-[var(--ds-text-subtle)]">
-            {codeError ?? '3–20 letters, numbers, hyphens or underscores. This becomes your ?ref= link.'}
+            {codeError ?? '3 to 20 letters, numbers, hyphens or underscores. This becomes your ?ref= link.'}
           </p>
         </div>
 

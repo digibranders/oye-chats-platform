@@ -59,7 +59,7 @@ function LockedTab({ label, onClick }: LockedTabProps): ReactElement {
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label} — upgrade to unlock`}
+      aria-label={`${label}. Upgrade to unlock`}
       className={cn(
         TAB_BASE_CLASS,
         'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',

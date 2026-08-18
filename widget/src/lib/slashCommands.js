@@ -7,7 +7,7 @@ import { RotateCcw, Eraser, Headphones } from 'lucide-react';
 // inline confirm bar before its handler runs.
 //
 // `isAvailable(ctx)` hides a command from the palette when it would be a no-op
-// in the current session state. Fresh chats show only `/human` — running
+// in the current session state. Fresh chats show only `/human`. Running
 // `/clear` or `/new` on a transcript that only holds the welcome message
 // does nothing visible and confuses visitors who typed a command expecting
 // a result. Predicates receive `{ userMessageCount }` (extend as needed).
@@ -46,7 +46,7 @@ export const SLASH_HINT_THRESHOLD = 3;
 const WHOLE_INPUT_SLASH_RE = /^\/([a-z]+)$/i;
 
 // Returns the command entry that matches the raw composer input, or null.
-// Matches only when the input is exactly `/<name>` — never mid-sentence.
+// Matches only when the input is exactly `/<name>`, never mid-sentence.
 // This is what governs whether Enter intercepts execution: "hello /human"
 // is deliberately not a match so the visitor's surrounding text is never
 // silently discarded when they press Enter.
@@ -58,7 +58,7 @@ export function matchSlashCommand(rawInput) {
     return SLASH_COMMANDS.find((c) => c.name === name) || null;
 }
 
-// Locates the LAST "orphan" slash token in the input — a `/` at the start
+// Locates the LAST "orphan" slash token in the input, a `/` at the start
 // of the string or right after whitespace, followed by [a-z]* letters, and
 // terminated by whitespace or end-of-string. The leading-whitespace guard
 // stops URLs (`https://`) and words like "and/or" from opening the popover.

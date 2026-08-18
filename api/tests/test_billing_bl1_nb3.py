@@ -1,16 +1,16 @@
-"""BL-1 + NB-3 remediation — scheduled downgrade survives cutover, no silent strand.
+"""BL-1 + NB-3 remediation. Scheduled downgrade survives cutover, no silent strand.
 
 Under the UPI re-auth model a scheduled paid downgrade cancels the old mandate
 ``at_period_end`` and queues ``scheduled_plan_id``. Razorpay fires
 ``subscription.cancelled`` (NOT ``subscription.completed``) at the cutover of a
 ``cancel_at_cycle_end`` mandate. The bugs fixed here:
 
-* BL-1 — ``subscription.cancelled`` was scheduled-change-blind: it flipped the
+* BL-1. ``subscription.cancelled`` was scheduled-change-blind: it flipped the
   row to ``canceled`` and the queued downgrade was lost. Fixed by routing both
   the ``cancelled`` and ``completed`` handlers through a shared
   ``_promote_scheduled_if_pending`` helper, and by widening the cron backstop to
   re-include ``canceled`` rows that still carry ``scheduled_plan_id``.
-* NB-3 — promotion created the new lower-plan checkout but never told the
+* NB-3. Promotion created the new lower-plan checkout but never told the
   customer, stranding them with no active sub and no re-auth path. Fixed by
   emailing the Razorpay ``short_url`` re-auth link from
   ``promote_scheduled_change``.
@@ -163,7 +163,7 @@ def test_cancelled_webhook_promotes_scheduled_downgrade(db, monkeypatch):
     assert fake_create.calls[0]["plan_id"] == new_plan.id
     assert fake_create.calls[0]["extra_notes"]["prev_razorpay_subscription_id"] == "sub_bl1_cancel"
 
-    # Customer notified with the re-auth link — not silently stranded.
+    # Customer notified with the re-auth link, not silently stranded.
     assert len(emails) == 1
     assert emails[0]["reauth_url"] == "https://rzp.io/i/reauth-link"
     assert emails[0]["to_email"] == "bl1-cancel@e.com"
@@ -226,7 +226,7 @@ def test_cron_backstop_promotes_canceled_row_with_scheduled_plan(db, monkeypatch
 
 
 def test_plain_cancel_without_scheduled_change_still_terminates(db, monkeypatch):
-    """A cancel with no queued downgrade must do the plain terminal cancel — no
+    """A cancel with no queued downgrade must do the plain terminal cancel, no
     promotion, no checkout, no email (regression guard)."""
     client = _make_client(db, email="bl1-plain@e.com")
     plan = _make_plan(db, slug="bl1-plain", price_cents=399900)
@@ -311,14 +311,14 @@ def _truncate_all(session: Session) -> None:
 
 def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
     """Two independent sessions (webhook + cron) racing on the SAME cutover must
-    promote exactly ONCE — one checkout, one email — not twice (Fig A).
+    promote exactly ONCE (one checkout, one email) not twice (Fig A).
 
     We model the race with two real sessions on the throwaway Postgres. Session
     A (the webhook) promotes and commits, clearing the scheduled trio. Session B
     (the cron) still holds a stale in-memory row with ``scheduled_plan_id`` set;
     when it calls ``promote_scheduled_change`` the ``SELECT ... FOR UPDATE``
     refresh re-reads A's committed row, sees the trio cleared, and no-ops. This
-    proves the row-lock + re-check serialization — remove the
+    proves the row-lock + re-check serialization. Remove the
     ``refresh(with_for_update=True)`` re-check and B double-provisions."""
     fake_create = _FakeCreateSub()
     emails: list[dict] = []
@@ -346,7 +346,7 @@ def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
         )
         session_a.commit()
 
-        # Session B loads the row BEFORE A promotes — its in-memory copy still
+        # Session B loads the row BEFORE A promotes, its in-memory copy still
         # carries the queued change (the racing-read the fix must defeat).
         sub_b = session_b.get(Subscription, sub_a.id)
         assert sub_b is not None
@@ -360,7 +360,7 @@ def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
 
         # Cron (session B) now runs against its stale row. The FOR UPDATE refresh
         # inside ``promote_scheduled_change`` must observe A's committed clear and
-        # no-op — NO second checkout, NO second email.
+        # no-op. NO second checkout, NO second email.
         payload_b = transition_service.promote_scheduled_change(session_b, sub_b)
         session_b.commit()
         assert payload_b is None
@@ -437,7 +437,7 @@ def test_real_cron_task_promotes_stale_canceled_row(db, monkeypatch):
 
 def test_promotion_without_short_url_warns_and_sends_no_email(db, monkeypatch):
     """If the created checkout has no ``short_url`` (nothing to re-authorise
-    against), the promotion still stands but must NOT send a re-auth email — it
+    against), the promotion still stands but must NOT send a re-auth email, it
     takes the manual-reconcile warning branch instead."""
     client = _make_client(db, email="nourl@e.com")
     old_plan = _make_plan(db, slug="nourl-pro", price_cents=399900)
@@ -481,8 +481,8 @@ def test_promotion_without_short_url_warns_and_sends_no_email(db, monkeypatch):
 
 def test_reauth_email_failure_does_not_roll_back_promotion(db, monkeypatch):
     """The re-auth email is best-effort (delivery-failure is captured to Sentry
-    by the send path). If the send raises, the promotion — the checkout that
-    already exists at the gateway — must still commit, not unwind."""
+    by the send path). If the send raises, the promotion (the checkout that
+    already exists at the gateway) must still commit, not unwind."""
     client = _make_client(db, email="emailfail@e.com")
     old_plan = _make_plan(db, slug="ef-pro", price_cents=399900)
     new_plan = _make_plan(db, slug="ef-basic", price_cents=99900)
@@ -565,10 +565,10 @@ def test_stale_schedule_cleared_by_cancel_is_not_promoted(db, monkeypatch):
 
 
 def test_promote_cron_rolls_back_a_failed_rows_partial_promotion(db, monkeypatch):
-    """Review fix — promote_scheduled_change flushes the terminal flip +
+    """Review fix. Promote_scheduled_change flushes the terminal flip +
     cleared schedule BEFORE its gateway create. A create failure (deterministic
     for USD rows via IntlPaymentsDisabled while the intl switch is off) must
-    roll THIS row back — previously the end-of-loop commit persisted the
+    roll THIS row back. Previously the end-of-loop commit persisted the
     half-promotion: downgrade silently destroyed, no replacement checkout."""
     from datetime import timedelta
 

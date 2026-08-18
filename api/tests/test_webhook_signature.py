@@ -1,7 +1,7 @@
 """Razorpay webhook signature verification (remediation L1).
 
 The signature must be computed over the **exact raw request bytes** with a
-timing-safe comparison — not over a ``decode("utf-8")`` round-trip, which both
+timing-safe comparison, not over a ``decode("utf-8")`` round-trip, which both
 risks divergence and (for non-UTF-8 bytes) raises before verification can run.
 """
 
@@ -91,7 +91,7 @@ def test_missing_secret_raises_runtime(monkeypatch):
 
 
 def test_signature_failure_burst_escalates_to_error(caplog):
-    """P1-6a — one bad signature is scanner noise (WARNING); a burst means a
+    """P1-6a, one bad signature is scanner noise (WARNING); a burst means a
     rotated/mistyped RAZORPAY_WEBHOOK_SECRET is rejecting EVERY billing event
     before dead-lettering, and must reach ERROR (→ Sentry)."""
     import logging as _logging

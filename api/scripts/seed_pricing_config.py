@@ -33,13 +33,13 @@ from sqlalchemy import select
 from app.db.models import PricingConfig
 from app.db.session import get_session
 
-# ── Canonical pricing_config — single source of truth ──────────────────────
+# ── Canonical pricing_config. Single source of truth ──────────────────────
 _CONFIG: dict[str, object] = {
     # Per-action credit costs (credits deducted per event).
     "credit_cost.ai_chat": 1,
     "credit_cost.url_scan": 5,
     # Knowledge-base upload: 1 credit per 250 words, rounded up. The two keys
-    # are the two halves of that rate — ``document_upload`` is the minimum
+    # are the two halves of that rate. ``document_upload`` is the minimum
     # charge per file, ``document_upload_words_per_credit`` the divisor.
     "credit_cost.document_upload": 1,
     "credit_cost.document_upload_words_per_credit": 250,
@@ -115,7 +115,7 @@ def run(*, apply: bool) -> int:
             session.commit()
             print("\nCommitted.")
         else:
-            print("\nDry-run — re-run with --apply to commit.")
+            print("\nDry-run. Re-run with --apply to commit.")
     return 0
 
 

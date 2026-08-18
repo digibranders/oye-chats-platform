@@ -5,7 +5,7 @@ import { TopupModal } from './TopupModal';
 
 /**
  * "Top-up credits never expire" is a term of sale. It is only true when
- * `pricing_config.topup_expiry_months` is 0 — a value the client cannot read,
+ * `pricing_config.topup_expiry_months` is 0, a value the client cannot read,
  * because no endpoint exposes it. On any database whose row still says 12,
  * `grant_topup` stamps `expires_at` and the daily sweep deletes the credits, so
  * an unconditional promise in the purchase dialog is a false claim to a paying

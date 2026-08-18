@@ -17,7 +17,7 @@ export interface ExperienceDraft {
   orbColor: string;
   botLogo: string | null;
   /** Who set `botLogo`: null (nobody has), 'manual' (this workspace) or
-   * 'derived' (taken from the site's favicon during a crawl). Read-only here —
+   * 'derived' (taken from the site's favicon during a crawl). Read-only here,
    * the server owns it, and any save that touches the image stamps 'manual'.
    * Present so the picker can say where a derived image came from instead of
    * showing it as though someone uploaded it. */
@@ -192,7 +192,7 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
  * set the agent's avatar from the site's favicon while this editor is open,
  * and re-sending the value this page loaded before that happened writes the
  * derived avatar back off. Removing the avatar here is still a change, so it
- * is still sent — the guard is on "unchanged", not on "empty".
+ * is still sent, the guard is on "unchanged", not on "empty".
  */
 export function settingsFromDraft(
   draft: ExperienceDraft,

@@ -1,4 +1,4 @@
-"""PR3 — Trial enforcement coverage.
+"""PR3. Trial enforcement coverage.
 
 Focused unit tests for the two new auth dependencies and the polite
 offline helpers introduced for trial expiry. Routing-level tests (the
@@ -102,7 +102,7 @@ class TestRequireActiveSubscription:
         assert result.status == "active"
 
     def test_allows_past_due(self, patch_session):
-        """Dunning is a separate concern — past_due users keep service."""
+        """Dunning is a separate concern. Past_due users keep service."""
         with patch_session(_sub("past_due")):
             result = auth_module.require_active_subscription(client=_client())
         assert result.status == "past_due"
@@ -114,7 +114,7 @@ class TestRequireActiveSubscription:
         assert exc.status_code == 403
         assert exc.detail["error"] == "subscription_required"
         assert exc.detail["subscription_status"] == "trial_expired"
-        # Copy must be expiry-specific, not generic — the dashboard uses
+        # Copy must be expiry-specific, not generic, the dashboard uses
         # this string when no client-side i18n is wired up.
         assert "trial has ended" in exc.detail["message"].lower()
 
@@ -130,7 +130,7 @@ class TestRequireActiveSubscription:
 
     def test_superadmin_bypasses_gate(self, patch_session):
         """Platform staff manage the system; no paying sub required."""
-        # The fake session is wired but should not even be hit — the gate
+        # The fake session is wired but should not even be hit, the gate
         # returns early on ``is_superadmin``.
         with patch_session(_sub("trial_expired")):
             result = auth_module.require_active_subscription(client=_client(is_superadmin=True))
@@ -163,9 +163,9 @@ class TestBotSubscriptionStatus:
 
 class TestPoliteOffline:
     def test_uses_configured_offline_message(self):
-        bot = SimpleNamespace(offline_message="We're closed — leave a message.")
+        bot = SimpleNamespace(offline_message="We're closed. Leave a message.")
         payload = _polite_offline_payload(bot, reason="subscription_trial_expired")
-        assert payload["answer"] == "We're closed — leave a message."
+        assert payload["answer"] == "We're closed. Leave a message."
         assert payload["status"] == "service_unavailable"
         assert payload["metadata"]["offline"] is True
         assert payload["metadata"]["reason"] == "subscription_trial_expired"
@@ -183,7 +183,7 @@ class TestPoliteOffline:
     def test_offline_stream_emits_protocol_frames(self):
         bot = SimpleNamespace(offline_message="See you soon!")
         chunks = list(_offline_stream(bot, reason="subscription_trial_expired"))
-        # METADATA + body + FINAL_METADATA — the widget's parser depends
+        # METADATA + body + FINAL_METADATA, the widget's parser depends
         # on all three being present, in order, in a single response.
         assert any(chunk.startswith("METADATA:") for chunk in chunks)
         assert "See you soon!" in "".join(chunks)
@@ -229,7 +229,7 @@ def _seed_older_active_newer_terminal(db, *, terminal_status: str):
         bot_id=None,
         status=terminal_status,
         payment_provider="razorpay",
-        created_at=now,  # NEWER — the row the buggy gate used to pick
+        created_at=now,  # NEWER, the row the buggy gate used to pick
     )
     db.add_all([active, terminal])
     db.commit()

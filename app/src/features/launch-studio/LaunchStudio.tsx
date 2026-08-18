@@ -85,7 +85,7 @@ export function LaunchStudio() {
         const plan = envelope.plan as Record<string, unknown> | undefined;
         const status = typeof sub?.status === 'string' ? sub.status : '';
         const planSlug = typeof plan?.slug === 'string' ? plan.slug : '';
-        // Only skip if user is on a PAID plan or active trial — default Free plan does NOT skip!
+        // Only skip if user is on a PAID plan or active trial. Default Free plan does NOT skip!
         const alreadyHasPaidPlan = (status === 'active' && planSlug !== 'free' && planSlug !== '') || status === 'trialing';
         if (alreadyHasPaidPlan) {
           setMaxReached((max) => Math.max(max, PLAN_STEP_INDEX + 1));

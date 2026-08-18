@@ -134,14 +134,14 @@ async def test_billing_abort_stops_waves_and_skips_sweep(monkeypatch, harness):
     monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
     result = await _run(ordered_urls=[p["url"] for p in pages])
 
-    # Only the aborted wave ran — no further waves, no final sweep.
+    # Only the aborted wave ran, no further waves, no final sweep.
     assert len(harness["ingest_calls"]) == 1
     assert result["chunks_processed"] == 2  # what the aborted wave managed
 
 
 @pytest.mark.asyncio
 async def test_non_streaming_provider_falls_back_to_sweep(monkeypatch, harness):
-    """The recursive-crawl path never fires on_result — everything must still
+    """The recursive-crawl path never fires on_result. Everything must still
     be ingested exactly once via the final sweep."""
     monkeypatch.setattr(orch, "CRAWL_STREAM_INGEST_ENABLED", True)
     pages = [_page(i) for i in range(3)]
@@ -190,7 +190,7 @@ async def test_cancel_keeps_ingested_waves_and_discards_buffer(monkeypatch, harn
 
 @pytest.mark.asyncio
 async def test_stream_queue_is_bounded_and_provides_real_backpressure(monkeypatch, harness):
-    """AR-23: before this fix, stream_queue was an unbounded asyncio.Queue —
+    """AR-23: before this fix, stream_queue was an unbounded asyncio.Queue,
     a fast scrape outpacing a slow embed/ingest step would buffer unlimited
     pages in worker memory. This test proves the queue actually has a finite
     maxsize (not just that the crawl still completes) by capturing the real

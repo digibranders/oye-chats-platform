@@ -1,6 +1,6 @@
 """Reduce a hostname to its registrable domain.
 
-The registrable domain is the label immediately below the public suffix —
+The registrable domain is the label immediately below the public suffix.
 ``acme.co.uk`` from ``mail.acme.co.uk``. It is the cache key for a company
 profile: every employee's address, on whatever subdomain, must resolve to one
 entry.
@@ -8,7 +8,7 @@ entry.
 ## Why a curated suffix set, and why it fails CLOSED
 
 We carry a curated set rather than depend on ``tldextract``, which downloads
-the Public Suffix List over the network at first use — not a property this
+the Public Suffix List over the network at first use, not a property this
 codebase should acquire for a best-effort enrichment path.
 
 The consequence has to be handled carefully, because ``company_profile.domain``
@@ -18,11 +18,11 @@ every other customer's lead under that suffix then reads. Concretely:
 ``acme.myshopify.com`` collapsing to ``myshopify.com`` would attribute every
 Shopify-hosted lead on the platform to "Shopify".
 
-So the set covers BOTH sections of the PSL that matter here — the ccTLD
+So the set covers BOTH sections of the PSL that matter here, the ccTLD
 second-levels AND the private section (hosting platforms).
 
 For whatever is still missing, there is a backstop: a two-label result whose
-first label is generic (:data:`_SUFFIX_LIKE_LABELS` — ``co``, ``asso``,
+first label is generic (:data:`_SUFFIX_LIKE_LABELS`. ``co``, ``asso``,
 ``nom``, ``gob``, ``nhs``…) under a TLD that does not register flat
 (:data:`_FLAT_GTLDS`) is almost certainly a public suffix we do not carry, and
 returns ``None``. So ``acme.asso.fr`` yields nothing rather than handing back
@@ -30,14 +30,14 @@ returns ``None``. So ``acme.asso.fr`` yields nothing rather than handing back
 
 An unrecognised suffix therefore degrades to a cheap miss the caller falls
 back from, never to a poisoned shared key. An earlier version claimed this
-protection via a constant that was provably inert — emptying it failed no
-tests — so the guarantee is now expressed as a rule with tests that fail when
+protection via a constant that was provably inert (emptying it failed no
+tests) so the guarantee is now expressed as a rule with tests that fail when
 it is weakened.
 
 ## Scope
 
 This module answers "what is the registrable domain of this host?" and nothing
-else. It deliberately knows nothing about free email providers — for the
+else. It deliberately knows nothing about free email providers, for the
 "which company does this address belong to?" question, call
 ``email_domain_service.extract_company_domain``, which applies that policy on
 top of this normalisation. Keeping one public entry point per question stops
@@ -79,7 +79,7 @@ _ICANN_MULTI_PART: frozenset[str] = frozenset(
 # NOTE these are suffixes, not exclusions: the apex itself is usually a real
 # company (someone does work at squarespace.com), so `squarespace.com` returns
 # ITSELF while `acme.squarespace.com` returns `acme.squarespace.com`. Only the
-# ICANN entries above are never-a-company at the apex — nobody is reachable
+# ICANN entries above are never-a-company at the apex. Nobody is reachable
 # at `co.uk`.
 _PLATFORM_SUFFIXES: frozenset[str] = frozenset(
     {
@@ -105,13 +105,13 @@ _RESERVED_TLDS: frozenset[str] = frozenset(
     {"local", "internal", "localdomain", "localhost", "test", "invalid", "example", "onion", "arpa"}
 )
 
-# gTLDs that register FLAT — every second level is a real registrable domain,
+# gTLDs that register FLAT. Every second level is a real registrable domain,
 # so the unknown-suffix backstop below must not swallow web.com, go.com
 # (Disney), or info.com.
 #
 # ccTLDs are deliberately absent. Many of them (.fr, .br, .in, .jp, .uk, .at)
-# carry second-level structures — asso.fr, nom.br, res.in, ed.jp, nhs.uk,
-# gv.at — that we cannot enumerate exhaustively without the full PSL. Under a
+# carry second-level structures. Asso.fr, nom.br, res.in, ed.jp, nhs.uk,
+# gv.at. That we cannot enumerate exhaustively without the full PSL. Under a
 # ccTLD a generic second label therefore fails closed. That loses the odd real
 # domain such as web.de, which is a cheap false negative; returning `asso.fr`
 # as a company would be an expensive shared-key collision.
@@ -142,7 +142,7 @@ _MAX_HOST_LEN = 253
 def registrable_domain(host: str | None) -> str | None:
     """Return the registrable domain for ``host``, or None if there isn't one.
 
-    None means "not a company domain" and is a normal, expected outcome — an
+    None means "not a company domain" and is a normal, expected outcome, an
     empty value, a bare label, a public suffix on its own, an IP literal, a
     reserved TLD, or a suffix this module does not recognise. Callers treat it
     as "no company", never as an error. This function does not raise.
@@ -151,7 +151,7 @@ def registrable_domain(host: str | None) -> str | None:
         return None
 
     value = host.strip().lower().rstrip(".")
-    # Strip www BEFORE any suffix logic — otherwise www.medium.com becomes its
+    # Strip www BEFORE any suffix logic. Otherwise www.medium.com becomes its
     # own key alongside medium.com, and the platform branch never fires.
     value = value.removeprefix("www.")
     if not value or "." not in value or len(value) > _MAX_HOST_LEN:
@@ -174,7 +174,7 @@ def registrable_domain(host: str | None) -> str | None:
         return None
 
     # A real TLD always contains a letter. Without this, a malformed IP-like
-    # value that `ipaddress` rejects — "999.999.999.999", "123.456" — is read
+    # value that `ipaddress` rejects. "999.999.999.999", "123.456". Is read
     # as a domain and becomes a junk cache row.
     if not any(ch.isalpha() for ch in labels[-1]):
         return None

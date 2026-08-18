@@ -4,7 +4,7 @@ Every upload endpoint had grown its own copy of the same two checks, and the
 copies disagreed. ``/client/upload-logo`` had NEITHER: it called
 ``await file.read()`` with no cap and handed the bytes straight to
 ``Image.open``, so anything up to nginx's 50 MB body limit was materialised in
-RAM and then decoded by Pillow — a decompression-bomb and CVE surface reachable
+RAM and then decoded by Pillow, a decompression-bomb and CVE surface reachable
 by any authenticated customer.
 
 The other two endpoints did check, but in the order that does not help:
@@ -16,7 +16,7 @@ Reading in bounded chunks means an oversized upload costs one chunk beyond the
 limit, not the whole body, and a client that lies about ``Content-Length``
 cannot get around it.
 
-Client-supplied ``content_type`` is a hint, not evidence — it is trivially
+Client-supplied ``content_type`` is a hint, not evidence, it is trivially
 forged. The allow-list here is a cheap early reject; anything that actually
 decodes the bytes must ALSO verify what it really got (see
 ``r2_service.process_image_for_logo``).
@@ -34,9 +34,9 @@ logger = logging.getLogger(__name__)
 # large enough not to make a syscall per kilobyte.
 _CHUNK_BYTES = 64 * 1024
 
-# What the logo pipeline can actually process. Pillow cannot open SVG at all —
-# every SVG upload 500'd for as long as the feature existed, while the UI
-# advertised it — so it is deliberately absent.
+# What the logo pipeline can actually process. Pillow cannot open SVG at all
+# (every SVG upload 500'd for as long as the feature existed, while the UI
+# advertised it) so it is deliberately absent.
 IMAGE_UPLOAD_TYPES = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp"})
 
 MAX_LOGO_BYTES = 5 * 1024 * 1024
@@ -75,7 +75,7 @@ def ensure_allowed_type(upload: UploadFile, allowed: frozenset[str]) -> None:
     """Reject a declared content type outside ``allowed``.
 
     A cheap early exit only. The header is client-controlled, so this stops an
-    honest mistake and a lazy attacker — it is NOT the security boundary. The
+    honest mistake and a lazy attacker, it is NOT the security boundary. The
     boundary is whatever decodes the bytes.
     """
     declared = (upload.content_type or "").split(";")[0].strip().lower()

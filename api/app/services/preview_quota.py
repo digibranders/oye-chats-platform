@@ -1,21 +1,21 @@
 """Per-bot daily quota for owner-preview chat requests.
 
-Preview chats (Build Studio ``?preview=true`` — see ``app/api/auth.py`` and
+Preview chats (Build Studio ``?preview=true``. See ``app/api/auth.py`` and
 ``chat_routes.py``) skip ``ai_chat`` credit deduction entirely so a bot owner
 can freely test their own bot from the dashboard. Left unbounded, an
 owner-authenticated caller could proxy real visitor traffic through preview
-and run unlimited free LLM completions with no cap and no cost — that's the
+and run unlimited free LLM completions with no cap and no cost. That's the
 bug this module closes: preview stays free, but bounded.
 
 Redis-unavailable degradation mirrors ``crawler_service``'s locks/progress
 helpers (see ``app/services/crawler_service.py``):
   - If Redis was never configured / never connected (``get_redis()`` returns
-    ``None`` — the normal case for single-worker local dev), fall back to an
+    ``None``, the normal case for single-worker local dev), fall back to an
     in-process counter dict. This still enforces the real cap locally; it
     just doesn't share state across processes, which matches every other
     Redis-backed helper in this codebase.
   - If a *configured* Redis raises mid-call (a transient outage in
-    production), this fails OPEN — the request is allowed through uncapped
+    production), this fails OPEN, the request is allowed through uncapped
     for that call. This matches the existing precedent in
     ``crawler_service.acquire_crawl_lock``: a rare, bounded abuse window
     during a genuine Redis blip is preferable to a hard wall that breaks
@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = f"{PREFIX}preview:"
 # Self-expiring TTL slightly over 24h so a key created just before midnight
-# UTC still comfortably outlives that UTC day before Redis reaps it — the
+# UTC still comfortably outlives that UTC day before Redis reaps it, the
 # per-day key (below) is what actually resets the count, not this TTL.
 _TTL_SECONDS = 90000  # 25h
 
-# In-process fallback for single-worker dev (no Redis) — mirrors
+# In-process fallback for single-worker dev (no Redis). Mirrors
 # crawler_service._local_locks / _local_progress. Keyed by "{bot_id}:{YYYYMMDD}"
 # -> count. Production always runs Redis (required by config.py), so this
 # dict is never populated there.
@@ -56,7 +56,7 @@ def check_and_increment_preview(bot_id: int) -> bool:
 
     Returns ``True`` while the post-increment count is at or under
     ``PREVIEW_DAILY_LIMIT`` (this call may proceed). Returns ``False`` once
-    the count exceeds the limit — the caller must reject the request
+    the count exceeds the limit, the caller must reject the request
     (HTTP 429) *before* generating an LLM reply, not after.
 
     Call this exactly once per preview chat request, before generation.
@@ -72,14 +72,14 @@ def check_and_increment_preview(bot_id: int) -> bool:
     try:
         count = client.incr(redis_key)
         if count == 1:
-            # Only the first writer of a fresh day's key sets the TTL —
-            # avoids resetting the expiry (and thus the effective window)
+            # Only the first writer of a fresh day's key sets the TTL.
+            # Avoids resetting the expiry (and thus the effective window)
             # on every single request.
             client.expire(redis_key, _TTL_SECONDS)
         return count <= PREVIEW_DAILY_LIMIT
     except Exception:
         logger.warning(
-            "check_and_increment_preview: Redis error for bot_id=%s — failing open (request allowed)",
+            "check_and_increment_preview: Redis error for bot_id=%s. Failing open (request allowed)",
             bot_id,
             exc_info=True,
         )

@@ -1,4 +1,4 @@
-"""Lead management endpoints — view, filter, and export qualified leads."""
+"""Lead management endpoints. View, filter, and export qualified leads."""
 
 import csv
 import io
@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 
 
 def _require_leads_dashboard(auth: dict = Depends(get_current_client_or_operator)) -> None:
-    """Router-level gate — every plan reaches the Leads dashboard.
+    """Router-level gate. Every plan reaches the Leads dashboard.
 
     Free included: the dashboard itself is open, and the paid boundary is
     the lead-intelligence layer (score / tier / BANT / location / export),
-    enforced per-route via ``is_lead_intelligence_enabled`` — responses
+    enforced per-route via ``is_lead_intelligence_enabled``. Responses
     are stripped server-side for Free, and ``/export`` 403s. This
     dependency now only denies when the entitlements resolver fails
     (deny-by-default), keeping the surface closed when plan state is
@@ -141,7 +141,7 @@ def list_leads(
 
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
         intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
-        # Visitor Intelligence resolves PER BOT — a workspace can hold a
+        # Visitor Intelligence resolves PER BOT, a workspace can hold a
         # Professional bot and a Free bot simultaneously, and the Free bot's
         # leads must not inherit the paid fields. Memoized per bot_id so a
         # 200-lead page still costs one entitlements lookup per bot, not per row.
@@ -154,7 +154,7 @@ def list_leads(
                 visitor_intel_by_bot[bot_id_] = is_visitor_intelligence_enabled_for_bot(bot_id_, session)
             return visitor_intel_by_bot[bot_id_]
 
-        # Build leads with scores — filters are Python-computed (score/tier not in DB)
+        # Build leads with scores. Filters are Python-computed (score/tier not in DB)
         leads = []
         for chat_session, msg_count in results:
             lead = build_lead_response(
@@ -168,7 +168,7 @@ def list_leads(
             )
 
             # Apply filters (tier or legacy status param). Tier/score are part
-            # of the paid intelligence layer — for Free the fields aren't in
+            # of the paid intelligence layer, for Free the fields aren't in
             # the payload, so the filters are ignored rather than leaking the
             # qualification via a filterable side channel.
             if intelligence_enabled:
@@ -274,7 +274,7 @@ def mark_all_leads_viewed(
 ):
     """Bulk-clear the unread flag on every lead for the caller's bot(s).
 
-    Matches the `PATCH /offline-messages/{id} → read` UX — a single
+    Matches the `PATCH /offline-messages/{id} → read` UX, a single
     "Mark all as read" click on the Leads page drops the sidebar badge
     to zero without opening every drawer.
     """
@@ -300,7 +300,7 @@ def mark_lead_viewed(
     session_id: str,
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Mark a single lead as viewed. Idempotent — subsequent calls are no-ops.
+    """Mark a single lead as viewed. Idempotent. Subsequent calls are no-ops.
 
     Returns 204 (no body) so the frontend can fire-and-forget on drawer open.
     """
@@ -329,7 +329,7 @@ def _qualification_value(lead: dict, dimension: str) -> str:
 
     ``build_lead_response`` emits the dimensions of the bot's *actual*
     framework, so a bot on MEDDIC / CHAMP / GPCTBA+C&I has no ``need`` key at
-    all — it has ``metrics``, ``economic_buyer``, and so on. Indexing the four
+    all, it has ``metrics``, ``economic_buyer``, and so on. Indexing the four
     BANT names directly raised ``KeyError`` for those bots, and since this
     handler has no ``except``, every one of those customers got a 500 and could
     never export their leads.
@@ -337,7 +337,7 @@ def _qualification_value(lead: dict, dimension: str) -> str:
     This restores the export for them with the file's shape unchanged: the four
     BANT columns come back empty rather than crashing. Emitting each bot's real
     dimensions instead would be the better end state, but it changes what the
-    columns *mean* per row and is a product decision, not a bug fix — tracked
+    columns *mean* per row and is a product decision, not a bug fix. Tracked
     separately so it doesn't gate unbreaking the endpoint.
     """
     entry = (lead.get("bant") or {}).get(dimension) or {}
@@ -353,7 +353,7 @@ def export_leads_csv(
 
     The CSV is the lead-intelligence layer in bulk (Score / Status / BANT /
     Location / Device columns), so it is gated the same way the fields are
-    stripped from the JSON responses — a Free API key gets a 403, not a
+    stripped from the JSON responses, a Free API key gets a 403, not a
     file with the locked columns filled in.
     """
     with get_session() as session:
@@ -458,7 +458,7 @@ def export_leads_csv(
             # Absence is an EMPTY CELL, never a word. ``build_lead_response``
             # answers "Unknown" for a missing location/device because that
             # reads well in the dashboard table, but a file says "no value"
-            # with an empty cell — a CRM importing "Unknown" creates a country
+            # with an empty cell, a CRM importing "Unknown" creates a country
             # by that name. The client-side "Export selected" download
             # (``app/src/features/leads/leadsCsv.ts``) blanks the same
             # placeholder so a customer merging the two files never sees one
@@ -477,7 +477,7 @@ def export_leads_csv(
                 _qualification_value(lead, "authority"),
                 _qualification_value(lead, "timeline"),
                 # This column is the reason ``core.visitor_privacy`` exists.
-                # It used to be ``chat_session.location or ""`` — the stored
+                # It used to be ``chat_session.location or ""``, the stored
                 # string, IP and all, for every lead in the workspace, in a file
                 # that then gets mailed around and loaded into a CRM. The
                 # dashboard beside it had been stripping the IP the whole time.
@@ -494,8 +494,8 @@ def export_leads_csv(
                 journey_summary = " → ".join(
                     entry.get("path", "") for entry in journey if isinstance(entry, dict) and entry.get("path")
                 )
-                # All six come off the host page the widget was embedded on —
-                # query string, document.referrer, and the recorded path list —
+                # All six come off the host page the widget was embedded on.
+                # Query string, document.referrer, and the recorded path list,
                 # so an attacker controls them by linking a visitor to the
                 # customer's own site with a crafted URL.
                 row.extend(
@@ -580,7 +580,7 @@ def get_lead_detail(
             for m in messages
         ]
 
-        # Add BANT signal evidence trail — intelligence-layer data, so Free
+        # Add BANT signal evidence trail. Intelligence-layer data, so Free
         # gets the transcript above but never the extraction evidence.
         if intelligence_enabled:
             signals = (
@@ -598,7 +598,7 @@ def get_lead_detail(
                     "confidence": s.confidence,
                     "score_before": s.score_before,
                     "score_after": s.score_after,
-                    # llm | cta_click | operator_override — lets the UI separate
+                    # llm | cta_click | operator_override. Lets the UI separate
                     # visitor-stated evidence from manual operator score edits.
                     "source": getattr(s, "source", None),
                     "created_at": s.created_at.isoformat() if s.created_at else None,
@@ -624,7 +624,7 @@ def send_manual_follow_up(
 ):
     """Admin manually sends a follow-up email to a captured lead.
 
-    There is no automatic or timed send anywhere in this system — an
+    There is no automatic or timed send anywhere in this system, an
     operator triggers this explicitly, but every gate below still runs at
     click time (not just when deciding whether to show the button), so a
     bad send stays structurally hard to make. See
@@ -642,7 +642,7 @@ def send_manual_follow_up(
         if not chat_session:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        # Gated on THIS bot's subscription, not the account's best plan — a
+        # Gated on THIS bot's subscription, not the account's best plan, a
         # Free bot must not be able to send follow-ups just because a sibling
         # bot in the same workspace is on Professional.
         if not is_visitor_intelligence_enabled_for_bot(chat_session.bot_id, session):
@@ -653,25 +653,25 @@ def send_manual_follow_up(
 
         lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
 
-        # Gate 1a — hard stop, no override. Nothing to send to.
+        # Gate 1a. Hard stop, no override. Nothing to send to.
         if not lead_info or not lead_info.email:
-            raise HTTPException(status_code=400, detail="Lead is not eligible — no email address was captured.")
+            raise HTTPException(status_code=400, detail="Lead is not eligible, no email address was captured.")
 
-        # Gate 1b — hard stop, no override. Reoon positively flagged this
+        # Gate 1b. Hard stop, no override. Reoon positively flagged this
         # address as junk (bad syntax / disposable / spamtrap / dead MX).
         # Sending here is what gets a sending domain blacklisted.
         if lead_info.is_valid_email is False:
             raise HTTPException(
                 status_code=400,
-                detail="Lead is not eligible — this address failed email validation and cannot be contacted.",
+                detail="Lead is not eligible. This address failed email validation and cannot be contacted.",
             )
 
-        # Gate 1c — SOFT stop, operator can override. ``None`` means "never
+        # Gate 1c. SOFT stop, operator can override. ``None`` means "never
         # validated", not "known bad": the lead predates this feature, was
         # captured on a plan without email validation, or Reoon was
         # unreachable at capture time. Treating that identically to
         # "flagged unsafe" (as this gate originally did) permanently locked
-        # follow-up for every such lead with no way out — the operator can
+        # follow-up for every such lead with no way out, the operator can
         # see the address on screen, so let them take responsibility for it.
         if lead_info.is_valid_email is None and not confirm_override:
             raise HTTPException(
@@ -679,7 +679,7 @@ def send_manual_follow_up(
                 detail=("This address hasn't been checked for deliverability. Double-check it before sending."),
             )
 
-        # Gate 2 — soft stop, operator can override.
+        # Gate 2. Soft stop, operator can override.
         if lead_info.last_followup_sent_at:
             elapsed = datetime.now(UTC) - lead_info.last_followup_sent_at
             if elapsed < FOLLOWUP_COOLDOWN and not confirm_override:
@@ -691,8 +691,8 @@ def send_manual_follow_up(
                     ),
                 )
 
-        # Gate 3 — hard stop, no override, ever. Scoped to THIS bot —
-        # unsubscribing from one company's follow-ups must never suppress
+        # Gate 3. Hard stop, no override, ever. Scoped to THIS bot.
+        # Unsubscribing from one company's follow-ups must never suppress
         # a different, unrelated customer's bot from emailing the same address.
         suppressed = session.execute(
             select(EmailSuppression).where(
@@ -701,12 +701,12 @@ def send_manual_follow_up(
             )
         ).scalar_one_or_none()
         if suppressed:
-            raise HTTPException(status_code=403, detail="This email has unsubscribed — cannot send.")
+            raise HTTPException(status_code=403, detail="This email has unsubscribed. Cannot send.")
 
-        # Gate 4 — hard stop, no override.
+        # Gate 4. Hard stop, no override.
         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         if bot and bot.followup_sending_paused:
-            raise HTTPException(status_code=423, detail="Sending is paused for this bot — contact ops.")
+            raise HTTPException(status_code=423, detail="Sending is paused for this bot. Contact ops.")
 
         unsubscribe_url = (
             f"{API_BASE_URL}/leads/unsubscribe?token={make_unsubscribe_token(chat_session.bot_id, lead_info.email)}"
@@ -729,12 +729,12 @@ def send_manual_follow_up(
                 html_body=html_body,
             )
         except Exception as e:
-            # PRIVACY — ``session_id``, never the address. This is a visitor's
+            # PRIVACY. ``session_id``, never the address. This is a visitor's
             # email (the lead captured in the chat), personal data under GDPR and
             # under India's DPDP Act, where this product's basis is consent-only.
             # ``logger.error`` is not a log line here: Sentry's LoggingIntegration
             # promotes ERROR records to full events, so the address was the
-            # event's own message — the one field no scrubber gets to see. The
+            # event's own message, the one field no scrubber gets to see. The
             # session is the join key to the lead row for anyone with DB access.
             logger.error(f"Failed to send follow up | session={session_id} | {e}")
             raise HTTPException(status_code=500, detail="Failed to send email") from e

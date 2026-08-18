@@ -1,4 +1,4 @@
-"""task_render_invoice_pdfs — sweep finalized invoices, render→R2→urls (+email)."""
+"""task_render_invoice_pdfs. Sweep finalized invoices, render→R2→urls (+email)."""
 
 import asyncio
 import os
@@ -122,7 +122,7 @@ def test_email_sent_only_when_enabled(db, env, monkeypatch):
     _mk_invoice(db, "pdf-8@test.example", "DB/26-27/000007")
     asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
     # The new invoice is emailed inline; the shadow-mode one is picked up by the
-    # F43 recovery pass — enabling emails delivers the backlog of numbered
+    # F43 recovery pass. Enabling emails delivers the backlog of numbered
     # documents (a tax invoice must reach the buyer), it doesn't strand them.
     assert env["emails"] == [
         ("billing-pdf-8@test.example", "DB/26-27/000007"),

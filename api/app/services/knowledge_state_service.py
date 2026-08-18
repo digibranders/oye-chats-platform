@@ -2,7 +2,7 @@
 
 When a paid subscription lapses to Free (dunning expiry or cancellation) the
 bot keeps all its data but should stop answering from a knowledge base it built
-on a paid tier — the customer is prompted to re-add knowledge within Free's
+on a paid tier, the customer is prompted to re-add knowledge within Free's
 caps, and re-upgrading restores everything. This module owns that reversible
 "deactivate the whole bot's knowledge" flip; retrieval scoping lives in
 ``repository.py`` (every search/list query filters ``Document.is_active``).
@@ -11,7 +11,7 @@ Scope is per **bot**, not per client: the platform bills one subscription per
 bot, so a lapse on one bot must not blank a sibling bot the customer still pays
 for. Callers pass the lapsed/reactivated subscription's ``bot_id``.
 
-Neither function commits — the caller owns the transaction so the flag flip
+Neither function commits, the caller owns the transaction so the flag flip
 lands atomically with the subscription status change that triggered it.
 """
 

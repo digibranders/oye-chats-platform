@@ -66,7 +66,7 @@ export interface PlanCheckoutContext {
   /**
    * Active launch promotion the client qualifies for, if any. When it applies to
    * the selected plan, the money-path is forced through CHECKOUT (where the
-   * deferred free-period is realised) rather than change-plan — otherwise a
+   * deferred free-period is realised) rather than change-plan. Otherwise a
    * free-tier signup (which holds an active Free sub) would route to change-plan
    * and silently skip the promo it was shown.
    */
@@ -230,8 +230,8 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
 
       // A promo-eligible selection runs the CHECKOUT money-path so the deferred
       // free-period (start_at) is applied. Used to (a) suppress the auto-trial
-      // path — the 3-month promo beats a 7-day trial and is what the customer
-      // was shown — and (b) force checkout over change-plan below. Monthly-only:
+      // path (the 3-month promo beats a 7-day trial and is what the customer
+      // was shown) and (b) force checkout over change-plan below. Monthly-only:
       // annual + promo would bill a full year after the free period, so the
       // backend never applies it there either.
       const promoApplies = billingCycle === 'monthly' && promotionAppliesToPlan(promotion ?? null, plan);
@@ -272,7 +272,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         //   purchase → checkout.
         // Only a charge-grade country may be sent as billing_country: the
         // account's stored fact or one the user picked this session. A
-        // 'detected' (IP geo) country is display-only — echoing it here would
+        // 'detected' (IP geo) country is display-only. Echoing it here would
         // launder the IP signal into the server's request-confirmation slot
         // and silently rail-switch a mis-detected traveller. Omitted, the
         // server refuses with billing_country_required and we hand off to the
@@ -498,7 +498,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           );
           return;
         }
-        // Knowledge-base overflow — same hard-block contract as seats: the
+        // Knowledge-base overflow, same hard-block contract as seats: the
         // downgrade is refused until the customer trims uploaded documents to
         // the target plan's allowance. Point them at the Knowledge base.
         if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'document_overflow') {

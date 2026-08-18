@@ -8,7 +8,7 @@ import { TopupModal } from './TopupModal';
  *
  * The top-up rail is INR-only and waves an unconfirmed buyer through as
  * domestic, so every case the frontend has to *guess* must resolve to INR.
- * Unlike checkout, nothing downstream 409s a wrong guess here — the customer
+ * Unlike checkout, nothing downstream 409s a wrong guess here, the customer
  * simply sees one number and is debited another.
  *
  * These tests deliberately mount the REAL CurrencyProvider (the other TopupModal
@@ -88,7 +88,7 @@ describe('TopupModal currency vs the amount charged', () => {
 
   it('still shows dollars for a detected foreign country', async () => {
     // The deliberate divergence: IP geo is display-grade and shows USD. Safe
-    // only because it can never become a charge — checkout omits a 'detected'
+    // only because it can never become a charge. Checkout omits a 'detected'
     // country and the server 409s billing_country_required. Pinned so the
     // INR default above can't be over-applied into "always INR".
     getBillingGeo.mockResolvedValue({

@@ -4,26 +4,26 @@ A plan whose ``limits.bots`` is the ``UNLIMITED`` sentinel sells ONE credit
 balance pooled across unlimited agents. Attached to a bot-scoped subscription
 its credits are granted into that single bot's isolated ledger
 (``credit_service.resolve_bot_ledger_bot_id``) while every other agent the
-promise entitles drains the unfunded shared client pool — one working agent and
+promise entitles drains the unfunded shared client pool, one working agent and
 N silent ones.
 
 The defence has three shapes, and all three are covered here. Which one applies
 turns on ONE question: does a subscription already exist that a refusal would be
 protecting?
 
-**REFUSE — an existing bot-scoped subscription.** ``POST /subscriptions/change-plan``
+**REFUSE, an existing bot-scoped subscription.** ``POST /subscriptions/change-plan``
 Branches 1 / 2a / 2b act on the subscription ``_resolve_target_subscription``
 returned, so their scope is ``sub.bot_id``. Re-scoping such a row would move a
 live credit ledger, so these refuse. ``POST /subscriptions/resume`` Mode 2 is the
 same shape: it stamps ``oyechats_bot_id`` into the replacement mandate's notes
 whenever ``sub.bot_id`` is set, and had no plan check at all.
 
-**DEMOTE — no subscription exists yet.** ``change-plan`` Branch 3 mints a brand
+**DEMOTE, no subscription exists yet.** ``change-plan`` Branch 3 mints a brand
 new mandate, and ``create_bot_resubscription`` stamps ``request.bot_id`` onto it
 whatever the resolver returned. Refusing here was the regression: Branch 3 is
 reached WITH a ``bot_id`` whenever the resolved row is the account row carrying
-no Razorpay mandate — every Free, manual, and trialing account, including the
-trial→paid conversion — and since ``BotContext`` scopes the shell to exactly one
+no Razorpay mandate (every Free, manual, and trialing account, including the
+trial→paid conversion) and since ``BotContext`` scopes the shell to exactly one
 agent as soon as the account has any, that refusal made a pooled tier unbuyable
 by every existing customer. Nothing is being re-scoped, so the fix is to drop the
 agent scope the UI happened to carry and mint at account scope, which is what the
@@ -31,7 +31,7 @@ tier sells.
 
 **The sink** (``razorpay_service._handle_subscription_activated``). Every mint
 path funnels into one INSERT; the sink refuses to persist the incoherent state
-whichever door the mandate came through — including a per-bot mandate created
+whichever door the mandate came through, including a per-bot mandate created
 BEFORE the route guards shipped and only authorised afterwards. Because the money
 is already taken by then, the refusal must leave a durable, actionable artifact
 and must not permanently burn the idempotency key.
@@ -108,7 +108,7 @@ def _account_sub(*, monthly: int = 94900, razorpay: str | None = "sub_live_accou
     """The ACCOUNT subscription (``bot_id IS NULL``).
 
     What ``_resolve_target_subscription`` falls back to when the selected agent
-    holds no subscription of its own — the case the regression blocked.
+    holds no subscription of its own, the case the regression blocked.
     """
     current = _plan("professional", 1, plan_id=3, monthly=monthly)
     sub = Subscription(
@@ -148,7 +148,7 @@ def gateway(monkeypatch):
     # Branch 3 reads the client row to consult the in-flight-checkout marker
     # (``pending_checkout_service``). A bare MagicMock attribute is TRUTHY, so
     # the route would believe a mandate is pending and reach for the gateway to
-    # supersede it. Hand it a client with nothing in flight — this file is a
+    # supersede it. Hand it a client with nothing in flight. This file is a
     # pure test of the plan-scope guard.
     session.get.side_effect = lambda model, *a, **k: (
         SimpleNamespace(pending_checkout_subscription_id=None) if model is Client else MagicMock()
@@ -251,7 +251,7 @@ def test_account_fallback_that_reaches_branch_3_is_demoted(gateway):
     """The regression's real entry point: a trialing/Free/manual account.
 
     The agent has no subscription of its own, so the resolver falls back to the
-    ACCOUNT row — which carries no Razorpay mandate, so neither in-place paid
+    ACCOUNT row, which carries no Razorpay mandate, so neither in-place paid
     branch matches and the request falls through to Branch 3. This is the shape
     every Free, manual, and trialing customer arrives in (the docstring on
     ``change_plan`` names the trial→paid conversion explicitly), and refusing it
@@ -294,7 +294,7 @@ def test_account_fallback_upgrade_to_unlimited_agent_plan_proceeds(gateway):
     ``_resolve_target_subscription`` falls back to the ACCOUNT row and Branch 2a
     upgrades THAT. ``transition_service.execute_paid_upgrade`` only stamps
     ``oyechats_bot_id`` into the replacement mandate's notes when
-    ``sub.bot_id is not None``, so the replacement is account-scoped — exactly
+    ``sub.bot_id is not None``, so the replacement is account-scoped, exactly
     the pooled shape the tier sells. The guard must stay out of the way.
     """
     result = gateway(plan=_plan("enterprise", UNLIMITED), sub=_account_sub(), bot_id=42)
@@ -306,7 +306,7 @@ def test_account_fallback_upgrade_to_unlimited_agent_plan_proceeds(gateway):
 
 
 def test_account_fallback_upgrade_to_a_normal_paid_plan_proceeds(gateway):
-    """The same fallback shape on an ordinary plan — untouched by either guard."""
+    """The same fallback shape on an ordinary plan. Untouched by either guard."""
     result = gateway(plan=_plan("scale", 1), sub=_account_sub(), bot_id=42)
 
     assert result.response.status_code == 200, result.response.text
@@ -326,7 +326,7 @@ def test_bot_scoped_change_to_a_normal_paid_plan_still_proceeds(gateway):
 def test_plan_without_a_bots_quota_still_proceeds(gateway):
     """A bespoke plan row missing ``limits.bots`` is not an unlimited plan.
 
-    Only the explicit ``-1`` sentinel may trip the guard — reading a missing or
+    Only the explicit ``-1`` sentinel may trip the guard. Reading a missing or
     garbled quota as unlimited would block legitimate per-agent plan changes on
     hand-provisioned plan rows.
     """
@@ -341,8 +341,8 @@ def test_account_level_change_to_unlimited_agent_plan_proceeds(gateway):
     """``bot_id`` omitted is the CORRECT purchase path and must not regress.
 
     Without a bot scope the subscription is minted against the shared client
-    pool (``bot_id IS NULL``) — which is exactly what an unlimited-agent tier
-    sells — so the guard must stay out of the way.
+    pool (``bot_id IS NULL``) (which is exactly what an unlimited-agent tier
+    sells) so the guard must stay out of the way.
     """
     result = gateway(plan=_plan("enterprise", UNLIMITED), sub=None, bot_id=None)
 
@@ -356,7 +356,7 @@ def test_account_level_change_to_unlimited_agent_plan_proceeds(gateway):
 #
 # Mode 2 mints a REAL replacement mandate and stamps ``oyechats_bot_id`` +
 # ``purpose=per_bot_subscription`` into its notes whenever ``sub.bot_id`` is set
-# — with no plan check of its own before this change. Refusal has to land BEFORE
+# , with no plan check of its own before this change. Refusal has to land BEFORE
 # ``create_subscription``, or the customer is charged for a mandate the sink will
 # then refuse to persist.
 
@@ -412,7 +412,7 @@ def _cancelled_sub(*, plan: Plan, bot_id: int | None) -> Subscription:
 
 
 def test_resume_refuses_a_bot_scoped_subscription_on_a_pooled_plan(resume):
-    """Refused BEFORE the gateway call — no mandate, so no charge."""
+    """Refused BEFORE the gateway call, no mandate, so no charge."""
     result = resume(sub=_cancelled_sub(plan=_plan("enterprise", UNLIMITED), bot_id=42), bot_id=42)
 
     assert result.response.status_code == 400, result.response.text
@@ -422,7 +422,7 @@ def test_resume_refuses_a_bot_scoped_subscription_on_a_pooled_plan(resume):
 
 
 def test_resume_of_an_account_scoped_subscription_on_a_pooled_plan_proceeds(resume):
-    """``bot_id IS NULL`` is the shape a pooled tier is sold on — untouched."""
+    """``bot_id IS NULL`` is the shape a pooled tier is sold on. Untouched."""
     result = resume(sub=_cancelled_sub(plan=_plan("enterprise", UNLIMITED), bot_id=None), bot_id=None)
 
     assert result.response.status_code == 200, result.response.text
@@ -448,7 +448,7 @@ class _ReachedTheMint(Exception):
     """Raised by a stub placed just past the guard, to prove it let the call through."""
 
 
-_PAST_PERIOD_START = 1704067200  # 2024-01-01Z — safely past, so no deferred-start branch.
+_PAST_PERIOD_START = 1704067200  # 2024-01-01Z. Safely past, so no deferred-start branch.
 _PAST_PERIOD_END = 1706745600  # 2024-02-01Z
 
 
@@ -473,7 +473,7 @@ def activation(monkeypatch):
     """Drive the activation handler's CREATE path with the plan row under test.
 
     ``_resolve_local_subscription`` returns ``None`` so the handler takes the
-    branch that INSERTS — the sink itself. Two tripwires stand immediately past
+    branch that INSERTS, the sink itself. Two tripwires stand immediately past
     the guard, one per scope: the per-bot path's ``Bot`` mint and the
     account-level path's sibling-cancel sweep (every read past the guard is a
     ``SELECT``). Either firing proves the guard let the activation through; the
@@ -481,7 +481,7 @@ def activation(monkeypatch):
     transaction would commit.
 
     ``DELETE`` is exempted from the sweep tripwire because the refusal itself
-    issues one — releasing the idempotency key it would otherwise have burned on
+    issues one. Releasing the idempotency key it would otherwise have burned on
     work it never did. Those statements are captured so a test can assert it.
 
     The dead-letter write opens its OWN session, so it is captured separately
@@ -549,7 +549,7 @@ def test_sink_refuses_a_pooled_plan_on_a_new_per_bot_activation(activation):
     result = fixture.run()
 
     assert "NOT created" in result
-    # Refused before the Bot INSERT and before any sibling was cancelled — the
+    # Refused before the Bot INSERT and before any sibling was cancelled, the
     # webhook route commits whatever the handler leaves behind, so an early
     # return must leave behind nothing but the key release.
     fixture.session.add.assert_not_called()
@@ -557,7 +557,7 @@ def test_sink_refuses_a_pooled_plan_on_a_new_per_bot_activation(activation):
 
 
 def test_sink_refuses_a_pooled_plan_on_a_resume_or_revive_activation(activation):
-    """``oyechats_bot_id`` funds an EXISTING bot — same forbidden scope."""
+    """``oyechats_bot_id`` funds an EXISTING bot, same forbidden scope."""
     fixture = activation(plan=_plan("enterprise", UNLIMITED), notes={"oyechats_bot_id": "42"})
 
     result = fixture.run()
@@ -579,7 +579,7 @@ def test_sink_acks_rather_than_raising_so_razorpay_stops_retrying(activation):
 
 
 def test_sink_records_a_reconciliation_row_for_the_charge_it_refuses(activation):
-    """The customer HAS been charged — an ERROR log alone is not an artifact.
+    """The customer HAS been charged, an ERROR log alone is not an artifact.
 
     Before this, a refused activation left no ``Subscription``, no ``Invoice``,
     and nothing durable but a Sentry event. The row must land in
@@ -618,7 +618,7 @@ def test_sink_releases_the_idempotency_key_it_would_otherwise_burn(activation):
     Leaving the key burned is what made the refusal terminal: after a fix ships,
     neither a redelivery nor ``reconcile_subscription_from_razorpay`` could ever
     reprocess the activation without someone deleting a row in production. It is
-    still not a retry loop — the handler ACKs, so the provider stops redelivering
+    still not a retry loop, the handler ACKs, so the provider stops redelivering
     and only a DELIBERATE reprocess picks the event back up.
     """
     fixture = activation(
@@ -666,7 +666,7 @@ def test_sink_leaves_a_normal_paid_plan_on_a_per_bot_activation_alone(activation
 
 
 def test_sink_treats_an_unreadable_plan_row_conservatively(activation):
-    """No ``bots`` quota is NOT unlimited — a bespoke plan row still activates."""
+    """No ``bots`` quota is NOT unlimited, a bespoke plan row still activates."""
     fixture = activation(plan=_plan("bespoke-acme", None), notes={"purpose": "per_bot_subscription"})
 
     with pytest.raises(_ReachedTheMint):
@@ -677,7 +677,7 @@ def test_sink_treats_an_unreadable_plan_row_conservatively(activation):
 # ── The remaining scope leaks ───────────────────────────────────────────────
 #
 # Neither of these passes through ``/change-plan`` or the per-bot checkout, so
-# neither is covered by any guard above — they reach the plan/scope pairing by a
+# neither is covered by any guard above. They reach the plan/scope pairing by a
 # different route entirely.
 
 
@@ -708,7 +708,7 @@ def test_superadmin_plan_override_refuses_a_pooled_plan_on_a_bot_scoped_sub(monk
 
 
 def test_superadmin_plan_override_allows_a_pooled_plan_on_an_account_sub(monkeypatch):
-    """``bot_id IS NULL`` is the scope a pooled plan belongs on — no refusal."""
+    """``bot_id IS NULL`` is the scope a pooled plan belongs on, no refusal."""
     plan = _plan("enterprise", UNLIMITED)
     sub = _account_sub()
     session = MagicMock()
@@ -733,8 +733,8 @@ def _promotion_session(sub: Subscription, new_plan: Plan) -> MagicMock:
 def test_promotion_refuses_to_cut_a_bot_scoped_sub_over_to_a_pooled_plan(monkeypatch):
     """The downgrade cutover copies ``sub.bot_id`` onto the grace row it INSERTs.
 
-    That grace row is a real active-set row — it carries entitlements and scopes
-    the credit ledger for the whole re-authorisation window — so a pooled plan on
+    That grace row is a real active-set row (it carries entitlements and scopes
+    the credit ledger for the whole re-authorisation window) so a pooled plan on
     it is the same incoherent state, reached by cron rather than by a request.
     The scheduled trio is deliberately left SET: clearing it would destroy the
     customer's requested change and hide the defect.
@@ -758,7 +758,7 @@ def test_promotion_refuses_to_cut_a_bot_scoped_sub_over_to_a_pooled_plan(monkeyp
 
 
 def test_promotion_of_an_account_scoped_sub_onto_a_pooled_plan_proceeds(monkeypatch):
-    """``bot_id IS NULL`` is the shape a pooled tier is sold on — cutover runs."""
+    """``bot_id IS NULL`` is the shape a pooled tier is sold on. Cutover runs."""
     new_plan = _plan("enterprise", UNLIMITED)
     sub = _account_sub()
     sub.scheduled_plan_id = new_plan.id

@@ -5,7 +5,7 @@
  * [MEETING_CARD] or [LEAVE_MESSAGE_CARD] on their own line to trigger
  * inline UI cards. The backend strips these from the persisted
  * ChatMessage and sets flags in FINAL_METADATA, but during streaming
- * each chunk is yielded as it arrives — so without client-side
+ * each chunk is yielded as it arrives, so without client-side
  * scrubbing the raw token briefly flashes in the chat bubble.
  *
  * This module sits between the stream reader and the UI so that the
@@ -17,11 +17,11 @@
  *  - Split-chunk safe: only holds back a trailing substring that could
  *    be the prefix of a known sentinel, and only when that substring
  *    actually starts with '[' (the sentinel marker). This prevents the
- *    UX regression where every chunk would buffer up to 19 chars —
- *    now the stripper is effectively a no-op for normal text.
+ *    UX regression where every chunk would buffer up to 19 chars.
+ *    Now the stripper is effectively a no-op for normal text.
  *  - Pure function factory: one stripper instance per stream, no
  *    shared state between concurrent chats.
- *  - Literal string matching (split+join) rather than regex — avoids
+ *  - Literal string matching (split+join) rather than regex. Avoids
  *    regex-escape pitfalls if a sentinel ever contains special chars.
  */
 
@@ -37,19 +37,19 @@ export const STREAM_SENTINELS = Object.freeze([
 const CTA_PREFIX = '[CTA:';
 const CTA_PATTERN = /\[CTA:[a-zA-Z0-9_]+\]/g;
 
-// [CTA_Q:short follow-up question] — the qualifying-question twin of [CTA:].
+// [CTA_Q:short follow-up question], the qualifying-question twin of [CTA:].
 // Body grammar mirrors the backend's _CTA_Q_PATTERN (rag_service.py): any
 // run of chars except ']' / newline, up to 200. Checked BEFORE CTA_PREFIX
 // everywhere since '[CTA_Q:' also contains '[CTA' as a leading substring.
 const CTA_Q_PREFIX = '[CTA_Q:';
 const CTA_Q_PATTERN = /\[CTA_Q:[^\]\n]{0,200}\]/g;
 
-// Media card sentinels — same pattern as CTA but with a different body
+// Media card sentinels, same pattern as CTA but with a different body
 // grammar. [YOUTUBE_CARD:VIDEO_ID] where VIDEO_ID is the 11-char URL-safe
 // alphabet; [DOWNLOAD_CARD:URL|FILENAME] where URL is a bracket/pipe/
 // whitespace-free segment and FILENAME is anything up to a closing bracket.
-// The visitor never sees a card sentinel — the widget renders the card via
-// FINAL_METADATA instead — so in-flight stripping keeps the raw token from
+// The visitor never sees a card sentinel (the widget renders the card via
+// FINAL_METADATA instead) so in-flight stripping keeps the raw token from
 // briefly typing into the bubble as the stream arrives token by token.
 const YOUTUBE_CARD_PREFIX = '[YOUTUBE_CARD:';
 const YOUTUBE_CARD_PATTERN = /\[YOUTUBE_CARD:[A-Za-z0-9_-]{11}\]/g;
@@ -58,14 +58,14 @@ const DOWNLOAD_CARD_PATTERN = /\[DOWNLOAD_CARD:[^\s|\]]{1,500}\|[^\]\n]{1,200}\]
 
 // The strict YOUTUBE_CARD_PATTERN / DOWNLOAD_CARD_PATTERN passes above strip
 // only WELL-FORMED card sentinels. The LLM sometimes echoes a card marker into
-// prose in a shape those patterns reject — a wrong-length video id, a stray
+// prose in a shape those patterns reject, a wrong-length video id, a stray
 // "[YOUTUBE_CARD: video below]", a "[DOWNLOAD_CARD:...]" missing its pipe. This
 // sweep catches those leaked markers by their prefix so the raw token never
 // reaches the bubble.
 //
 // It is deliberately NARROW: it matches ONLY the two card-marker prefixes.
-// Every other bracketed span is legitimate and MUST be preserved verbatim —
-// citation markers ([1]), ranges ([9am-5pm]), code subscripts (list[0], a[i]),
+// Every other bracketed span is legitimate and MUST be preserved verbatim.
+// Citation markers ([1]), ranges ([9am-5pm]), code subscripts (list[0], a[i]),
 // key labels ([Enter], [Ctrl+C]), and markdown link labels ([label](url)).
 //
 // History: PR #234 used a keyword-free /\[[^\]\n]{1,300}\](?!\()/g sweep that
@@ -138,7 +138,7 @@ const couldBeDownloadCardPrefix = (tail) => {
         return /^[^\s|\]]*$/.test(body);
     }
     const namePart = body.slice(pipeIdx + 1);
-    // Name segment still building — anything except newline / closing bracket.
+    // Name segment still building. Anything except newline / closing bracket.
     return !/[\]\n]/.test(namePart);
 };
 
@@ -154,12 +154,12 @@ export const stripAllSentinels = (text) => {
         if (out.includes(s)) out = out.split(s).join('');
     }
     // CTA_Q first: '[CTA_Q:' also contains the '[CTA' lead-in, and the strict
-    // CTA_PATTERN can never match a CTA_Q body — but ordering keeps intent clear.
+    // CTA_PATTERN can never match a CTA_Q body, but ordering keeps intent clear.
     if (out.includes(CTA_Q_PREFIX)) out = out.replace(CTA_Q_PATTERN, '');
     if (out.includes(CTA_PREFIX)) out = out.replace(CTA_PATTERN, '');
     if (out.includes(YOUTUBE_CARD_PREFIX)) out = out.replace(YOUTUBE_CARD_PATTERN, '');
     if (out.includes(DOWNLOAD_CARD_PREFIX)) out = out.replace(DOWNLOAD_CARD_PATTERN, '');
-    // General bracket sweep — any [...] not followed by ( is either a
+    // General bracket sweep. Any [...] not followed by ( is either a
     // valid sentinel we've already stripped above, or an LLM-invented
     // placeholder we should strip. The ``includes('[')`` guard skips
     // the regex entirely for normal text (hot path).
@@ -188,7 +188,7 @@ export const createSentinelStripper = () => {
 
             // Fast path: if the pending buffer does not contain the sentinel
             // marker character, no sentinel can possibly start inside it.
-            // Release everything — zero trailing-char latency for normal text.
+            // Release everything. Zero trailing-char latency for normal text.
             const lastBracket = pending.lastIndexOf('[');
             if (lastBracket === -1) {
                 const emit = pending;
@@ -197,8 +197,8 @@ export const createSentinelStripper = () => {
             }
 
             // A '[' is present in the tail. Identify the longest trailing
-            // substring that could still be the prefix of a known sentinel —
-            // hold only that much back until more chunks arrive. The hold
+            // substring that could still be the prefix of a known sentinel.
+            // Hold only that much back until more chunks arrive. The hold
             // window must cover the longest possible dynamic sentinel body:
             // [DOWNLOAD_CARD:URL|NAME] can be up to ~700 chars (500 URL + 200
             // name + wrapper). Clamp at 720 so a malformed unterminated token
@@ -210,7 +210,7 @@ export const createSentinelStripper = () => {
             let holdFrom = pending.length;
             for (let k = maxHold; k > 0; k--) {
                 const tail = pending.slice(pending.length - k);
-                // Only '[...' tails can be sentinel prefixes — anchor on the
+                // Only '[...' tails can be sentinel prefixes. Anchor on the
                 // bracket to avoid holding back text like "...]" that happens
                 // to end near but after a '['.
                 if (
@@ -230,7 +230,7 @@ export const createSentinelStripper = () => {
             return emit;
         },
 
-        /** Stream is done — release everything still held, minus any completed sentinel. */
+        /** Stream is done. Release everything still held, minus any completed sentinel. */
         flush() {
             const out = stripAllSentinels(pending);
             pending = '';

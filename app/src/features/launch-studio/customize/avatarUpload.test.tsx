@@ -23,10 +23,10 @@ import {
  *
  *  1. A 48 MP phone photo allocated a 48 MP canvas. iOS Safari caps total
  *     canvas area at ~16.7 MP and, past that, `toBlob` hands back a fully
- *     TRANSPARENT blob without throwing — an invisible avatar, reported as a
+ *     TRANSPARENT blob without throwing, an invisible avatar, reported as a
  *     successful upload.
  *  2. Every crop was re-encoded as lossless PNG, so a 2 MB JPEG came back out
- *     at 10-25 MB — "file too large" for a file the UI had just called fine.
+ *     at 10-25 MB. "file too large" for a file the UI had just called fine.
  *  3. `image/*` admits SVG; an SVG with no intrinsic size reports
  *     naturalWidth === 0, which the `Math.max(1, …)` guards turned into a
  *     silently uploaded 1x1 PNG.
@@ -69,7 +69,7 @@ describe('validateAvatarFile', () => {
   });
 
   it('rejects a file that is not an image at all', () => {
-    // `accept="image/*"` never stopped this — drag-and-drop bypasses accept.
+    // `accept="image/*"` never stopped this. Drag-and-drop bypasses accept.
     const message = validateAvatarFile(fileLike('contract.pdf', 'application/pdf', 50_000));
     expect(message).toBeTruthy();
     expect(message).toMatch(/PNG, JPG or WebP/);

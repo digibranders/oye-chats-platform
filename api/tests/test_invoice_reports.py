@@ -50,7 +50,7 @@ def _finalized(db, email, *, gstin=None, state="27", country="IN", amount=179900
     c = _client_row(db, email, gstin=gstin, billing_state_code=state, billing_country=country)
     if (country or "IN") != "IN":
         # Wave 1.1 export backstop: an INR-settled export only finalizes for
-        # accounts with a genuine foreign-currency charge history — corroborate.
+        # accounts with a genuine foreign-currency charge history. Corroborate.
         db.add(Invoice(client_id=c.id, amount_cents=1900, currency="usd", status="paid", inr_amount_minor=160000))
         db.flush()
     inv = Invoice(
@@ -174,7 +174,7 @@ def test_export_row_reports_rupees_not_the_face_currency(db, enabled):
 
 def test_summary_never_adds_cents_to_paise(db, enabled):
     # The bug this prevents: summing a $9 document's FACE value (900 cents)
-    # with a ₹1,799 document's paise (179900) produces 180800 — a number that
+    # with a ₹1,799 document's paise (179900) produces 180800, a number that
     # is not money in any currency, and looks entirely normal on a CA's sheet.
     _seller(db, lut_active=True, lut_number="LUT-1")
     _finalized(db, "rep-mix-inr@test.example")
@@ -279,7 +279,7 @@ def test_anomaly_stuck_pdfs_and_broken_totals(db, enabled):
     stuck = _finalized(db, "rep-stuck@test.example")
     _raw_tamper(db, stuck, issued_at=datetime(2026, 7, 1, tzinfo=UTC))  # long past the sweep interval
     broken = _finalized(db, "rep-broken@test.example", pay_ref="pay-broken")
-    # Simulate a corrupted row via raw SQL — the ORM guard (finding L) now makes
+    # Simulate a corrupted row via raw SQL, the ORM guard (finding L) now makes
     # this impossible through normal code; reconciliation is the backstop.
     _raw_tamper(db, broken, total_tax_minor=broken.total_tax_minor + 1)
 
@@ -443,8 +443,8 @@ def test_csv_export_neutralizes_formula_injection(db, enabled, monkeypatch):
     )
     body = HttpClient(app).get(f"/superadmin/billing/gstr-export?month={THIS_MONTH}").text
     assert "'=HYPERLINK" in body  # neutralised with a leading quote
-    # Never appears as a bare cell (right after a delimiter or opening quote) —
-    # only ever behind the neutralising apostrophe.
+    # Never appears as a bare cell (right after a delimiter or opening quote).
+    # Only ever behind the neutralising apostrophe.
     assert ",=HYPERLINK" not in body
     assert '"=HYPERLINK' not in body
     assert body.startswith("﻿")  # UTF-8 BOM for Excel
@@ -457,7 +457,7 @@ def test_csv_export_leaves_absent_identity_columns_and_money_alone(db, enabled, 
     replaced this route's inline copy: the old helper collapsed its argument
     with ``str(value or "")``, so anything falsy became ``""``. Every column it
     guards is ``str | None`` (``Client.legal_name`` / ``name`` / ``gstin`` and
-    two ``String`` columns on the invoice), which is why the swap is safe — but
+    two ``String`` columns on the invoice), which is why the swap is safe, but
     a ``None`` reaching the file as the literal ``None``, or a rupee figure
     picking up a leading apostrophe, would put a wrong number on a tax return.
     """

@@ -232,7 +232,7 @@ function HomeEmpty(): ReactElement {
  *
  * Always agent-scoped: Members (operator seats are per-bot) and Documents are
  * scoped to `selectedBot`, matching the rest of Home and the per-bot seat model
- * on the Members page. The card is only mounted when an agent is selected — on
+ * on the Members page. The card is only mounted when an agent is selected, on
  * "All agents" the account-wide meters read as unactionable over-limit red bars,
  * so Home hides it and plan capacity lives in Workspace ▸ Billing instead.
  */
@@ -454,7 +454,7 @@ function HomeContent({
           {/* Plan & usage is scoped to a single agent. On "All agents"
               (selectedBot null) it's hidden: the account-wide Agents/Members
               meters read as over-limit red bars that alarm without being
-              actionable here — plan capacity lives in Workspace ▸ Billing. */}
+              actionable here. Plan capacity lives in Workspace ▸ Billing. */}
           {selectedBot && (
             <section aria-label="Plan and usage">
               <PlanUsageCard selectedBot={selectedBot} data={data} />
@@ -490,7 +490,7 @@ function HomeContent({
 
           {/* Recent activity is agent-scoped. On "All agents" it aggregates
               cross-agent feedback/messages that read as noise here, so Home
-              hides it — it returns when a single agent is selected. */}
+              hides it, it returns when a single agent is selected. */}
           {selectedBot && (
             <section aria-label="Recent activity" className="space-y-4">
               <SectionHeader title="Recent activity" description="Feedback and new messages." />

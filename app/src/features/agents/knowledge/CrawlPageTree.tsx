@@ -15,7 +15,7 @@ import { cn, Modal } from '../../../design-system';
  * A node in the discovered-page route tree. A node can be a folder (has
  * ``children``), a page (has a ``url``), or both (e.g. ``/blog`` is a real page
  * that also has ``/blog/post-1`` beneath it). ``urls`` is the flattened set of
- * every page URL in this subtree — including this node's own — precomputed so
+ * every page URL in this subtree (including this node's own) precomputed so
  * selection maths (checked / indeterminate / toggle-all) stay O(1) per node.
  */
 interface PageNode {
@@ -62,7 +62,7 @@ function rootHost(urls: readonly string[]): string {
  * `decodeURIComponent` that cannot take the panel down.
  *
  * It throws `URIError` on a lone `%` or a truncated escape, and real sitemaps
- * contain both — `/sale/50%_off` survives `new URL()` intact and then throws
+ * contain both. `/sale/50%_off` survives `new URL()` intact and then throws
  * here. This sat inside a `useMemo` with no guard (the `new URL()` above it IS
  * guarded, so the wrong failure was anticipated), which meant one such URL
  * unmounted the whole Add-Knowledge panel to the error boundary and left the
@@ -149,7 +149,7 @@ function buildTree(urls: readonly string[]): PageNode {
 
 /**
  * Canonicalise a raw crawl URL list down to the exact deduplicated set the
- * tree renders — one URL per page, near-duplicate path variants (a trailing
+ * tree renders, one URL per page, near-duplicate path variants (a trailing
  * slash, a re-ordered query, etc.) collapsed into a single node. Seed the
  * selection with this so the submitted crawl list matches what the user sees
  * and never carries redundant duplicates. Order is DISCOVERY order, not the
@@ -304,7 +304,7 @@ function TreeRow({
 }
 
 /**
- * CrawlPageTree — an interactive route tree of every page discovered on a site,
+ * CrawlPageTree, an interactive route tree of every page discovered on a site,
  * letting the customer choose exactly which pages to train the AI on before the
  * crawl runs. Folders aggregate their descendants with a tri-state checkbox and
  * toggle all pages beneath them at once; the selection is reported upward as a
@@ -368,7 +368,7 @@ export function CrawlPageTree({
   // Count only selected pages that exist in the tree, NOT `selectedSet.size`.
   // The parent seeds `selected` from the raw crawl result, which can carry
   // near-duplicates (e.g. a trailing-slash variant of a page) that buildTree
-  // canonicalises into a single node — so the raw set can hold more URLs than
+  // canonicalises into a single node, so the raw set can hold more URLs than
   // the tree has pages. Counting the intersection keeps the header honest
   // ("N of M" with N ≤ M) and lets "Select all" read as fully checked once
   // every tree page is picked, instead of the impossible "18 of 17".
@@ -380,7 +380,7 @@ export function CrawlPageTree({
 
   // The tree can grow into hundreds of pages on a big site, which the inline
   // `max-h-72` scroller only shows a sliver of. `maximized` opens the exact
-  // same tree in a large modal — selection and expand state are shared (they
+  // same tree in a large modal. Selection and expand state are shared (they
   // live in this component / the parent), so both views stay in lockstep.
   const [maximized, setMaximized] = useState(false);
   // Auto-open the maximized view the moment a crawl first yields pages, so the

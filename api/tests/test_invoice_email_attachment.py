@@ -1,7 +1,7 @@
 """Invoice email attaches the rendered PDF (not just a download link).
 
 Follow-up to the invoicing feature: the customer's invoice/receipt email now
-carries the PDF as a Brevo attachment. These are pure-function tests — no DB,
+carries the PDF as a Brevo attachment. These are pure-function tests, no DB,
 no network (urlopen is stubbed)."""
 
 import base64
@@ -79,8 +79,8 @@ def test_inr_invoice_email_announces_rupees():
 
 
 def test_usd_invoice_email_announces_dollars_not_rupees():
-    # This hardcoded _fmt_inr, so a $9.00 export was announced as "₹9.00" —
-    # matching neither the attached PDF nor the customer's card statement.
+    # This hardcoded _fmt_inr, so a $9.00 export was announced as "₹9.00".
+    # Matching neither the attached PDF nor the customer's card statement.
     _, html = _capture_html(_invoice(currency="usd", amount_cents=900, total_tax_minor=0))
     assert "$9.00" in html
     assert "₹9.00" not in html
@@ -94,7 +94,7 @@ def test_usd_invoice_email_shows_gst_in_the_same_currency():
 
 
 def test_brevo_payload_uses_attachment_key():
-    """The Brevo transactional API expects the singular `attachment` key —
+    """The Brevo transactional API expects the singular `attachment` key,
     a wrong key silently drops the file, so pin it."""
     sent = {}
 

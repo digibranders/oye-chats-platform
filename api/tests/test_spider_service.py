@@ -150,7 +150,7 @@ async def test_logs_page_count_for_cost_tracking(monkeypatch, caplog):
 #
 # `fetch_html` returns None for a missing key, an expired key, a transport
 # error AND a genuine 404. Any caller that PERSISTS "this URL yielded nothing"
-# needs those apart — company_profile_service writes to a cross-tenant cache,
+# needs those apart. Company_profile_service writes to a cross-tenant cache,
 # so conflating them lets one expired key blacklist every domain it sees, with
 # an exponential backoff compounding it to 90 days.
 
@@ -188,7 +188,7 @@ async def test_a_bare_404_on_the_scrape_endpoint_is_ours(monkeypatch):
 @pytest.mark.parametrize("status", [301, 307, 400, 401, 402, 403, 408, 429, 451, 500, 502, 503])
 async def test_fetch_html_outcome_reports_spiders_own_failures_as_unanswered(monkeypatch, status):
     """Expired key, exhausted quota, Spider down, Spider's own fetch timing
-    out — none of these are evidence about the target."""
+    out. None of these are evidence about the target."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -233,7 +233,7 @@ async def test_fetch_html_outcome_returns_content_on_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_fetch_html_still_returns_a_bare_string_for_its_existing_callers(monkeypatch):
     """The footer harvester is a log-only side channel and must keep its
-    simpler signature — the outcome variant is additive, not a replacement."""
+    simpler signature, the outcome variant is additive, not a replacement."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -246,7 +246,7 @@ async def test_fetch_html_still_returns_a_bare_string_for_its_existing_callers(m
 @pytest.mark.parametrize(
     ("body", "why"),
     [
-        ("<html>a proxy error page</html>", "unparseable body — a WAF or captive portal, not the target"),
+        ("<html>a proxy error page</html>", "unparseable body, a WAF or captive portal, not the target"),
         ("[]", "Spider returned no page object at all"),
         ('{"error": "insufficient credits"}', "a 200-wrapped billing error is ours"),
     ],
@@ -267,7 +267,7 @@ async def test_a_200_that_carries_no_page_object_is_not_evidence(monkeypatch, bo
 @pytest.mark.parametrize("upstream", [500, 502, 503, 504, 403, 429, None])
 async def test_an_empty_page_with_a_non_target_upstream_status_is_not_evidence(monkeypatch, upstream):
     """A 5xx means the target is broken TODAY, not absent. `_scrape_one` in
-    this same module retries exactly this condition three times — it must not
+    this same module retries exactly this condition three times, it must not
     become a permanent verdict somewhere else. 403 is usually the target's WAF
     refusing Spider, which must not blacklist a real company."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
@@ -297,7 +297,7 @@ async def test_a_spider_5xx_is_ours_even_when_it_carries_a_page_payload(monkeypa
     """Pins the status guard itself.
 
     Without the `2xx only` check the code still behaves for a bare error
-    response (an empty body parses to no page, and fail-closed catches it) —
+    response (an empty body parses to no page, and fail-closed catches it),
     but a Spider 5xx that echoes a cached page envelope would be read as the
     target's own 404 and blacklist a live domain.
     """

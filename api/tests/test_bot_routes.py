@@ -1,4 +1,4 @@
-"""Tests for app.api.bot_routes — bot management endpoints."""
+"""Tests for app.api.bot_routes. Bot management endpoints."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -29,13 +29,13 @@ def _build_app(auth_override=None, bot_override=None):
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
     if bot_override:
         app.dependency_overrides[get_current_bot] = lambda: bot_override
-    # The subscription gate is a separate concern from bot-route logic —
-    # every test in this module exercises an authenticated, paying user, so
+    # The subscription gate is a separate concern from bot-route logic.
+    # Every test in this module exercises an authenticated, paying user, so
     # we short-circuit the gate to "allow" rather than build a fake
     # subscription row per test. PR3 has its own dedicated coverage for
     # the gate semantics (see test_trial_enforcement.py).
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
-    # Same rationale for the email-verification gate — its semantics are covered
+    # Same rationale for the email-verification gate, its semantics are covered
     # in test_verified_email_gate; here we act as a verified workspace.
     app.dependency_overrides[require_verified_email_for_workspace] = lambda: None
     return app
@@ -216,7 +216,7 @@ class TestCreateBot:
         data = response.json()
         assert data["id"] == 7
         assert data["bot_key"] == "bot-existing123"
-        # Reused, not created — no new Bot row was added.
+        # Reused, not created, no new Bot row was added.
         session.add.assert_not_called()
 
     def test_create_402s_when_capped_and_no_matching_site(self, monkeypatch):
@@ -409,7 +409,7 @@ class TestBotSettingsPublic:
         """The bypass regression test: a non-entitled plan must NEVER receive a
         white-label badge, even when custom values are already stored on the
         bot (e.g. from directly PATCHing the public API). The public settings
-        payload the widget reads is the real enforcement boundary — the admin
+        payload the widget reads is the real enforcement boundary, the admin
         UI merely hides the inputs for these plans."""
         from app.api import bot_routes as br
         from app.services.plan_entitlements_service import PlanEntitlements
@@ -655,7 +655,7 @@ class TestBotAccessControl:
         _populate_on_refresh(session)
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
-        # Same gate as TestCreateBot.test_creates_bot — the route now
+        # Same gate as TestCreateBot.test_creates_bot, the route now
         # consults ``can_client_add_new_bot`` instead of resolving
         # plan-level bot limits.
         allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)

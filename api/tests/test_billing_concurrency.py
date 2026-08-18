@@ -1,10 +1,10 @@
 """Concurrency backstops the CTO review flagged as untested:
 
 - H: the partial unique index on ``idempotency_key`` is the fail-closed backstop
-  behind the app-level check — prove a lost race (two keyed deductions) is
+  behind the app-level check. Prove a lost race (two keyed deductions) is
   actually rejected by the DB, not just the app check.
 - D: two genuinely concurrent upgrade submits (separate connections) must not
-  both mint a subscription — the per-client advisory lock serialises them.
+  both mint a subscription, the per-client advisory lock serialises them.
 """
 
 import os
@@ -22,8 +22,8 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 
 def test_idempotency_key_unique_index_rejects_a_lost_race(db):
     """Two deduction rows with the same idempotency_key (as a lost race between
-    the app check and insert would produce) must violate the partial unique index
-    — the DB backstop, independent of the app-level guard."""
+     the app check and insert would produce) must violate the partial unique index
+    , the DB backstop, independent of the app-level guard."""
     client = Client(name="Race", email="race@test.local", hashed_password="x", api_key="k-race")
     db.add(client)
     db.flush()
@@ -80,7 +80,7 @@ def test_concurrent_upgrade_double_submit_mints_once(pg_engine, db):
                     },
                 ),
                 # The reuse path asks the gateway whether the pending mandate was
-                # already PAID before reusing or re-minting. Unpaid here — this
+                # already PAID before reusing or re-minting. Unpaid here. This
                 # test is about the lock and the committed marker.
                 patch("app.services.razorpay_service.checkout_already_paid", return_value=False),
             ):

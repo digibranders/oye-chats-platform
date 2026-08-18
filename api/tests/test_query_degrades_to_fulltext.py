@@ -101,7 +101,7 @@ def test_async_embed_cache_call_does_not_block_event_loop(monkeypatch):
     asyncio.run(main())
 
     # The ticker must have made progress *during* the blocking cache call,
-    # not only before/after it — i.e. at least one tick landed inside the
+    # not only before/after it. I.e. at least one tick landed inside the
     # sleep window while the cache call was still in flight.
     ticks_during_sleep = [t for t in ticks if start < t < start + SLEEP_S]
     assert ticks_during_sleep, "event loop was blocked by the sync cache_get call"

@@ -2,7 +2,7 @@
 
 `/client/upload-logo` had NO size cap and NO type check. It called
 `await file.read()` on a body bounded only by nginx's 50MB limit and handed
-the result straight to `Image.open` — a decompression-bomb and Pillow-CVE
+the result straight to `Image.open`, a decompression-bomb and Pillow-CVE
 surface reachable by any authenticated customer.
 
 Two sibling endpoints did check, but in the order that does not help:
@@ -30,8 +30,8 @@ def _restore_pillow_globals():
     """Snapshot and restore Pillow's process-global decode switches.
 
     Several tests below flip these deliberately to reproduce a process that has
-    imported weasyprint. Leaving one flipped would hand the next test — and
-    every later module in the run — a different decoder, which is precisely the
+    imported weasyprint. Leaving one flipped would hand the next test (and
+    every later module in the run) a different decoder, which is precisely the
     failure being tested for.
     """
     prev_max_pixels = Image.MAX_IMAGE_PIXELS
@@ -117,7 +117,7 @@ class TestTheActualDecodeIsTheBoundary:
         Parametrized over Pillow's `LOAD_TRUNCATED_IMAGES`, because that global
         is not ours: importing `weasyprint` (the invoice-PDF renderer) sets it
         True process-wide for its own rendering. Whether it is set therefore
-        depends on what else the process has imported — which is why this test
+        depends on what else the process has imported, which is why this test
         passed on a Mac, where weasyprint cannot import without
         DYLD_FALLBACK_LIBRARY_PATH, and failed on CI, where everything lands in
         one process. Under True, and before `_strict_decode_limits`, the
@@ -197,7 +197,7 @@ class TestTheActualDecodeIsTheBoundary:
         """The allow-list has to do work that `Image.open` failing does not.
 
         Garbage bytes and truncated files are already rejected by the decode
-        itself, so they do not exercise this rule — removing the allow-list
+        itself, so they do not exercise this rule. Removing the allow-list
         left those tests green. A TIFF or ICO decodes perfectly well; it is
         simply not something the logo pipeline should accept, and each extra
         decoder is extra attack surface.

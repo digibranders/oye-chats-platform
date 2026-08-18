@@ -2,7 +2,7 @@
 
 The inventory doc is only useful if it's true. These tests fail whenever the set
 of email-sending functions in ``app.services.email_service`` drifts from what the
-doc documents — in either direction:
+doc documents, in either direction:
 
 * a NEW ``send_*`` sender is added but not written up in the inventory, or
 * the inventory references a ``send_*`` sender that has been removed/renamed.
@@ -22,7 +22,7 @@ import app.services.email_service as es
 
 INVENTORY = Path(__file__).resolve().parent.parent / "emails" / "EMAIL_INVENTORY.md"
 
-# Low-level dispatch/plumbing helpers — these SEND, but they are not themselves a
+# Low-level dispatch/plumbing helpers. These SEND, but they are not themselves a
 # distinct email "type"; every real email routes through one of them. They are
 # intentionally excluded from the documented catalogue.
 PLUMBING: frozenset[str] = frozenset(

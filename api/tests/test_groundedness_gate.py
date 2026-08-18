@@ -1,6 +1,6 @@
 """Tests for the post-generation groundedness gate (AR-12).
 
-Mirrors test_relevance_gate_model_config.py's mocking style — no real
+Mirrors test_relevance_gate_model_config.py's mocking style, no real
 network/API calls, litellm.completion is mocked throughout.
 """
 
@@ -36,8 +36,8 @@ class TestCheckGroundedness:
 
     def test_fails_open_on_llm_error(self):
         """A slow/flaky judge call must never be mistaken for a hallucination
-        — this check is observability-only, so failing open costs nothing
-        but a missed metric point."""
+        . This check is observability-only, so failing open costs nothing
+         but a missed metric point."""
         chunk = MagicMock(content="Our standard plan costs $49/month.")
         with patch("litellm.completion", side_effect=TimeoutError("gate timed out")):
             is_grounded, score = check_groundedness("What's the price?", "It costs $49/month.", [chunk])

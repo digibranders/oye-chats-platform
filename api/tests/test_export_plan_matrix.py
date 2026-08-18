@@ -1,4 +1,4 @@
-"""The docs plan matrix is generated from this repo — keep the generator honest.
+"""The docs plan matrix is generated from this repo. Keep the generator honest.
 
 ``scripts/export_plan_matrix.py`` feeds the public documentation's plan and
 capability tables. The website repo cannot import Python, so a rename or a
@@ -49,7 +49,7 @@ def test_capability_slugs_are_real_plans(matrix: dict) -> None:
 def test_no_capability_is_empty(matrix: dict) -> None:
     """Every published capability belongs to at least one tier.
 
-    An empty row means the feature was retired, renamed, or never seeded — and
+    An empty row means the feature was retired, renamed, or never seeded, and
     the docs would advertise something no plan can reach.
     """
     empty = [c["key"] for c in matrix["capabilities"] if not c["slugs"]]
@@ -79,7 +79,7 @@ def test_labelled_limits_still_exist_on_the_seeded_plans() -> None:
 
 def test_external_gates_match_the_live_constants(matrix: dict) -> None:
     """The capabilities gated outside ``Plan.features`` are the ones that drifted
-    before — assert the exported slugs equal the constants the platform enforces.
+    before. Assert the exported slugs equal the constants the platform enforces.
     """
     from app.services.plan_entitlements_service import (
         EMAIL_VERIFICATION_SLUGS,
@@ -104,7 +104,7 @@ def test_external_gates_match_the_live_constants(matrix: dict) -> None:
 
 
 def test_prices_are_not_exported(matrix: dict) -> None:
-    """Docs deliberately carry no prices — they are geo-gated and live on /pricing."""
+    """Docs deliberately carry no prices. They are geo-gated and live on /pricing."""
     blob = repr(matrix)
     for banned in ("price_cents", "monthly_price", "annual_price", "usd_cents"):
         assert banned not in blob

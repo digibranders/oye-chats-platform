@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# migrate-to-nonroot.sh — one-time droplet migration for audit finding F06:
+# migrate-to-nonroot.sh, one-time droplet migration for audit finding F06:
 # drop the long-running oyechats-api / oyechats-worker services from root to a
 # dedicated unprivileged `oyechats` system user.
 #
-# What it does (idempotent — safe to re-run):
+# What it does (idempotent. Safe to re-run):
 #   1. Creates the `oyechats` system user/group (nologin, no home).
 #   2. Grants the service user traverse access along /opt/oyechats/platform.
-#   3. Makes api/.env group-readable by `oyechats` only (root:oyechats 0640) —
+#   3. Makes api/.env group-readable by `oyechats` only (root:oyechats 0640),
 #      it holds every production secret, so it must NOT become world-readable.
 #   4. Chowns the two runtime-write dirs (documents/, archive/) to the service
 #      user; the rest of the checkout stays root-owned so root deploys keep
@@ -18,17 +18,17 @@
 #   7. Preflight-probes AS THE SERVICE USER: .env readability, venv imports,
 #      a real WeasyPrint PDF render, and an R2 upload+delete round trip.
 #   8. Installs the User=oyechats units from this checkout, restarts the
-#      services (worker first — /health/full gates on its heartbeat), and
+#      services (worker first - /health/full gates on its heartbeat), and
 #      verifies /health/full.
 #   9. Prints the rollback procedure.
 #
 # Usage (as root on the droplet):
 #   bash /opt/oyechats/platform/api/scripts/migrate-to-nonroot.sh
 #
-# `--prepare-only` runs steps 1–6 (user + file grants) and stops before the
+# `--prepare-only` runs steps 1 to 6 (user + file grants) and stops before the
 # probes and unit install. The deploy workflow calls this mode right before
 # installing units, so a droplet that never ran the full migration still gets
-# the prerequisites created inline — merging the F06 units can never strand
+# the prerequisites created inline. Merging the F06 units can never strand
 # the services on a missing user (the ordering hazard in review).
 #
 # Deploys are unaffected: GitHub Actions still SSHes as root and runs
@@ -65,7 +65,7 @@ print_rollback() {
 ────────────────────────────────────────────────────────────────────────────
 ROLLBACK PROCEDURE (if the non-root services misbehave)
   1. Flip the installed units back to root (leaves the rest of the
-     hardening in place — it was already active while running as root):
+     hardening in place, it was already active while running as root):
        sed -i -e 's/^User=oyechats/User=root/' -e 's/^Group=oyechats/Group=root/' \
          /etc/systemd/system/oyechats-api.service \
          /etc/systemd/system/oyechats-worker.service
@@ -81,16 +81,16 @@ EOF
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail "must run as root"
-[[ -d "${APP_DIR}" ]] || fail "${APP_DIR} not found — is this the droplet?"
-[[ -f "${APP_DIR}/.env" ]] || fail "${APP_DIR}/.env not found — deploy has never written it?"
-[[ -d "${APP_DIR}/.venv" ]] || fail "${APP_DIR}/.venv not found — run 'uv sync' first"
+[[ -d "${APP_DIR}" ]] || fail "${APP_DIR} not found. Is this the droplet?"
+[[ -f "${APP_DIR}/.env" ]] || fail "${APP_DIR}/.env not found. Deploy has never written it?"
+[[ -d "${APP_DIR}/.venv" ]] || fail "${APP_DIR}/.venv not found, run 'uv sync' first"
 
 # Refuse to install units that don't actually drop privileges (e.g. script
 # run from an old checkout that still has User=root units).
 for unit in oyechats-api.service oyechats-worker.service; do
   [[ -f "${UNIT_SRC}/${unit}" ]] || fail "${UNIT_SRC}/${unit} missing"
   grep -q '^User=oyechats$' "${UNIT_SRC}/${unit}" \
-    || fail "${UNIT_SRC}/${unit} does not set User=oyechats — fetch the F06 units first"
+    || fail "${UNIT_SRC}/${unit} does not set User=oyechats. Fetch the F06 units first"
 done
 
 # ── 1. Service user/group ────────────────────────────────────────────────────
@@ -108,12 +108,12 @@ if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
     "${SERVICE_USER}"
 fi
 # NOTE: journal access for the super-admin logs endpoint is granted
-# declaratively via SupplementaryGroups=systemd-journal in the API unit —
+# declaratively via SupplementaryGroups=systemd-journal in the API unit,
 # no usermod needed here.
 
 # ── 2. Path traversal ────────────────────────────────────────────────────────
 # The checkout stays root-owned (root deploys keep working; the service can't
-# modify its own code) — the service only needs read+execute along the path.
+# modify its own code), the service only needs read+execute along the path.
 # Root's umask 022 already leaves tracked files world-readable; these chmods
 # only guarantee directory traversal.
 log "2/8 Ensuring traverse (o+rx) on /opt/oyechats → ${APP_DIR}"
@@ -127,7 +127,7 @@ log "3/8 Restricting ${APP_DIR}/.env to root:${SERVICE_GROUP} 0640"
 chown root:"${SERVICE_GROUP}" "${APP_DIR}/.env"
 chmod 640 "${APP_DIR}/.env"
 if [[ -f "${APP_DIR}/.env.rollback" ]]; then
-  # Deploy-time rollback snapshot — only root reads it; keep it root-only.
+  # Deploy-time rollback snapshot. Only root reads it; keep it root-only.
   chown root:root "${APP_DIR}/.env.rollback"
   chmod 600 "${APP_DIR}/.env.rollback"
 fi
@@ -147,7 +147,7 @@ done
 # ── 5. Virtualenv readability ────────────────────────────────────────────────
 # uv sync runs as root with umask 022, so the venv is normally already
 # group/world-readable. Belt-and-braces: normalize in case any wheel shipped
-# restrictive modes. (Ownership stays root — the service must NOT be able to
+# restrictive modes. (Ownership stays root, the service must NOT be able to
 # rewrite its own interpreter/packages.)
 log "5/8 Normalizing .venv permissions (u+rwX,go+rX)"
 chmod -R u+rwX,go+rX "${APP_DIR}/.venv"
@@ -178,7 +178,7 @@ echo "    ok"
 log "7/8 Probe: ${SERVICE_USER} can import the venv (gunicorn, arq, boto3)"
 run_as_service "${APP_DIR}/.venv/bin/python" -c \
   "import gunicorn, arq, boto3; print('    ok')" \
-  || fail "venv import probe failed as ${SERVICE_USER} — check .venv permissions"
+  || fail "venv import probe failed as ${SERVICE_USER}. Check .venv permissions"
 
 log "7/8 Probe: WeasyPrint PDF render as ${SERVICE_USER} (pango + fontconfig)"
 run_as_service "${APP_DIR}/.venv/bin/python" -c \
@@ -206,7 +206,7 @@ secret = os.environ.get("R2_APPLICATION_KEY", "").strip()
 bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
 
 if not all([endpoint, key_id, secret, bucket]):
-    print("    skipped — R2_* not configured in .env")
+    print("    skipped. R2_* not configured in .env")
     sys.exit(0)
 
 s3 = boto3.client(
@@ -223,7 +223,7 @@ s3.delete_object(Bucket=bucket, Key=probe_key)
 print(f"    ok (put+delete s3://{bucket}/{probe_key})")
 PY
 chmod 644 "${R2_PROBE}"
-# Extract ONLY the R2_* keys from .env — never `source` the whole file: it is
+# Extract ONLY the R2_* keys from .env, never `source` the whole file: it is
 # written for python-dotenv/systemd (values literal to end of line), not for
 # shell. VAPID_PRIVATE_KEY is an unquoted PEM with spaces that bash would
 # word-split into a command. Reading the file as the service user also
@@ -248,7 +248,7 @@ cp "${UNIT_SRC}/oyechats-api.service" /etc/systemd/system/
 cp "${UNIT_SRC}/oyechats-worker.service" /etc/systemd/system/
 systemctl daemon-reload
 
-log "8/8 Restarting services (worker first — /health/full gates on its heartbeat)"
+log "8/8 Restarting services (worker first - /health/full gates on its heartbeat)"
 systemctl restart oyechats-worker
 systemctl restart oyechats-api
 
@@ -283,7 +283,7 @@ for svc in oyechats-api oyechats-worker; do
 done
 
 echo
-log "MIGRATION COMPLETE — oyechats-api and oyechats-worker run as '${SERVICE_USER}', /health/full is green."
+log "MIGRATION COMPLETE. Oyechats-api and oyechats-worker run as '${SERVICE_USER}', /health/full is green."
 echo "    Next: exercise a document upload + ingestion, an invoice PDF render,"
 echo "    and the super-admin logs page (journalctl access) before signing off."
 print_rollback

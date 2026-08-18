@@ -31,14 +31,14 @@ export async function retryImport(thunk, { retries = 2, delayMs = 400, sleep } =
  * React.lazy with automatic retry on transient dynamic-import failures.
  *
  * A dynamic import() rejects with "Failed to fetch dynamically imported module"
- * when a chunk momentarily fails to load — a CDN blip, a brief cache race right
+ * when a chunk momentarily fails to load, a CDN blip, a brief cache race right
  * after a deploy, or a flaky visitor network. A single failure is enough for
  * React.lazy to surface the rejection to the nearest error boundary, so without
  * a retry a one-off hiccup permanently breaks the lazy subtree for that session.
  *
  * Retrying a few times with backoff self-heals the common transient case. A
  * genuinely missing chunk (e.g. a partial deploy that never uploaded the file)
- * still rejects after the final attempt — that case is caught by the surrounding
+ * still rejects after the final attempt. That case is caught by the surrounding
  * <ErrorBoundary>, which degrades gracefully instead of unmounting the widget.
  *
  * @param {() => Promise<{ default: React.ComponentType }>} factory dynamic import thunk

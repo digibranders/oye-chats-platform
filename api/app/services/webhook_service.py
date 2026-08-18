@@ -68,7 +68,7 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
     with get_session() as session:
         # Plan gate (deny-by-default): outbound webhooks are a paid feature.
         # The create-time gate in ``webhook_routes`` only blocks NEW
-        # registrations — it never revokes existing rows. Without this
+        # registrations, it never revokes existing rows. Without this
         # delivery-time check, a ``Webhook`` registered on a paid tier keeps
         # firing forever after the customer downgrades to a tier that lacks
         # ``webhooks`` (e.g. Starter). Resolve the owning client and consult
@@ -79,10 +79,10 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
 
         # Per-bot gate: outbound webhooks follow THIS bot's own subscription
         # (with account fallback). An unknown/deleted bot resolves to the Free
-        # fallback and is therefore denied — deny-by-default.
+        # fallback and is therefore denied. Deny-by-default.
         if not plan_entitlements_service.get_bot_entitlements(bot_id, session).has_feature("webhooks"):
             logger.info(
-                "fire_webhook: bot %s plan lacks 'webhooks' — skipping %s dispatch",
+                "fire_webhook: bot %s plan lacks 'webhooks'. Skipping %s dispatch",
                 bot_id,
                 event_type,
             )
@@ -205,7 +205,7 @@ def _open_pinned(url: str, *, data: bytes, headers: dict, timeout: int) -> tuple
 
 
 def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
-    """Deliver a single webhook — called in background thread."""
+    """Deliver a single webhook. Called in background thread."""
     with get_session() as session:
         webhook = session.execute(select(Webhook).where(Webhook.id == webhook_id)).scalar_one_or_none()
         if not webhook:
@@ -270,11 +270,11 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
                 next_retry_at = datetime.fromtimestamp(time.time() + delay, UTC)
 
         # L-4: the LAST attempt failing is the moment a customer integration
-        # goes permanently dark for this event — say so at ERROR (Sentry picks
+        # goes permanently dark for this event. Say so at ERROR (Sentry picks
         # it up) instead of burying it as one more attempt row.
         if delivered_at is None and next_retry_at is None and attempt >= _MAX_RETRIES:
             logger.error(
-                "Webhook delivery EXHAUSTED after %d attempts: webhook %s event %s last_status=%s — "
+                "Webhook delivery EXHAUSTED after %d attempts: webhook %s event %s last_status=%s. "
                 "the customer endpoint never accepted this event and no further retries will run",
                 attempt,
                 webhook.id,
@@ -300,15 +300,15 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
 def process_pending_retries() -> int:
     """Process pending webhook retries that are due now.
 
-    ``FOR UPDATE SKIP LOCKED`` (M-4): the ARQ cron and any legacy in-process
-    poller can sweep concurrently; without row locks both would enqueue the
-    same delivery and the customer receives duplicates. SKIP LOCKED lets
-    concurrent sweepers partition the due set instead of double-claiming it.
+     ``FOR UPDATE SKIP LOCKED`` (M-4): the ARQ cron and any legacy in-process
+     poller can sweep concurrently; without row locks both would enqueue the
+     same delivery and the customer receives duplicates. SKIP LOCKED lets
+     concurrent sweepers partition the due set instead of double-claiming it.
 
-    The ``next_retry_at`` marker is cleared ONLY after the enqueue call
-    returns (M-1): clearing first meant a Redis hiccup lost the retry forever
-    — the marker is the sole record that a redelivery is owed. On enqueue
-    failure the row keeps its marker and the next sweep retries it.
+     The ``next_retry_at`` marker is cleared ONLY after the enqueue call
+     returns (M-1): clearing first meant a Redis hiccup lost the retry forever
+    , the marker is the sole record that a redelivery is owed. On enqueue
+     failure the row keeps its marker and the next sweep retries it.
     """
     now = datetime.now(UTC)
     queued = 0
@@ -335,7 +335,7 @@ def process_pending_retries() -> int:
                 )
             except Exception:
                 logger.exception(
-                    "Webhook retry enqueue failed for delivery %s (webhook %s) — keeping next_retry_at "
+                    "Webhook retry enqueue failed for delivery %s (webhook %s). Keeping next_retry_at "
                     "so the next sweep re-claims it",
                     delivery.id,
                     delivery.webhook_id,

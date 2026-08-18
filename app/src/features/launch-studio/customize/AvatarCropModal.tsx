@@ -33,7 +33,7 @@ export interface AvatarCropModalProps {
   /** Original file name (used for the cropped output). */
   fileName: string;
   /**
-   * MIME type of the picked file, or `null` when it isn't known — the re-crop
+   * MIME type of the picked file, or `null` when it isn't known, the re-crop
    * entry point reopens an already-stored avatar by URL, not by File. Drives
    * the output encoding: only a known JPEG source is safe to flatten.
    */
@@ -104,7 +104,7 @@ function toRectFile(
 
 /** Freehand-lasso crop: clip to the drawn polygon (points are fractions of the
  *  image, so zoom-independent), keep its bounding box, transparent outside.
- *  Always PNG — the mask is the whole point and JPEG has no alpha channel. */
+ *  Always PNG, the mask is the whole point and JPEG has no alpha channel. */
 function toLassoFile(img: HTMLImageElement, pts: Pt[], fileName: string, sourceType: string | null): Promise<File> {
   const NW = img.naturalWidth;
   const NH = img.naturalHeight;

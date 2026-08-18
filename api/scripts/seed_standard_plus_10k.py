@@ -129,7 +129,7 @@ def run(*, apply: bool, plan_slug: str, topup_amount: int, note: str) -> int:
                 summary["subs_skipped_existing"] += 1
 
             # Plan-credit grant: every active sub must have a plan_grant entry
-            # for its current period — same call the Stripe / Razorpay webhooks
+            # for its current period, same call the Stripe / Razorpay webhooks
             # make on activation. Without it, ``used this period`` reads as
             # ``monthly_grant - 0 = 10,000`` and the UI shows "100% used".
             plan_action = "skip(no-sub-yet)"

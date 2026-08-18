@@ -41,13 +41,13 @@ _MAX_EVENT_TYPE_LEN = 128
 # the dead-letter path, so nothing reaches Sentry and revenue events silently
 # drop for Razorpay's whole retry window. Track consecutive failures in a
 # rolling window and escalate to ERROR (→ Sentry) at the threshold. Process-
-# local by design — this is an alert, not an exact counter, and any verified
+# local by design. This is an alert, not an exact counter, and any verified
 # event resets it.
 _SIG_FAILURE_WINDOW_SECS = 900.0
 _SIG_FAILURE_ALERT_THRESHOLD = 3
 _sig_failures: dict[str, float] = {"count": 0.0, "window_start": 0.0}
 # The webhook pipeline now runs in the threadpool, so this counter is mutated
-# from multiple threads — an unlocked read-modify-write would under-count and
+# from multiple threads, an unlocked read-modify-write would under-count and
 # could miss the alert threshold.
 _sig_failures_lock = threading.Lock()
 
@@ -61,7 +61,7 @@ def _note_signature_failure(now: float) -> None:
         count = _sig_failures["count"]
     if count >= _SIG_FAILURE_ALERT_THRESHOLD:
         logger.error(
-            "Razorpay webhook signature verification failed %d times in the last %.0f min — "
+            "Razorpay webhook signature verification failed %d times in the last %.0f min. "
             "check RAZORPAY_WEBHOOK_SECRET against the Razorpay dashboard (a rotated or "
             "mistyped secret rejects EVERY billing event before dead-lettering)",
             int(count),
@@ -87,7 +87,7 @@ def _dead_letter(
 ) -> None:
     """Persist a failed webhook in its own transaction so it survives the
     handler's rollback. Best-effort: a dead-letter write failure must never
-    mask the original error — we log critically and let the caller still 5xx
+    mask the original error. We log critically and let the caller still 5xx
     so the provider keeps retrying.
     """
     try:
@@ -106,7 +106,7 @@ def _dead_letter(
             session.commit()
     except Exception:
         logger.critical(
-            "Failed to dead-letter %s webhook event_id=%s — event may be lost if retries are exhausted",
+            "Failed to dead-letter %s webhook event_id=%s. Event may be lost if retries are exhausted",
             provider,
             event_id,
             exc_info=True,
@@ -124,7 +124,7 @@ async def razorpay_webhook(request: Request):
 
     On a processing failure the raw signed event is dead-lettered (so it can
     be replayed) and, when ``WEBHOOK_RETRY_ON_ERROR`` is on (default), the
-    route returns 5xx so Razorpay retries — safe because event-id idempotency
+    route returns 5xx so Razorpay retries. Safe because event-id idempotency
     makes the eventual successful retry a no-op. The flag can be turned off to
     fall back to the legacy 200-on-error behaviour, but the event is still
     dead-lettered either way.
@@ -132,18 +132,18 @@ async def razorpay_webhook(request: Request):
     Only the body read is async; the ENTIRE processing stack (HMAC, dispatch,
     DB writes, invoice work) is synchronous and runs in Starlette's threadpool
     via ``run_in_threadpool`` (P1-4). Running it inline on the event loop
-    stalled every concurrent request — including /health — for the duration of
+    stalled every concurrent request (including /health) for the duration of
     each webhook's DB/gateway round-trips.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
-        logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
+        logger.error("RAZORPAY_WEBHOOK_SECRET is not configured. Rejecting unverified webhook.")
         raise HTTPException(
             status_code=503,
             detail="Webhook signature verification is not configured.",
         )
 
     # ``BodySizeLimitMiddleware`` already refuses anything over the global
-    # ceiling before we get here — which matters more on this route than any
+    # ceiling before we get here, which matters more on this route than any
     # other, because the HMAC cannot be checked until the bytes are in hand,
     # so the allocation is controlled by an unauthenticated caller.
     raw_payload = await request.body()
@@ -156,7 +156,7 @@ async def razorpay_webhook(request: Request):
     if len(signature) > _MAX_SIGNATURE_LEN or (event_id is not None and len(event_id) > _MAX_EVENT_ID_LEN):
         logger.warning("Razorpay webhook rejected: oversized signature/event-id header")
         raise HTTPException(status_code=400, detail="Malformed webhook headers.")
-    # Headers worth keeping for replay/debug (not the whole set) — reused by both
+    # Headers worth keeping for replay/debug (not the whole set). Reused by both
     # the missing-id and processing-error dead-letter paths.
     replay_headers = {
         k: request.headers.get(k)
@@ -188,10 +188,10 @@ def _process_razorpay_webhook(
     event_id: str | None,
     replay_headers: dict[str, str],
 ):
-    """The synchronous webhook pipeline — runs in the threadpool, never on the
+    """The synchronous webhook pipeline. Runs in the threadpool, never on the
     event loop. ``HTTPException`` raised here propagates through
     ``run_in_threadpool`` exactly like an inline raise."""
-    # L5 — alert on event-id-less deliveries. A missing X-Razorpay-Event-Id means
+    # L5. Alert on event-id-less deliveries. A missing X-Razorpay-Event-Id means
     # idempotency dedup can't key on it; in bulk it usually signals a dashboard
     # misconfiguration that would silently drop billing events. Surface loudly.
     if not event_id:
@@ -216,7 +216,7 @@ def _process_razorpay_webhook(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
-    # Post-signature, so the payload is authenticated — but "signed by
+    # Post-signature, so the payload is authenticated, but "signed by
     # Razorpay" is not "shaped the way this handler assumes". A JSON document
     # is not necessarily an object, and ``event`` is not necessarily a string:
     # both used to flow straight into ``.get()`` and into a log format.
@@ -228,14 +228,14 @@ def _process_razorpay_webhook(
 
     # Finding #4: a delivery with no X-Razorpay-Event-Id cannot be idempotency-
     # deduped, and the dispatcher would treat a null id as a "duplicate" and
-    # silently ACK-drop it — a revenue-affecting event (subscription.charged /
+    # silently ACK-drop it, a revenue-affecting event (subscription.charged /
     # payment.captured) would be lost forever behind a 200. Route it to the same
     # dead-letter + retry path as a processing failure so it is never silently
     # dropped. Modern Razorpay always sends the id, so this should be vanishingly
     # rare; when it does happen the raw event is preserved for manual replay.
     if not event_id:
-        exc = RuntimeError("razorpay webhook missing x-razorpay-event-id — cannot dedup")
-        logger.error("Razorpay webhook %s has no event id — dead-lettering instead of dropping", event_type)
+        exc = RuntimeError("razorpay webhook missing x-razorpay-event-id. Cannot dedup")
+        logger.error("Razorpay webhook %s has no event id. Dead-lettering instead of dropping", event_type)
         _dead_letter(
             provider="razorpay",
             raw_payload=raw_payload,

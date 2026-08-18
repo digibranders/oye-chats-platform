@@ -1,4 +1,4 @@
-"""Tests for app.services.rag_service — RAG pipeline core logic."""
+"""Tests for app.services.rag_service. RAG pipeline core logic."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -56,7 +56,7 @@ class TestRetrievalIncludedCrawledContent:
 
     def test_false_when_source_attribute_missing(self):
         """A chunk fixture/mock without a .source attribute must not crash
-        this — treated as non-crawl rather than raising."""
+        this. Treated as non-crawl rather than raising."""
         from app.services.rag_service import _retrieval_included_crawled_content
 
         assert _retrieval_included_crawled_content([object()]) is False
@@ -79,7 +79,7 @@ class TestBackgroundGroundednessCheck:
 
     def test_never_raises_even_if_check_groundedness_raises(self):
         """A fire-and-forget background task raising would surface as an
-        unhandled exception in the thread pool worker — must never happen."""
+        unhandled exception in the thread pool worker. Must never happen."""
         from app.services.rag_service import _background_groundedness_check
 
         with patch("app.services.rag_service.check_groundedness", side_effect=RuntimeError("boom")):
@@ -255,7 +255,7 @@ class TestShouldSkipBantExtraction:
         assert _should_skip_bant_extraction("What features do you offer?", bant) is False
 
     def test_no_skip_at_sal_level(self):
-        """A lead at 15/15/15/15 = 60 (SAL) must NOT be skipped — can still upgrade to SQL."""
+        """A lead at 15/15/15/15 = 60 (SAL) must NOT be skipped. Can still upgrade to SQL."""
         from app.services.rag_service import _should_skip_bant_extraction
 
         bant = {
@@ -313,7 +313,7 @@ class TestHandoffIntentSkip:
         """
         from app.services.rag_service import _should_skip_bant_extraction
 
-        # Mentions "team" but isn't a routing request — should NOT be skipped.
+        # Mentions "team" but isn't a routing request. Should NOT be skipped.
         assert (
             _should_skip_bant_extraction(
                 "Our team is drowning in support tickets and we need automation",
@@ -337,7 +337,7 @@ class TestHandoffIntentSkip:
     def test_does_NOT_skip_authority_statement(self):
         from app.services.rag_service import _should_skip_bant_extraction
 
-        # No routing language — must proceed to extraction.
+        # No routing language. Must proceed to extraction.
         assert (
             _should_skip_bant_extraction(
                 "I'm the VP of Engineering and I make the final call on tooling",
@@ -477,7 +477,7 @@ class TestStripCtaMarker:
 class TestExtractMediaCard:
     """`_extract_media_card` peels the LLM's ``[YOUTUBE_CARD:id]`` /
     ``[DOWNLOAD_CARD:url|name]`` tokens out of the answer text and returns
-    a single card payload — enforcing the "at most one per response" rule
+    a single card payload. Enforcing the "at most one per response" rule
     server-side even when the LLM ignores it."""
 
     def test_no_sentinel_returns_none(self):
@@ -547,7 +547,7 @@ class TestExtractMediaCard:
     def test_ignores_malformed_youtube_id(self):
         # Video IDs are strictly 11 chars; a shorter body must NOT match.
         # If the LLM hallucinates ``[YOUTUBE_CARD:xyz]`` (3 chars), we treat
-        # it as literal text — no card, no strip.
+        # it as literal text, no card, no strip.
         from app.services.rag_service import _extract_media_card
 
         text, card = _extract_media_card("Broken [YOUTUBE_CARD:xyz] token")
@@ -569,8 +569,8 @@ class TestPromoteLooseUrlToMediaCard:
     The regression these tests pin: on a confirmation turn ("download pls")
     the query text matches no document, so retrieval returns unrelated chunks
     and the file the bot had just named is absent from ``retrieved_chunks``.
-    The promoter must fall back to the caller-supplied bot-wide whitelist —
-    the same set the hallucination guard trusts — or the card silently never
+    The promoter must fall back to the caller-supplied bot-wide whitelist
+    (the same set the hallucination guard trusts) or the card silently never
     renders. Promotion stays bounded by that whitelist so a URL the bot does
     not own is never turned into a card."""
 
@@ -579,7 +579,7 @@ class TestPromoteLooseUrlToMediaCard:
     def test_promotes_bare_url_from_bot_wide_whitelist_when_not_retrieved(self):
         from app.services.rag_service import _promote_loose_url_to_media_card
 
-        answer = f"Sure — here you go: {self._PDF}"
+        answer = f"Sure. Here you go: {self._PDF}"
         cleaned, card = _promote_loose_url_to_media_card(
             answer, retrieved_chunks=[], allowed_video_ids=set(), allowed_file_urls={self._PDF}
         )
@@ -604,7 +604,7 @@ class TestPromoteLooseUrlToMediaCard:
 
     def test_does_not_promote_url_outside_whitelist(self):
         # A URL the bot does not own (visitor pasted it, or LLM hallucinated
-        # it) must never become a card — the whitelist is the trust boundary.
+        # it) must never become a card, the whitelist is the trust boundary.
         from app.services.rag_service import _promote_loose_url_to_media_card
 
         answer = "Check https://evil.example.com/not-ours.pdf for that."
@@ -640,8 +640,8 @@ class TestPromoteLooseUrlToMediaCard:
 
 
 class TestHandleTrailingMediaAsk:
-    """`_handle_trailing_media_ask` — product decision: the card IS the
-    offer. The bot must never ask "want the X?" — every trailing ask
+    """`_handle_trailing_media_ask`. Product decision: the card IS the
+    offer. The bot must never ask "want the X?". Every trailing ask
     (vague OR named) is a slip against the FORBIDDEN OUTPUT SHAPES prompt
     rule and gets stripped, regardless of whether an existing card was
     emitted this turn.
@@ -659,7 +659,7 @@ class TestHandleTrailingMediaAsk:
         from app.services.rag_service import _handle_trailing_media_ask
 
         text = (
-            "Yes, we work with base images — hardened containers, near-zero-CVE "
+            "Yes, we work with base images. Hardened containers, near-zero-CVE "
             "alternatives. Want the Base Images walkthrough video?"
         )
         out_text, card = _handle_trailing_media_ask(
@@ -704,7 +704,7 @@ class TestHandleTrailingMediaAsk:
         assert card is None
 
     def test_strips_ask_when_card_already_emitted(self):
-        # Card was already emitted this turn — trailing "want the other
+        # Card was already emitted this turn. Trailing "want the other
         # thing too?" is redundant hedging. Strip and keep existing card.
         from app.services.rag_service import _handle_trailing_media_ask
 
@@ -747,7 +747,7 @@ class TestHandleTrailingMediaAsk:
 
 
 class TestPickSecondaryMedia:
-    """`_pick_secondary_media` — Option E: primary card + a small secondary
+    """`_pick_secondary_media`. Option E: primary card + a small secondary
     chip of the OPPOSITE type when it topically matches. Contract:
 
       * primary=video with a real title → pick the file whose name has the
@@ -756,7 +756,7 @@ class TestPickSecondaryMedia:
       * If nothing overlaps at the threshold, return [] (no chip beats a
         weak chip).
       * Never return the primary itself.
-      * At most one item — the list shape is future-proofing.
+      * At most one item, the list shape is future-proofing.
     """
 
     def test_picks_related_pdf_for_video_primary(self):
@@ -836,7 +836,7 @@ class TestPickSecondaryMedia:
         assert _pick_secondary_media({"type": "meeting"}, retrieved_chunks=[], extra_payloads=[]) == []
 
     def test_stopwords_dont_cause_false_matches(self):
-        # Both titles share "the", "video", "overview" — all stopwords.
+        # Both titles share "the", "video", "overview". All stopwords.
         # Real content words are disjoint. Must reject.
         from app.services.rag_service import _pick_secondary_media
 
@@ -926,20 +926,20 @@ class TestReadTimeJunkFilter:
         }
         secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
         # Either the real report matches on tokens (secondary picked), or
-        # nothing matches strongly enough — but the junk MUST NEVER be it.
+        # nothing matches strongly enough, but the junk MUST NEVER be it.
         for item in secondary:
             assert item.get("url") != "https://hub.doc"
 
 
 class TestStripLlmCardProse:
-    """Leaked-card-placeholder stripper — removes ONLY the actual media-card
+    """Leaked-card-placeholder stripper. Removes ONLY the actual media-card
     markers this codebase emits (``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]``)
     when the LLM echoes them into prose instead of emitting them cleanly.
 
     It MUST NOT touch any other bracketed content: citation markers, ranges,
     code subscripts, key labels, or markdown links. PR #234 shipped an
-    over-broad regex that stripped every ``[...]`` not followed by ``(`` —
-    corrupting all of the above. These tests pin the narrowed contract."""
+    over-broad regex that stripped every ``[...]`` not followed by ``(``.
+    Corrupting all of the above. These tests pin the narrowed contract."""
 
     # ── still-strips: leaked real card markers echoed into prose ────────────
 
@@ -1003,7 +1003,7 @@ class TestStripLlmCardProse:
 
     def test_preserves_arbitrary_placeholder_prose(self):
         # Narrowed rule: brackets that are NOT the card prefixes are left
-        # verbatim — no more keyword-free carpet-bombing of every ``[...]``.
+        # verbatim, no more keyword-free carpet-bombing of every ``[...]``.
         from app.services.rag_service import _strip_llm_card_prose
 
         for text in (
@@ -1044,8 +1044,8 @@ class TestStripLlmCardProse:
 
 class TestStreamSanitizerMediaCards:
     """The streaming path yields each LLM chunk to the widget the instant it
-    arrives, so ``_StreamCtaSanitizer`` — not the post-stream
-    ``_extract_media_card`` — is what keeps a raw media sentinel out of the
+    arrives, so ``_StreamCtaSanitizer`` (not the post-stream
+    ``_extract_media_card``) is what keeps a raw media sentinel out of the
     visitor's bubble. These tests feed the sentinel one character at a time
     (the worst case for a token buffer) to prove it never leaks mid-stream."""
 
@@ -1126,7 +1126,7 @@ class TestInferCtaFallback:
 
         # Matches the user-reported answer that omitted the marker.
         result = _infer_cta_fallback(
-            "I can get that started — please pick a preferred time window?",
+            "I can get that started. Please pick a preferred time window?",
             {},
             self._BANT_TIMELINE,
         )
@@ -1139,7 +1139,7 @@ class TestInferCtaFallback:
         from app.services.rag_service import _infer_cta_fallback
 
         result = _infer_cta_fallback(
-            "Sounds good — when are you hoping to roll this out?",
+            "Sounds good. When are you hoping to roll this out?",
             {},
             self._BANT_TIMELINE,
         )
@@ -1213,7 +1213,7 @@ class TestRewriteQuery:
 
     def test_uses_gate_tier_model_not_primary(self):
         """AR-10: query rewrite is a classification/rewrite task with no
-        customer-facing generation quality bar — route to the cheap
+        customer-facing generation quality bar. Route to the cheap
         gate-tier model, not the expensive primary model."""
         from app.services.rag_service import rewrite_query
 
@@ -1237,7 +1237,7 @@ class TestRewriteQuery:
 class TestResolveSearchQueryAndEmbedding:
     """AR-09: query rewrite and a speculative raw-question embed run
     concurrently. These tests pin correctness of the reuse-vs-discard
-    decision — the optimization must never change WHICH text ends up
+    decision, the optimization must never change WHICH text ends up
     embedded, only WHEN the embedding work happens."""
 
     @staticmethod
@@ -1248,7 +1248,7 @@ class TestResolveSearchQueryAndEmbedding:
     async def test_no_rewrite_reuses_speculative_embedding(self):
         """Common case: rewrite_query returns the question unchanged (short
         history / no follow-up signal). The speculative embed (of the raw
-        question) must be reused — embed must be called exactly once."""
+        question) must be reused. Embed must be called exactly once."""
         from app.services.rag_service import _resolve_search_query_and_embedding
 
         embed_calls = []
@@ -1272,7 +1272,7 @@ class TestResolveSearchQueryAndEmbedding:
     @pytest.mark.asyncio
     async def test_rewrite_change_discards_speculative_and_embeds_fresh(self):
         """Follow-up case: rewrite_query changes the text. The final
-        embedding must be for the REWRITTEN text, not the raw question — even
+        embedding must be for the REWRITTEN text, not the raw question, even
         though a speculative embed of the raw question was already in
         flight."""
         from app.services.rag_service import _resolve_search_query_and_embedding
@@ -1302,7 +1302,7 @@ class TestResolveSearchQueryAndEmbedding:
     @pytest.mark.asyncio
     async def test_company_expansion_applied_before_reuse_comparison(self):
         """_expand_company_query runs on both the raw question and the
-        rewritten query before the reuse-vs-discard comparison — if rewrite
+        rewritten query before the reuse-vs-discard comparison. If rewrite
         returns the question unchanged, expansion must still be applied
         exactly once (not skipped, not doubled)."""
         from app.services.rag_service import _resolve_search_query_and_embedding
@@ -1340,7 +1340,7 @@ class TestExtractQualificationSignals:
 
     def test_emits_distinct_metric_on_parse_or_api_failure(self):
         """AR-32: before this, a genuine parse/validation/API failure was
-        indistinguishable from a legitimate "no signal" turn — both just
+        indistinguishable from a legitimate "no signal" turn, both just
         returned []. A transient failure on a turn with a real buying signal
         silently and permanently dropped it with zero alert. Must now emit
         its own metric tag distinct from the empty-response case."""
@@ -1358,8 +1358,8 @@ class TestExtractQualificationSignals:
         assert mock_metric.call_args[0][0] == "bant_extraction_failed"
 
     def test_does_not_emit_failure_metric_on_legitimate_empty_response(self):
-        """A clean LLM response with an empty signals list is NOT a failure —
-        must not fire the AR-32 failure metric."""
+        """A clean LLM response with an empty signals list is NOT a failure.
+        Must not fire the AR-32 failure metric."""
         from app.services.rag_service import extract_qualification_signals
 
         with (
@@ -1395,8 +1395,8 @@ class TestExtractQualificationSignals:
         admin swapping the gate model during an incident left BANT extraction
         silently calling the old model forever. It must now resolve via
         runtime_config on every call. (AR-10 additionally routes BANT to the
-        cheap gate-tier model instead of the expensive primary model — see
-        test_uses_gate_tier_model_not_primary below — so this test asserts
+        cheap gate-tier model instead of the expensive primary model (see
+        test_uses_gate_tier_model_not_primary below) so this test asserts
         against get_gate_model(), not get_primary_model()/get_fallback_model().)
         """
         from app.services.rag_service import extract_qualification_signals
@@ -1417,7 +1417,7 @@ class TestExtractQualificationSignals:
 
     def test_uses_gate_tier_model_not_primary(self):
         """AR-10: BANT extraction is a structured-signal-extraction task with
-        no customer-facing generation quality bar — route it to the cheap
+        no customer-facing generation quality bar. Route it to the cheap
         gate-tier model (already proven adequate by the relevance gate),
         not the expensive primary model."""
         from app.services.rag_service import extract_qualification_signals
@@ -1447,7 +1447,7 @@ class TestBuildHybridPrompt:
     falling back to ``client.name``.  The client object needs a ``.name``
     attribute (not ``.company_name``).
 
-    AR-27: returns ``(system_prompt, user_prompt)`` rather than one string —
+    AR-27: returns ``(system_prompt, user_prompt)`` rather than one string,
     the question/context/history/BANT-state live in ``user_prompt``, the
     identity/rules/bot-config sections live in ``system_prompt``.
     """
@@ -1512,7 +1512,7 @@ class TestBuildHybridPrompt:
 
     @patch("app.services.rag_service.get_framework_config", return_value={})
     def test_pricing_directive_defaults_to_usd_when_country_missing(self, _mock_config):
-        """No country (None — missing header / local dev) falls through to USD,
+        """No country (None. Missing header / local dev) falls through to USD,
         the safe default so a non-Indian visitor is never shown INR."""
         from app.services.rag_service import build_hybrid_prompt
 
@@ -1525,7 +1525,7 @@ class TestBuildHybridPrompt:
     def test_system_prompt_is_byte_stable_across_varying_per_turn_state(self, _mock_config):
         """AR-27's actual regression target: the system half must be
         IDENTICAL across turns with different BANT state, context, history,
-        and question — otherwise a provider's prefix-based prompt cache never
+        and question. Otherwise a provider's prefix-based prompt cache never
         matches and the split bought nothing."""
         from app.services.rag_service import build_hybrid_prompt
 
@@ -1616,7 +1616,7 @@ class TestQuestionSuggestsLeaveMessage:
 
 
 class TestResponseSuggestsLeaveMessage:
-    """Bot-answer affordance detection — catches the hallucinated framing."""
+    """Bot-answer affordance detection. Catches the hallucinated framing."""
 
     def _match(self, text: str) -> bool:
         from app.services.rag_service import _response_suggests_leave_message
@@ -1624,9 +1624,9 @@ class TestResponseSuggestsLeaveMessage:
         return _response_suggests_leave_message(text)
 
     def test_hallucinated_leave_a_note_here(self):
-        # The exact screenshot repro — bot told the visitor to use chat.
+        # The exact screenshot repro. Bot told the visitor to use chat.
         # The affordance framing still matches; safety net fires.
-        assert self._match("Yes — you can leave a note for our team here.")
+        assert self._match("Yes. You can leave a note for our team here.")
 
     def test_leave_your_message(self):
         assert self._match("Feel free to leave your message and we'll respond.")
@@ -1654,27 +1654,27 @@ class TestResponseSuggestsLeaveMessage:
     def test_tightened_team_will_no_longer_fires_on_pricing_context(self):
         # C2 regression: before the fix, "our team will follow up with pricing
         # details next quarter" would trigger the card. Now requires a
-        # contact-noun within 40 chars — pricing details are not a contact noun.
+        # contact-noun within 40 chars. Pricing details are not a contact noun.
         assert not self._match("Our team will follow up with pricing details next quarter.")
 
     def test_tightened_team_will_no_longer_fires_on_work_context(self):
         assert not self._match("Our team will be in touch with the engineering update.")
 
-    # ── "open/share/pull up a form" family — LLM's natural phrasing ──
+    # ── "open/share/pull up a form" family. LLM's natural phrasing ──
     # Repro: visitor said "can i submit a message for the taeam", bot replied
-    # "Of course — I'll open a quick message form for you." but dropped the
+    # "Of course. I'll open a quick message form for you." but dropped the
     # [LEAVE_MESSAGE_CARD] sentinel. Safety net missed it because the regex
     # had no branch for the "open a form" affordance. These tests pin the fix.
 
     def test_repro_open_quick_message_form(self):
         # Exact text from the screenshot.
-        assert self._match("Of course — I'll open a quick message form for you.")
+        assert self._match("Of course. I'll open a quick message form for you.")
 
     def test_ill_open_the_message_form(self):
         assert self._match("I'll open the message form now.")
 
     def test_pull_up_the_form(self):
-        assert self._match("Absolutely — I'll pull up the message form now.")
+        assert self._match("Absolutely. I'll pull up the message form now.")
 
     def test_share_a_form(self):
         assert self._match("Let me share a contact form with you.")
@@ -1714,7 +1714,7 @@ class TestLeaveMessageDisqualifiers:
         assert not self._match("Can I leave and come back to reach the team tomorrow?")
 
     def test_email_me_self_addressed_does_not_match(self):
-        # Visitor asking for email TO THEM — not a contact-team intent.
+        # Visitor asking for email TO THEM, not a contact-team intent.
         assert not self._match("Can you email me the pricing sheet?")
 
     def test_send_me_self_addressed_does_not_match(self):
@@ -1790,7 +1790,7 @@ class TestInlineCardDedupe:
 # ── _build_date_hints ────────────────────────────────────────────────────────
 # Regression coverage for the "upcoming events" bug: asking the LLM to compare
 # dates against TODAY'S DATE via prompt instructions alone is unreliable once
-# the reference material has several dated items or omits the year — it drifts
+# the reference material has several dated items or omits the year, it drifts
 # and reports months-old events as "upcoming". _build_date_hints computes the
 # PAST/UPCOMING verdict in code so the LLM only has to look it up.
 
@@ -1808,7 +1808,7 @@ class TestBuildDateHints:
 
         from app.services.rag_service import _build_date_hints
 
-        text = "Upcoming Events\n- Spring Product Launch — 15 March 2025\n- Summer Conference 2026 — 18 August 2026\n"
+        text = "Upcoming Events\n- Spring Product Launch. 15 March 2025\n- Summer Conference 2026 to 18 August 2026\n"
         hints = _build_date_hints(text, date(2026, 7, 2))
 
         assert "2025-03-15" in hints and "PAST" in hints
@@ -1819,14 +1819,14 @@ class TestBuildDateHints:
 
     def test_yearless_date_already_passed_this_year_rolls_to_next_year(self):
         """A yearless date like "March 15" evaluated on 2026-07-02 refers to
-        March 2026 by default, which has already passed — that almost always
+        March 2026 by default, which has already passed. That almost always
         means the *next* occurrence, so the year rolls forward and is flagged
         as inferred rather than silently misreported as PAST."""
         from datetime import date
 
         from app.services.rag_service import _build_date_hints
 
-        hints = _build_date_hints("Event — March 15", date(2026, 7, 2))
+        hints = _build_date_hints("Event. March 15", date(2026, 7, 2))
 
         assert "2027-03-15" in hints
         assert "UPCOMING" in hints
@@ -1837,7 +1837,7 @@ class TestBuildDateHints:
 
         from app.services.rag_service import _build_date_hints
 
-        hints = _build_date_hints("Event — December 3", date(2026, 7, 2))
+        hints = _build_date_hints("Event. December 3", date(2026, 7, 2))
 
         assert "2026-12-03" in hints
         assert "UPCOMING" in hints
@@ -1847,13 +1847,13 @@ class TestBuildDateHints:
 
         from app.services.rag_service import _build_date_hints
 
-        text = "Event A — 15 March 2025\nSame date again — 15 March 2025"
+        text = "Event A (15 March 2025\nSame date again) 15 March 2025"
         hints = _build_date_hints(text, date(2026, 7, 2))
 
         assert hints.count("2025-03-15") == 1
 
     def test_recognizes_ordinal_day_first_format(self):
-        """Real crawled content frequently writes '15th March 2026' — the old
+        """Real crawled content frequently writes '15th March 2026', the old
         regex missed this because it required a plain '\\d+' before the month,
         so the DATE ANALYSIS block was silently empty and the LLM guessed."""
         from datetime import date
@@ -1897,7 +1897,7 @@ class TestBuildDateHints:
 
     def test_ignores_version_numbers_not_dates(self):
         """Dotted numbers without a 4-digit year (e.g. '1.2.3') must not be
-        parsed as dates — the year requirement in the dotted branch guards
+        parsed as dates, the year requirement in the dotted branch guards
         against version strings polluting the DATE ANALYSIS block."""
         from datetime import date
 
@@ -2000,7 +2000,7 @@ class TestExtractVisitorName:
     @pytest.mark.parametrize(
         "question, history, expected",
         [
-            # explicit intros — matched anywhere, any casing
+            # explicit intros. Matched anywhere, any casing
             ("my name is Gaurav", [], "Gaurav"),
             ("My name's Priya", [], "Priya"),
             ("I'm Sarah Khan", [], "Sarah Khan"),
@@ -2008,7 +2008,7 @@ class TestExtractVisitorName:
             ("call me Sam", [], "Sam"),
             ("this is Priya", [], "Priya"),
             ("you can call me Max", [], "Max"),
-            # role self-identification is NOT a name — must not be captured
+            # role self-identification is NOT a name. Must not be captured
             ("i am the manager", [], None),
             ("i am manager", [], None),
             ("I'm the owner", [], None),
@@ -2348,7 +2348,7 @@ class TestResolveNameFlow:
     def test_name_only_reply_acknowledges_instead_of_searching(self):
         # Reported bug: bot asks the name, visitor replies only "steve", and the
         # deferred item was a greeting (nothing to answer). The bare name must NOT
-        # fall through to retrieval (which returns the off-scope guardrail) — it
+        # fall through to retrieval (which returns the off-scope guardrail), it
         # gets a warm acknowledgment via the ask-message channel, name captured.
         from app.services import rag_service
 

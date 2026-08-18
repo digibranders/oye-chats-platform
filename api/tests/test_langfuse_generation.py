@@ -141,7 +141,7 @@ def test_generation_setup_failure_is_safe(monkeypatch):
 
 
 def test_generation_setup_failure_logs_at_warning_not_debug(monkeypatch, caplog):
-    """AR-29: a start-failure was previously logged at debug — invisible at
+    """AR-29: a start-failure was previously logged at debug. Invisible at
     the info/warning level an operator actually scans, so an intermittent
     Langfuse connectivity blip silently dropped tracing with zero visible
     signal. Must be loud enough to notice without digging through debug logs."""

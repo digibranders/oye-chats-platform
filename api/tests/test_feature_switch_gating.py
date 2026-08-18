@@ -2,13 +2,13 @@
 
 This existed with ZERO coverage, and that is precisely why it was broken for
 its whole life: `is_feature_enabled` read `feature.<name>`, while every place
-that DEFINES the config — `_DEFAULT_PRICING` and `seed_pricing_config.py` —
-writes `feature.<name>_enabled`. The key it read existed nowhere, and the
+that DEFINES the config. `_DEFAULT_PRICING` and `seed_pricing_config.py`.
+Writes `feature.<name>_enabled`. The key it read existed nowhere, and the
 lookup fails open, so every switch was permanently ON.
 
 The consequence was not theoretical. `feature.company_name_enabled` was seeded
-False while the Visitor-Intelligence company lookup was unlaunched — the admin
-UI badged it "Coming soon" and its own comment promised it "never charges" —
+False while the Visitor-Intelligence company lookup was unlaunched (the admin
+UI badged it "Coming soon" and its own comment promised it "never charges")
 yet it charged 10 credits per visitor session, and a super-admin toggling it off
 changed nothing. On Professional that is the entire 10,000-credit monthly
 allowance in 1,000 sessions. (The feature has since launched, so the default is
@@ -55,7 +55,7 @@ def test_a_switch_turned_back_on_is_honoured(db, feature):
 def test_a_string_typed_into_the_admin_panel_means_what_it_says(db, falsy):
     """The pricing panel's editor is an untyped `value: Any` field, so a
     super-admin can save the STRING "false". `bool("false")` is True in Python,
-    which would turn the off switch on — on the one control whose entire job is
+    which would turn the off switch on, on the one control whose entire job is
     to stop a metered feature from charging."""
     _set(db, "feature.company_name_enabled", falsy)
     assert is_feature_enabled(db, "company_name") is False
@@ -69,7 +69,7 @@ def test_a_truthy_string_still_enables(db, truthy):
 
 def test_an_absent_key_fails_open(db):
     """A feature shipped without a config row behaves like its default rather
-    than silently dying. Only ABSENCE fails open — a present falsy value is
+    than silently dying. Only ABSENCE fails open, a present falsy value is
     always honoured (the tests above)."""
     assert is_feature_enabled(db, "some_feature_with_no_row_at_all") is True
 
@@ -79,7 +79,7 @@ def test_the_shipped_defaults_are_on(db, feature):
     """Guards the shipped posture, not just the mechanism.
 
     `company_name` was seeded False while the feature was unlaunched and is now
-    on. Either way this test is the thing that would notice a silent drift —
+    on. Either way this test is the thing that would notice a silent drift,
     the previous value went unguarded, which is part of why nobody spotted that
     the switch was not being read at all.
     """

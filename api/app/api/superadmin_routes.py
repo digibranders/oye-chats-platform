@@ -72,7 +72,7 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
             is_superadmin=False,
         )
 
-        # This provisions a real paying customer, not platform staff — the
+        # This provisions a real paying customer, not platform staff, the
         # ``is_superadmin`` bypass in ``require_verified_email`` does not cover
         # them, so they verify like any other account. Mirrors the OTP handling
         # in ``/auth/register``: same 15-minute window, same double-gated
@@ -93,7 +93,7 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
         elif APP_ENV != "production":
             logger.info("[DEV] email verification OTP for %s: %s", new_client.email, otp)
 
-        # Fire after commit and swallow failures — a transient provider error
+        # Fire after commit and swallow failures, a transient provider error
         # must never roll back a created client. The recipient can always pull a
         # fresh code from the "Resend code" action on /verify-email.
         try:
@@ -135,7 +135,7 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
             raise HTTPException(status_code=400, detail="Cannot delete a superadmin account.")
 
         # Issued tax documents are statutory records (Section 36: 72-month
-        # retention) and their serials are gapless — a CASCADE delete would
+        # retention) and their serials are gapless, a CASCADE delete would
         # leave permanent, unexplainable holes in the FY series and destroy
         # the substantiation behind filed GSTR returns.
         has_issued_invoice = (
@@ -156,7 +156,7 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
         client_name = client.name
         client_email = client.email
 
-        # Delete the client — CASCADE will remove all bots, documents, sessions, messages
+        # Delete the client. CASCADE will remove all bots, documents, sessions, messages
         session.delete(client)
         session.commit()
 
@@ -227,7 +227,7 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                 primary_sub[s.client_id] = s
 
         # Bots per client + current credit balance (SUM(delta), the ledger's
-        # documented source of truth). Both batch-loaded — one grouped query each.
+        # documented source of truth). Both batch-loaded, one grouped query each.
         bots_by_client = (
             dict(
                 session.execute(
@@ -450,7 +450,7 @@ def update_platform_feedback(
             feedback.area = body.area
         if body.severity is not None:
             feedback.severity = body.severity
-        # Severity is bug-only — clear it whenever the (possibly re-classified)
+        # Severity is bug-only. Clear it whenever the (possibly re-classified)
         # type is not a bug, regardless of which field changed this request.
         if feedback.type != "bug":
             feedback.severity = None
@@ -461,7 +461,7 @@ def update_platform_feedback(
             feedback.resolved_at = datetime.now(UTC)
             feedback.resolved_by = superadmin.id
         elif not now_resolved:
-            # Re-opened — clear the resolution stamp so the loop is consistent.
+            # Re-opened. Clear the resolution stamp so the loop is consistent.
             feedback.resolved_at = None
             feedback.resolved_by = None
 

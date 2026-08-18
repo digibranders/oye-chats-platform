@@ -167,11 +167,11 @@ export function BillingPage(): ReactElement {
       showNotice({ tone: 'info', message });
       reload();
       // A plan change flips feature gates APP-WIDE (sidebar locks, live chat,
-      // BANT, seat limits) — but the entitlements context was fetched at app
+      // BANT, seat limits), but the entitlements context was fetched at app
       // load and nobody told it the plan changed, so an upgraded customer
       // kept staring at padlocks until a hard refresh. Refresh the context in
       // place: the sidebar unlocks without a jarring full reload. Twice, with
-      // a short tail — the activation webhook that busts the server-side
+      // a short tail, the activation webhook that busts the server-side
       // entitlements cache can land a beat after the checkout settles.
       void refreshEntitlements();
       window.setTimeout(() => void refreshEntitlements(), 4000);

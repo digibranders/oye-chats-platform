@@ -1,7 +1,7 @@
 """Interactive API docs must be disabled in production (audit F22).
 
 /docs, /redoc and /openapi.json expose the full API schema (every route, params,
-auth headers) — a recon aid for attackers. They stay on in dev/testing and are
+auth headers), a recon aid for attackers. They stay on in dev/testing and are
 turned off when APP_ENV=production.
 """
 

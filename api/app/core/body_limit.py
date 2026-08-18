@@ -7,10 +7,10 @@ Two properties of the stack make that worse than it sounds:
 * ``Request.json()`` buffers the whole body before Pydantic sees a single
   field, so per-field ``max_length`` constraints do nothing about total size.
 * ``POST /webhooks/razorpay`` reads the raw body *before* it can verify the
-  HMAC — signature checking needs the bytes — so an unauthenticated caller
+  HMAC (signature checking needs the bytes) so an unauthenticated caller
   controls that allocation.
 
-nginx caps bodies at 50–60 MB in production, but nginx is not in the loop for
+nginx caps bodies at 50 to 60 MB in production, but nginx is not in the loop for
 local dev, Docker Compose, tests, or any future deployment that fronts the app
 differently. A limit that only exists in one deployment's reverse proxy is not
 a limit the application has.
@@ -22,9 +22,9 @@ layer we can answer 413 and simply never forward the rest.
 
 Two checks, because either alone is bypassable:
 
-1. ``Content-Length``, when present — rejects before a single byte of body is
+1. ``Content-Length``, when present. Rejects before a single byte of body is
    read. A client can lie about or omit this header.
-2. A running byte count over the streamed chunks — catches the liar, and
+2. A running byte count over the streamed chunks. Catches the liar, and
    catches ``Transfer-Encoding: chunked``, which has no ``Content-Length`` at
    all.
 """
@@ -46,7 +46,7 @@ DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024
 #: Ceiling for multipart upload routes. Matches the per-request total the
 #: document pipeline already enforces (``_MAX_TOTAL_UPLOAD`` = 60 MB) plus
 #: multipart framing overhead, so this middleware never rejects an upload the
-#: endpoint would have accepted — it only stops what nothing else would.
+#: endpoint would have accepted, it only stops what nothing else would.
 UPLOAD_MAX_BODY_BYTES = 64 * 1024 * 1024
 
 #: Path prefixes that legitimately carry multipart file bodies.

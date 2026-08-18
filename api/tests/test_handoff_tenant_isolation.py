@@ -8,7 +8,7 @@ overwrite ``handoff_reason`` / ``department_id``, fire the victim's
 audit/webhook/push side effects). The guard now returns 404 when an existing
 session's ``bot_id`` does not match the authenticated bot.
 
-Driven by a MagicMock session — the guard fires on the very first load, so no
+Driven by a MagicMock session, the guard fires on the very first load, so no
 real Postgres is required.
 """
 
@@ -63,7 +63,7 @@ class TestHandoffTenantIsolation:
         resp = client.post("/operators/handoff", json={"session_id": "sess-victim"})
 
         assert resp.status_code == 404
-        # The victim's session must be untouched — no status flip, no commit.
+        # The victim's session must be untouched, no status flip, no commit.
         assert victim_session.bot_id == 999
         assert not getattr(victim_session, "status", None)
         session.commit.assert_not_called()
@@ -93,7 +93,7 @@ class TestHandoffTenantIsolation:
             client.post("/operators/handoff", json={"session_id": "s1"})
 
     def test_absent_session_create_path_passes_the_guard(self, monkeypatch):
-        """The create-path (session doesn't exist yet) must also proceed — the
+        """The create-path (session doesn't exist yet) must also proceed, the
         new ChatSession is stamped with bot_id=bot.id, so it's owned."""
         from app.api import operator_routes
         from app.services import live_chat_availability_service as availsvc

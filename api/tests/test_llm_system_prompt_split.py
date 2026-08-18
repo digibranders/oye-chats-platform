@@ -3,7 +3,7 @@
 Previously the entire assembled prompt (identity/rules AND per-turn
 question/context/history/BANT-state) was sent as one ``role: user`` message.
 When ``system_prompt`` is supplied, it must be sent as its own ``role:
-system`` message ahead of the ``role: user`` prompt — this is what lets a
+system`` message ahead of the ``role: user`` prompt. This is what lets a
 provider's prefix-based prompt cache actually match the stable half turn
 over turn. When omitted, callers that don't build a hybrid prompt (BANT
 extraction, query rewrite, relevance gate, ...) must see no behavior change

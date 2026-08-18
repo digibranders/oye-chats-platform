@@ -112,7 +112,7 @@ class TestUpdateProfile:
         assert body["email"] == "old@example.com"
 
     def test_email_field_is_ignored(self, monkeypatch, mock_client, auth_override_client):
-        """Email changes must go through /client/change-email/* — a bare PATCH
+        """Email changes must go through /client/change-email/*, a bare PATCH
         can no longer move the login email even if the caller sends one."""
         mock_client.email = "old@example.com"
         session = _FakeSession(mock_client)

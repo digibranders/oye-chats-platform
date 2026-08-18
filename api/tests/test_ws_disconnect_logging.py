@@ -68,7 +68,7 @@ def test_client_gone_exceptions_are_recognised(exc):
     ],
 )
 def test_genuine_errors_are_not_mistaken_for_a_closed_socket(exc):
-    """The guard must stay narrow — a real bug hidden at DEBUG is worse than
+    """The guard must stay narrow, a real bug hidden at DEBUG is worse than
     the noise this change removes."""
     assert is_client_gone(exc) is False
 
@@ -97,7 +97,7 @@ def test_repeat_disconnect_is_a_no_op_for_an_untracked_session(caplog):
 
 
 def test_disconnect_still_cleans_up_a_queued_visitor_with_no_socket():
-    """A visitor can be in the waiting queue after their socket dropped — the
+    """A visitor can be in the waiting queue after their socket dropped, the
     idempotency guard must not skip that cleanup."""
     m = ConnectionManager()
     sid = "sess-queued"
@@ -141,7 +141,7 @@ def test_send_failure_from_a_real_error_still_warns_and_names_the_exception(capl
 
 
 def test_send_failure_message_is_never_left_dangling_after_the_colon(caplog):
-    """WebSocketDisconnect.str() is empty — the exact bug that produced
+    """WebSocketDisconnect.str() is empty, the exact bug that produced
     'Failed to send to visitor <id>:' with nothing after it."""
     m = ConnectionManager()
     sid = "sess-empty-detail"

@@ -4,7 +4,7 @@
  * Launch Studio runs Train (step 3) before Customize (step 6), and the crawl
  * sets the agent's avatar from the site's favicon asynchronously after training
  * reports done. This step loads `bot_logo` once on mount, so on the ordinary
- * onboarding path that snapshot can be older than the derived avatar — and the
+ * onboarding path that snapshot can be older than the derived avatar, and the
  * PATCH merges by key, so sending `bot_logo: null` is an instruction to clear
  * it, not an absence of opinion.
  *

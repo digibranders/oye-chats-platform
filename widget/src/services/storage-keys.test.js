@@ -11,7 +11,7 @@
  *      subdomain; a host-only cookie is readable only on the host that set it.
  * The `CookieJar` below implements that domain-matching faithfully, so the
  * assertions exercise our logic (localStorage-first read, cookie mirror on
- * write, clear-expires-both) — not a mock of our own behaviour.
+ * write, clear-expires-both), not a mock of our own behaviour.
  */
 
 import test from 'node:test';
@@ -70,7 +70,7 @@ class CookieJar {
         this.cookies = this.cookies.filter(
             (c) => !(c.name === name && (c.domain || null) === domain && (domain ? true : c.host === host)),
         );
-        if (maxAge === 0) return; // expiry — leave it removed
+        if (maxAge === 0) return; // expiry. Leave it removed
         this.cookies.push({ name, value: decodeURIComponent(value), domain, host });
     }
 }
@@ -132,7 +132,7 @@ test('shared session carries from apex to subdomain', () => {
     visitPage('example.com', jar);
     writeSessionId('session_shared', { botKey: BOT, shareDomain: 'example.com' });
 
-    // Page 2: they navigate to a subdomain — a DIFFERENT origin, so its
+    // Page 2: they navigate to a subdomain, a DIFFERENT origin, so its
     // localStorage is empty. The domain-scoped cookie is all it has to go on.
     visitPage('academy.example.com', jar, new Map());
     assert.equal(readSessionId(BOT), 'session_shared');
@@ -182,13 +182,13 @@ test('clearSessionId removes localStorage and expires the shared cookie', () => 
 test('localhost sharing bridges two origins via a host-only cookie', () => {
     const jar = new CookieJar();
 
-    // Page on localhost:PORT_A — "main" test page.
+    // Page on localhost:PORT_A. "main" test page.
     visitPage('localhost', jar);
     writeSessionId('session_local', { botKey: BOT, shareDomain: 'localhost' });
     // A host-only cookie must actually be written (no Domain attribute).
     assert.equal(jar.read('localhost').includes(`${COOKIE_NAME}=session_local`), true);
 
-    // Page on localhost:PORT_B — different origin (fresh localStorage), same host.
+    // Page on localhost:PORT_B. Different origin (fresh localStorage), same host.
     visitPage('localhost', jar, new Map());
     assert.equal(readSessionId(BOT), 'session_local');
 });
@@ -211,7 +211,7 @@ test('bare and dotted share domains both scope the cookie to the parent', () => 
     }
 });
 
-// NOTE: The widget's open/closed PANEL state is intentionally not persisted —
+// NOTE: The widget's open/closed PANEL state is intentionally not persisted,
 // it always starts closed on every page load (see ChatWidget's initial state),
 // so there is no storage-level open-flag behaviour to cover here. The
 // conversation (session id) continuity is covered by the tests above.
@@ -249,7 +249,7 @@ test('resolveShareDomain: an explicit config always wins over auto-detect', () =
 test('auto-detect: session carries apex → subdomain with NO configured domain', () => {
     const jar = new CookieJar();
 
-    // Apex page, sharing left unconfigured — resolver auto-detects the apex.
+    // Apex page, sharing left unconfigured. Resolver auto-detects the apex.
     visitPage('example.com', jar);
     const shareDomain = resolveShareDomain(undefined);
     assert.equal(shareDomain, 'example.com');

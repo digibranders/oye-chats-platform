@@ -282,7 +282,7 @@ function SwitchAccount({
   const navigate = useNavigate();
   const isOperator = variant === 'operator';
   const signOutAndSwitch = (): void => {
-    // An impersonated tab must end only the support session — see
+    // An impersonated tab must end only the support session. See
     // endImpersonationSessionFromSignOut.
     if (endImpersonationSessionFromSignOut()) return;
     clearAuthStorage();

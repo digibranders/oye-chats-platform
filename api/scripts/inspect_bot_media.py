@@ -7,17 +7,17 @@ Usage (from ``platform/api`` inside the conda ``oye`` env):
 Diagnoses "no card ever comes up" failures by showing exactly what the
 LLM sees. Three outcomes:
 
-  1. "videos=0 files=0" — Ingestion never captured any media URLs. No
+  1. "videos=0 files=0". Ingestion never captured any media URLs. No
      prompt change or safety net can help; the KB documents don't
      contain the raw ``https://youtube.com/...`` or ``https://.../file.pdf``
      URLs that ``extract_media_urls`` scans for. Re-ingest with URL-rich
      source docs, or crawl a URL that embeds them.
 
   2. "videos=N files=M" but N/M are small and don't cover the topic
-     the visitor asked about — the LLM is correctly skipping because
+     the visitor asked about, the LLM is correctly skipping because
      the catalog doesn't hold the asset. Same fix: re-ingest.
 
-  3. "videos=N files=M" with the expected asset present — catalog is
+  3. "videos=N files=M" with the expected asset present. Catalog is
      healthy. The failure is at the LLM step (prompt discipline) or
      the API isn't running the latest code. Restart the API and
      retest; if it still fails, capture the raw bot reply.

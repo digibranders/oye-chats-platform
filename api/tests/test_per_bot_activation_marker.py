@@ -4,14 +4,14 @@ The account-level ``subscription.activated`` path advances
 ``last_granted_period_end`` (via ``_grant_subscription_period``) so the first
 ``subscription.charged`` for the same period is a clean no-op. The PER-BOT
 branch of :func:`razorpay_service._handle_subscription_activated` instead called
-``grant_for_subscription`` directly and returned early — never setting the
+``grant_for_subscription`` directly and returned early, never setting the
 marker.
 
 Consequence: the first ``subscription.charged`` sees ``last_granted_period_end
 is None``, so ``grant_subscription_period_once`` skips its idempotency guard,
 runs ``reset_monthly_plan_credits`` (zeroing whatever the customer already
-consumed this period) and grants a SECOND full allowance for the same period —
-silently refunding first-cycle consumption (up to 72,000 credits on an annual
+consumed this period) and grants a SECOND full allowance for the same period.
+Silently refunding first-cycle consumption (up to 72,000 credits on an annual
 per-bot plan) and erasing the usage audit.
 
 This test drives the real Jan-activate -> consume -> Jan-charge sequence for a
@@ -200,7 +200,7 @@ def test_per_bot_activation_sets_marker_and_first_charge_does_not_regrant(db):
     assert credit_service.get_balance(db, client.id, bot_id=bot.id) == 7_000
 
     # 3) First subscription.charged lands for the SAME period. With the marker
-    #    set it must no-op — no reset of consumed credits, no second grant.
+    #    set it must no-op, no reset of consumed credits, no second grant.
     #    Stub invoice creation so the test isolates credit-grant idempotency
     #    from the seller-config / PDF finalization machinery.
     with patch.object(rzp, "_ensure_subscription_charge_invoice", return_value=None):

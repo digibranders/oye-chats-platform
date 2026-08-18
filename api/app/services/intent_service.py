@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 #
 # Two design notes:
 #   • Use \s+ (not literal spaces) so noisy whitespace / typos like
-#     "iw  th" — extra spaces between tokens — still match.
+#     "iw  th" (extra spaces between tokens) still match.
 #   • Cover both "live connection" intents (talk to a human now) AND
 #     "leave a message" intents (send/leave/drop a message). Both flows
 #     funnel through the same handoff form on the widget; the form then
@@ -128,7 +128,7 @@ Respond with ONLY the word YES or NO. No explanation."""
 
 
 def detect_handoff_intent_keywords(question: str) -> bool:
-    """Fast keyword-based handoff detection — no LLM call.
+    """Fast keyword-based handoff detection, no LLM call.
 
     Returns True if the message matches common handoff phrases.
     Used as a fallback when the LLM-based detection times out or errors.
@@ -150,23 +150,23 @@ def detect_handoff_intent(question: str) -> bool:
     """
     has_keyword = detect_handoff_intent_keywords(question)
     if has_keyword:
-        logger.info("Handoff keywords matched for: '%s' — requesting LLM confirmation", question)
+        logger.info("Handoff keywords matched for: '%s'. Requesting LLM confirmation", question)
 
     try:
         llm_result = _detect_handoff_intent_raw(question)
         if llm_result:
             return True
-        # LLM said NO — but if keywords matched, trust the explicit signal
+        # LLM said NO, but if keywords matched, trust the explicit signal
         if has_keyword:
             logger.info(
-                "LLM declined handoff for '%s' but keywords matched — overriding to YES",
+                "LLM declined handoff for '%s' but keywords matched. Overriding to YES",
                 question,
             )
             return True
         return False
     except Exception as e:
         if has_keyword:
-            logger.error("Handoff LLM failed for '%s': %s — trusting keyword match", question, e)
+            logger.error("Handoff LLM failed for '%s': %s. Trusting keyword match", question, e)
             return True
-        logger.error("Handoff LLM failed for '%s': %s — no keyword signal, skipping", question, e)
+        logger.error("Handoff LLM failed for '%s': %s, no keyword signal, skipping", question, e)
         return False

@@ -1,6 +1,6 @@
 """The per-agent enrichment toggles: default OFF, and a real server-side gate.
 
-Two metered enrichments — Reoon email verification and the IP→company lookup —
+Two metered enrichments (Reoon email verification and the IP→company lookup)
 each sit behind THREE independent gates: the plan, the super-admin kill switch
 (`feature.<name>_enabled`), and the customer's own toggle. All three must pass
 before a credit is spent.
@@ -115,7 +115,7 @@ class TestTheCallSitesPassTheRightAction:
 
     A review proved the gap: swapping "email_verification" for "company_name"
     at the lead-capture call site left the whole suite green. The deny-on-
-    unknown-action guard is no help — both strings are valid keys, so a typo
+    unknown-action guard is no help, both strings are valid keys, so a typo
     lands on the WRONG LIVE GATE instead of failing closed. A customer who
     turns Company lookup off to save credits would silently stop getting email
     verification, which they are paying for and did not disable.
@@ -144,7 +144,7 @@ class TestTheCallSitesPassTheRightAction:
         assert self._actions_passed_in(chat_routes._resolve_and_update_location) == {"company_name"}
 
     def test_every_action_used_at_a_call_site_is_a_known_column(self):
-        """Catches the other direction — a call site inventing an action name
+        """Catches the other direction, a call site inventing an action name
         that silently denies forever, since unknown actions deny."""
         import inspect
         import re
@@ -157,7 +157,7 @@ class TestTheCallSitesPassTheRightAction:
                 inspect.getsource(chat_routes),
             )
         )
-        assert used, "no call sites found — did the helper get renamed again?"
+        assert used, "no call sites found. Did the helper get renamed again?"
         assert used <= set(chat_routes._AGENT_TOGGLE_COLUMN), (
             f"call sites use unknown actions {sorted(used - set(chat_routes._AGENT_TOGGLE_COLUMN))}, "
             "which deny silently and forever"

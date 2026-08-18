@@ -1,4 +1,4 @@
-"""Integration tests for app.services.affiliate_service — real Postgres.
+"""Integration tests for app.services.affiliate_service. Real Postgres.
 
 These tests run against a throwaway database (``<dbname>_afftest``) created
 from the server pointed at by ``DB_URL``. A real database is required (not
@@ -177,7 +177,7 @@ class TestRecordClick:
 
         click = db.execute(select(ReferralClick)).scalar_one()
         assert click.code_id == code.id
-        # sha256 hex digests — raw values must never land in the table.
+        # sha256 hex digests. Raw values must never land in the table.
         assert len(click.ip_hash) == 64 and "203.0.113.7" not in click.ip_hash
         assert len(click.ua_hash) == 64 and "Mozilla" not in click.ua_hash
         assert click.referrer == "https://x.com"
@@ -201,7 +201,7 @@ class TestRecordClick:
         assert svc.record_click(db, "SAVE20", ip="1.2.3.4", user_agent="UA", referrer=None) is False
 
 
-# ── attribute_signup (plan §6 — the race-sensitive path) ─────────────────────
+# ── attribute_signup (plan §6, the race-sensitive path) ─────────────────────
 
 
 class TestAttributeSignup:
@@ -265,7 +265,7 @@ class TestAttributeSignup:
 
         assert svc.is_own_code(db, owner.id, code_row) is True
         assert svc.is_own_code(db, prospect.id, code_row) is False
-        # And the non-owner attaches fine — the guard is owner-only.
+        # And the non-owner attaches fine, the guard is owner-only.
         assert svc.attribute_signup(db, prospect.id, "OWNCODE1") is True
 
     def test_redemption_cap_is_enforced_at_the_boundary(self, db):
@@ -274,7 +274,7 @@ class TestAttributeSignup:
         Pins the ``redeemed_count < max_redemptions`` boundary in BOTH the
         atomic claim ``UPDATE`` inside ``attribute_signup`` and in
         ``validate_code``. An off-by-one there (``<=``) would let exactly one
-        signup redeem an already-exhausted code — a real over-redemption of a
+        signup redeem an already-exhausted code, a real over-redemption of a
         capped referral offer. Nothing else in the suite exercised this cap,
         so the guard could be silently weakened. (mutation AFF3)
         """
@@ -289,7 +289,7 @@ class TestAttributeSignup:
         db.refresh(code)
         assert code.redeemed_count == 1
 
-        # Cap is now reached — a second, different prospect must be refused and
+        # Cap is now reached, a second, different prospect must be refused and
         # the redeemed_count must NOT advance past the ceiling.
         second = make_client(db)
         assert svc.attribute_signup(db, second.id, "CAP1") is False
@@ -488,7 +488,7 @@ class TestInviteLifecycle:
         """An accepted invite yields a VERIFIED client.
 
         No OTP is sent on this path, and the front-end verification gate holds
-        every unverified client on /verify-email — so a False here would strand
+        every unverified client on /verify-email, so a False here would strand
         the invitee on a screen with no code to enter. It is safe because the
         magic link was emailed to ``invite.email`` and ``accept_invite`` forces
         the account onto that same address: holding the link proves control of
@@ -508,7 +508,7 @@ class TestInviteLifecycle:
         db.commit()
 
         assert client.is_verified is True
-        # The acceptor never chooses the address — it comes from the invite.
+        # The acceptor never chooses the address, it comes from the invite.
         assert client.email == "verified@example.com"
 
     def test_expired_invite_rejected(self, db):
@@ -572,12 +572,12 @@ class TestNoStackingGuard:
         _assert_no_stacking(client, None)  # no raise
 
 
-# ── C3 / NV4 — referral redemption caps, expiry, discount ceiling, invite pool ──
+# ── C3 / NV4. Referral redemption caps, expiry, discount ceiling, invite pool ──
 
 
 class TestReferralCaps:
     def test_redemption_cap_blocks_after_limit(self, db):
-        """C3 — a code with max_redemptions=1 attributes once, then is exhausted."""
+        """C3, a code with max_redemptions=1 attributes once, then is exhausted."""
         aff = make_affiliate(db, commission_bps=2000)
         code = ReferralCode(affiliate_id=aff.id, code="CAP1", customer_discount_bps=1000, max_redemptions=1)
         db.add(code)
@@ -593,7 +593,7 @@ class TestReferralCaps:
         assert svc.validate_code(db, "CAP1") is None  # exhausted
 
     def test_expired_code_rejected(self, db):
-        """C3 — a code past valid_until is neither valid nor attributable."""
+        """C3, a code past valid_until is neither valid nor attributable."""
         aff = make_affiliate(db, commission_bps=2000)
         code = ReferralCode(
             affiliate_id=aff.id,
@@ -609,7 +609,7 @@ class TestReferralCaps:
         assert svc.attribute_signup(db, prospect.id, "EXPIRED1") is False
 
     def test_race_loss_releases_redemption_slot(self, db):
-        """C3 — if attribution is claimed but the client was already attributed,
+        """C3. If attribution is claimed but the client was already attributed,
         the redemption slot must be released so the count stays exact."""
         aff = make_affiliate(db, commission_bps=2000)
         code_a = ReferralCode(affiliate_id=aff.id, code="AAA1", customer_discount_bps=1000, max_redemptions=5)
@@ -627,7 +627,7 @@ class TestReferralCaps:
         assert code_b.redeemed_count == 0
 
     def test_customer_discount_capped_independent_of_pool(self, db):
-        """C3 — even with a 100% pool, a single code's customer discount is
+        """C3, even with a 100% pool, a single code's customer discount is
         capped at MAX_CUSTOMER_DISCOUNT_BPS (50%)."""
         aff = make_affiliate(db, commission_bps=10000)
         with pytest.raises(svc.CommissionSplitExceedsPool):
@@ -636,7 +636,7 @@ class TestReferralCaps:
         assert row.customer_discount_bps == 5000
 
     def test_invite_carries_commission_pool_to_affiliate(self, db):
-        """NV4 — a magic-link invite stores the pool and the accept path grants it."""
+        """NV4, a magic-link invite stores the pool and the accept path grants it."""
         inviter = make_client(db, email="boss@e.com")
         result = svc.invite_affiliate(db, email="newbie@e.com", invited_by_client_id=inviter.id, commission_bps=3000)
         assert result["kind"] == "pending_invite"
@@ -676,7 +676,7 @@ class TestListCodeReferralsCurrency:
             slug="std-inr-aff",
             monthly_price_cents=94900,  # ₹949
             annual_price_cents=910800,
-            monthly_price_usd_cents=1900,  # $19 — must NOT be used
+            monthly_price_usd_cents=1900,  # $19. Must NOT be used
             credits_per_month=10000,
             is_active=True,
         )
@@ -702,8 +702,8 @@ class TestListCodeReferralsCurrency:
 
 class TestReferralConversionSnapshot:
     """Finding MED-2: a referral conversion must be recorded for ANY active
-    attributed code — including commission-only codes with no customer
-    discount — so the super-admin referral-conversions view isn't undercounting."""
+    attributed code (including commission-only codes with no customer
+    discount) so the super-admin referral-conversions view isn't undercounting."""
 
     def test_commission_only_code_still_yields_a_snapshot(self, db):
         from app.services import discount_service

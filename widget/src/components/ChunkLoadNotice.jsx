@@ -6,7 +6,7 @@ import { RefreshCw } from 'lucide-react';
  * meeting booking) fails to load. Keeps the surrounding chat alive and gives the
  * visitor a one-tap retry instead of the whole widget disappearing.
  *
- * `onRetry` comes from the ErrorBoundary — it clears the error and re-mounts the
+ * `onRetry` comes from the ErrorBoundary, it clears the error and re-mounts the
  * lazy child, which re-attempts the dynamic import (paired with lazyWithRetry's
  * backoff, this recovers from transient CDN/network blips).
  */

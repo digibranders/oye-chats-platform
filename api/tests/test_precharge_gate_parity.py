@@ -4,18 +4,18 @@ pre-charge gates as /checkout.
 The identity requirement follows the CGST Rule 46 matrix (see
 ``_missing_billing_fields``): a REGISTERED buyer (GSTIN) must carry the
 registered legal name + address; an EXPORT buyer must carry an address; an
-unregistered domestic B2C buyer below ₹50,000 owes NOTHING — payment stays
+unregistered domestic B2C buyer below ₹50,000 owes NOTHING. Payment stays
 open to everyone.
 
 ``/change-plan`` Branch 3 (trial/Free → paid, or a lapsed bot returning to
 paid) and ``/resume`` Mode 2 (dead mandate → fresh subscription) created real
 gateway mandates with none of /checkout's gates: no Rule 46 billing-identity
 check (so the activation webhook issued an invoice with no buyer identity), no
-country trust rules. The intl kill switch alone was covered — at the service
+country trust rules. The intl kill switch alone was covered, at the service
 layer (Wave 2.1).
 
 ``_require_precharge_gates`` is now the shared gate; these tests pin each
-refusal firing BEFORE the gateway mint (the mock must not be called — a 409
+refusal firing BEFORE the gateway mint (the mock must not be called, a 409
 after ``subscription.create`` would strand an authorizable mandate).
 """
 
@@ -98,7 +98,7 @@ _CHECKOUT_PAYLOAD = {"subscription_id": "sub_gate_new", "key_id": "rzp_test", "p
 
 
 def test_change_plan_registered_buyer_requires_full_identity(db, monkeypatch):
-    # GSTIN on record but no legal name / address: refuse before the mint —
+    # GSTIN on record but no legal name / address: refuse before the mint,
     # the invoice this mandate produces would break the buyer's ITC claim.
     api, _ = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
     plan = _plan(db)
@@ -111,8 +111,8 @@ def test_change_plan_registered_buyer_requires_full_identity(db, monkeypatch):
 
 
 def test_change_plan_b2c_without_details_proceeds(db, monkeypatch):
-    # Unregistered domestic buyer below ₹50k: Rule 46(f) requires nothing —
-    # asking anyway was blocking legitimate payments. The account name and the
+    # Unregistered domestic buyer below ₹50k: Rule 46(f) requires nothing.
+    # Asking anyway was blocking legitimate payments. The account name and the
     # supplier-state fallback (Circular 242) make the invoice valid.
     api, _ = _mk(db, monkeypatch)  # bare account: no GSTIN, no address, no name
     plan = _plan(db)
@@ -216,7 +216,7 @@ def test_resume_mode2_with_identity_reauthorises(db, monkeypatch):
 
 
 def test_resume_mode1_skips_precharge_gates(db, monkeypatch):
-    # Mode 1 mints NOTHING (it clears a flag on a live mandate) — an identity
+    # Mode 1 mints NOTHING (it clears a flag on a live mandate), an identity
     # gap must not block a customer from un-cancelling their own subscription.
     api, client = _mk(db, monkeypatch)  # no identity
     plan = _plan(db)
@@ -244,7 +244,7 @@ def test_resume_mode1_skips_precharge_gates(db, monkeypatch):
 def test_upgrade_now_branch_2a_requires_registered_identity(db, monkeypatch):
     # Branch 2a (paid → higher paid, upgrade-now) mints a replacement mandate;
     # identity fields are freely clearable after the original checkout, so the
-    # gate must re-check here too — for the registered buyer it applies to.
+    # gate must re-check here too, for the registered buyer it applies to.
     api, client = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
     lower = _plan(db, slug="std-gate-lower", monthly=44900)
     higher = _plan(db, slug="std-gate-higher", monthly=94900)
@@ -287,7 +287,7 @@ def test_seat_addition_requires_registered_identity(db, monkeypatch):
 
 
 def test_seat_removal_skips_the_gate(db, monkeypatch):
-    # Removing seats charges nothing — an identity gap must not block it.
+    # Removing seats charges nothing, an identity gap must not block it.
     api, client = _mk(db, monkeypatch)  # no identity
     plan = _plan(db, slug="std-gate-seatrm")
     sub = Subscription(
@@ -311,7 +311,7 @@ def test_seat_removal_skips_the_gate(db, monkeypatch):
 def test_foreign_buyer_needs_address_for_the_export_invoice(db, monkeypatch):
     # Rule 46's export proviso wants recipient name + address + destination
     # country on the document. Country routed them here, name falls back to
-    # the account name — only the address is asked for.
+    # the account name. Only the address is asked for.
     monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
     api, _ = _mk(db, monkeypatch, billing_country="US")  # no address
     plan = _plan(db)

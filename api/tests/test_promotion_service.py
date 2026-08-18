@@ -1,6 +1,6 @@
 """Unit tests for the launch-promotion resolver.
 
-Offline — no live database. ``resolve_active_promotion``'s DB query is exercised
+Offline, no live database. ``resolve_active_promotion``'s DB query is exercised
 via a mocked session; the branch logic (window, plan eligibility, one-per-
 account, cap) lives in ``_is_eligible`` and the slot accounting in
 ``consume_slot`` / ``free_period_end``, all of which are tested directly here.
@@ -125,7 +125,7 @@ def test_coded_promo_ineligible_for_wrong_code():
 
 
 def test_coded_promo_ignores_signup_date_window():
-    # A coded promo is gated by the code, NOT created_at — a client who signed up
+    # A coded promo is gated by the code, NOT created_at, a client who signed up
     # before the window but has the code still qualifies (window bounds the promo
     # being active, handled by _active_promotions_in_window).
     promo = _promo(code="LAUNCH3")

@@ -1,7 +1,7 @@
 """Unit tests for the SQL-backed event router in ``rag_service``.
 
 Covers the keyword classifier, the prompt-block formatter, and the guarded
-lookup wrapper — the three pure helpers that gate the Tier 2 branch. The
+lookup wrapper, the three pure helpers that gate the Tier 2 branch. The
 full ``rag_pipeline_stream`` integration is exercised by the existing
 rag_service test suite.
 """

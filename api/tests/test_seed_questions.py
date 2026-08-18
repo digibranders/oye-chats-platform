@@ -100,7 +100,7 @@ def _build_app(bot):
         yield SimpleNamespace(commit=lambda: None)
 
     app = FastAPI()
-    # The router already carries prefix="/bots" — don't double it.
+    # The router already carries prefix="/bots". Don't double it.
     app.include_router(bot_routes.router)
     app.dependency_overrides[get_current_client_or_operator] = lambda: {
         "type": "client",

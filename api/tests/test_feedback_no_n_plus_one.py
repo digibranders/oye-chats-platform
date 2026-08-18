@@ -1,7 +1,7 @@
 """get_feedback_data must not issue one query per feedback row (audit F28).
 
 The old code ran a separate SELECT for each bot message to find its preceding
-user question — N+1 round-trips. The preceding question must be resolved in the
+user question. N+1 round-trips. The preceding question must be resolved in the
 same query so the count stays constant as feedback grows.
 """
 

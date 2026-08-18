@@ -368,8 +368,8 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     const token = getAuthItem('admin_token');
     const authType = getAuthItem('auth_type');
     // Never open the operator channel from an impersonated tab. The only
-    // credential available is the shared `admin_token` — the super-admin's own
-    // key — so the socket would join live-chat as the ADMIN while the rest of
+    // credential available is the shared `admin_token` (the super-admin's own
+    // key) so the socket would join live-chat as the ADMIN while the rest of
     // the page shows the impersonated Account, and the backend cannot
     // revalidate an impersonation token on this channel (revoke/expiry would
     // not close it). Taking over a live visitor conversation is outside the

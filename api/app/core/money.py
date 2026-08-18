@@ -8,7 +8,7 @@ and a different one on the invoice. Routing every caller through a
 single helper makes the rule "round half away from zero" (the everyday
 arithmetic rounding most people expect) and provable in tests.
 
-Nothing in here touches the database — pure value helpers, safe to call
+Nothing in here touches the database. Pure value helpers, safe to call
 from anywhere.
 """
 
@@ -19,7 +19,7 @@ import math
 # Basis-point space: 10000 bps = 100%. Anything outside [0, 10000] is
 # nonsense in a commission/discount context and gets clamped instead of
 # raising, because every caller is already validating the human-percent
-# input upstream — clamping here is belt-and-braces.
+# input upstream. Clamping here is belt-and-braces.
 MAX_BPS = 10_000
 
 
@@ -32,7 +32,7 @@ def normalize_bps(value: int | float | None, *, max_bps: int = MAX_BPS) -> int:
     same rule applies in ``pct_to_bps`` and in the billing-service guard
     so quote and invoice never disagree by one bps.
 
-    ``None`` resolves to ``0`` — used as "no discount on file" everywhere.
+    ``None`` resolves to ``0``. Used as "no discount on file" everywhere.
     """
     if value is None:
         return 0
@@ -46,7 +46,7 @@ def normalize_bps(value: int | float | None, *, max_bps: int = MAX_BPS) -> int:
 
 
 def pct_to_bps(pct: int | float | None) -> int | None:
-    """Convert a human percentage (0–100, decimals allowed) to bps.
+    """Convert a human percentage (0 to 100, decimals allowed) to bps.
 
     Returns ``None`` if input is ``None`` (caller's signal to skip an
     update). Raises ``ValueError`` on out-of-range input so a route
@@ -62,7 +62,7 @@ def pct_to_bps(pct: int | float | None) -> int | None:
 
 
 def bps_to_pct(bps: int | None) -> float | None:
-    """Inverse of :func:`pct_to_bps` — bps → human percent (two decimals)."""
+    """Inverse of :func:`pct_to_bps`. Bps → human percent (two decimals)."""
     if bps is None:
         return None
     return round(bps / 100, 2)

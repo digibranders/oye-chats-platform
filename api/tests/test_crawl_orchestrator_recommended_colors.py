@@ -3,7 +3,7 @@ different site never shows the stale palette from the previous website.
 
 Regression guard for the bug where Spider/Jina return ``recommended_colors=[]``
 (they never extract colors), which used to be silently skipped by a truthy
-guard — leaving whatever palette the previous crawl wrote in place forever.
+guard. Leaving whatever palette the previous crawl wrote in place forever.
 """
 
 from contextlib import contextmanager

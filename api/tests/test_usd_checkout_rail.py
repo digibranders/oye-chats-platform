@@ -1,4 +1,4 @@
-"""Currency-aware plan selection — the USD (international) rail.
+"""Currency-aware plan selection, the USD (international) rail.
 
 A Razorpay plan's currency is fixed at creation, so an international customer
 must be billed against a *different* plan object than an Indian one. These
@@ -8,7 +8,7 @@ tests lock down the routing rule end to end:
 * which Razorpay plan id ``create_subscription`` / the seat add-on pick,
 * that a missing USD id fails loudly instead of silently charging INR,
 * that discounted (referral) plans never leak across the currency boundary,
-* and that the ``INTL_PAYMENTS_ENABLED`` flag is what opens the gate — with
+* and that the ``INTL_PAYMENTS_ENABLED`` flag is what opens the gate, with
   top-ups deliberately staying closed, because ``create_topup_order`` is still
   INR-only.
 
@@ -28,7 +28,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _razorpay_keys(monkeypatch):
-    """Dummy keys so ``RAZORPAY_ENABLED`` flips on — mirrors test_razorpay_service."""
+    """Dummy keys so ``RAZORPAY_ENABLED`` flips on. Mirrors test_razorpay_service."""
     monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_dummy")
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", "secret_dummy")
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_dummy")
@@ -85,7 +85,7 @@ def _fake_rzp(sub_id: str = "sub_test") -> MagicMock:
 
 @pytest.mark.parametrize("country", [None, "", "IN", "in", " in "])
 def test_charge_currency_defaults_to_inr(country):
-    """Unknown/absent country must stay on the domestic rail — an existing
+    """Unknown/absent country must stay on the domestic rail, an existing
     customer with no confirmed country is an INR customer, never a USD one."""
     from app.core.pricing import charge_currency
 
@@ -101,7 +101,7 @@ def test_charge_currency_selects_usd_for_foreign_country(country):
 
 # ── create_subscription: plan-id selection ────────────────────────────────────
 # These test RAIL SELECTION with the gate open, so they pin
-# INTL_PAYMENTS_ENABLED=True explicitly — the service now enforces the kill
+# INTL_PAYMENTS_ENABLED=True explicitly, the service now enforces the kill
 # switch itself (test_intl_kill_switch.py owns the flag-off behavior), and
 # without the pin these pass or fail based on the local .env's flag value
 # (CI runs with the flag off; a dev box testing the USD rail runs it on).
@@ -157,8 +157,8 @@ def test_create_subscription_refuses_foreign_client_without_usd_plan(_intl_on):
     """The dangerous failure is a silent INR fallback: a US customer charged
     ₹449 instead of $9. A missing USD id must raise instead.
 
-    It raises ``PlanNotCheckoutable`` carrying ``intl_usd_pending`` — the code
-    the USD branch of ``/checkout/quote`` already returns for the same plan — so
+    It raises ``PlanNotCheckoutable`` carrying ``intl_usd_pending`` (the code
+    the USD branch of ``/checkout/quote`` already returns for the same plan) so
     the quote and the charge agree. The rail is asserted on the exception's
     ``currency``, not on the message: the message is the customer-facing
     sentence and deliberately names no gateway internals.
@@ -268,7 +268,7 @@ def _persist_plan(db, *, slug: str):
 
 @_db_only
 def test_discounted_plan_is_minted_in_usd_for_the_usd_rail(db):
-    """A 10% discount on the USD rail must mint a USD plan at $8.10 — not a
+    """A 10% discount on the USD rail must mint a USD plan at $8.10, not a
     rupee plan, and not the INR discounted amount tagged as dollars."""
     from app.services import razorpay_service
 
@@ -289,7 +289,7 @@ def test_discounted_plan_is_minted_in_usd_for_the_usd_rail(db):
 @_db_only
 def test_discounted_plan_cache_does_not_leak_across_currencies(db):
     """Same base plan, cycle and discount on both rails must resolve to two
-    different Razorpay plans — a shared cache row would bill a US customer in
+    different Razorpay plans, a shared cache row would bill a US customer in
     rupees (or an Indian customer in dollars)."""
     from app.services import razorpay_service
 
@@ -345,7 +345,7 @@ def _api(client):
 
     app = FastAPI()
     app.include_router(subscription_routes.router)
-    # Top-ups live on their own /credits router — mounted here so the shared
+    # Top-ups live on their own /credits router. Mounted here so the shared
     # billing-country gate can be exercised on both money paths.
     app.include_router(subscription_routes.credits_router)
     app.dependency_overrides[auth.get_current_client_strict] = lambda: client
@@ -406,7 +406,7 @@ def test_checkout_still_rejects_foreign_country_while_intl_disabled(db):
 @_db_only
 def test_topup_rejects_foreign_country_even_when_intl_enabled(db):
     """``create_topup_order`` is still INR-only, so opening the subscription
-    rail must not open the top-up rail — that would charge a US buyer rupees
+    rail must not open the top-up rail. That would charge a US buyer rupees
     and invoice it as an export (the GST mis-classification this gate exists
     to prevent)."""
     from app.api import subscription_routes
@@ -453,7 +453,7 @@ def test_quote_supports_usd_checkout_when_intl_enabled(db):
     assert body["amount_display"] == "$9"
     assert body["checkout_supported"] is True
     assert body["provider"] == "razorpay"
-    # Foreign cards only — UPI is a domestic rail and cannot settle a USD charge.
+    # Foreign cards only. UPI is a domestic rail and cannot settle a USD charge.
     assert body["methods"] == ["card"]
 
 

@@ -76,7 +76,7 @@ const CONFLICT_409 = {
       detail: {
         reason: 'subscription_activation_conflict',
         message:
-          'Your Enterprise payment went through — we’re activating your plan now. You don’t need to pay again; this usually takes under a minute.',
+          'Your Enterprise payment went through. We’re activating your plan now. You don’t need to pay again; this usually takes under a minute.',
         payment_captured: true,
         support: 'developer@oyechats.com',
       },

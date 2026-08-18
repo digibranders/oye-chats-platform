@@ -2,7 +2,7 @@
 
 A paid→paid downgrade to a tier with a smaller ``limits.documents`` allowance is
 refused (409 ``document_overflow``) until the customer deletes enough uploaded
-documents to fit — the same hard-block contract the operator-seat overflow
+documents to fit, the same hard-block contract the operator-seat overflow
 already uses. Documents are otherwise grandfathered at upload time, so this
 guard is what turns a downgrade into an explicit "get under the limit first"
 decision instead of a silent over-quota state.

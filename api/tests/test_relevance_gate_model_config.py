@@ -5,7 +5,7 @@ constant (captured at import time from the env var) instead of resolving it
 via `runtime_config.get_gate_model()` on every call. An admin swapping the
 gate model via the super-admin dashboard during an incident would see the
 change "save" successfully while the gate kept calling the old model
-indefinitely — a decorative control.
+indefinitely, a decorative control.
 """
 
 import json
@@ -58,7 +58,7 @@ def test_check_relevance_falls_back_to_env_default_when_unconfigured(monkeypatch
 def test_gate_model_is_re_resolved_on_every_call_not_cached_at_import(monkeypatch):
     """The bug was specifically that the model was frozen at import time.
     Changing the runtime_config-resolved model between two calls must change
-    which model the second call uses — proves there's no import-time
+    which model the second call uses. Proves there's no import-time
     freezing anywhere in the new code path."""
     monkeypatch.setattr("app.services.relevance_gate.cache_get", lambda *_a, **_k: None)
     monkeypatch.setattr("app.services.relevance_gate.cache_set", lambda *_a, **_k: None)

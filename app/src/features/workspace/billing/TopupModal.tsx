@@ -106,14 +106,14 @@ export function TopupModal({
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState<number | null>(null);
   const [error, setError] = useState('');
-  // Neutral (non-error) feedback — e.g. "you cancelled, nothing was charged".
+  // Neutral (non-error) feedback. E.g. "you cancelled, nothing was charged".
   const [notice, setNotice] = useState('');
   // What we can truthfully say about expiry, or null while unknown/unevidenced.
   const [expiryNote, setExpiryNote] = useState<string | null>(null);
 
   // Expiry is a term of sale, so it is read from the customer's own ledger
   // rather than asserted. Deliberately a separate request from the packs one:
-  // it must never delay, block, or fail the purchase path — if it doesn't
+  // it must never delay, block, or fail the purchase path. If it doesn't
   // arrive, the dialog simply makes no expiry claim.
   useEffect(() => {
     if (!open) return undefined;
@@ -205,7 +205,7 @@ export function TopupModal({
       onClose();
     } catch (err: unknown) {
       // The customer closed the Razorpay sheet themselves. Detected via the
-      // modal's ondismiss (src/lib/razorpay.js) — say so, or returning to the
+      // modal's ondismiss (src/lib/razorpay.js). Say so, or returning to the
       // app reads as "nothing happened / did my payment go through?".
       if ((err as { code?: string })?.code === 'dismissed') {
         void recordBillingEvent('checkout_abandoned', 'topup', { amount });
@@ -218,7 +218,7 @@ export function TopupModal({
       const detail =
         (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
           ?.detail ?? (err as { detail?: unknown })?.detail;
-      // Registered/export buyers must complete billing details first — hand
+      // Registered/export buyers must complete billing details first. Hand
       // off to the form instead of a dead-end banner (B2C buyers below the
       // Rule 46(f) threshold never hit this).
       if (

@@ -8,7 +8,7 @@ link in a manual follow-up is built from it in
 
 The deploy workflow never passed it either, so production silently used the
 default and every follow-up email shipped an unsubscribe pointing at
-``http://localhost:8000`` — dead for the recipient. An unsubscribe that cannot
+``http://localhost:8000``. Dead for the recipient. An unsubscribe that cannot
 be actioned is a compliance problem, not a cosmetic one, and nothing failed
 loudly enough to notice: the email sent, the link rendered, the token was even
 valid.
@@ -29,8 +29,8 @@ from app.config import (
 )
 
 # The DEFAULTS, not the resolved values. Simulating "unset" by reloading
-# `app.config` cannot work — `load_dotenv()` repopulates from `api/.env` on
-# every import — and that gap is exactly how a localhost default survived to
+# `app.config` cannot work. `load_dotenv()` repopulates from `api/.env` on
+# every import, and that gap is exactly how a localhost default survived to
 # production without a single test noticing.
 PUBLIC_URL_DEFAULTS = {
     "API_BASE_URL": DEFAULT_API_BASE_URL,
@@ -41,11 +41,11 @@ PUBLIC_URL_DEFAULTS = {
 
 @pytest.mark.parametrize(("name", "default"), sorted(PUBLIC_URL_DEFAULTS.items()))
 def test_no_public_url_defaults_to_localhost(name, default):
-    """With nothing set — which is exactly what production had — none of these
+    """With nothing set (which is exactly what production had) none of these
     may resolve to a host only the server itself can reach."""
     assert "localhost" not in default, f"{name} defaults to a link no recipient can open"
     assert "127.0.0.1" not in default
-    assert default.startswith("https://"), f"{name} must be https — it is emailed to strangers"
+    assert default.startswith("https://"), f"{name} must be https, it is emailed to strangers"
 
 
 @pytest.mark.parametrize(("name", "default"), sorted(PUBLIC_URL_DEFAULTS.items()))

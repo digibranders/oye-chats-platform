@@ -11,15 +11,15 @@ Razorpay behaviour we can only confirm live:
   1. **Which event fires at authorisation?** Entitlements are granted in
      ``_handle_subscription_activated`` (``subscription.activated``). If a
      deferred sub only fires ``subscription.authenticated`` at auth and delays
-     ``activated`` until ``start_at``, we must grant on ``authenticated`` too —
-     otherwise a customer gets *no access* for the whole free period.
+     ``activated`` until ``start_at``, we must grant on ``authenticated`` too.
+     Otherwise a customer gets *no access* for the whole free period.
 
   2. **What period does Razorpay report?** ``current_start`` / ``current_end`` /
      ``charge_at`` on a deferred sub decide how the credit-refresh cadence
      during the free months must be built (there are no ``subscription.charged``
      events until ``start_at``).
 
-KEY INSIGHT — no webhook tunnel needed
+KEY INSIGHT, no webhook tunnel needed
 --------------------------------------
 Razorpay subscription ``status`` transitions map 1:1 to the webhooks:
     created        -> (awaiting auth)
@@ -27,13 +27,13 @@ Razorpay subscription ``status`` transitions map 1:1 to the webhooks:
     active         -> fires ``subscription.activated``
 So polling ``subscription.fetch`` and watching ``status`` tells us exactly which
 event the app would receive, and when. This script creates one deferred test
-subscription, prints the authorise link, and polls the entity — printing every
+subscription, prints the authorise link, and polls the entity. Printing every
 field the design decision turns on, plus a plain-English verdict.
 
 SAFETY
 ------
 * Refuses to run against a **live** key (``rzp_live_...``) unless ``--force``.
-* Only creates a subscription in Razorpay **test** mode — no real money moves.
+* Only creates a subscription in Razorpay **test** mode, no real money moves.
 * Read-only after creation (fetch + list invoices). Does not touch the app DB.
 
 USAGE
@@ -66,7 +66,7 @@ try:  # python-dotenv is a dev dependency; tolerate its absence.
     from dotenv import load_dotenv
 
     load_dotenv()
-except Exception:  # noqa: BLE001 — env may already be exported; never fail here.
+except Exception:  # noqa: BLE001. Env may already be exported; never fail here.
     pass
 
 from app.config import RAZORPAY_KEY_ID, RAZORPAY_TEST_PLAN_ID  # noqa: E402
@@ -87,7 +87,7 @@ _WATCH_FIELDS = (
 
 # status -> the webhook the app would receive on entering that status.
 _STATUS_TO_EVENT = {
-    "created": "(none — created, awaiting authorisation)",
+    "created": "(none. Created, awaiting authorisation)",
     "authenticated": "subscription.authenticated  ← NOT currently handled by the app",
     "active": "subscription.activated  ← grants entitlements today",
     "pending": "subscription.pending  (mandate pending / retry)",
@@ -99,9 +99,9 @@ _STATUS_TO_EVENT = {
 
 
 def _fmt_epoch(value: object) -> str:
-    """Render a Razorpay epoch-seconds field as UTC + IST, or '—' when unset."""
+    """Render a Razorpay epoch-seconds field as UTC + IST, or '-' when unset."""
     if not value:
-        return "—"
+        return "-"
     try:
         dt = datetime.fromtimestamp(int(value), tz=UTC)
     except (TypeError, ValueError, OverflowError):
@@ -124,12 +124,12 @@ def _list_invoice_summaries(client, sub_id: str) -> list[str]:
     """Return short summaries of any invoices raised for the subscription.
 
     An invoice appearing at authorisation time (before ``start_at``) is the
-    signal that Razorpay took a validation debit — the UI copy must then say
+    signal that Razorpay took a validation debit, the UI copy must then say
     "you may see a ₹1 verification charge that's refunded", not "₹0 today".
     """
     try:
         resp = client.invoice.all({"subscription_id": sub_id, "count": 20})
-    except Exception as exc:  # noqa: BLE001 — invoice listing is diagnostic only.
+    except Exception as exc:  # noqa: BLE001. Invoice listing is diagnostic only.
         return [f"(could not list invoices: {exc})"]
     out = []
     for inv in resp.get("items", []):
@@ -150,7 +150,7 @@ def _guard_test_mode(force: bool) -> None:
             "Use test keys, or pass --force if you truly mean to."
         )
     if not key:
-        sys.exit("RAZORPAY_KEY_ID is not set — configure test keys in .env first.")
+        sys.exit("RAZORPAY_KEY_ID is not set. Configure test keys in .env first.")
 
 
 def main() -> int:
@@ -201,7 +201,7 @@ def main() -> int:
                 "notes": {"purpose": "promo_start_at_verification", "oyechats_env": "verification"},
             }
         )
-    except Exception as exc:  # noqa: BLE001 — surface the gateway error verbatim.
+    except Exception as exc:  # noqa: BLE001. Surface the gateway error verbatim.
         sys.exit(f"subscription.create failed: {exc}")
 
     sub_id = sub["id"]
@@ -228,7 +228,7 @@ def main() -> int:
         time.sleep(args.interval)
         try:
             sub = client.subscription.fetch(sub_id)
-        except Exception as exc:  # noqa: BLE001 — keep polling through transient errors.
+        except Exception as exc:  # noqa: BLE001. Keep polling through transient errors.
             print(f"  [{datetime.now(IST):%H:%M:%S}] fetch error: {exc}")
             continue
 
@@ -245,7 +245,7 @@ def main() -> int:
 
         # Terminal-ish states worth stopping on once start_at has passed.
         if status in ("active", "completed", "cancelled", "expired") and int(time.time()) >= start_at:
-            print(f"\nReached '{status}' at/after start_at — the deferred first charge has resolved. Done.")
+            print(f"\nReached '{status}' at/after start_at, the deferred first charge has resolved. Done.")
             break
 
     print("\n" + "=" * 78)

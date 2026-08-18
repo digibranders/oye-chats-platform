@@ -1,12 +1,12 @@
 /**
- * The pricing step's plan filter — the one place in the app that hides a plan
+ * The pricing step's plan filter, the one place in the app that hides a plan
  * from a picker.
  *
  * `POST /bots/checkout` mints a subscription scoped to ONE agent, so a plan
  * whose `limits.bots` is the UNLIMITED sentinel cannot be sold here: its
  * credits would land in that single agent's isolated ledger while every other
  * agent it entitles drained the unfunded shared pool. The server refuses such
- * a plan, and this dialog's filter is the matching UI half — without it the
+ * a plan, and this dialog's filter is the matching UI half, without it the
  * customer picks a tier, pays nothing, and gets a 400 they cannot act on.
  *
  * Nothing covered the predicate at the call site before this file: the filter
@@ -103,7 +103,7 @@ describe('CreateAgentDialog plan filter', () => {
 
   /* `Plan.limits` is untyped JSONB and the server reads the quota through
      `int(...)`, which accepts `"-1"`. While the client only recognised the
-     number, this row stayed in the picker and its checkout 400'd — the
+     number, this row stayed in the picker and its checkout 400'd, the
      customer chose a plan the money path would never sell. */
   it('hides an unlimited-agents tier whose quota is stored as a string', async () => {
     getSubscriptionPlans.mockResolvedValue([
@@ -117,7 +117,7 @@ describe('CreateAgentDialog plan filter', () => {
     expect(screen.queryByText('Enterprise')).not.toBeInTheDocument();
   });
 
-  /* The Free tier funds nothing, so it is not a per-agent product either —
+  /* The Free tier funds nothing, so it is not a per-agent product either.
      `POST /bots/checkout` refuses it by slug. */
   it('hides the free tier', async () => {
     getSubscriptionPlans.mockResolvedValue([

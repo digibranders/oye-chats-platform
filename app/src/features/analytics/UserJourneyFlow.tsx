@@ -43,15 +43,15 @@ import {
 } from './journeyModel';
 
 /**
- * UserJourneyFlow — a Sankey-inspired flow visualisation. Sources on
+ * UserJourneyFlow, a Sankey-inspired flow visualisation. Sources on
  * the left (pages the visitor saw BEFORE opening chat), the "Opened
  * Chatbot" node in the middle, outcomes on the right. Curves widen
  * with visitor volume.
  *
  * Real data comes from ``useJourneyAnalytics`` (summary + pre-phase
  * top pages). Path strings are heuristically bucketed into a small
- * fixed set of source slots — Home, Pricing, Blog, Other Pages,
- * Features, Product, FAQ, Resources — so the layout stays stable
+ * fixed set of source slots (Home, Pricing, Blog, Other Pages,
+ * Features, Product, FAQ, Resources) so the layout stays stable
  * even when a bot's URLs change month to month.
  */
 
@@ -76,8 +76,8 @@ const TONE: Record<ToneKey, Tone> = {
 
 // ── Layout constants ────────────────────────────────────────────────────────
 // VB_W stretched to 1200 (was 820) so each row can render the
-// visitor's full journey — pre-chain → chatbot → post-chain →
-// outcome column — inline, matching how the DB stores it. Card view
+// visitor's full journey (pre-chain → chatbot → post-chain →
+// outcome column) inline, matching how the DB stores it. Card view
 // still fills the container thanks to preserveAspectRatio; long
 // diagrams pan/zoom inside the canvas.
 //
@@ -128,12 +128,12 @@ interface FlowNode {
  * Trie-based visualization: shared page prefixes render as ONE node
  * that forks into branches, instead of drawing the same page (e.g. `/`)
  * as N separate cards stacked vertically. This is a truer picture of
- * the flow — a real branching journey rather than parallel strips —
+ * the flow (a real branching journey rather than parallel strips)
  * and matches how a Sankey should read.
  *
  * A `TrieVizNode` carries its ready-to-render geometry (x/y/width),
- * the summed sessions passing through it, and the highlight set —
- * every node id that stays lit when this node is clicked (its
+ * the summed sessions passing through it, and the highlight set.
+ * Every node id that stays lit when this node is clicked (its
  * ancestors AND descendants, i.e. the full flow the visitor took).
  */
 interface TrieVizNode {
@@ -142,7 +142,7 @@ interface TrieVizNode {
   label: string;
   /** Sum of sessions passing through this node (through its subtree). */
   sessions: number;
-  /** True if this node forks into more than one child — used to hint
+  /** True if this node forks into more than one child. Used to hint
    *  the reader that the count aggregates several downstream branches. */
   isFork: boolean;
   tone: ToneKey;
@@ -151,14 +151,14 @@ interface TrieVizNode {
   y: number;
   width: number;
   /** 0 for a root child, 1 for its child, etc. Exposed on the viz
-   *  node so the render pass can identify root children reliably —
-   *  parsing IDs to detect depth is fragile (a URL path could
+   *  node so the render pass can identify root children reliably.
+   *  Parsing IDs to detect depth is fragile (a URL path could
    *  contain `>`) and this is O(1). */
   depth: number;
   /** Global indices of source sequences whose flow passes through
    *  this node. Set-membership across both pre- and post-tries is
    *  how "click a pre-node, light the corresponding post-nodes"
-   *  works — two nodes are on the same flow iff they share a
+   *  works, two nodes are on the same flow iff they share a
    *  sequence index. */
   seqIndices: ReadonlySet<number>;
   side: 'pre' | 'post';
@@ -170,7 +170,7 @@ interface TrieVizNode {
 
 interface TrieVizEdge {
   id: string;
-  /** Parent + child node ids — an edge is "on-flow" for a selection
+  /** Parent + child node ids, an edge is "on-flow" for a selection
    *  when BOTH endpoints are in the current highlight set. */
   fromNodeId: string;
   toNodeId: string;
@@ -178,7 +178,7 @@ interface TrieVizEdge {
   fromY: number;
   toX: number;
   toY: number;
-  /** Sessions represented by this edge — the child's session sum.
+  /** Sessions represented by this edge, the child's session sum.
    *  Wider edges = more visitors take this branch. */
   sessions: number;
   tone: ToneKey;
@@ -186,7 +186,7 @@ interface TrieVizEdge {
 }
 
 // Rotating (tone, icon) palette that colours the chain-row cards.
-// Purely decorative — the cards are labelled by their real URL path,
+// Purely decorative, the cards are labelled by their real URL path,
 // so icons don't have to match page semantics; the palette gives each
 // stop in a chain visible identity.
 const SOURCE_STYLES: ReadonlyArray<{ tone: ToneKey; icon: LucideIcon }> = [
@@ -203,7 +203,7 @@ const SOURCE_STYLES: ReadonlyArray<{ tone: ToneKey; icon: LucideIcon }> = [
 // Source-row layout: each row = one common pre-chat SEQUENCE. Cards
 // chain right into the chatbot: page1 → page2 → ... → chatbot. Card
 // width is computed per row via chainCardWidth() so a 3-page journey
-// gets fat cards while an 8-page journey gets slim cards — everything
+// gets fat cards while an 8-page journey gets slim cards. Everything
 // still fits inside the source area (24 → 410px).
 const CHAIN_GAP = 15;
 const CHAIN_START_X = 24;
@@ -212,7 +212,7 @@ const CHAIN_MIN_CARD_W = 44; // don't shrink below icon-plus-text
 const CHAIN_MAX_CARD_W = 156; // don't grow past the destination CARD_W
 // REVERTED from 25. These four are geometry-derived, not preferences: the
 // source band is a fixed 24→410px, `colW = (410-24)/cols` and
-// `cardW = max(44, min(156, colW-15))`, so overlap begins at cols >= 9 — 8 was
+// `cardW = max(44, min(156, colW-15))`, so overlap begins at cols >= 9 to 8 was
 // exactly the largest non-overlapping value. At 25 every card overlapped its
 // neighbour by ~29px and the deepest one intruded into the chatbot circle,
 // while `cardW` pinned to 44 truncated every label to six characters
@@ -224,8 +224,8 @@ const MAX_CHAIN_LEN = 8;
 // Post-chat chain lives to the RIGHT of the chatbot, mirroring the
 // pre-chat chain on the left. Each source row grows its own post-chain
 // (up to MAX_POST_CHAIN_LEN cards) using the same row tone, so the
-// visitor's full journey — pages seen, then chatbot, then pages seen
-// after — reads as one continuous flow.
+// visitor's full journey (pages seen, then chatbot, then pages seen
+// after) reads as one continuous flow.
 const POST_CHAIN_START_X = 595;
 const POST_CHAIN_END_X = 950;
 const MAX_POST_CHAIN_LEN = 6;
@@ -240,10 +240,10 @@ function distributeRows(vbH: number, count: number): number[] {
   if (count === 1) return [vbH / 2 - CARD_H / 2];
   const evenCenterGap = vbH / (count + 1);
   if (evenCenterGap - CARD_H >= ROW_MIN_GAP) {
-    // Comfortable — use even center distribution (nicer visually).
+    // Comfortable. Use even center distribution (nicer visually).
     return Array.from({ length: count }, (_, i) => (vbH * (i + 1)) / (count + 1) - CARD_H / 2);
   }
-  // Tight — fall back to fixed ROW_MIN_GAP spacing, centered vertically.
+  // Tight. Fall back to fixed ROW_MIN_GAP spacing, centered vertically.
   const totalH = count * CARD_H + (count - 1) * ROW_MIN_GAP;
   const startY = Math.max(V_MARGIN, (vbH - totalH) / 2);
   return Array.from({ length: count }, (_, i) => startY + i * (CARD_H + ROW_MIN_GAP));
@@ -264,7 +264,7 @@ const EXIT_DESTINATION = { id: 'exit', label: 'Drop-off / Exit', tone: 'gray' as
 // Synthetic pre-chat entry for visitors who opened chat with NO tracked
 // page before it (direct / first-touch). Rendered as one card on the far
 // left so the entry column sums to the center count instead of silently
-// under-counting these sessions. Sentinel — never a real URL path, so
+// under-counting these sessions. Sentinel, never a real URL path, so
 // clicking it is a no-op rather than a page filter.
 const DIRECT_PATH = 'Direct (no prior page)';
 
@@ -319,7 +319,7 @@ function cardLeft(node: FlowNode): { x: number; y: number } {
 // round line-caps get masked by the circle fill and the line reads as
 // floating in space. Overshooting the endpoint 6px into the circle
 // lets the line visibly cross the boundary before it's clipped by the
-// circle — a clean visual "landing".
+// circle, a clean visual "landing".
 const CIRCLE_ANCHOR_OVERSHOOT = 6;
 
 function circleEntry(index: number, count: number, centerY: number): { x: number; y: number } {
@@ -338,12 +338,12 @@ function circleExit(index: number, count: number, centerY: number): { x: number;
 // ── Trie build + layout ───────────────────────────────────────────────────
 //
 // Sequences arrive as N flat rows, but visitor journeys are actually a
-// TREE — many visitors share early hops before diverging. Rendering the
+// TREE. Many visitors share early hops before diverging. Rendering the
 // tree directly means a shared `/` shows once (with the summed count)
 // and forks into the branches that diverged from it, matching how a
 // real Sankey reads. This section builds and lays out that tree.
 
-/** Hard ceiling on visible leaves — also the fetch cap and the "All" option's
+/** Hard ceiling on visible leaves. Also the fetch cap and the "All" option's
  *  value. The diagram never renders more end-to-end journeys than this. */
 const TRIE_MAX_LEAVES = 25;
 /** Default number of page flows shown before the reader asks for more. Keeping
@@ -386,7 +386,7 @@ interface TrieBuildNode {
  * rooted at ``root``, incrementing session counts and recording
  * ``seqIndex`` on every node along the walk (including root).
  * Recording on the root as well means "click the root" would light
- * every sequence — but the root is never rendered, so this is only
+ * every sequence, but the root is never rendered, so this is only
  * used to keep the invariant "every node passed through by seqIndex
  * contains seqIndex in its set" true even after pruning.
  */
@@ -446,13 +446,13 @@ function pruneToMaxLeaves(root: TrieBuildNode, maxLeaves: number): void {
     const ls = leaves();
     if (ls.length <= maxLeaves) return;
     // Drop the least-trafficked leaf; on ties, the one with the
-    // longest path (deepest tail) — that's the noisiest end to remove.
+    // longest path (deepest tail). That's the noisiest end to remove.
     ls.sort((a, b) => a.sessions - b.sessions || b.depth - a.depth);
     const victim = ls[0];
     const parent = victim.parent;
     if (!parent) return;
     parent.children.delete(victim.path);
-    // Sessions stay attributed to the parent — the visitor did pass
+    // Sessions stay attributed to the parent, the visitor did pass
     // through the parent, we just no longer render the specific tail.
   }
 }
@@ -460,7 +460,7 @@ function pruneToMaxLeaves(root: TrieBuildNode, maxLeaves: number): void {
 interface TrieVisual {
   nodes: TrieVizNode[];
   edges: TrieVizEdge[];
-  /** Ends of leaf branches — used to draw the final curves that land
+  /** Ends of leaf branches. Used to draw the final curves that land
    *  on the chatbot circle (pre) or emanate from it (post). Ordered
    *  top-to-bottom so `circleEntry/Exit` distributes the anchors. */
   leafAnchors: Array<{ nodeId: string; x: number; y: number; sessions: number; tone: ToneKey }>;
@@ -472,7 +472,7 @@ interface TrieVisual {
  * Layout a built trie horizontally with root on the anchored side.
  * ``side='pre'`` places root-column nodes at ``xStart`` and grows
  * rightward toward ``xEnd`` (where leaves land near the chatbot).
- * ``side='post'`` mirrors — root-column nodes at ``xEnd``, growing
+ * ``side='post'`` mirrors. Root-column nodes at ``xEnd``, growing
  * leftward toward ``xStart``… actually no: for post-chain the ROOT
  * of the trie is the "first page the visitor saw after chat", which
  * should sit LEFT (adjacent to the chatbot). So both sides layout
@@ -526,7 +526,7 @@ function layoutTrie(
 
   // Starting page of a node's branch: walk up to the depth-0 ancestor.
   // Every sequence passing through a node shares its prefix, so this is
-  // the single page their journey began on — the value a pre-node click
+  // the single page their journey began on, the value a pre-node click
   // filters by.
   const rootPageOf = (bn: TrieBuildNode): string => {
     let c = bn;
@@ -548,7 +548,7 @@ function layoutTrie(
 // (deepest) closest to the chatbot. For post-side the root
 // column now sits right next to the chatbot (short connector),
 // and deeper post-hops extend rightward toward the outcomes
-// column — so the whole diagram reads left-to-right in time.
+// column, so the whole diagram reads left-to-right in time.
 const x = xStart + n.depth * colW;
         const tone = toneOf.get(n.id) ?? rootStyle.tone;
         const icon = iconOf.get(n.id) ?? rootStyle.icon;
@@ -572,7 +572,7 @@ const x = xStart + n.depth * colW;
         });
         // Leaf anchor: right edge of the card (both sides). Only the
         // pre-side actually renders these anchors as chatbot
-        // connectors — post-side leaves are tree tails that just end
+        // connectors. Post-side leaves are tree tails that just end
         // where their card sits.
         const anchorX = cardX + cardW;
         leafAnchors.push({ nodeId: n.id, x: anchorX, y: yCenter, sessions: n.sessions, tone });
@@ -590,7 +590,7 @@ const x = xStart + n.depth * colW;
 // (deepest) closest to the chatbot. For post-side the root
 // column now sits right next to the chatbot (short connector),
 // and deeper post-hops extend rightward toward the outcomes
-// column — so the whole diagram reads left-to-right in time.
+// column, so the whole diagram reads left-to-right in time.
 const x = xStart + n.depth * colW;
       const cardX = clampCard(x, cardW);
       const labelMax = Math.max(6, Math.floor(cardW / 7));
@@ -666,7 +666,7 @@ function clampCard(x: number, w: number): number {
 // no path attribution, and it cannot be reconstructed from what the client
 // holds:
 //   · `preChatSequences.sequences[].sessions` is the pattern's TOTAL session
-//     count — converted and not. Removing a whole bucket because one of its
+//     count. Converted and not. Removing a whole bucket because one of its
 //     200 sessions booked a meeting deletes 199 real drop-offs; keeping the
 //     bucket and printing 200 labels 200 sessions as drop-offs when only some
 //     were. Both directions are wrong, and the high-traffic buckets (the ones
@@ -674,11 +674,11 @@ function clampCard(x: number, w: number): number {
 //   · `conversionPaths` is fetched with `limit: 5` per outcome, so any
 //     conversion outside the top 5 is invisible to the client anyway.
 //   · `post_sessions` counts only the single WINNING post-chat continuation,
-//     not every session that kept browsing — so "no conversion AND no
+//     not every session that kept browsing, so "no conversion AND no
 //     post-chat page" is not computable per pattern either.
 // The honest per-session TOTAL does exist (`summary.sessions_no_activity`) and
 // is what the Drop-off card shows via `deriveDropOffTotal`. The card is
-// therefore rendered but not filterable — see `isFilterableOutcome`.
+// therefore rendered but not filterable. See `isFilterableOutcome`.
 
 // ── UI ─────────────────────────────────────────────────────────────────────
 
@@ -689,7 +689,7 @@ export interface UserJourneyFlowProps {
 export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   const { status, data, error, refreshing, reload, lastUpdatedAt } = useJourneyAnalytics(botId);
   const [zoomOpen, setZoomOpen] = useState(false);
-  // Click a row to focus it — that row stays at full opacity, everything
+  // Click a row to focus it. That row stays at full opacity, everything
   // else (other rows, destinations, chatbot circle stays visible) dims
   // so the eye can follow the visitor's full pre → chat → post path.
   // Click the same row again or the SVG background to clear.
@@ -697,13 +697,13 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   const otherOpacity = (): number => (selectedRowId == null ? 1 : 0.15);
   const toggleRow = (rowId: string): void =>
     setSelectedRowId((prev) => (prev === rowId ? null : rowId));
-  // Filter by "starting page" — the first page of a pre-chat sequence,
+  // Filter by "starting page", the first page of a pre-chat sequence,
   // i.e. where the visitor's journey to chat began. `null` = show all.
   // Picking a page filters the rows in the diagram to only those whose
   // pre-chain starts on it. Cleared when the agent or period changes.
   const [startFilter, setStartFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  // Filter by OUTCOME — clicking a conversion destination card (Meeting /
+  // Filter by OUTCOME. Clicking a conversion destination card (Meeting /
   // Live Chat / Offline) narrows the diagram to the pre-chat sequences that
   // actually led to that outcome, using the backend's own attribution from
   // `conversionPaths`. Drop-off is NOT in this union: the backend attributes
@@ -715,7 +715,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   const [maxFlows, setMaxFlows] = useState<number>(DEFAULT_MAX_FLOWS);
   // Reset filters + selection when the agent changes. Uses the
   // "derived state during render" pattern (a prev-value shadow state)
-  // instead of a `useEffect(setState, [botId])` — the latter runs an
+  // instead of a `useEffect(setState, [botId])`, the latter runs an
   // extra render pass and is flagged by React Compiler as a cascading
   // render. See react.dev's "You Might Not Need an Effect" doc.
   const [prevBotId, setPrevBotId] = useState(botId);
@@ -727,7 +727,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     setMaxFlows(DEFAULT_MAX_FLOWS);
   }
   // Rerender the "Updated Xs ago" label once a second so it stays honest
-  // between polls. Cheap — the whole component is already re-rendering
+  // between polls. Cheap, the whole component is already re-rendering
   // on every hook update anyway.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -753,7 +753,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     [maxFlows],
   );
 
-  // Distinct "starting pages" — the FIRST page of each pre-chat
+  // Distinct "starting pages", the FIRST page of each pre-chat
   // sequence, aggregated across ALL sequences (not just the top 6
   // rendered rows) so the filter picker exposes every entry point a
   // visitor took, even minor ones. Sessions are summed per starting
@@ -786,7 +786,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // treat the filter as cleared for downstream code. Derived here
   // instead of via a setState-in-effect so React Compiler doesn't
   // flag a cascading render. The stale `startFilter` state stays in
-  // place until the user picks something new — cheap and invisible.
+  // place until the user picks something new. Cheap and invisible.
   const effectiveStartFilter = useMemo(() => {
     if (startFilter && !startingPages.some((p) => p.path === startFilter)) {
       return null;
@@ -802,7 +802,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // together. Each row is one common ordered pattern (e.g.
     // Home → About → Contact) that visitors travelled before
     // opening chat. The backend already collapses adjacent-duplicate
-    // paths (SPA hash refires) — we deliberately DON'T global-dedupe
+    // paths (SPA hash refires). We deliberately DON'T global-dedupe
     // on the client, so a genuine back-nav like /a → /b → /a stays
     // readable as three stops rather than being rewritten to /a → /b.
     // Long sequences keep their tail (backend already truncates with
@@ -813,8 +813,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // "who ended in Live Chat?" the rows must come from
     // `conversionPaths.handoff_requested.paths`, not from the general
     // pre-chat list (which is not attributed by outcome). Rows sourced
-    // this way have no `post_sequence` — the visitor went straight to
-    // the outcome — so the right-of-chatbot chain is naturally empty.
+    // this way have no `post_sequence` (the visitor went straight to
+    // the outcome) so the right-of-chatbot chain is naturally empty.
     // Drop-off is never a source: it has no backend path attribution.
     interface RawSeq {
       sequence: readonly string[];
@@ -848,7 +848,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // Build the pre-chat TRIE from all filtered sequences (backend
     // already caps each at max_seq_len=8). Rendering as a tree instead
     // of parallel strips means visitors who all start on `/` see one
-    // shared `/` card that forks into their divergent tails — a
+    // shared `/` card that forks into their divergent tails, a
     // truer flow view than N stacked homepages.
     const preRoot: TrieBuildNode = {
       id: 'pre-root',
@@ -866,7 +866,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     });
     pruneToMaxLeaves(preRoot, maxFlows);
 
-    // Direct visitors — opened chat with no tracked page before it. Only
+    // Direct visitors. Opened chat with no tracked page before it. Only
     // meaningful in the unfiltered "all paths" view; when a start/outcome
     // filter is active the diagram already shows a specific sub-population
     // whose entry pages are known, so a "no prior page" node wouldn't
@@ -887,7 +887,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // (`seq.post_sessions`); when the backend didn't send that field
     // (older API) we fall back to `seq.sessions` as a soft upper
     // bound. Sequences with no post-continuation contribute nothing
-    // to the post-trie — they'll route to the destinations column.
+    // to the post-trie. They'll route to the destinations column.
     const postRoot: TrieBuildNode = {
       id: 'post-root',
       path: '',
@@ -898,7 +898,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       order: 0,
       seqIndices: new Set(),
     };
-    // seqIndex must match the pre-trie's — that's the shared key
+    // seqIndex must match the pre-trie's. That's the shared key
     // that lets us correlate "this pre-node's sequences" with
     // "this post-node's sequences" for cross-side highlighting.
     filteredSequences.forEach((seq, seqIndex) => {
@@ -937,7 +937,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     const postViz = layoutTrie(postRoot, 'post', POST_CHAIN_START_X, POST_CHAIN_END_X, postTopY);
 
     // Cross-side highlight map. For every node (pre OR post), compute
-    // the union of node IDs — on EITHER side — that share at least one
+    // the union of node IDs (on EITHER side) that share at least one
     // source sequence with it. Clicking a pre-`/pricing` therefore
     // lights the post-nodes that pricing's visitors continued through,
     // and vice versa. Same-side ancestors/descendants come for free
@@ -966,7 +966,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // Destinations breakdown:
     //  - Three conversion slots from summary_counts (Book Meeting /
     //    Live Chat / Offline Message).
-    //  - Drop-off / Exit — sessions that opened chat but did nothing:
+    //  - Drop-off / Exit. Sessions that opened chat but did nothing:
     //    no conversion event AND no post-chat page. Read from the
     //    backend's per-session count; only older API builds fall back
     //    to a subtraction, and those are labelled as an estimate on
@@ -1080,7 +1080,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       />
     );
   }
-  // A filter is active but matched zero rows — say so instead of
+  // A filter is active but matched zero rows. Say so instead of
   // rendering a diagram with an empty source column (which reads as
   // "the bot is broken").
   const filterActive = effectiveStartFilter != null || outcomeFilter != null;
@@ -1119,11 +1119,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // external chatbot connectors (pre-side leaf → chatbot, post-side
   // chatbot → root-child) as one population. Otherwise, a trie
   // whose root children are all leaves (visitors with a 1-page
-  // pre- or post-sequence) has zero internal edges — `strokeFor`
+  // pre- or post-sequence) has zero internal edges. `strokeFor`
   // then returns 0 for the external connectors and they invisibly
   // vanish, making those nodes look disconnected from the chatbot.
   // A post-side node needs a direct chatbot connector iff it has no
-  // incoming edge from another visible node — that is, either it's a
+  // incoming edge from another visible node. That is, either it's a
   // depth-0 root child, OR its parent was pruned away and it's now
   // effectively orphaned. Computing this from edges (not depth alone)
   // is the safety net that catches both cases.
@@ -1143,11 +1143,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   ];
   const destValues = flow.destinations.map((d) => d.value);
 
-  // Selected NODE (not row) — clicking any trie node highlights the
+  // Selected NODE (not row). Clicking any trie node highlights the
   // entire visitor flow through it: same-side ancestors + descendants,
   // AND the corresponding nodes on the OTHER trie for every sequence
   // that passes through the clicked node. The cross-highlight map was
-  // precomputed in the flow useMemo — this render pass just looks it up.
+  // precomputed in the flow useMemo. This render pass just looks it up.
   const selectedHighlight: ReadonlySet<string> | null =
     selectedRowId != null ? flow.crossHighlight.get(selectedRowId) ?? null : null;
   // When a selection is active, override highlighted cards' AND
@@ -1164,7 +1164,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // When a selection is active, EVERY highlighted node + edge takes
   // on the selected flow's tone so the visitor's journey reads as
   // one continuous colored path. Merged nodes get the flow tone too
-  // — the truthful "this count is shared" cue is the visible number
+  //, the truthful "this count is shared" cue is the visible number
   // on the card itself (a `2` = shared). Splitting colors mid-flow
   // (base on merged, override on exclusive) made the highlighted
   // path look broken; unified color reads as intended.
@@ -1180,7 +1180,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       : 0.15;
   };
   const edgeStroke = (edge: TrieVizEdge): string => {
-    // Recolor when both endpoints are highlighted — the visitor's
+    // Recolor when both endpoints are highlighted, the visitor's
     // continuous path reads as one flow color end-to-end, without
     // the base-tone patches on merged edges breaking continuity.
     if (
@@ -1196,11 +1196,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
 
   // Pre-side leaves land on the chatbot circle's LEFT arc, distributed
   // via circleEntry so multiple leaves don't stack on the same anchor.
-  // (Post-side leaves are natural tree tails — they just end where the
+  // (Post-side leaves are natural tree tails. They just end where the
   // last card sits; no additional connector needed.)
   const preLeafAnchors = flow.preViz.leafAnchors;
 
-  // Just the SVG children (no <svg> wrapper) — the card view wraps
+  // Just the SVG children (no <svg> wrapper), the card view wraps
   // them in a plain static SVG, while the zoom Modal wraps them in a
   // ZoomableFlowCanvas that adds pan + wheel-zoom + a toolbar.
   const diagramContent = (
@@ -1254,7 +1254,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       })()}
 
       {/* Chatbot → post-side orphans. An "orphan" is any post-node
-          that has no incoming edge from another visible node — that
+          that has no incoming edge from another visible node. That
           covers both true depth-0 root children AND nodes whose
           parent got pruned. Sorted top-to-bottom so `circleExit`
           distributes their anchors along the chatbot's right arc in
@@ -1266,7 +1266,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           const chatStart = circleExit(i, sorted.length, flow.centerY);
           // Fallback stroke floor: even when the natural strokeFor
           // returns 0 (empty scaling population edge-case), the
-          // connector for an orphan post-node MUST render — a card
+          // connector for an orphan post-node MUST render, a card
           // showing sessions with no incoming line reads as broken.
           const base = strokeFor(child.sessions, postAllSessions) || MIN_STROKE;
           const isOnFlow = selectedHighlight != null && selectedHighlight.has(child.id);
@@ -1313,7 +1313,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           falsely imply "this journey → these outcomes." The
           destination CARDS stay visible (dimmed) so the reader
           still sees the outcome column exists; the numbers on them
-          drop the % when a row is selected — see FlowCard. */}
+          drop the % when a row is selected. See FlowCard. */}
       {selectedRowId == null && (
         <g>
           {flow.destinations.map((node, i) => {
@@ -1364,11 +1364,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         </div>
       </foreignObject>
 
-      {/* Trie nodes — pre-side then post-side. Each card is
+      {/* Trie nodes. Pre-side then post-side. Each card is
           individually clickable: click a shared root (like `/`) and
           the entire subtree lights up; click a leaf and just its
           root-to-leaf path lights up. Cards show summed sessions
-          through that node — a shared `/` with 3 branches shows the
+          through that node, a shared `/` with 3 branches shows the
           total 3 visitors, not any single tail. */}
       {[...flow.preViz.nodes, ...flow.postViz.nodes].map((node) => {
         const value = node.sessions;
@@ -1388,7 +1388,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               // filters to journeys that ended there. This re-renders a
               // focused, non-empty view instead of the in-place highlight
               // (which, on sparse data, dimmed everything and hid the
-              // outcome connectors — reading as "nothing happened").
+              // outcome connectors. Reading as "nothing happened").
               // Post-chat nodes keep the highlight: they have no single
               // starting page to filter by.
               if (
@@ -1401,7 +1401,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
                 setSelectedRowId(null);
               } else {
                 // Direct / post-chat nodes have no single starting page to
-                // filter by — just toggle the highlight for the flow.
+                // filter by. Just toggle the highlight for the flow.
                 toggleRow(node.id);
               }
             }}
@@ -1424,7 +1424,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           </foreignObject>
         );
       })}
-      {/* Destination cards — click a CONVERSION card to filter the
+      {/* Destination cards. Click a CONVERSION card to filter the
           diagram to the pre-chat journeys the backend attributed to
           that outcome ("who ended in Live Chat?"). The Drop-off card
           is deliberately inert: its total is honest, but no per-journey
@@ -1434,7 +1434,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           of ALL sessions, not of the selected row. */}
       <g opacity={otherOpacity()}>
         {flow.destinations.map((node) => {
-          // Narrow once, here — the id is only a filter target when the
+          // Narrow once, here, the id is only a filter target when the
           // backend actually attributes paths to it.
           const filterOutcome: FilterableOutcome | null = isFilterableOutcome(node.id)
             ? node.id
@@ -1571,7 +1571,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         </div>
       </div>
 
-      {/* Diagram — pan + wheel-zoom right here in the card. The SVG
+      {/* Diagram. Pan + wheel-zoom right here in the card. The SVG
           uses preserveAspectRatio="xMidYMid meet" so it scales
           proportionally to whatever width the card gives it; no
           maxWidth cap here, otherwise wide screens leave huge empty
@@ -1580,7 +1580,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         <ZoomableFlowCanvas vbH={flow.effVBH}>{diagramContent}</ZoomableFlowCanvas>
       </div>
 
-      {/* Zoom modal — same diagram inside an interactive pan/zoom
+      {/* Zoom modal, same diagram inside an interactive pan/zoom
           canvas so owners with dense journeys can drag around and
           zoom into individual chains. */}
       <Modal
@@ -1614,7 +1614,7 @@ function FlowCard({
   node: FlowNode;
   hidePct?: boolean;
   active?: boolean;
-  /** Short secondary label under the value — e.g. "merged" for a
+  /** Short secondary label under the value. E.g. "merged" for a
    *  trie node that aggregates several downstream branches. */
   subtitle?: string;
   /** Full text shown on hover via the native `title` attribute.
@@ -1636,7 +1636,7 @@ function FlowCard({
   // - A tiny 4px colored dot in the top-right corner keeps the
   //   subtle tone cue (matches the outgoing connector) without the
   //   AI-slop translucent-tile look. Dropped when the card is
-  //   active — the accent ring takes over as the visual anchor.
+  //   active, the accent ring takes over as the visual anchor.
   const showDot = !active;
   if (compact) {
     return (
@@ -1718,7 +1718,7 @@ function StartingPageFilter({
   onSelect: (path: string | null) => void;
   onClose: () => void;
 }): ReactElement {
-  // Close on outside click — a small effect that watches document
+  // Close on outside click, a small effect that watches document
   // mousedown; skipped when the target is inside the popover so
   // scrolling the list doesn't close it.
   const ref = useRef<HTMLDivElement>(null);
@@ -1860,13 +1860,13 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 /**
- * ZoomableFlowCanvas — wraps the diagram in an SVG with pan (click +
+ * ZoomableFlowCanvas. Wraps the diagram in an SVG with pan (click +
  * drag) and zoom (mouse wheel + toolbar buttons). Only used inside the
  * expand modal; the card overview stays static so the two views serve
  * distinct purposes.
  *
  * Wheel handling attaches via addEventListener with `passive: false` in
- * a useEffect so we can call preventDefault — React normalises wheel
+ * a useEffect so we can call preventDefault. React normalises wheel
  * listeners as passive by default, which would let the parent page
  * scroll every time the visitor tried to zoom.
  */
@@ -1964,7 +1964,7 @@ function ZoomableFlowCanvas({ children, vbH }: { children: ReactNode; vbH: numbe
         </g>
       </svg>
 
-      {/* Zoom toolbar — sits on top of the canvas in the corner. */}
+      {/* Zoom toolbar. Sits on top of the canvas in the corner. */}
       <div className="absolute right-3 top-3 flex flex-col gap-1">
         <CanvasButton onClick={zoomIn} aria-label="Zoom in" disabled={transform.scale >= ZOOM_MAX}>
           <ZoomIn size={14} />
@@ -1977,7 +1977,7 @@ function ZoomableFlowCanvas({ children, vbH }: { children: ReactNode; vbH: numbe
         </CanvasButton>
       </div>
 
-      {/* Zoom % readout — a subtle affordance so the user always
+      {/* Zoom % readout, a subtle affordance so the user always
           knows how far they've scaled. */}
       <div className="absolute bottom-3 right-3 rounded-md border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2 py-1 text-[11px] font-medium tabular-nums text-[var(--ds-text-muted)]">
         {Math.round(transform.scale * 100)}%

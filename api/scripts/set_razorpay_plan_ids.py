@@ -11,7 +11,7 @@ plan's currency is fixed at creation, so an INR plan id can never serve a USD
 charge. Either rail may be left unset; USD checkout fails loudly when its ids
 are missing rather than falling back to INR.
 
-Usage (dry-run — shows what would be written):
+Usage (dry-run. Shows what would be written):
     cd platform/api
     uv run python scripts/set_razorpay_plan_ids.py \\
         --starter-monthly  plan_XXXXXXXXXXXXXXXX \\
@@ -43,12 +43,12 @@ USD rail (international customers):
     --enterprise-monthly-usd   plan_XXXXXXXXXXXXXXXX
     --enterprise-annual-usd    plan_XXXXXXXXXXXXXXXX
 
-The extra-seat add-on plans are NOT stored on a plan row — they are configured
+The extra-seat add-on plans are NOT stored on a plan row. They are configured
 via the ``RAZORPAY_SEAT_PLAN_ID`` (INR) and ``RAZORPAY_SEAT_PLAN_ID_USD``
 environment variables (per Razorpay account/mode).
 
 Attaching ids opens SELF-SERVE checkout; it does not list or unlist anything.
-This script never writes ``plans.is_active`` — listing is a product decision
+This script never writes ``plans.is_active``. Listing is a product decision
 (super-admin plan editor / soft-delete), and a paid tier with no INR ids stays
 on the pricing page and degrades to contact-sales rather than disappearing (see
 ``plan_service.plan_checkout_is_wired``). What it does print is the transition
@@ -180,7 +180,7 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
         for slug, ids in updates.items():
             p = plan_map.get(slug)
             if p is None:
-                print(f"  WARNING: plan slug='{slug}' not found in DB — skipping")
+                print(f"  WARNING: plan slug='{slug}' not found in DB. Skipping")
                 continue
             print(f"  {slug}:")
             for column, value in ids.items():
@@ -188,8 +188,8 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
                 print(f"    {label + ':':<14} {getattr(p, column) or '(none)'!r} → {_render(value)}")
 
             # Attaching (or clearing) the INR ids opens or closes SELF-SERVE
-            # checkout. It does not list or unlist the tier — see the module
-            # docstring — so nothing here writes ``is_active``.
+            # checkout. It does not list or unlist the tier (see the module
+            # docstring) so nothing here writes ``is_active``.
             was_wired = _wired_after(p, {})
             will_be_wired = _wired_after(p, ids)
             if will_be_wired != was_wired:
@@ -206,7 +206,7 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             print("\nCommitted.")
         else:
             session.rollback()
-            print("\nDry-run — re-run with --apply to commit.")
+            print("\nDry-run. Re-run with --apply to commit.")
     return 0
 
 

@@ -2,7 +2,7 @@
  * Tests for the visitor-facing slash-command parser (slashCommands.js).
  *
  * The parser governs whether Enter intercepts execution vs. sends a message,
- * which command the `/` popover shows, and how autocomplete splices text — all
+ * which command the `/` popover shows, and how autocomplete splices text. All
  * pure string logic, but with subtle edge cases (mid-sentence slashes, URLs,
  * caret math) that are easy to regress.
  *
@@ -29,7 +29,7 @@ test('matchSlashCommand matches an exact /<name>, case-insensitively', () => {
 });
 
 test('matchSlashCommand refuses mid-sentence slashes so text is never dropped', () => {
-    // "hello /human" pressing Enter must SEND, not execute — surrounding text
+    // "hello /human" pressing Enter must SEND, not execute. Surrounding text
     // would otherwise be silently discarded.
     assert.equal(matchSlashCommand('hello /human'), null);
     assert.equal(matchSlashCommand('/human now'), null);

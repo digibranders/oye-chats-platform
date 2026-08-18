@@ -2,7 +2,7 @@
 
 These are regression tests for a class of leak, not for one handler. The rule
 they pin down is the one from ``app.core.error_sanitizer``: a failure renders
-twice — a generic sentence for the client, the full diagnostic for the log —
+twice (a generic sentence for the client, the full diagnostic for the log)
 and the two never swap places.
 
 The assertions are deliberately written as "this string must not appear
@@ -172,7 +172,7 @@ def test_production_500_has_no_debug_field(prod_client):
 
 
 def test_development_500_includes_a_debug_hint(failing_app, monkeypatch):
-    """Prod and dev behaviour differ on purpose — and only here."""
+    """Prod and dev behaviour differ on purpose, and only here."""
     monkeypatch.setenv("APP_ENV", "development")
     client = TestClient(failing_app, raise_server_exceptions=False)
     body = client.get("/boom/attr").json()
@@ -204,8 +204,8 @@ def test_debug_hint_is_available_in_debug_environments(monkeypatch, app_env):
 
 
 def test_debug_hint_present_when_app_env_is_unset(monkeypatch):
-    """Unset resolves to ``development`` — the same default ``app.config`` uses
-    — so a developer who never set the variable still gets hints."""
+    """Unset resolves to ``development``, the same default ``app.config`` uses
+    , so a developer who never set the variable still gets hints."""
     monkeypatch.delenv("APP_ENV", raising=False)
     assert debug_hint(ValueError("boom")) is not None
 
@@ -246,7 +246,7 @@ def test_validation_error_does_not_leak_pydantic_version(prod_client):
 
 
 def test_validation_error_keeps_the_field_and_message(prod_client):
-    """Sanitising must not cost the caller the ability to fix their request —
+    """Sanitising must not cost the caller the ability to fix their request.
     ``loc``/``msg`` are what the dashboard renders."""
     resp = prod_client.post("/login", json={"email": "a@b.com", "password": "x", "age": "abc"})
     entries = resp.json()["detail"]
@@ -259,7 +259,7 @@ def test_validation_error_status_is_422(prod_client):
 
 
 def test_malformed_json_body_is_rejected_without_internals(prod_client):
-    """Not a validation error but a parse error — a different code path."""
+    """Not a validation error but a parse error, a different code path."""
     resp = prod_client.post(
         "/login",
         content=b'{"email": "a@b.com", "password": ',
@@ -317,7 +317,7 @@ def test_log_truncates_oversized_values():
 
 
 def test_unhandled_exception_is_logged_with_traceback_and_id(prod_client, caplog):
-    """'Do not silently swallow' — the generic response is paired with a full
+    """'Do not silently swallow', the generic response is paired with a full
     server-side record, keyed by the id the client was given."""
     with caplog.at_level("ERROR"):
         resp = prod_client.get("/boom/db")
@@ -343,7 +343,7 @@ def test_validation_failure_is_logged_below_error(prod_client, caplog):
 
 
 def test_http_exception_detail_is_passed_through_unchanged(prod_client):
-    """Route-authored details are already client-safe and must keep working —
+    """Route-authored details are already client-safe and must keep working,
     the hardening targets machine-generated text, not deliberate copy."""
     resp = prod_client.get("/not-found")
     assert resp.status_code == 404
@@ -352,7 +352,7 @@ def test_http_exception_detail_is_passed_through_unchanged(prod_client):
 
 @pytest.fixture()
 def limited_client():
-    """A real SlowAPI-limited app — the stock handler's behaviour is what is
+    """A real SlowAPI-limited app, the stock handler's behaviour is what is
     under test, so faking the limiter would test the fake."""
     from slowapi import Limiter
     from slowapi.middleware import SlowAPIMiddleware
@@ -386,7 +386,7 @@ def test_rate_limit_body_is_generic_and_keeps_retry_after(limited_client):
     # off), so a 429 here used to carry no backoff signal at all.
     assert int(resp.headers["Retry-After"]) >= 1
     assert resp.json()["retry_after_seconds"] >= 1
-    # Body and Content-Length must agree — the handler rewrites the body, so
+    # Body and Content-Length must agree, the handler rewrites the body, so
     # copying the upstream length header would truncate the response.
     assert json.loads(resp.content)["error"] == "Rate limit exceeded"
 
@@ -457,7 +457,7 @@ def test_real_app_root_does_not_advertise_disabled_docs(monkeypatch):
     ``APP_ENV`` is read into ``app.main`` at import and the docs routes are
     mounted from it once, so the *mounting* can only be asserted at the
     ``_docs_urls`` level (``tests/test_docs_gating.py``). What is testable here
-    — and what regressed — is that the banner asks the same function rather
+    (and what regressed) is that the banner asks the same function rather
     than hardcoding the path.
     """
     import app.main as main_module
@@ -476,7 +476,7 @@ def test_files_route_rejects_traversal_without_echoing_input(real_app_client):
 
 
 def test_files_route_404_does_not_reflect_the_requested_key(monkeypatch):
-    """An unauthenticated 404 that echoes its input is a namespace oracle — and
+    """An unauthenticated 404 that echoes its input is a namespace oracle, and
     reflects arbitrary attacker text into a response body."""
     monkeypatch.setenv("APP_ENV", "production")
     from botocore.exceptions import ClientError

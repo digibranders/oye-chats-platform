@@ -43,7 +43,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('useCountUp — reduced motion', () => {
+describe('useCountUp. Reduced motion', () => {
   it('returns the target immediately and never renders the 0 start frame', () => {
     stubReducedMotion(true);
 
@@ -53,7 +53,7 @@ describe('useCountUp — reduced motion', () => {
   });
 });
 
-describe('useCountUp — animated path', () => {
+describe('useCountUp. Animated path', () => {
   it('starts at 0 and eases up to exactly the target', () => {
     stubReducedMotion(false);
 
@@ -70,7 +70,7 @@ describe('useCountUp — animated path', () => {
     drive(600); // duration elapsed: lands exactly on target
     expect(result.current).toBe(100);
 
-    // Animation is complete — no further frame was scheduled.
+    // Animation is complete, no further frame was scheduled.
     expect(rafCallbacks).toHaveLength(0);
   });
 

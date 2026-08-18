@@ -1,5 +1,5 @@
 /**
- * Pure, framework-free helpers for the feedback log — ported from the legacy
+ * Pure, framework-free helpers for the feedback log. Ported from the legacy
  * `pages/Feedback.jsx:18-77`, now typed and unit-testable in isolation from any
  * component.
  *
@@ -70,7 +70,7 @@ export interface FeedbackTrendPoint {
   total: number;
 }
 
-/** Days plotted on the trend chart, at most — a fortnight reads well at its width. */
+/** Days plotted on the trend chart, at most, a fortnight reads well at its width. */
 const TREND_DAYS = 14;
 
 /**
@@ -81,7 +81,7 @@ const TREND_DAYS = 14;
  * Buckets are sorted by their own timestamp rather than left in the order the
  * items arrived, which is the whole correctness argument here. The list this is
  * called with comes straight off `/analytics/feedback`, and that endpoint sorts
- * newest-first — so an insertion-ordered `Map` yields newest-first buckets, and
+ * newest-first, so an insertion-ordered `Map` yields newest-first buckets, and
  * taking the *last* 14 of those keeps the fourteen OLDEST days. That was the
  * shipped behaviour: the chart plotted weeks-old history, in reverse, under a
  * heading that says "trend", and dropped the current week entirely. Nothing
@@ -93,7 +93,7 @@ const TREND_DAYS = 14;
  * left-to-right along a categorical axis, so index order *is* the time axis.
  *
  * Two points can therefore share a `date` label when the window spans a year
- * boundary — two distinct "Jul 21"s, a year apart. That is the honest rendering:
+ * boundary, two distinct "Jul 21"s, a year apart. That is the honest rendering:
  * they are different days, and collapsing them into one averaged point is the
  * bug this keys around.
  */
@@ -107,7 +107,7 @@ export function buildTrend(items: readonly FeedbackItem[], days: number): Feedba
     const at = ratedAt.getTime();
     // Key on the absolute day, label with the short form. They cannot be the
     // same string: the label carries no year, so keying on it merges this
-    // Jul 21 with last year's into a single averaged point — reachable from the
+    // Jul 21 with last year's into a single averaged point. Reachable from the
     // "All" range on any workspace older than a year, and worse than it looks,
     // because the merged bucket inherits the OLDER timestamp below and can then
     // be dropped from the "most recent 14" entirely.
@@ -178,18 +178,18 @@ export function normalizeQuestionKey(question: string): string {
  * Build the feedback CSV. Columns: `Date,User,Type,Question,Answer`.
  *
  * Every cell goes through the shared `csvField` funnel. Question and Answer are
- * raw chat content — whatever a website visitor typed, verbatim — so this file
+ * raw chat content (whatever a website visitor typed, verbatim) so this file
  * is attacker-influenced by construction, and routing the whole row through one
  * escape is what keeps a column added later safe without its author having to
  * know that.
  *
  * Note what the funnel deliberately does *not* do: the previous implementation
  * deleted every comma from the data (`.replace(/,/g, '')`) before quoting it.
- * Quoting is what makes a comma safe — stripping it silently corrupted every
+ * Quoting is what makes a comma safe. Stripping it silently corrupted every
  * answer that contained one, and left `user` quote-unescaped besides.
  *
  * Separated from the download so the file's contents can be tested without a
- * DOM — the same split `leadsCsv.ts` uses, and for the same reason: this is
+ * DOM, the same split `leadsCsv.ts` uses, and for the same reason: this is
  * the one path where the data leaves the product, so a regression here is
  * invisible until it is in a customer's spreadsheet.
  */

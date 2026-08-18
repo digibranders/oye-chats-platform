@@ -1,6 +1,6 @@
 """get_visitor_data must be bounded and tenant-scoped (audit F26).
 
-The query had no LIMIT — on a busy workspace it loads every ChatSession row into
+The query had no LIMIT, on a busy workspace it loads every ChatSession row into
 memory for the dashboard. It must accept a bounded limit/offset and return the
 most-recent sessions first, scoped to the caller's workspace.
 """

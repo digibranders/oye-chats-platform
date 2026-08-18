@@ -1,7 +1,7 @@
 """Reusable server-side input-validation primitives.
 
 Every route module grew its own copy of "is this an email", "is this URL
-safe", "cap this string" — and the copies disagreed. Worse, most request
+safe", "cap this string", and the copies disagreed. Worse, most request
 models declared bare ``str`` / ``dict`` fields, which Pydantic happily fills
 with a 40 MB string or a 12-level-deep object graph. The database columns
 behind them are unbounded Postgres ``VARCHAR`` / ``JSONB``, so whatever the
@@ -113,7 +113,7 @@ Identifier = Annotated[
     ),
 ]
 
-#: Chat session id. Same shape as :data:`Identifier` — named separately
+#: Chat session id. Same shape as :data:`Identifier`. Named separately
 #: because it is by far the most common one and reads better at call sites.
 SessionId = Identifier
 
@@ -145,7 +145,7 @@ GatewayRef = Annotated[
 #: Bounded and free of whitespace/control characters, but NOT pinned to hex.
 #: Razorpay emits a hex HMAC today; the encoding is the vendor's to change,
 #: and a schema that hard-codes it would reject a valid callback after a
-#: provider-side change — turning a paid customer's activation into a 422.
+#: provider-side change. Turning a paid customer's activation into a 422.
 #: Whether the signature is *correct* is settled by the constant-time compare
 #: in ``razorpay_service``, which is the only check that can answer that.
 GatewaySignature = Annotated[
@@ -264,7 +264,7 @@ PublicHttpUrl = Annotated[str, AfterValidator(_validate_public_http_url)]
 def _require_finite(value: float) -> float:
     """Reject ``NaN`` / ``±Infinity``.
 
-    ``json.loads`` — which is what Starlette parses request bodies with —
+    ``json.loads`` (which is what Starlette parses request bodies with)
     accepts all three as literals. A NaN that reaches a ``double precision``
     column stores fine and then breaks every consumer that serialises the row
     back to JSON, so it has to be refused at the boundary.
@@ -277,7 +277,7 @@ def _require_finite(value: float) -> float:
 #: A float guaranteed to be a real number.
 FiniteFloat = Annotated[float, AfterValidator(_require_finite)]
 
-#: Non-negative, finite, and bounded to a day — enough for any "seconds spent"
+#: Non-negative, finite, and bounded to a day. Enough for any "seconds spent"
 #: telemetry and small enough that no consumer has to think about overflow.
 DurationSeconds = Annotated[float, AfterValidator(_require_finite), Field(ge=0, le=86_400)]
 
@@ -327,7 +327,7 @@ def check_json_object(
     """Validate a free-form JSON object's shape, size, depth and key count.
 
     Returns the object unchanged on success and raises ``ValueError`` on any
-    breach — this is a gate, not a sanitiser. Rejecting rather than pruning
+    breach. This is a gate, not a sanitiser. Rejecting rather than pruning
     matters here: silently dropping the 201st key would persist a config the
     caller never asked for and can't see, which is a worse outcome than a 422.
     """
@@ -376,7 +376,7 @@ def bounded_json_object(
 #: A free-form JSON object held to the default size/depth/key budget.
 BoundedJsonObject = Annotated[dict, bounded_json_object()]
 
-#: Small telemetry/metadata blobs — one page of JSON, shallow.
+#: Small telemetry/metadata blobs, one page of JSON, shallow.
 SmallJsonObject = Annotated[dict, bounded_json_object(max_bytes=4 * 1024, max_depth=4, max_keys=50)]
 
 #: ``{"utm_source": "...", ...}``-style maps: flat, string-valued, few keys.

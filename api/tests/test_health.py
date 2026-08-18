@@ -1,4 +1,4 @@
-"""Tests for /health and /health/full — readiness vs comprehensive checks.
+"""Tests for /health and /health/full. Readiness vs comprehensive checks.
 
 The split is the user-facing behavioral contract:
 - /health returns 200 as long as DB + Redis are up (worker degradation does
@@ -35,7 +35,7 @@ def healthy_engine():
 
 @pytest.fixture()
 def broken_engine():
-    """An engine whose connect() raises — simulates DB unreachable."""
+    """An engine whose connect() raises. Simulates DB unreachable."""
     engine = MagicMock()
     engine.connect.side_effect = RuntimeError("connection refused")
     return engine
@@ -46,7 +46,7 @@ def _redis_with_heartbeat(heartbeat_iso=None):
     to the given ISO timestamp (or None for missing/dead worker).
 
     Production `get_redis()` configures `decode_responses=True`, so `get()`
-    returns str (not bytes) — the fixture mirrors that contract.
+    returns str (not bytes), the fixture mirrors that contract.
     """
     redis = MagicMock()
     redis.ping.return_value = True
@@ -64,7 +64,7 @@ def _broken_redis():
 
 
 class TestHealthEndpoint:
-    """`/health` must stay 200 when only the worker is degraded — that's the
+    """`/health` must stay 200 when only the worker is degraded. That's the
     whole point of splitting the endpoints. Regressing this would silently
     take down LB probes whenever the worker hiccupped."""
 
@@ -85,7 +85,7 @@ class TestHealthEndpoint:
         assert body["redis"] == "connected"
 
     def test_returns_200_when_worker_is_disabled(self, healthy_engine):
-        """`WORKER_ENABLED=false` means in-process work — no separate worker
+        """`WORKER_ENABLED=false` means in-process work, no separate worker
         to poll, so worker_status='disabled' is healthy."""
         with (
             patch("app.main.engine", healthy_engine),
@@ -134,7 +134,7 @@ class TestHealthFullEndpoint:
     oncall when the worker disappears."""
 
     def test_returns_503_when_worker_is_dead(self, healthy_engine):
-        """Mirror image of the /health test above — worker death MUST 503
+        """Mirror image of the /health test above. Worker death MUST 503
         the comprehensive endpoint, otherwise pager rules are silent."""
         with (
             patch("app.main.engine", healthy_engine),
@@ -201,7 +201,7 @@ class TestLlmReadiness:
 
     def test_health_readiness_stays_200_when_llm_unavailable(self, healthy_engine):
         """/health is the LB / deploy gate and must keep DB+Redis-only response
-        semantics — a hollow litellm must NOT take the load balancer down."""
+        semantics, a hollow litellm must NOT take the load balancer down."""
         from datetime import UTC, datetime
 
         recent = datetime.now(UTC).isoformat()
@@ -238,12 +238,12 @@ class TestLlmProbe:
     ran the whole time with `/health/full` reporting healthy, because the only
     LLM signal was the import-attribute check (`_llm_ready`), which can't see
     a revoked key, billing block, or provider outage. `_llm_probe` makes one
-    real, tiny completion call — these tests pin that it actually calls out,
+    real, tiny completion call. These tests pin that it actually calls out,
     caches the result, and never spends money re-probing within the TTL."""
 
     @pytest.fixture(autouse=True)
     def _reset_probe_cache(self):
-        """Every test in this class gets a clean cache — otherwise test order
+        """Every test in this class gets a clean cache. Otherwise test order
         (or a slow CI box) could leak a cached result across tests."""
         import app.main as main_module
 
@@ -253,8 +253,8 @@ class TestLlmProbe:
         yield
 
     def test_short_circuits_without_network_call_when_import_check_fails(self):
-        """A hollow litellm install can't make a completion call at all —
-        don't even try; this must never make a network call."""
+        """A hollow litellm install can't make a completion call at all.
+        Don't even try; this must never make a network call."""
         from app.main import _llm_probe
 
         with (
@@ -371,7 +371,7 @@ class TestFallbackCount1h:
             assert _fallback_count_1h() == 5
 
     def test_returns_none_not_zero_when_unreadable(self):
-        """Distinguish 'confirmed zero fallbacks' from 'couldn't check' — a
+        """Distinguish 'confirmed zero fallbacks' from 'couldn't check', a
         silent Redis outage must not read as a false-positive clean bill of
         health."""
         from app.main import _fallback_count_1h

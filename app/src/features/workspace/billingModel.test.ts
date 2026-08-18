@@ -79,7 +79,7 @@ describe('planGrantsUnlimitedAgents', () => {
   });
 
   /* `limits` is JSONB with nothing enforcing its value types, and the server
-     reads the quota through `int(...)` — which accepts `"-1"`. Dropping the
+     reads the quota through `int(...)`, which accepts `"-1"`. Dropping the
      string here made the picker offer a plan `POST /bots/checkout` then
      refused, so the customer chose it and hit a dead end. */
   it('is true for the unlimited sentinel stored as a string', () => {

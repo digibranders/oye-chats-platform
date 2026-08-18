@@ -1,6 +1,6 @@
 """IP-based company and threat-signal lookup via ipapi.is.
 
-Always-on, best-effort signal — see
+Always-on, best-effort signal. See
 docs/superpowers/plans/2026-08-08-visitor-intelligence.md for why this
 can never resolve the real employer behind an ISP-routed IP.
 """
@@ -19,11 +19,11 @@ IPAPI_IS_URL = "https://api.ipapi.is/"
 # ── Is this "company" actually somebody's employer? ─────────────────────────
 #
 # Measured on production traffic: 10 IP resolutions produced 0 usable company
-# names — 9 consumer ISPs and 1 subnet label. Unfiltered, that is 10 carrier
+# names. 9 consumer ISPs and 1 subnet label. Unfiltered, that is 10 carrier
 # names shown to salespeople as leads' employers.
 #
 # The vendor's own `type` field is checked first but cannot be trusted alone:
-# it classified "TSBB pool2" — a BSNL subnet label — as `business`.
+# it classified "TSBB pool2" (a BSNL subnet label) as `business`.
 #
 # Matching is anchored on WORD boundaries, not raw substrings. This module's
 # sibling `company_markup` already learned that lesson the expensive way
@@ -68,7 +68,7 @@ _CORPORATE_SUFFIXES = frozenset(
 )  # fmt: skip
 
 # Consumer carrier brands. Their corporate names are perfectly plausible
-# company names, so no token rule can catch them — they have to be named.
+# company names, so no token rule can catch them. They have to be named.
 #
 # This knowingly rejects the rare visitor browsing from a carrier's own
 # CORPORATE network. That trade is deliberate: a carrier has millions of
@@ -80,7 +80,7 @@ _CORPORATE_SUFFIXES = frozenset(
 # review tested 197 realistic carrier names worldwide against an earlier
 # 24-entry version and 126 passed. It is a best-effort backstop for when the
 # vendor's `type` field is wrong, not a guarantee. Matched on word boundaries
-# for the same reason everything else here is — "jio" as a bare substring
+# for the same reason everything else here is. "jio" as a bare substring
 # would hit nothing useful, and as a trailing-space hack ("jio ") it missed
 # "JioFiber", "Reliance Jio" and the ASN-style "RELIANCEJIO-IN".
 _CARRIER_BRAND_WORDS = frozenset(
@@ -107,7 +107,7 @@ _CARRIER_BRAND_WORDS = frozenset(
 
 # Multi-word phrases, matched as substrings because each is unambiguous.
 # "last mile" was here and is gone: it condemned Delhivery, Shadowfax,
-# Loadshare and Porter — one of India's largest B2B verticals — while
+# Loadshare and Porter (one of India's largest B2B verticals) while
 # matching no realistic ipapi.is label.
 _INFRASTRUCTURE_PHRASES = (
     "internet service",
@@ -120,7 +120,7 @@ _INFRASTRUCTURE_PHRASES = (
     "virgin media",
 )
 
-# Two, not three: 3M, GE, BP, HP and LG are real employers. (BT is not — it is
+# Two, not three: 3M, GE, BP, HP and LG are real employers. (BT is not, it is
 # British Telecom, and it sits in the carrier list above.) Empty and
 # whitespace-only names are already caught by the strip and isalpha guards.
 _MIN_COMPANY_NAME_LEN = 2
@@ -130,7 +130,7 @@ _MIN_COMPANY_NAME_LEN = 2
 #
 # `education` and `government` were originally excluded along with hosting and
 # isp, which was an oversight rather than a decision: a procurement officer at
-# IIT Bombay or a state department is a legitimate — often the most valuable —
+# IIT Bombay or a state department is a legitimate (often the most valuable)
 # B2B lead, and their range is exactly as employer-owned as a company's. An
 # unrecognised value fails CLOSED, matching the rest of this module: showing
 # nothing costs less than showing a salesperson something false.
@@ -158,13 +158,13 @@ def is_usable_company_name(name: str | None) -> bool:
 
     Deliberately conservative, because the two errors do not cost the same. A
     false positive puts a carrier's name in front of a salesperson as though
-    it were the lead's company — they act on it, and it is wrong. A false
+    it were the lead's company. They act on it, and it is wrong. A false
     negative shows "not identified", which is merely honest.
     """
     # The vendor's payload is untrusted, and `company`/`asn` are already
     # guarded one level up. A non-string name reaching `.strip()` raised
     # AttributeError out of fetch_ip_intel, which sits BEFORE the geolocation
-    # lookup in its caller's try block — so one malformed field cost the
+    # lookup in its caller's try block, so one malformed field cost the
     # session its city and country too. Same guard, same reason, as
     # company_markup._plausible_name.
     if not isinstance(name, str):
@@ -192,7 +192,7 @@ def is_usable_company_name(name: str | None) -> bool:
 def fetch_ip_intel(ip_address: str) -> dict | None:
     """Fetch company/ASN/threat data for an IP. Returns None on any failure.
 
-    PRIVACY — the only caller is ``chat_routes._resolve_and_update_location``,
+    PRIVACY, the only caller is ``chat_routes._resolve_and_update_location``,
     which runs on the background pool; read the note on that function before
     calling this from anywhere else. ``url`` below carries both the visitor's
     address and the vendor API key, and Sentry's StdlibIntegration records
@@ -210,7 +210,7 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=3.0) as response:
             data = json.loads(response.read().decode())
     except Exception as exc:
-        # PRIVACY — no ``ip_address`` and no ``url`` in either line. Sentry's
+        # PRIVACY, no ``ip_address`` and no ``url`` in either line. Sentry's
         # LoggingIntegration promotes every WARNING to a breadcrumb, so an
         # address interpolated here rode out on the next error the process
         # reported, and the URL would have taken the vendor key with it.
@@ -237,7 +237,7 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
     if not isinstance(asn, dict):
         asn = {}
 
-    # "business" | "hosting" | "isp" | "education" | "government" — drives
+    # "business" | "hosting" | "isp" | "education" | "government". Drives
     # whether the company name means "the visitor's employer" or just "the ISP
     # that routed them".
     company_type = company.get("type")

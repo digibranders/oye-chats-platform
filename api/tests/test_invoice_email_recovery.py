@@ -3,7 +3,7 @@
 An email failure after a successful PDF render used to be permanently
 unrecoverable: the sweep only selects ``pdf_url IS NULL``, so a rendered
 invoice with ``emailed_at IS NULL`` was never retried, and
-``reconciliation_anomalies`` had no check for it — the customer silently never
+``reconciliation_anomalies`` had no check for it, the customer silently never
 received their tax invoice. Two fixes under test here:
 
 * ``task_render_invoice_pdfs`` gains a recovery pass that re-attempts delivery
@@ -53,7 +53,7 @@ def env(db, monkeypatch):
 
 def _mk_rendered_unmailed(db, email, number, *, issued_ago=timedelta(0), buyer_email=True):
     """A numbered invoice whose PDF rendered fine but whose email never went out
-    — exactly the state a post-render email failure leaves behind in prod."""
+    , exactly the state a post-render email failure leaves behind in prod."""
     c = Client(name="T", email=email, api_key=f"key-{email}")
     db.add(c)
     db.flush()
@@ -106,7 +106,7 @@ def test_recovery_failure_leaves_invoice_pending_for_next_sweep(db, env, monkeyp
 
 
 def test_recovery_ignores_invoices_without_buyer_email(db, env):
-    # A snapshot with no email can never be delivered — it must not occupy the
+    # A snapshot with no email can never be delivered, it must not occupy the
     # recovery batch (starving real recoverable rows) or be marked emailed.
     no_email = _mk_rendered_unmailed(db, "rec-4@test.example", "DB/26-27/000104", buyer_email=False)
     ok = _mk_rendered_unmailed(db, "rec-5@test.example", "DB/26-27/000105")
@@ -129,7 +129,7 @@ def test_recovery_does_not_touch_already_emailed(db, env):
 
 def test_emails_pending_anomaly_lists_stuck_deliveries(db, env):
     stuck = _mk_rendered_unmailed(db, "rec-7@test.example", "DB/26-27/000107", issued_ago=timedelta(hours=2))
-    _mk_rendered_unmailed(db, "rec-8@test.example", "DB/26-27/000108")  # fresh — sweep hasn't had its chance yet
+    _mk_rendered_unmailed(db, "rec-8@test.example", "DB/26-27/000108")  # fresh. Sweep hasn't had its chance yet
     anomalies = invoice_reports.reconciliation_anomalies(db)
     assert [r["id"] for r in anomalies["emails_pending"]] == [stuck.id]
 
@@ -145,7 +145,7 @@ def test_emails_pending_empty_in_shadow_mode(db, env, monkeypatch):
 def test_stale_claim_from_crashed_worker_is_reswept(db, env):
     # A worker that crashed between claim-commit and send (deploys restart the
     # worker) leaves email_claimed_at set with emailed_at NULL. The claim must
-    # go stale (>1h) and the invoice must be re-swept — the first M-5 cut
+    # go stale (>1h) and the invoice must be re-swept, the first M-5 cut
     # claimed via emailed_at itself and lost the document forever.
     inv = _mk_rendered_unmailed(db, "stale-claim@test.example", "INV/25-26/9001")
     inv.email_claimed_at = datetime.now(UTC) - timedelta(hours=2)
@@ -159,7 +159,7 @@ def test_stale_claim_from_crashed_worker_is_reswept(db, env):
 
 
 def test_fresh_claim_is_left_for_the_owning_sweep(db, env):
-    # A LIVE claim belongs to a concurrent sweep — this run must not
+    # A LIVE claim belongs to a concurrent sweep. This run must not
     # double-send.
     inv = _mk_rendered_unmailed(db, "fresh-claim@test.example", "INV/25-26/9002")
     inv.email_claimed_at = datetime.now(UTC) - timedelta(minutes=5)

@@ -1,7 +1,7 @@
 """Regression tests for the widget rate-limit key (roadmap §0.3).
 
 ``key_from_bot_key`` must bucket by ``<bot-key>:<client-ip>``, not by the public
-bot key alone — otherwise one copied key monopolises a bot's shared limit and
+bot key alone. Otherwise one copied key monopolises a bot's shared limit and
 starves every other visitor (and helps drain the owner's credits). These are
 pure-function tests: a lightweight fake Request carries headers + client host.
 """

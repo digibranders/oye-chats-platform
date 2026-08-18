@@ -1,6 +1,6 @@
 """Locks the dual-currency contract used by checkout_quote and /geo.
 
-These are pure unit tests over display_price — they do not hit the database
+These are pure unit tests over display_price. They do not hit the database
 or the network. They exist to pin the rule: Indian visitors see INR paise,
 everyone else sees the fixed USD column from the plan row.
 """

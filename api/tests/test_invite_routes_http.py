@@ -3,13 +3,13 @@
 ``tests/test_invite_service.py`` covers the service layer directly. This file
 covers the *route* layer that sits on top of it, which the service tests cannot
 reach: request/response contracts, the ``InviteError`` → structured-HTTP
-mapping, authorization, cross-tenant isolation, and — most importantly — the two
+mapping, authorization, cross-tenant isolation, and (most importantly) the two
 **unauthenticated public endpoints** (``GET /invites/by-token/{token}`` and
 ``POST /invites/by-token/{token}/accept``). Those grant workspace access from a
 bare token, so their negative paths are security-relevant, not cosmetic.
 
 The centrepiece is ``test_full_invite_round_trip``: it drives the real journey a
-customer takes — owner sends an invite → the emailed link's token is looked up
+customer takes. Owner sends an invite → the emailed link's token is looked up
 anonymously by the airlock page → the invitee accepts with their own API key →
 an ``Operator`` bound to the invite's bot exists. Nothing about that chain is
 asserted by the service tests, because the token only leaves the system through
@@ -196,7 +196,7 @@ def test_full_invite_round_trip(db):
     assert view["bot_id"] == bot.id  # the binding survives the response contract
     assert view["email"] == "newbie@example.com"  # normalized
     assert view["status"] == "pending"
-    # The response must never carry the token — only the email does.
+    # The response must never carry the token. Only the email does.
     assert "token" not in created.text.lower()
 
     # The email actually went out, and its link carries a usable token.
@@ -241,11 +241,11 @@ def test_full_invite_round_trip(db):
     assert invite.accepted_by_client_id == invitee.id
 
 
-# ── POST /invites — contract + error mapping ─────────────────────────────────
+# ── POST /invites. Contract + error mapping ─────────────────────────────────
 
 
 def test_create_requires_bot_id(db):
-    """``bot_id`` is required by the contract — omitting it is a 422, never a
+    """``bot_id`` is required by the contract. Omitting it is a 422, never a
     silently workspace-wide invite."""
     owner, _bot = _make_paid_workspace(db)
     app = _build_app(db, actor=owner)
@@ -308,7 +308,7 @@ def test_invite_email_failure_does_not_roll_back_the_invite(db):
     from app.api import invite_routes
 
     # Patch the *email service* under the dispatcher, so the route's real
-    # try/except is what swallows the failure — patching the dispatcher itself
+    # try/except is what swallows the failure. Patching the dispatcher itself
     # would test nothing.
     with (
         _routed(db, app) as api,
@@ -321,7 +321,7 @@ def test_invite_email_failure_does_not_roll_back_the_invite(db):
     assert row.status == "pending"
 
 
-# ── GET /invites — authorization + tenant isolation ──────────────────────────
+# ── GET /invites. Authorization + tenant isolation ──────────────────────────
 
 
 def test_list_returns_only_the_callers_workspace(db):
@@ -342,7 +342,7 @@ def test_list_returns_only_the_callers_workspace(db):
 
 
 def test_list_rejects_a_non_manager(db):
-    """Invite enumeration is owner/admin-only — a stranger gets the structured
+    """Invite enumeration is owner/admin-only, a stranger gets the structured
     RBAC error, not the list."""
     owner, bot = _make_paid_workspace(db)
     _seed_invite(db, owner, bot, email="secret@example.com", token="tok-sec-cccccccccccccccccccc")
@@ -369,11 +369,11 @@ def test_list_rejects_a_non_manager(db):
     assert res.json()["detail"]["error"] == "insufficient_permissions"
 
 
-# ── Public token endpoints — unauthenticated surface ─────────────────────────
+# ── Public token endpoints. Unauthenticated surface ─────────────────────────
 
 
 def test_public_lookup_unknown_token_is_404(db):
-    """An unknown token must be an ordinary 404 — no stack trace, no hint about
+    """An unknown token must be an ordinary 404, no stack trace, no hint about
     whether the token space is occupied."""
     anon_app = _build_app(db)
     with _routed(db, anon_app) as anon:
@@ -401,8 +401,8 @@ def test_public_lookup_reports_expired_and_sweeps_it(db):
 
 
 def test_accept_rejects_a_different_signed_in_account(db):
-    """The invite is bound to an email. Someone else holding the link — the
-    realistic leak — cannot spend it on their own account."""
+    """The invite is bound to an email. Someone else holding the link (the
+    realistic leak) cannot spend it on their own account."""
     owner, bot = _make_paid_workspace(db)
     token = "tok-mismatch-eeeeeeeeeeeeeeeeeeee"
     _seed_invite(db, owner, bot, email="intended@example.com", token=token)
@@ -429,7 +429,7 @@ def test_accept_unknown_token_is_404(db):
 
 
 def test_accept_a_revoked_invite_is_refused(db):
-    """Revocation is the owner's kill switch — a link already in the wild must
+    """Revocation is the owner's kill switch, a link already in the wild must
     stop working the moment it is revoked."""
     owner, bot = _make_paid_workspace(db)
     token = "tok-revoked-fffffffffffffffffff"
@@ -467,12 +467,12 @@ def test_accepting_twice_does_not_create_a_second_operator(db):
     assert len(ops) == 1
 
 
-# ── POST /invites/{id}/resend — token rotation ───────────────────────────────
+# ── POST /invites/{id}/resend. Token rotation ───────────────────────────────
 
 
 def test_resend_rotates_the_token_and_kills_the_old_link(db):
-    """Resend issues a NEW token and the previous link must stop resolving —
-    otherwise a leaked first link would stay valid forever alongside the new one."""
+    """Resend issues a NEW token and the previous link must stop resolving.
+    Otherwise a leaked first link would stay valid forever alongside the new one."""
     owner, bot = _make_paid_workspace(db)
     old_token = "tok-rotate-old-jjjjjjjjjjjjjjjj"
     invite = _seed_invite(db, owner, bot, email="rotate@example.com", token=old_token)
@@ -518,7 +518,7 @@ def test_resend_of_another_workspaces_invite_is_rejected(db):
     assert victim.token_hash == hashlib.sha256(b"tok-victim2-kkkkkkkkkkkkkk").hexdigest()
 
 
-# ── DELETE /invites/{id} — revoke ────────────────────────────────────────────
+# ── DELETE /invites/{id}. Revoke ────────────────────────────────────────────
 
 
 def test_revoke_marks_the_invite_and_kills_the_link(db):

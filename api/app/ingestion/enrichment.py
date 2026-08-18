@@ -1,17 +1,17 @@
 """Contextual chunk enrichment for RAG ingestion.
 
 Prepends a short LLM-generated context summary to each chunk before embedding.
-Inspired by Anthropic's Contextual Retrieval technique — reported 49–67%
+Inspired by Anthropic's Contextual Retrieval technique. Reported 49 to 67%
 reduction in failed retrievals.
 
 Feature flag: ``CHUNK_ENRICHMENT_ENABLED`` (default: false).
-Model:        ``ENRICHMENT_MODEL`` (default: gemini/gemini-2.5-flash — cheapest capable).
+Model:        ``ENRICHMENT_MODEL`` (default: gemini/gemini-2.5-flash. Cheapest capable).
 
 Cost estimate: ~$0.001/chunk at ingestion (one-time per document).
 A 50-page site with ~200 chunks ≈ $0.20 total.
 
 Important: enrichment happens BEFORE embedding so the vector captures the
-contextual summary. It does NOT replace the chunk text — it prepends
+contextual summary. It does NOT replace the chunk text, it prepends
 ``[Context: <summary>]`` to it.
 """
 
@@ -32,7 +32,7 @@ CHUNK_ENRICHMENT_ENABLED: bool = os.getenv("CHUNK_ENRICHMENT_ENABLED", "false").
 )
 ENRICHMENT_MODEL: str = os.getenv("ENRICHMENT_MODEL", "gemini/gemini-2.5-flash")
 
-# Keep enrichment summaries short — they're prepended to chunks for embedding
+# Keep enrichment summaries short. They're prepended to chunks for embedding
 _SUMMARY_MAX_TOKENS = 80
 # Inter-call delay (seconds) to avoid hitting rate limits on cheap models
 _RATE_LIMIT_DELAY = 0.5

@@ -1,6 +1,6 @@
 """GSTIN format + checksum validation (15-char, Rule 46 buyer/seller identity).
 
-Layout: SS PPPPPPPPPP E Z C — SS = state code (01-38 or 97), 10-char PAN,
+Layout: SS PPPPPPPPPP E Z C. SS = state code (01-38 or 97), 10-char PAN,
 E = entity code, literal 'Z', C = mod-36 check character.
 """
 

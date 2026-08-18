@@ -3,7 +3,7 @@
 Every rupee figure the UI shows is read from ``plan.monthly_price_cents``; if it
 drifts from the live Razorpay plan amount, the UI truthfully-but-wrongly quotes
 a number the mandate does not debit. This diagnostic makes drift observable. The
-Razorpay client is mocked — no live calls in tests.
+Razorpay client is mocked, no live calls in tests.
 
 Real-Postgres route test via the shared ``db`` fixture. Skips without DB_URL.
 """
@@ -64,7 +64,7 @@ def test_plan_price_reconciliation_flags_drift(db):
     db.commit()
 
     fake_rzp = MagicMock()
-    # Razorpay returns the plan amount in paise under item.amount — drifted here.
+    # Razorpay returns the plan amount in paise under item.amount. Drifted here.
     fake_rzp.plan.fetch.return_value = {"item": {"amount": 149900, "currency": "INR"}}
 
     app = FastAPI()

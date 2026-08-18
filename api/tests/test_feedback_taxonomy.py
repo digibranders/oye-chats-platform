@@ -1,15 +1,15 @@
-"""Feedback taxonomy — backend coverage (real Postgres).
+"""Feedback taxonomy. Backend coverage (real Postgres).
 
 Exercises the Type/Area/Severity taxonomy, auto-captured context, and
 multi-screenshot attachments end-to-end:
 
-  * ``POST /client/feedback`` — validates type/area/severity enums, drops
+  * ``POST /client/feedback``. Validates type/area/severity enums, drops
     severity for non-bugs, whitelists context, normalizes attachments, and
     mirrors the first attachment into the legacy ``attachment_url``.
-  * ``GET /client/feedback`` — serializes the new fields and coalesces
+  * ``GET /client/feedback``. Serializes the new fields and coalesces
     ``attachments`` from a legacy single ``attachment_url``.
-  * ``GET /superadmin/platform-feedback`` — filters by type/area/severity.
-  * ``PATCH`` — re-classification with the bug-only severity rule + audit.
+  * ``GET /superadmin/platform-feedback``. Filters by type/area/severity.
+  * ``PATCH``. Re-classification with the bug-only severity rule + audit.
   * Migration backfill mapping (category → type) at the SQL level.
 """
 

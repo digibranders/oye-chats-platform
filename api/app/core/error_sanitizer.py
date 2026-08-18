@@ -1,7 +1,7 @@
 """One place that decides what an error is allowed to tell a client.
 
-Every handler in ``app.core.middleware`` — and the handful of routes that catch
-a third-party failure directly — goes through this module instead of formatting
+Every handler in ``app.core.middleware`` (and the handful of routes that catch
+a third-party failure directly) goes through this module instead of formatting
 its own response. Centralising it is the point: the leaks this file exists to
 close were never a single bad handler, they were the same reasonable-looking
 line written independently in a dozen places.
@@ -9,7 +9,7 @@ line written independently in a dozen places.
 THE TWO AUDIENCES
     A failure has two readers with opposite needs. The **client** needs to know
     what to do next and nothing else. The **operator** needs the exception type,
-    the traceback, the offending field, and the row that broke — all of which
+    the traceback, the offending field, and the row that broke. All of which
     are exactly what an attacker wants. Splitting one exception into two
     renderings is the whole design; helpers here always come in pairs, one
     ``public_*`` and one ``loggable_*``, so a call site cannot accidentally
@@ -21,14 +21,14 @@ WHAT LEAKED, CONCRETELY
     crossing the wire:
 
     ``url``
-        ``https://errors.pydantic.dev/2.12/v/string_type`` — the framework's
+        ``https://errors.pydantic.dev/2.12/v/string_type``, the framework's
         exact **minor version**, handed to anyone who can POST a malformed
         body, on a service whose OpenAPI schema is deliberately switched off in
         production (``main._docs_urls``) precisely to deny that class of recon.
 
     ``input``
         The submitted value, echoed back. On ``POST /login`` a body of
-        ``{"email": [], "password": "hunter2"}`` fails on ``email`` — and the
+        ``{"email": [], "password": "hunter2"}`` fails on ``email``, and the
         response, the ERROR-level log line, and the Sentry breadcrumb attached
         to it all carried the password field's neighbourhood back out. Any
         endpoint taking a credential (``/register``, ``/reset-password``,
@@ -50,7 +50,7 @@ ERROR IDs
     cannot connect "it broke at 3pm" to a log line, so somebody argues for
     putting the traceback back in the response. :func:`new_error_id` gives the
     client an opaque token that means nothing on its own and everything in
-    ``journalctl``. It is random per occurrence — deliberately not derived from
+    ``journalctl``. It is random per occurrence. Deliberately not derived from
     the request, the account, or the exception, so it cannot be mined.
 
 PRODUCTION VS DEVELOPMENT
@@ -108,8 +108,8 @@ _DEBUG_HINT_MAX_CHARS = 300
 def is_sensitive_field(name: Any) -> bool:
     """Would a value under this field name be a credential?
 
-    Accepts anything Pydantic can put in a ``loc`` tuple — a string key, an int
-    list index, ``'__root__'`` — and answers False for the non-strings, which is
+    Accepts anything Pydantic can put in a ``loc`` tuple (a string key, an int
+    list index, ``'__root__'``) and answers False for the non-strings, which is
     correct: an array index names no field.
     """
     if not isinstance(name, str):
@@ -133,7 +133,7 @@ def public_validation_errors(errors: list[dict]) -> list[dict]:
     Keeps ``type``, ``loc`` and ``msg``; drops ``url``, ``input`` and ``ctx``
     for the reasons in the module docstring. The shape stays a list of dicts
     with ``msg`` and ``loc``, which is the contract the dashboard and widget
-    already parse — this narrows the payload without changing its type.
+    already parse. This narrows the payload without changing its type.
     """
     safe: list[dict] = []
     for err in errors:
@@ -155,8 +155,8 @@ def public_validation_errors(errors: list[dict]) -> list[dict]:
 def loggable_validation_errors(errors: list[dict]) -> list[dict]:
     """Full-fidelity rendering for the server log, with secrets removed.
 
-    Unlike :func:`public_validation_errors` this **keeps** ``input`` — knowing
-    the value that failed is most of the diagnostic — except where the ``loc``
+    Unlike :func:`public_validation_errors` this **keeps** ``input`` (knowing
+    the value that failed is most of the diagnostic) except where the ``loc``
     path names a credential, in which case the value is replaced with
     ``[redacted]``. Values are stringified and truncated so a 10 MB body that
     failed validation cannot be re-materialised in the log.
@@ -188,7 +188,7 @@ def new_error_id() -> str:
 
     12 hex characters: enough that two concurrent 500s will not collide in a
     log search, short enough for a customer to read out over the phone. Carries
-    no information on its own — see the module docstring.
+    no information on its own. See the module docstring.
     """
     return secrets.token_hex(6)
 
@@ -196,8 +196,8 @@ def new_error_id() -> str:
 # Environments permitted to see exception text in a response body. An
 # ALLOW-list, not a "!= production" check, and that asymmetry is the whole
 # point: the two are equivalent only while ``APP_ENV`` is spelled exactly right.
-# Under a blocklist, ``APP_ENV=Production`` — or ``prod``, or ``staging``, or a
-# value blanked by a broken deploy script — reads as "not production" and turns
+# Under a blocklist, ``APP_ENV=Production`` (or ``prod``, or ``staging``, or a
+# value blanked by a broken deploy script) reads as "not production" and turns
 # exception text back on across the fleet, silently, with no other symptom.
 # Under this list the same typo costs a debug convenience and nothing else.
 #
@@ -230,8 +230,8 @@ def debug_hint(exc: BaseException) -> str | None:
     """``'<ExceptionType>: <message>'`` in a debug environment, ``None`` elsewhere.
 
     The single intentional difference between production and development error
-    responses. Never a traceback and never unbounded — a hint identifies the
-    failure, it does not reproduce it — because the same string is what a
+    responses. Never a traceback and never unbounded (a hint identifies the
+    failure, it does not reproduce it) because the same string is what a
     misconfigured environment would end up shipping.
     """
     if not debug_details_allowed():

@@ -1,7 +1,7 @@
-"""Affiliate invite acceptance transaction boundary — remediation H3 (real PG).
+"""Affiliate invite acceptance transaction boundary. Remediation H3 (real PG).
 
 ``accept_invite_for_existing_client`` marks an invite consumed even on the
-already-an-affiliate branch. It must persist ONLY that mark — it must not
+already-an-affiliate branch. It must persist ONLY that mark, it must not
 ``session.commit()`` the caller's session, which would commit whatever other
 pending work the request had staged. The mark is written in its own
 transaction (on the same engine) so it survives the caller's rollback without

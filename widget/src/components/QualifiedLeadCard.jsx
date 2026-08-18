@@ -3,13 +3,13 @@ import { MessageCircle, CalendarClock } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 
 /**
- * QualifiedLeadCard — warm-lead conversion prompt rendered inline in the chat
+ * QualifiedLeadCard. Warm-lead conversion prompt rendered inline in the chat
  * thread, right after the bot's answer.
  *
  * Surfaces once a visitor becomes qualified (2+ BANT dimensions marked) AND the
  * bot has meeting booking configured. Rather than a plain-text "connect with our
- * team?" follow-up, the visitor gets an explicit choice — talk to the team now
- * (live-chat handoff) or book a meeting — styled as the same pill chips used for
+ * team?" follow-up, the visitor gets an explicit choice (talk to the team now
+ * (live-chat handoff) or book a meeting) styled as the same pill chips used for
  * the welcome suggestions, with "Continue with AI" as a low-friction text escape
  * hatch. While it's shown the composer is hidden, so the choice is the visitor's
  * sole next action until they pick one.
@@ -21,9 +21,9 @@ import { sanitizeColor } from '../services/sanitize';
  * Props:
  *   - liveChatEnabled : show the "Live chat" chip
  *   - hasMeeting      : show the "Book a meeting" chip
- *   - onConnectSupport: () => void — visitor chooses live-chat handoff
- *   - onBookMeeting   : () => void — visitor chooses to book a meeting
- *   - onDismiss       : () => void — visitor continues with AI
+ *   - onConnectSupport: () => void. Visitor chooses live-chat handoff
+ *   - onBookMeeting   : () => void. Visitor chooses to book a meeting
+ *   - onDismiss       : () => void. Visitor continues with AI
  *   - primaryColor    : brand accent, used to tint the chip icons
  */
 const QualifiedLeadCard = ({
@@ -36,7 +36,7 @@ const QualifiedLeadCard = ({
 }) => {
     const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
 
-    // With neither action available there is nothing to offer — never render an
+    // With neither action available there is nothing to offer, never render an
     // empty prompt (defensive: the backend only emits this card when meeting
     // booking is configured, so ``hasMeeting`` is effectively always true).
     if (!liveChatEnabled && !hasMeeting) return null;

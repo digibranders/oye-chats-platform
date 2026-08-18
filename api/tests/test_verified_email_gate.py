@@ -1,12 +1,12 @@
-"""Email-verification gate (B2) — ``require_verified_email`` + workspace variant.
+"""Email-verification gate (B2). ``require_verified_email`` + workspace variant.
 
 A freshly registered client starts un-verified (``is_verified=False``). B2 adds
-two FastAPI dependencies that defer — never wall — the small set of sensitive
+two FastAPI dependencies that defer (never wall) the small set of sensitive
 mutations that shouldn't run before the account proves ownership of its email:
 
-* ``require_verified_email`` — strict (``X-API-Key`` only) variant, attached to
+* ``require_verified_email``. Strict (``X-API-Key`` only) variant, attached to
   the paid-subscription checkout mutation.
-* ``require_verified_email_for_workspace`` — accepts client OR operator callers
+* ``require_verified_email_for_workspace``. Accepts client OR operator callers
   and gates on the *workspace owner's* verification, attached to invite-send.
   Mirrors the existing ``require_active_subscription`` / ``…_for_workspace`` pair.
 
@@ -112,7 +112,7 @@ def test_workspace_gate_admits_superadmin_without_db():
     admin.is_superadmin = True
     auth = {"type": "client", "entity": admin, "client_id": 1, "operator_id": None}
 
-    # Superadmins bypass before any DB lookup — patch get_session to explode if
+    # Superadmins bypass before any DB lookup. Patch get_session to explode if
     # it were consulted, proving the short-circuit.
     def _boom():
         raise AssertionError("superadmin must bypass before resolving the owner")
@@ -143,7 +143,7 @@ class _FakeSession:
     def __init__(self, client):
         self._client = client
 
-    def get(self, model, ident):  # noqa: ARG002 — signature parity with Session.get
+    def get(self, model, ident):  # noqa: ARG002  Signature parity with Session.get
         return self._client
 
 
@@ -219,7 +219,7 @@ def test_invite_send_route_blocks_unverified_owner(db):
 
 @_needs_db
 def test_invite_send_route_admits_verified_owner_past_the_gate(db):
-    """A verified owner clears the gate — proving the block is verification, not a
+    """A verified owner clears the gate. Proving the block is verification, not a
     blanket wall. We stop at the gate boundary by letting invite creation run;
     a verified owner must NOT get a 403 ``email_verification_required``."""
     from app.api import auth, invite_routes

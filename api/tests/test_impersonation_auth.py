@@ -51,7 +51,7 @@ def _mk_target(db, email: str, **extra) -> Client:
 def _mk_token(db, actor: Client, target: Client, *, expires_in: timedelta = timedelta(minutes=30)) -> tuple[str, int]:
     """Mint an impersonation token exactly as ``/impersonate`` does.
 
-    Returns ``(raw_token, token_id)`` — the raw value never leaves this helper
+    Returns ``(raw_token, token_id)``, the raw value never leaves this helper
     in production, so tests must capture it at mint time just like the browser.
     """
     raw = secrets.token_urlsafe(32)
@@ -130,7 +130,7 @@ class TestImpersonationResolution:
         )
 
         assert client.api_key is None
-        # Scrubbing happens on the detached copy only — the stored credential
+        # Scrubbing happens on the detached copy only, the stored credential
         # must be untouched.
         assert db.get(Client, target_id).api_key == real_key
 
@@ -148,7 +148,7 @@ class TestImpersonationResolution:
         assert _resolve_expecting_401(raw) == "Impersonation session expired or revoked."
 
     def test_token_valid_up_to_the_expiry_boundary(self, db, monkeypatch):
-        """A token one second short of expiry still resolves — the boundary is
+        """A token one second short of expiry still resolves, the boundary is
         ``expires_at > now``, not ``>=`` with a safety margin."""
         admin = _mk_admin(db, "imp-bound-admin@test.example")
         target = _mk_target(db, "imp-bound-target@test.example")
@@ -335,7 +335,7 @@ def _probe_client(db, monkeypatch) -> TestClient:
 class TestBotKeysStayExcluded:
     def test_bot_key_cannot_resolve_to_a_client(self, db, monkeypatch):
         """Bot keys are public (embedded in every widget script) and must never
-        resolve to a Client — impersonation support does not change that."""
+        resolve to a Client. Impersonation support does not change that."""
         owner = _mk_target(db, "imp-botkey-owner@test.example")
         db.add(Bot(client_id=owner.id, bot_key="bot-imp-public-key"))
         db.flush()
@@ -378,7 +378,7 @@ class TestImpersonationWriteGuard:
         assert res.json()["detail"]["error"] == "impersonation_read_only"
 
     def test_unmarked_delete_is_denied(self, db, monkeypatch):
-        """The guard keys on the HTTP method, not on POST specifically — and it
+        """The guard keys on the HTTP method, not on POST specifically, and it
         applies to ``get_current_client_or_operator`` too."""
         admin = _mk_admin(db, "imp-g3-admin@test.example")
         target = _mk_target(db, "imp-g3-target@test.example")
@@ -400,7 +400,7 @@ class TestImpersonationWriteGuard:
         assert res.json()["client_id"] == target_id
 
     def test_guard_does_not_touch_ordinary_api_key_writes(self, db, monkeypatch):
-        """The guard is scoped to impersonated callers — a customer POSTing to
+        """The guard is scoped to impersonated callers, a customer POSTing to
         an unmarked route with their own key must keep working."""
         target = _mk_target(db, "imp-g5-target@test.example")
         target_id, api_key = target.id, target.api_key
@@ -421,7 +421,7 @@ class TestImpersonationWriteGuard:
         assert handler.impersonation_writable is True
 
     def test_newly_registered_mutating_route_is_denied_by_default(self, db, monkeypatch):
-        """REGRESSION GUARD — do not delete.
+        """REGRESSION GUARD. Do not delete.
 
         A mutating route added later, by someone who has never heard of
         impersonation, must be inert under an impersonated session until a human
@@ -592,7 +592,7 @@ class TestImpersonatedPreviewChat:
         assert exc.value.status_code == 401
 
     def test_impersonation_cannot_preview_another_accounts_bot(self, db, monkeypatch):
-        """Tenant scoping still applies — the token grants ONE Account."""
+        """Tenant scoping still applies, the token grants ONE Account."""
         _patch_session(monkeypatch, db)
         admin = _mk_admin(db, "imp-prev-x-admin@test.example")
         target = _mk_target(db, "imp-prev-x-target@test.example")
@@ -656,12 +656,12 @@ class TestImpersonationPrivilegeRechecks:
     ``get_current_client_strict`` honours ``X-Impersonation-Token`` and
     ``get_superadmin`` depends on it, inspecting only the RESOLVED client. So a
     token whose target is (or becomes) a super-admin grants the whole
-    ``/superadmin/*`` surface — and every read there is a safe method the write
+    ``/superadmin/*`` surface, and every read there is a safe method the write
     guard waves through, so the escalation leaks every Account's data, not one.
     """
 
     def test_token_whose_target_was_promoted_is_rejected(self, db, monkeypatch):
-        """The promotion happens AFTER minting — the mint filter cannot see it."""
+        """The promotion happens AFTER minting, the mint filter cannot see it."""
         _patch_session(monkeypatch, db)
         admin = _mk_admin(db, "esc-promo-admin@test.example")
         target = _mk_target(db, "esc-promo-target@test.example")

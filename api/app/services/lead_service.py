@@ -102,7 +102,7 @@ def get_bant_config(bot: Bot | None) -> dict:
     which framework the bot actually had selected. For a MEDDIC/CHAMP/
     GPCTBA+C&I bot, that silently produced a hybrid config containing both
     the bot's real dimensions AND the four unused, still-"enabled" BANT
-    dimensions (need/budget/authority/timeline) — corrupting any weighted
+    dimensions (need/budget/authority/timeline). Corrupting any weighted
     composite computed from it and, in ``bot_routes._build_public_cta_options``,
     hiding every non-BANT dimension's CTA pill entirely. Delegates to
     ``qualification_service.get_framework_config``, which selects the correct
@@ -139,12 +139,12 @@ def count_dimensions_assessed(session: ChatSession) -> int:
     """Count how many of the active framework's dimensions have a non-zero score.
 
     BR-01/BR-05: previously hardcoded to the four legacy BANT columns, which
-    are only ever populated when the bot's framework is literally "bant" —
+    are only ever populated when the bot's framework is literally "bant",
     for MEDDIC/CHAMP/GPCTBA+C&I bots this always read 0 regardless of how
     many dimensions were actually assessed. ``dimensions_assessed`` is a
     persisted column already computed framework-agnostically (from
     ``dimension_scores``) at extraction time in
-    ``rag_service._background_bant_extraction`` — read it directly instead
+    ``rag_service._background_bant_extraction``. Read it directly instead
     of recomputing from BANT-only columns.
     """
     return _score_value(getattr(session, "dimensions_assessed", 0))
@@ -158,18 +158,18 @@ def apply_display_decay(session: ChatSession, framework_config: dict | None = No
     itself is never mutated; callers receive adjusted values for presentation only.
 
     Returns ``{"dimensions": {dim: decayed_score, ...}, "total": composite,
-    "decayed": bool}`` — ``total`` is the framework-weighted composite
+    "decayed": bool}``. ``total`` is the framework-weighted composite
     (via ``calculate_composite_score``) computed from the *decayed* per-dimension
     scores, not a raw point sum, so it stays consistent with the persisted
     ``ChatSession.bant_score`` for every framework (equal-weight BANT is the
     special case where a raw sum and the weighted composite coincide).
 
     BR-05: previously hardcoded to decay only the literal ``need_score``/
-    ``timeline_score`` columns — meaningless for any framework whose
+    ``timeline_score`` columns. Meaningless for any framework whose
     dimensions aren't named "need"/"timeline" (MEDDIC/CHAMP/GPCTBA+C&I all
     share the same two decay-rate keys as BANT despite not having those
     dimensions). Generalized to read ``dimension_scores`` and apply a
-    per-dimension decay rate keyed as ``f"{dimension}_decay_per_30d"`` —
+    per-dimension decay rate keyed as ``f"{dimension}_decay_per_30d"``,
     a no-op for frameworks/dimensions that don't define one, which matches
     prior (accidental) behavior for those cases while fixing it for BANT.
     """
@@ -238,14 +238,14 @@ def build_lead_response(
     (``page_url``, ``referrer``, ``utm_params`` on ``behavioral``, and the
     top-level ``source`` block that pins the lead's UTM + journey snapshot
     from ``lead_info``). Callers pass ``True`` only when the caller's client
-    is on a plan that includes the feature — the gate is enforced at the
+    is on a plan that includes the feature, the gate is enforced at the
     route boundary via ``is_lead_source_attribution_enabled``. On lower
     tiers the fields are stripped from the response entirely so a curl
     against the API cannot bypass the frontend paywall.
 
     ``include_intelligence`` gates the lead-intelligence layer the same
-    way (route boundary: ``is_lead_intelligence_enabled``). When False —
-    the Free plan — the composite score, tier, per-dimension breakdown,
+    way (route boundary: ``is_lead_intelligence_enabled``). When False
+    (the Free plan) the composite score, tier, per-dimension breakdown,
     and location/device are stripped entirely, leaving the conversation
     surface: identity, contact, chat count, and timestamps.
 
@@ -253,16 +253,16 @@ def build_lead_response(
     Intelligence layer: the Reoon-validated ``is_valid_email`` / `email_score`
     on ``contact``, and the top-level ``visitor_metadata`` IP-intelligence
     block (company/ASN/VPN-threat signal captured in the background for
-    every visitor, regardless of plan — this flag only controls whether it's
+    every visitor, regardless of plan. This flag only controls whether it's
     ever returned in the API response). Route boundary:
     ``is_visitor_intelligence_enabled``. Unlike ``include_intelligence``,
     these keys are never present in the base payload and are only added
-    when this flag is True — there's nothing to strip on lower tiers
+    when this flag is True. There's nothing to strip on lower tiers
     because the fields don't exist in the payload at all otherwise.
 
     BR-01: ``config`` reflects the bot's ACTUAL selected framework (via
     the fixed ``get_bant_config``), and the ``bant`` breakdown below
-    emits that framework's real dimensions — for a BANT bot this is
+    emits that framework's real dimensions, for a BANT bot this is
     unchanged (need/budget/authority/timeline); for MEDDIC/CHAMP/
     GPCTBA+C&I it surfaces their real dimensions instead of four
     permanently-empty ones.
@@ -286,7 +286,7 @@ def build_lead_response(
             contact["is_valid_email"] = lead_info.is_valid_email
             contact["email_score"] = lead_info.email_score
             # The resolved company identity, behind the same plan gate as the
-            # rest of visitor intelligence — it is produced by the same paid
+            # rest of visitor intelligence, it is produced by the same paid
             # enrichment. `company` above stays the raw domain on every plan,
             # because it is free and pre-dates this feature.
             contact["company_name"] = lead_info.company_name
@@ -305,7 +305,7 @@ def build_lead_response(
             value = getattr(session, _LEGACY_DIMENSION_TEXT_ATTR[dim], None)
         bant_breakdown[dim] = {"value": value, "score": adjusted_scores["dimensions"].get(dim, 0)}
 
-    # Behavioral block — engagement score is always exposed; page_url /
+    # Behavioral block. Engagement score is always exposed; page_url /
     # referrer / utm_params live behind ``include_attribution`` so lower
     # tiers can still see the engagement bar without leaking source data.
     behavioral_block: dict = {
@@ -344,12 +344,12 @@ def build_lead_response(
     if include_visitor_intelligence:
         # The plan gate decides whether the customer sees the enrichment at all;
         # it does not entitle them to the visitor's raw IP, which rides along
-        # inside the blob as ``ip_intel.resolved_for_ip`` — our own dedup marker.
+        # inside the blob as ``ip_intel.resolved_for_ip``. Our own dedup marker.
         payload["visitor_metadata"] = redact_visitor_metadata(getattr(session, "visitor_metadata", None))
 
     if not include_intelligence:
         # Free plan: the conversation surface only. Deleting (not nulling)
-        # keeps the wire contract honest — absent means "not on your plan",
+        # keeps the wire contract honest. Absent means "not on your plan",
         # and a curl can't recover what was never serialized.
         for key in (
             "score",

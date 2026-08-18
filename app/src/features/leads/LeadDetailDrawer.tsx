@@ -62,7 +62,7 @@ export interface LeadDetailDrawerProps {
    * True when the caller's plan includes Visitor Intelligence
    * (Professional). Controls whether `VisitorIntelligenceSection` renders
    * the company signal / email validity / follow-up action, or a locked
-   * teaser in their place. Independent of `locked` — a Starter client
+   * teaser in their place. Independent of `locked`, a Starter client
    * (unlocked lead intelligence, no Visitor Intelligence) sees the full
    * drawer with only this one section gated.
    */
@@ -75,7 +75,7 @@ export interface LeadDetailDrawerProps {
   annotations?: LeadAnnotationController | null;
 }
 
-/** A compact circular score gauge (0–100), tinted by tier tone. */
+/** A compact circular score gauge (0 to 100), tinted by tier tone. */
 function ScoreRing({ score }: { score: number }): ReactElement {
   const clamped = Math.max(0, Math.min(100, score));
   // Tally the score up from 0 whenever a lead is selected; the ring sweep and
@@ -139,7 +139,7 @@ function ContactRow({
 }: {
   icon: typeof Mail;
   value: string;
-  /** Quieter line beneath the value — used to keep the raw email domain
+  /** Quieter line beneath the value. Used to keep the raw email domain
    *  visible under a resolved company name, rather than replacing it. */
   secondary?: string;
   /** Company logo, when the resolver found one. Replaces the generic icon. */
@@ -200,7 +200,7 @@ function formatClock(iso: string | null | undefined): string {
  * said them. Backs the per-dimension evidence list so a lead who mentioned
  * three different needs shows all three, not just the highest-scoring one.
  *
- * Operator score overrides are excluded — their ``extracted_value`` is the raw
+ * Operator score overrides are excluded. Their ``extracted_value`` is the raw
  * numeric score, not visitor-stated text. Values are de-duplicated
  * case-insensitively so a repeated identical mention appears once.
  */
@@ -551,7 +551,7 @@ export function LeadDetailDrawer({
                 {detail.contact?.email && <ContactRow icon={Mail} value={detail.contact.email} />}
                 {detail.contact?.phone && <ContactRow icon={Phone} value={detail.contact.phone} />}
                 {(() => {
-                  // Resolved name with the raw domain beneath it — never
+                  // Resolved name with the raw domain beneath it, never
                   // instead of it. See `companyDisplay`.
                   const company = companyDisplay(detail.contact);
                   if (!company) return null;
@@ -563,7 +563,7 @@ export function LeadDetailDrawer({
                       secondary={company.secondary}
                       // The resolver returns a logo and a description too, and
                       // both were stored, plan-gated and typed while being
-                      // rendered nowhere — two thirds of what the paid
+                      // rendered nowhere, two thirds of what the paid
                       // enrichment produces was invisible.
                       logoUrl={typeof logo === 'string' ? logo : undefined}
                       description={detail.contact?.company_description ?? undefined}
@@ -636,7 +636,7 @@ export function LeadDetailDrawer({
                             // back to the single rolling value when signals
                             // aren't available (older leads, or the query was
                             // skipped). A multi-value list is what surfaces the
-                            // 3–4 separate needs a visitor mentioned.
+                            // 3 to 4 separate needs a visitor mentioned.
                             const values = distinctSignalValues(detail.signals, key);
                             if (values.length > 1) {
                               return (
@@ -679,7 +679,7 @@ export function LeadDetailDrawer({
               </>
             )}
 
-            {/* Conversation transcript — the ONLY thing the "View chat" face shows */}
+            {/* Conversation transcript, the ONLY thing the "View chat" face shows */}
             {view === 'chat' && (
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
@@ -690,7 +690,7 @@ export function LeadDetailDrawer({
                 {detail.messages && detail.messages.length > 0 && (
                   <span className="text-[11px] text-[var(--ds-text-subtle)]">
                     {/* When the conversation took place (session start), NOT the
-                        most recent activity — that lives in the "Last active"
+                        most recent activity. That lives in the "Last active"
                         footer below. ``created_at`` is fixed at session creation;
                         ``last_active_at`` moves on every new message. */}
                     {formatDateTime(detail.created_at ?? detail.last_active_at)}
@@ -711,7 +711,7 @@ export function LeadDetailDrawer({
             </section>
             )}
 
-            {/* Operator-private notes & tags — unlocked detail face only. */}
+            {/* Operator-private notes & tags. Unlocked detail face only. */}
             {view === 'detail' && !locked && annotations && (
               <LeadAnnotationsSection key={detail.session_id} controller={annotations} />
             )}

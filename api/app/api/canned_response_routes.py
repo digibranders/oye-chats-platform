@@ -1,4 +1,4 @@
-"""Canned response CRUD endpoints — pre-saved quick replies for operators."""
+"""Canned response CRUD endpoints. Pre-saved quick replies for operators."""
 
 import logging
 
@@ -86,7 +86,7 @@ def create_canned_response(
     """Create a new canned response.
 
     Writable under a super-admin impersonation session (design §6.1,
-    "Canned-response CRUD") — pure workspace content, and reversible.
+    "Canned-response CRUD"). Pure workspace content, and reversible.
     """
     _require_canned_response_write_access(auth)
     with get_session() as session:
@@ -157,7 +157,7 @@ def delete_canned_response(
 
     Writable under a super-admin impersonation session (design §6.1,
     "Canned-response CRUD"). The deletion denied by §6.2 is Account / AI Agent
-    deletion — a quick reply is neither, and re-creating one is trivial.
+    deletion, a quick reply is neither, and re-creating one is trivial.
     """
     _require_canned_response_write_access(auth)
     with get_session() as session:

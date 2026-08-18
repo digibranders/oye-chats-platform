@@ -32,7 +32,7 @@ export function isFilterableOutcome(id: string): id is FilterableOutcome {
 }
 
 /**
- * Human-readable label for a destination-card id. Covers `exit` too — the
+ * Human-readable label for a destination-card id. Covers `exit` too, the
  * drop-off card is still rendered (with an honest total), it just cannot be
  * used as a path filter.
  */
@@ -54,8 +54,8 @@ export function outcomeLabel(id: string): string {
 // ── Drop-off total ──────────────────────────────────────────────────────────
 
 /**
- * `reported` — the backend counted it per session (`sessions_no_activity`).
- * `estimated` — the field was absent (older API build) and we subtracted;
+ * `reported`, the backend counted it per session (`sessions_no_activity`).
+ * `estimated`, the field was absent (older API build) and we subtracted;
  * that subtraction is a lower bound, never an exact figure.
  */
 export type DropOffBasis = 'reported' | 'estimated';
@@ -83,14 +83,14 @@ export interface DropOffInput {
 }
 
 /**
- * How many sessions opened chat and then did nothing — no conversion, no
+ * How many sessions opened chat and then did nothing, no conversion, no
  * further page view.
  *
  * Prefers the backend's per-session count. It is the only correct source: a
  * session is a drop-off or it is not, and only the row-level journey data can
  * decide that. The fallback subtraction exists solely for API builds that
  * predate the field, and is flagged `estimated` because a session that both
- * converted AND kept browsing is subtracted twice — so it reads low.
+ * converted AND kept browsing is subtracted twice, so it reads low.
  */
 export function deriveDropOffTotal(data: DropOffInput): DropOffTotal {
   const reported = data.summary.sessions_no_activity;
@@ -109,14 +109,14 @@ export function deriveDropOffTotal(data: DropOffInput): DropOffTotal {
 }
 
 /**
- * Hover copy for the drop-off card. States the definition, and — when the
- * number is an estimate — says so and which direction it errs, so nobody
+ * Hover copy for the drop-off card. States the definition, and (when the
+ * number is an estimate) says so and which direction it errs, so nobody
  * plans against it as if it were measured.
  */
 export function dropOffTooltip(total: DropOffTotal): string {
   const sessions = `${total.count.toLocaleString()} ${total.count === 1 ? 'session' : 'sessions'}`;
   if (total.basis === 'reported') {
-    return `${sessions} opened chat and then did nothing — no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`;
+    return `${sessions} opened chat and then did nothing, no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`;
   }
   return `Estimate: ${sessions}. This API build doesn't report the exact drop-off count, so it's total sessions minus conversions minus post-chat browsing. Sessions that did both are subtracted twice, so the real figure may be higher.`;
 }
@@ -137,7 +137,7 @@ export interface FilterEmptyInput {
 /** Description for the "no journeys match this filter" state. */
 export function filterEmptyDescription(input: FilterEmptyInput): string {
   if (!input.hasTrackedJourneys) {
-    return 'No page journeys were tracked in this window — this view needs visitors who browsed at least one page before opening chat.';
+    return 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
   }
   const scope = input.startPage ? ` starting on ${input.startPage}` : '';
   if (input.outcome) {

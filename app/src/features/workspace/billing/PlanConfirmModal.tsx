@@ -322,7 +322,7 @@ export function PlanConfirmModal({
   // shorter (finite) retention window, older conversations disappear from view.
   // Only warn on a REAL shrink (current unlimited, or strictly larger than the
   // target); a shorter target with an unknown/equal current stays silent to
-  // avoid a false alarm. Data is retained, not deleted — say so.
+  // avoid a false alarm. Data is retained, not deleted. Say so.
   const targetHistoryDays = plan.limits?.chat_history_days;
   const showHistoryWarning =
     intent === 'downgrade' &&

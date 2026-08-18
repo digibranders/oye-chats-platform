@@ -135,7 +135,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
         </div>
       )}
 
-      {/* Master–detail */}
+      {/* Master-detail */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
         {/* List */}
         <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">

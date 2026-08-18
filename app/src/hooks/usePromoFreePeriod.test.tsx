@@ -2,7 +2,7 @@
  * `usePromoFreePeriod` surfaces "Free until X" only while a launch-promo window
  * is genuinely still open. The behaviour that matters: it returns the ISO string
  * ONLY when `promo_free_until` is in the future, and stays `null` for an expired
- * window, a missing field, no subscription, or a failed fetch — a promo customer
+ * window, a missing field, no subscription, or a failed fetch, a promo customer
  * must never be told they're free when they're being billed, and vice versa.
  */
 import { renderHook, waitFor } from '@testing-library/react';

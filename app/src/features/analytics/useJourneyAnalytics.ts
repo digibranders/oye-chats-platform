@@ -54,11 +54,11 @@ export interface UseJourneyAnalyticsResult {
  * whole status flips to `gated` so the tab can render the LockedFeatureCard
  * upgrade teaser instead of a broken empty state.
  *
- * `botId` of `null` means "no agent selected" — the hook stays idle rather
+ * `botId` of `null` means "no agent selected", the hook stays idle rather
  * than hitting the API. Journeys are always per-agent (each embed has one
  * `bot_key`), unlike the workspace-aggregated feeds on the other tabs.
  */
-/** Formats a Date as `YYYY-MM` — matches what the backend expects. */
+/** Formats a Date as `YYYY-MM`. Matches what the backend expects. */
 function toMonthKey(date: Date): JourneyPeriod {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -98,7 +98,7 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyPostChat(botId, { period, limit: 10 }),
             // Must cover the LARGEST option the diagram's "Page flows shown"
             // control offers (`TRIE_MAX_LEAVES`), because that control prunes
-            // what is already fetched — it does not re-fetch. Left at 6 while
+            // what is already fetched, it does not re-fetch. Left at 6 while
             // the picker gained Top 10 / All, "All" returned the same six flows
             // as "Top 5" and the control looked broken on exactly the busy
             // accounts it exists for. The route's ceiling was raised to

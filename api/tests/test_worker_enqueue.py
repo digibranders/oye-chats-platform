@@ -1,4 +1,4 @@
-"""Behavioral tests for ``app/worker/enqueue.py`` — the API→ARQ handoff.
+"""Behavioral tests for ``app/worker/enqueue.py``, the API→ARQ handoff.
 
 This module is small but it is the seam every background job crosses (invoice
 PDFs, transactional email, webhooks, ingestion). It was the least-covered file
@@ -26,7 +26,7 @@ import pytest
 
 from app.worker import enqueue as eq
 
-# ── _get_redis_settings — configuration behavior ─────────────────────────────
+# ── _get_redis_settings. Configuration behavior ─────────────────────────────
 
 
 def test_missing_redis_url_raises_a_clear_error(monkeypatch):
@@ -45,7 +45,7 @@ def test_redis_url_is_parsed_into_settings(monkeypatch):
     assert settings.database == 3
 
 
-# ── enqueue() — dedup contract ───────────────────────────────────────────────
+# ── enqueue(). Dedup contract ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_enqueue_returns_the_job_on_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_enqueue_returns_none_when_arq_deduplicates(monkeypatch):
     """ARQ returns ``None`` for an already-queued job id. That is a normal
-    outcome, not an error — callers branch on it, so it must pass through."""
+    outcome, not an error. Callers branch on it, so it must pass through."""
 
     class _Pool:
         async def enqueue_job(self, *a, **kw):
@@ -85,7 +85,7 @@ def _fake_async(value):
     return _coro()
 
 
-# ── enqueue_sync — the two dispatch paths ────────────────────────────────────
+# ── enqueue_sync, the two dispatch paths ────────────────────────────────────
 
 
 def test_enqueue_sync_without_a_running_loop_returns_the_job_id(monkeypatch):
@@ -109,7 +109,7 @@ def test_enqueue_sync_without_a_running_loop_returns_the_job_id(monkeypatch):
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
 
     assert eq.enqueue_sync("task_x") == "sync-job-1"
-    # The per-call pool is always closed — leaking one per call would exhaust
+    # The per-call pool is always closed. Leaking one per call would exhaust
     # connections on a busy sync endpoint.
     assert closed == [True]
 
@@ -165,7 +165,7 @@ def test_enqueue_sync_returns_none_when_deduplicated(monkeypatch):
 @pytest.mark.asyncio
 async def test_enqueue_sync_inside_a_running_loop_schedules_and_completes(monkeypatch):
     """The fire-and-forget path. It returns ``None`` immediately (no job id is
-    available synchronously) but the enqueue MUST still complete — the strong
+    available synchronously) but the enqueue MUST still complete, the strong
     reference in ``_pending_enqueue_tasks`` is what guarantees that."""
     fired: list[str] = []
 
@@ -176,7 +176,7 @@ async def test_enqueue_sync_inside_a_running_loop_schedules_and_completes(monkey
     monkeypatch.setattr(eq, "enqueue", _fake_enqueue)
 
     result = eq.enqueue_sync("task_bg", 7, k="v")
-    assert result is None  # no id synchronously — documented contract
+    assert result is None  # no id synchronously. Documented contract
     assert eq._pending_enqueue_tasks  # held strongly while in flight
 
     await asyncio.sleep(0.05)  # let the scheduled task run
@@ -189,7 +189,7 @@ async def test_enqueue_sync_inside_a_running_loop_schedules_and_completes(monkey
 @pytest.mark.asyncio
 async def test_background_enqueue_failure_is_swallowed_not_raised(monkeypatch):
     """A Redis outage must not surface as an unhandled task exception that takes
-    down the request that scheduled it — the job is lost, loudly logged, and the
+    down the request that scheduled it, the job is lost, loudly logged, and the
     caller continues."""
 
     async def _boom(*_a, **_kw):
@@ -202,7 +202,7 @@ async def test_background_enqueue_failure_is_swallowed_not_raised(monkeypatch):
     assert not eq._pending_enqueue_tasks  # cleaned up even on failure
 
 
-# ── get_job_status — status mapping ──────────────────────────────────────────
+# ── get_job_status. Status mapping ──────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_job_status_maps_arq_states_to_api_vocabulary(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_completed_but_unsuccessful_job_reports_failed(monkeypatch):
-    """A job that ran to completion and threw must NOT report "complete" — the
+    """A job that ran to completion and threw must NOT report "complete", the
     UI would show success for a failed invoice render."""
     from arq.jobs import JobStatus
 

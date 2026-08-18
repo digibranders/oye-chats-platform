@@ -208,7 +208,7 @@ export function CreateAgentDialog({
       // and leaves every further agent it entitles unfunded. The backend rejects
       // such a plan on `POST /bots/checkout`; this filter is the matching UI
       // half, so the option is never offered in the first place. A plan row
-      // without a `bots` quota is not unlimited and stays selectable — same
+      // without a `bots` quota is not unlimited and stays selectable, same
       // conservative reading as the server.
       const parsed = (Array.isArray(raw) ? raw : [])
         .map((r) => buildPlan(r))

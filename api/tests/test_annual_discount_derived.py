@@ -1,13 +1,13 @@
 """``annual_discount_percent`` is one number, derived, on every surface.
 
 The bug this pins: commit d2f0a2f taught the admin app to compute the annual
-saving from the prices it displays, so it began rendering "save up to 21%" —
-while ``GET /public/pricing-catalog`` kept serving the stored
+saving from the prices it displays, so it began rendering "save up to 21%".
+While ``GET /public/pricing-catalog`` kept serving the stored
 ``Plan.annual_discount_percent``, and oyechats.com kept advertising 22% for the
 same Professional tier. Two numbers under one name, on two properties.
 
 These tests assert the SERVED value from each route rather than the helper in
-isolation, because agreement between consumers is the actual requirement — a
+isolation, because agreement between consumers is the actual requirement, a
 correct helper that some route forgets to call reproduces the bug exactly.
 
 Every plan row below is written with a deliberately WRONG stored column (22, or
@@ -29,7 +29,7 @@ from scripts.seed_plans import _PLANS
 
 # Slug → (12 × monthly INR paise, annual INR paise, the percent every surface
 # must serve). Taken from the seeded catalogue; Professional is the tier that
-# changes — it stored 22 for a 21.674% saving.
+# changes, it stored 22 for a 21.674% saving.
 _SEEDED_EXPECTATIONS: dict[str, int] = {
     "free": 0,
     "starter": 20,
@@ -112,7 +112,7 @@ def test_subscriptions_plans_serves_the_derived_percent(db, monkeypatch):
 
 
 def test_public_pricing_catalog_serves_the_derived_percent(db, monkeypatch):
-    """The marketing site's feed — the surface that was advertising 22%.
+    """The marketing site's feed, the surface that was advertising 22%.
 
     Serving the corrected number in the EXISTING key is what lets oyechats.com
     show 21% with no website deploy at all.
@@ -135,7 +135,7 @@ def test_professional_no_longer_advertises_twenty_two_percent(db, monkeypatch):
 
 
 def test_both_catalogs_agree_plan_for_plan(db, monkeypatch):
-    """Whatever the value is, the two feeds must never differ — that divergence
+    """Whatever the value is, the two feeds must never differ. That divergence
     IS the bug, independent of which number is right."""
     _seed_catalogue(db)
     app_feed = _by_slug(_plans_client(db, monkeypatch).get("/subscriptions/plans").json())
@@ -166,7 +166,7 @@ def test_the_response_shape_is_unchanged(db, monkeypatch):
 
 def test_the_free_tier_serves_zero_not_the_stored_thirty(db, monkeypatch):
     """No monthly price means no saving to quote. Consumers drop the badge on 0
-    rather than render "save 0%" — same rule as billingModel.annualSavingPercent.
+    rather than render "save 0%", same rule as billingModel.annualSavingPercent.
     """
     _seed_catalogue(db)
     plans = _by_slug(_plans_client(db, monkeypatch).get("/subscriptions/plans").json())
@@ -177,7 +177,7 @@ def test_a_contact_sales_tier_serves_its_real_derived_percent(db, monkeypatch):
     """A bespoke tier is priced on request but still carries real amounts.
 
     The frontend excludes contact-sales tiers from the "save up to X%" toggle
-    (``maxAnnualSavingPercent``) — an AGGREGATION rule, not a per-plan one:
+    (``maxAnnualSavingPercent``), an AGGREGATION rule, not a per-plan one:
     ``annualSavingPercent`` still returns the tier's own 35%. The server serves
     the same per-plan figure and leaves the aggregation choice to the surface,
     so the key never changes meaning depending on who is reading it.
@@ -189,7 +189,7 @@ def test_a_contact_sales_tier_serves_its_real_derived_percent(db, monkeypatch):
             currency="INR",
             is_active=True,
             monthly_price_cents=100_000,  # ₹1,000/mo → ₹12,000 a year
-            annual_price_cents=780_000,  # ₹7,800 — 35% off
+            annual_price_cents=780_000,  # ₹7,800 to 35% off
             annual_discount_percent=30,
             features={"contact_sales": True},
             limits={},
@@ -268,7 +268,7 @@ def test_creating_a_plan_no_longer_defaults_to_thirty_percent(db, monkeypatch):
 
 
 def test_creating_a_plan_with_no_prices_derives_zero(db, monkeypatch):
-    """The minimal create — no prices at all — must not advertise anything."""
+    """The minimal create (no prices at all) must not advertise anything."""
     c = _superadmin_client(db, monkeypatch)
     plan_id = c.post("/superadmin/plans", json={"name": "Bare", "slug": "bare"}).json()["plan_id"]
     listed = next(p for p in c.get("/superadmin/plans").json() if p["id"] == plan_id)
@@ -276,7 +276,7 @@ def test_creating_a_plan_with_no_prices_derives_zero(db, monkeypatch):
 
 
 def test_creating_a_plan_rejects_a_percent_the_prices_do_not_back(db, monkeypatch):
-    """A supplied value is validated, not silently dropped — an editor field that
+    """A supplied value is validated, not silently dropped, an editor field that
     looks editable but does nothing is a worse failure than the one being fixed.
     """
     c = _superadmin_client(db, monkeypatch)
@@ -296,7 +296,7 @@ def test_creating_a_plan_rejects_a_percent_the_prices_do_not_back(db, monkeypatc
 
 
 def test_creating_a_plan_accepts_the_percent_the_prices_do_back(db, monkeypatch):
-    """Sending the right number is not an error — only disagreement is."""
+    """Sending the right number is not an error. Only disagreement is."""
     c = _superadmin_client(db, monkeypatch)
     res = c.post(
         "/superadmin/plans",
@@ -315,7 +315,7 @@ def test_creating_a_plan_accepts_the_percent_the_prices_do_back(db, monkeypatch)
 
 def test_updating_a_plan_self_heals_a_stale_stored_percent(db, monkeypatch):
     """Any save recomputes the column, so a legacy row converges without a
-    migration — the seeded Professional 22 becomes 21 on the next edit."""
+    migration, the seeded Professional 22 becomes 21 on the next edit."""
     plan = Plan(
         slug="legacy",
         name="Legacy",
@@ -341,7 +341,7 @@ def test_updating_a_plan_self_heals_a_stale_stored_percent(db, monkeypatch):
 def test_updating_the_annual_price_moves_the_advertised_percent(db, monkeypatch):
     """A price edit cannot leave a stale headline behind.
 
-    The gateway mint that a price change triggers is patched out — this asserts
+    The gateway mint that a price change triggers is patched out. This asserts
     the discount arithmetic, not the Razorpay round trip.
     """
     plan = Plan(
@@ -350,7 +350,7 @@ def test_updating_the_annual_price_moves_the_advertised_percent(db, monkeypatch)
         currency="INR",
         is_active=True,
         monthly_price_cents=10_000,  # ₹100/mo → ₹1,200 a year
-        annual_price_cents=108_000,  # ₹1,080 — 10% off
+        annual_price_cents=108_000,  # ₹1,080 to 10% off
         annual_discount_percent=10,
         features={},
         limits={},
@@ -363,7 +363,7 @@ def test_updating_the_annual_price_moves_the_advertised_percent(db, monkeypatch)
     monkeypatch.setattr(razorpay_service, "create_plan_for_price", lambda **kwargs: "plan_NEW")
 
     c = _superadmin_client(db, monkeypatch)
-    res = c.put(f"/superadmin/plans/{plan.id}", json={"annual_price_cents": 78_000})  # ₹780 — 35% off
+    res = c.put(f"/superadmin/plans/{plan.id}", json={"annual_price_cents": 78_000})  # ₹780 to 35% off
     assert res.status_code == 200, res.text
 
     db.refresh(plan)

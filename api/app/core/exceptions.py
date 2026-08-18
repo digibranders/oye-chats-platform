@@ -15,7 +15,7 @@ class SessionOwnershipError(Exception):
 
     1. The existing row has ``bot_id IS NULL`` (legacy / pre-multi-bot data).
        We deliberately do **not** auto-claim it for the requesting bot at
-       runtime — that would silently grant whoever asks first ownership of
+       runtime. That would silently grant whoever asks first ownership of
        any orphan session. The Alembic backfill migration handles unambiguous
        cases (single-bot clients); the rest surface here.
     2. The existing row's ``bot_id`` differs from the caller's. Cross-bot

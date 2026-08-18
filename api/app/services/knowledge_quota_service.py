@@ -1,4 +1,4 @@
-"""Knowledge-base character quota — per-account enforcement.
+"""Knowledge-base character quota. Per-account enforcement.
 
 Tracks how many *cleaned pre-chunk* characters an account has ingested across
 every bot it owns, and enforces the ``plan.limits.knowledge_characters`` cap
@@ -6,9 +6,9 @@ at ingest time.
 
 Storage model
 -------------
-* ``clients.kb_characters_used`` — running BigInteger counter, incremented
+* ``clients.kb_characters_used``. Running BigInteger counter, incremented
   atomically on ingest and decremented on delete.
-* ``documents.source_char_count`` — per-source char count, replicated on every
+* ``documents.source_char_count``. Per-source char count, replicated on every
   chunk so a delete can look up "how many chars does this source contribute?"
   without re-running extraction.
 
@@ -16,13 +16,13 @@ Why chars, not tokens
 ---------------------
 Character length is language-agnostic and cheap to compute. Tokens map better
 to embedding cost but require a tokenizer round-trip per document and vary by
-model — the counter here is a *product limit*, not a cost meter (the cost
+model, the counter here is a *product limit*, not a cost meter (the cost
 meter is the credit ledger, which stays in its own service).
 
 Downgrade policy
 ----------------
 This service only enforces the limit for *new* ingests. When a paid account
-downgrades and is now over the new limit, existing knowledge stays live —
+downgrades and is now over the new limit, existing knowledge stays live,
 the customer just can't add more until they trim or upgrade again. Blanket
 deactivation is handled by ``knowledge_state_service`` for the paid → Free
 transition only; smaller downgrades leave the bot answering.
@@ -67,7 +67,7 @@ def get_kb_char_limit(plan: Plan) -> int:
     """Return the plan's KB character cap, or ``UNLIMITED`` (-1).
 
     Missing key is treated as 0 (deny-by-default) exactly like other plan
-    limits — a typo'd metric name must never silently grant unlimited quota.
+    limits, a typo'd metric name must never silently grant unlimited quota.
     """
     return get_plan_limit(plan, _LIMIT_KEY)
 
@@ -76,7 +76,7 @@ def _lock_client_row(session: Session, client_id: int) -> Client | None:
     """Fetch the Client row with a row-level lock for the current TX.
 
     Concurrent ingests for the same account would otherwise both read the
-    same pre-ingest counter and both pass the quota check (TOCTOU) — the
+    same pre-ingest counter and both pass the quota check (TOCTOU), the
     ``FOR UPDATE`` lock serializes the read+write pair. No-op on non-Postgres
     dialects (unit tests): falls back to a plain select.
     """
@@ -95,14 +95,14 @@ def check_kb_quota(session: Session, client_id: int, additional_chars: int) -> N
     :func:`increment_kb_usage`, so the client row lock taken here serializes
     concurrent ingests for the same account.
 
-    ``additional_chars <= 0`` is treated as a no-op — the caller has nothing
+    ``additional_chars <= 0`` is treated as a no-op, the caller has nothing
     to ingest, so there's nothing to gate.
     """
     if additional_chars <= 0:
         return
 
     # A freshly-provisioned test DB (or a broken deploy where seed_plans
-    # hasn't run yet) has no Plan rows — ``get_client_plan`` raises. In that
+    # hasn't run yet) has no Plan rows. ``get_client_plan`` raises. In that
     # case we can't decide a limit, so we skip enforcement rather than
     # blocking every ingest until plans are seeded. Fail-open is the right
     # posture here: the seed is the fix, not a customer-visible 402.
@@ -111,7 +111,7 @@ def check_kb_quota(session: Session, client_id: int, additional_chars: int) -> N
     except RuntimeError:
         return
     raw_limit = get_kb_char_limit(plan)
-    # Only enforce when the limit is a real int — a mocked ``plan.limits``
+    # Only enforce when the limit is a real int, a mocked ``plan.limits``
     # returning a MagicMock (or any non-int sentinel) means the test isn't
     # exercising the quota path and should not accidentally trip a 402.
     # Real plan rows always store ints in JSONB, so this is a no-op in prod.
@@ -123,7 +123,7 @@ def check_kb_quota(session: Session, client_id: int, additional_chars: int) -> N
 
     client = _lock_client_row(session, client_id)
     # Defensive int-coerce: mocked test sessions can return non-numeric
-    # sentinels for the counter — treat those as 0 so the quota check never
+    # sentinels for the counter. Treat those as 0 so the quota check never
     # crashes an unrelated ingest test. Real DB reads always coerce cleanly.
     try:
         current = int(client.kb_characters_used) if client is not None else 0
@@ -143,7 +143,7 @@ def increment_kb_usage(session: Session, client_id: int, delta_chars: int) -> No
     """Atomically add ``delta_chars`` to the client's KB counter.
 
     A negative ``delta_chars`` decrements (used on delete). The counter is
-    clamped at 0 in-DB so any drift never produces a negative running total —
+    clamped at 0 in-DB so any drift never produces a negative running total,
     a wrongly-tracked delete would otherwise make the counter under-report and
     silently grant free quota. No-op for ``delta_chars == 0``.
     """
@@ -160,7 +160,7 @@ def sum_source_chars_for_client(session: Session, client_id: int) -> int:
     """Sum of ``source_char_count`` across the client's SOURCES (not chunks).
 
     ``DISTINCT ON (bot_id, document_name)`` collapses replicated per-chunk rows
-    to one row per source before summing — otherwise a 47-chunk document would
+    to one row per source before summing. Otherwise a 47-chunk document would
     count 47× its own char length. Used by :func:`recompute_kb_usage` for
     drift-correction.
     """
@@ -201,7 +201,7 @@ def recompute_kb_usage(session: Session, client_id: int) -> int:
 
     Call after any bulk delete / restore / manual DB edit where the running
     counter may have drifted. Returns the fresh total. Safe to call in the
-    same TX as inserts/deletes — writes the counter directly with UPDATE.
+    same TX as inserts/deletes. Writes the counter directly with UPDATE.
     """
     total = sum_source_chars_for_client(session, client_id)
     session.execute(
@@ -220,7 +220,7 @@ def chars_used_by_source(
 ) -> int:
     """Return the char count contributed by ONE source (upload or crawled URL).
 
-    Reads ``source_char_count`` from any chunk of the source — every chunk
+    Reads ``source_char_count`` from any chunk of the source. Every chunk
     carries the same replicated value. Returns 0 if the source has no chunks
     (already deleted) or every chunk has a NULL count (pre-migration row that
     never got re-ingested).
@@ -235,5 +235,5 @@ def chars_used_by_source(
         raw = session.execute(stmt).scalar_one() or 0
         return int(raw)
     except (TypeError, ValueError):
-        # Mocked test session returned a non-numeric sentinel — treat as 0.
+        # Mocked test session returned a non-numeric sentinel. Treat as 0.
         return 0

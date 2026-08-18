@@ -31,8 +31,8 @@ def test_queue_row_visibility_is_scoped_to_client():
 
     The operator queue is now derived from ``ChatSession.status == 'waiting'``
     rather than an in-process list (see ``_visible_queue_for_operator``), so the
-    old version of this test — which seeded ``waiting_queue`` and the sidecar
-    dicts — was exercising storage that no longer backs the feature. The rules
+    old version of this test (which seeded ``waiting_queue`` and the sidecar
+    dicts) was exercising storage that no longer backs the feature. The rules
     it guards are unchanged and are what matter, so they are asserted directly
     on the pure predicate instead of through a query.
     """
@@ -42,7 +42,7 @@ def test_queue_row_visibility_is_scoped_to_client():
     assert visible(session_client_id=2, session_dept=None, operator_client_id=1, operator_dept=None) is False
     # ...and must be visible to its own tenant.
     assert visible(session_client_id=2, session_dept=None, operator_client_id=2, operator_dept=None) is True
-    # An operator whose workspace is unknown sees nothing — fail closed.
+    # An operator whose workspace is unknown sees nothing. Fail closed.
     assert visible(session_client_id=2, session_dept=None, operator_client_id=None, operator_dept=None) is False
     # A session with no client_id stays visible, as it did in the in-memory
     # implementation, which only skipped on a positive mismatch.

@@ -4,8 +4,8 @@ Clients emit free-form activation milestones (``studio_opened``,
 ``first_doc_uploaded``, ``widget_installed``, …) as they progress through
 onboarding. ``POST /activation/events`` is a lightweight, best-effort ingest
 scoped to the authenticated client. ``GET /activation/funnel`` (super-admin
-only) aggregates counts per ``event_type`` and reports TTVLW — "time to
-verified live widget" — the time from a client's account creation to its first
+only) aggregates counts per ``event_type`` and reports TTVLW ("time to
+verified live widget") the time from a client's account creation to its first
 bot going live (``widget_installed_at``), summarised as a median in seconds.
 """
 
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/activation", tags=["activation"])
 
 
 class ActivationEventCreate(BaseModel):
-    # Free-form by design so a new milestone needs no migration — but the
+    # Free-form by design so a new milestone needs no migration, but the
     # value is a grouping key in the super-admin funnel aggregation, so it is
     # held to an identifier shape rather than accepting arbitrary text.
     event_type: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.\-]+$")

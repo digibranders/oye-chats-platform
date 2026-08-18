@@ -1,9 +1,9 @@
-"""Brand-tone presets — the single source of truth for tone templates.
+"""Brand-tone presets, the single source of truth for tone templates.
 
 The admin "AI & Personality" tab lets a customer pick a tone from a curated set
 of presets; the website crawl classifies the site into the closest one. The
 customer-facing free-text ``Bot.brand_tone`` remains what actually steers the
-LLM (injected as ``BRAND TONE: {brand_tone[:300]}`` in rag_service) — a preset
+LLM (injected as ``BRAND TONE: {brand_tone[:300]}`` in rag_service), a preset
 merely *fills* that text with a polished, prompt-ready description. ``Bot.
 brand_tone_preset`` records which preset key is active (or ``"custom"``) so the
 UI can highlight the right chip.
@@ -14,8 +14,8 @@ Each preset ``text`` is authored <= 280 chars so it survives the 300-char prompt
 truncation intact (enforced by a unit test).
 """
 
-# Ordered for display. Keys are stable identifiers persisted on the bot row —
-# do not rename an existing key without a data migration.
+# Ordered for display. Keys are stable identifiers persisted on the bot row.
+# Do not rename an existing key without a data migration.
 BRAND_TONE_PRESETS: list[dict[str, str]] = [
     {
         "key": "professional",

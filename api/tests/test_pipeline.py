@@ -1,4 +1,4 @@
-"""Tests for app.ingestion.pipeline — document ingestion pipeline."""
+"""Tests for app.ingestion.pipeline. Document ingestion pipeline."""
 
 import contextlib
 import hashlib
@@ -43,7 +43,7 @@ class TestExtractTitle:
         assert _extract_title_from_markdown("## Pricing Plans\nContent here") == "Pricing Plans"
 
     def test_prefers_h1_over_h2(self):
-        """When both exist, H1 wins — it's the canonical page title."""
+        """When both exist, H1 wins, it's the canonical page title."""
         text = "# Real Title\n## Section Heading\nContent"
         assert _extract_title_from_markdown(text) == "Real Title"
 
@@ -155,7 +155,7 @@ class TestIngestDocument:
 
     def test_invalidates_cache_on_success(self):
         """Successful ingestion invalidates BOTH the QA cache and the
-        relevance-gate cache for the bot — stale gate judgments from before
+        relevance-gate cache for the bot. Stale gate judgments from before
         the upload must die immediately, not haunt for an hour."""
         from app.ingestion.pipeline import _ingest_document
 
@@ -281,7 +281,7 @@ class TestRunWebIngestion:
         with patch("app.ingestion.pipeline._ingest_document", return_value=1) as mock_ingest:
             run_web_ingestion(1, "https://example.com", oversized)
 
-        # arg 2 is `full_text`, arg 3 is `pages_data` — both must see the
+        # arg 2 is `full_text`, arg 3 is `pages_data`, both must see the
         # capped content, not the original oversized string.
         args = mock_ingest.call_args[0]
         assert len(args[2]) == _MAX_CRAWLED_PAGE_CHARS

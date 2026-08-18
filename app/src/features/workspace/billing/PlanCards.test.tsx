@@ -48,7 +48,7 @@ function bulletsFor(planName: string): string[] {
   );
 }
 
-describe('PlanCards — agent entitlement bullet', () => {
+describe('PlanCards. Agent entitlement bullet', () => {
   it('leads the unlimited tier with its unlimited-agents entitlement', () => {
     renderCards([CAPPED, UNLIMITED]);
     expect(bulletsFor('Enterprise')[0]).toBe('Unlimited AI chatbots');

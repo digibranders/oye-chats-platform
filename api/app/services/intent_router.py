@@ -1,28 +1,28 @@
-"""Deterministic intent router — short-circuits the RAG pipeline for trivially
+"""Deterministic intent router. Short-circuits the RAG pipeline for trivially
 classifiable visitor messages so they never hit the relevance gate (which
 otherwise misclassifies them as off-topic and returns the boilerplate refusal).
 
 Three intent categories handled here:
 
-1. **Greeting / acknowledgment** — "hi", "hello", "hey", "good morning",
+1. **Greeting / acknowledgment**. "hi", "hello", "hey", "good morning",
    "thanks", "ok cool", lone emoji. The relevance gate sees these as
    off-topic because no chunk in the knowledge base matches "hi"; visitors
    were getting "I'm here to help with questions about <company>" as the
    first message of the conversation, which feels broken.
 
-2. **Identity / meta** — "are you AI", "what's your name", "who made you",
+2. **Identity / meta**. "are you AI", "what's your name", "who made you",
    "is this conversation recorded". These are reasonable visitor questions
    but never on-topic for any company knowledge base, so they always
    short-circuit unless we handle them explicitly.
 
-3. **Negative acknowledgement** — "no", "nope", "not really". These also
+3. **Negative acknowledgement**. "no", "nope", "not really". These also
    trip the gate but are conversational glue, not off-topic refusals.
 
 Returns ``IntentResponse`` (answer + flags) when a route matches, or ``None``
 to signal "fall through to the normal RAG pipeline".
 
 Design rules:
-- Pure regex / keyword matching — no LLM call, sub-millisecond cost.
+- Pure regex / keyword matching, no LLM call, sub-millisecond cost.
 - Rules are ordered most-specific to most-generic so e.g. "thanks for the help
   but who is the CEO" never trips the bare-thanks rule (it's > 4 words).
 - Routes return company-aware copy; ``company_name`` is the visible brand
@@ -68,7 +68,7 @@ _GREETING_TERMS = {
     "ge",
 }
 
-# Acknowledgements / closers — short, non-question, no information request.
+# Acknowledgements / closers. Short, non-question, no information request.
 _ACK_TERMS = {
     "thanks",
     "thank you",
@@ -94,7 +94,7 @@ _ACK_TERMS = {
     "kk",
 }
 
-# Negative ack — visitor declining a previous offer.
+# Negative ack. Visitor declining a previous offer.
 _NEG_ACK_TERMS = {
     "no",
     "nope",
@@ -109,7 +109,7 @@ _NEG_ACK_TERMS = {
 # Lone emoji or single punctuation.
 _EMOJI_OR_PUNCT_RE = re.compile(r"^[\W_]+$", re.UNICODE)
 
-# Identity / meta — patterns that ask about the bot itself, not the company.
+# Identity / meta. Patterns that ask about the bot itself, not the company.
 _IS_AI_RE = re.compile(
     r"(?ix)\b(?:"
     r"are\s+you\s+(?:an?\s+)?(ai|bot|robot|chatbot|machine|computer|human|real\s+(?:person|human))"
@@ -199,7 +199,7 @@ def route_intent(question: str, company_name: str | None) -> IntentResponse | No
     """Match ``question`` against deterministic intent rules.
 
     Returns an ``IntentResponse`` when a rule matches, or ``None`` to signal
-    "no match — proceed with the normal RAG pipeline".
+    "no match. Proceed with the normal RAG pipeline".
 
     ``company_name`` is the brand name to use in responses; ``None`` falls
     back to a neutral phrasing.
@@ -222,7 +222,7 @@ def route_intent(question: str, company_name: str | None) -> IntentResponse | No
     # about your services, what about pricing").
     word_count = len(norm.split())
 
-    # 2) Identity / meta — match before length gate so longer phrasings work
+    # 2) Identity / meta. Match before length gate so longer phrasings work
     if _IS_AI_RE.search(norm):
         return _is_ai(company_name)
     if _RECORDED_RE.search(norm):
@@ -234,11 +234,11 @@ def route_intent(question: str, company_name: str | None) -> IntentResponse | No
     if _BOT_NAME_RE.search(norm):
         return _bot_name(company_name)
 
-    # 3) Greetings — only if the WHOLE message is a greeting term
+    # 3) Greetings. Only if the WHOLE message is a greeting term
     if word_count <= 4 and norm in _GREETING_TERMS:
         return _greeting(company_name)
 
-    # 4) Acks — only if WHOLE message is an ack term
+    # 4) Acks. Only if WHOLE message is an ack term
     if word_count <= 4 and norm in _ACK_TERMS:
         return _ack(company_name)
 
@@ -250,7 +250,7 @@ def route_intent(question: str, company_name: str | None) -> IntentResponse | No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Response builders — kept short & on-brand.
+# Response builders. Kept short & on-brand.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -261,7 +261,7 @@ def _co(company_name: str | None) -> str:
 def _greeting(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
-        answer=f"Hey — happy to help. Want to hear about our services, see recent work, or chat with the team at {co}?",
+        answer=f"Hey. Happy to help. Want to hear about our services, see recent work, or chat with the team at {co}?",
         intent="greeting",
     )
 
@@ -269,7 +269,7 @@ def _greeting(company_name: str | None) -> IntentResponse:
 def _ack(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
-        answer=f"Glad that helped — anything else you want to know about {co}?",
+        answer=f"Glad that helped. Anything else you want to know about {co}?",
         intent="ack",
     )
 
@@ -286,7 +286,7 @@ def _is_ai(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
         answer=(
-            f"I'm an AI assistant for {co} — happy to help with services, work, or how we operate. "
+            f"I'm an AI assistant for {co}. Happy to help with services, work, or how we operate. "
             "If you'd rather talk to a human on the team, just say so."
         ),
         intent="is_ai",
@@ -296,7 +296,7 @@ def _is_ai(company_name: str | None) -> IntentResponse:
 def _bot_name(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
-        answer=f"I'm the {co} AI assistant — here to answer questions about our services, team, and work.",
+        answer=f"I'm the {co} AI assistant. Here to answer questions about our services, team, and work.",
         intent="bot_name",
     )
 
@@ -315,7 +315,7 @@ def _recorded(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
         answer=(
-            f"Yes — chats are saved so the {co} team can follow up if needed. "
+            f"Yes. Chats are saved so the {co} team can follow up if needed. "
             "Want me to connect you with someone directly?"
         ),
         intent="recorded",

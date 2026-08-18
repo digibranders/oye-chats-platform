@@ -252,7 +252,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   // skips scoring (rag_service.py → is_bant_enabled_for_bot), so
   // `qualified` will stay empty forever. Rendering the empty rail as-is
   // reads as "nothing to see here" instead of "you're not entitled to
-  // this signal" — swap it for an honest lock nudge.
+  // this signal". Swap it for an honest lock nudge.
   const bantUnlocked = hasFeature('bant');
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);

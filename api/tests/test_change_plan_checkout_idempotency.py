@@ -2,20 +2,20 @@
 
 Prod, client 18, one month: ``POST /subscriptions/change-plan`` was retried
 while ``sub_TPaGNnEfFML4Lr`` was still in Razorpay's ``created`` state (the
-verify call had correctly deferred the local upsert — "key not burned"), and the
+verify call had correctly deferred the local upsert. "key not burned"), and the
 retry minted ``sub_TPaHBPNyYV3tfe``. Both were authorised, both charged one
 cycle: ₹11,998 collected for one ₹5,999 subscription.
 
 ``/checkout`` already solved this with ``clients.pending_checkout_*`` (finding
-H1). Branch 3 mints exactly the same kind of first mandate — trial→paid,
-Free→paid, revive-in-place — and simply never consulted the marker. These tests
+H1). Branch 3 mints exactly the same kind of first mandate (trial→paid,
+Free→paid, revive-in-place) and simply never consulted the marker. These tests
 pin the extended mechanism:
 
 * a retry under the same key reuses the in-flight mandate (asserted on the
-  CREATE CALL COUNT, not just the end state — one mandate, not two);
+  CREATE CALL COUNT, not just the end state, one mandate, not two);
 * a retry under a different key cancels the superseded mandate at Razorpay
-  before minting its replacement, so the abandoned one can never charge —
-  unless that mandate has ALREADY been paid, in which case the replacement is
+  before minting its replacement, so the abandoned one can never charge.
+  Unless that mandate has ALREADY been paid, in which case the replacement is
   refused rather than minted beside it;
 * the marker is durable (a DB column, not process memory);
 * concurrent callers serialise on the billing advisory lock, so the loser reads
@@ -186,7 +186,7 @@ def test_different_plan_cancels_the_superseded_mandate_before_minting(db, monkey
 
     assert first.status_code == 200 and second.status_code == 200, second.text
     assert mint.call_count == 2
-    # The abandoned mandate is dead at the gateway — it can never charge.
+    # The abandoned mandate is dead at the gateway, it can never charge.
     cancel.assert_called_once_with("sub_cpidem_a")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_cpidem_b"
@@ -300,7 +300,7 @@ def test_a_pending_mandate_that_just_went_active_blocks_the_replacement(db, monk
     """The narrowest remaining window: the customer authorises AND pays the
     pending mandate between the two requests. Nothing may cancel a charged
     mandate from a checkout path, so minting the replacement would leave two
-    charged subscriptions for one month — the original defect, one race later.
+    charged subscriptions for one month, the original defect, one race later.
     Refuse; once the activation lands, this customer goes through the real
     upgrade/downgrade branches instead."""
     api, client = _mk(db, monkeypatch)
@@ -333,7 +333,7 @@ def test_a_pending_mandate_that_just_went_active_blocks_the_replacement(db, monk
 
 def test_a_terminal_pending_mandate_does_not_block_the_replacement(db, monkeypatch):
     """``cancelled``/``expired`` at the gateway: nothing to cancel, nothing to
-    fear — mint the replacement."""
+    fear. Mint the replacement."""
     api, client = _mk(db, monkeypatch)
     plan_a = _plan(db, slug="std-cpidem-term-a")
     plan_b = _plan(db, slug="std-cpidem-term-b", monthly=94900)
@@ -412,7 +412,7 @@ def test_dead_pending_mandate_is_re_minted(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert mint.call_count == 1
     # "Not reusable" is not the same fact as "dead", and only one of them makes a
-    # fresh mint safe — so the gateway is asked before anything is minted.
+    # fresh mint safe, so the gateway is asked before anything is minted.
     cancel.assert_called_once_with("sub_cpidem_dead")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_cpidem_fresh"
@@ -424,16 +424,16 @@ def test_dead_pending_mandate_is_re_minted(db, monkeypatch):
 def test_a_paid_mandate_still_reading_created_is_never_re_opened(db, monkeypatch):
     """THE reported defect, end to end.
 
-    The customer picked Enterprise on the Launch Studio welcome screen and paid.
-    The plan card did not update (the activation had not landed, and
-    ``verify-razorpay-subscription`` had logged "in non-billable state 'created'
-    — deferring local upsert"). Forty-four seconds later they clicked Select
-    again, on the SAME plan.
+     The customer picked Enterprise on the Launch Studio welcome screen and paid.
+     The plan card did not update (the activation had not landed, and
+     ``verify-razorpay-subscription`` had logged "in non-billable state 'created'
+    . Deferring local upsert"). Forty-four seconds later they clicked Select
+     again, on the SAME plan.
 
-    Razorpay still reported ``created`` at that moment, so every state-based
-    check calls the mandate authorizable and hands back a payment sheet.
-    ``paid_count`` is what says otherwise. Nothing may be minted, and nothing
-    may be re-opened.
+     Razorpay still reported ``created`` at that moment, so every state-based
+     check calls the mandate authorizable and hands back a payment sheet.
+     ``paid_count`` is what says otherwise. Nothing may be minted, and nothing
+     may be re-opened.
     """
     api, client = _mk(db, monkeypatch)
     api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
@@ -466,11 +466,11 @@ def test_a_paid_mandate_still_reading_created_is_never_re_opened(db, monkeypatch
     assert res.status_code == 409, res.text
 
     detail = res.json()["detail"]
-    # What the payer reads must not sound like a failed payment — their next
+    # What the payer reads must not sound like a failed payment. Their next
     # move on "payment failed" is a THIRD attempt or a support ticket.
     assert detail["payment_captured"] is True
     assert detail["message"] == (
-        f"Your {plan.name} payment went through — we're activating your plan now. "
+        f"Your {plan.name} payment went through. We're activating your plan now. "
         "You don't need to pay again; this usually takes under a minute."
     )
     assert detail["reason"] == "subscription_activation_conflict"
@@ -479,7 +479,7 @@ def test_a_paid_mandate_still_reading_created_is_never_re_opened(db, monkeypatch
     assert "paid_count" not in res.text
 
     db.refresh(client)
-    # The marker survives — the activation still has to consume it.
+    # The marker survives, the activation still has to consume it.
     assert client.pending_checkout_subscription_id == "sub_TPaGNnEfFML4Lr"
 
 
@@ -515,7 +515,7 @@ def test_a_different_plan_retry_after_payment_does_not_name_the_wrong_plan(db, m
 
 
 def test_the_paid_check_runs_before_the_first_mint_is_ever_recorded(db, monkeypatch):
-    """A FIRST purchase has no marker, so no gateway read happens — the paid
+    """A FIRST purchase has no marker, so no gateway read happens, the paid
     check must not add a round-trip to the common path."""
     api, _client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-cpidem-firstbuy")
@@ -544,7 +544,7 @@ def test_checkout_already_paid_trusts_paid_count_over_status():
         assert _real_checkout_already_paid("sub_x") is False
     with _fetch({"status": "authenticated", "paid_count": 0}):
         assert _real_checkout_already_paid("sub_x") is False
-    # status moved but the counter has not — must not read as unpaid.
+    # status moved but the counter has not. Must not read as unpaid.
     with _fetch({"status": "active", "paid_count": 0}):
         assert _real_checkout_already_paid("sub_x") is True
 
@@ -566,7 +566,7 @@ def test_checkout_already_paid_never_guesses_when_the_gateway_is_unreadable():
 def test_cancel_superseded_checkout_only_cancels_authorizable_mandates():
     """An ``active`` mandate has already been authorised AND charged. Cancelling
     it from a checkout path would kill a live subscription behind the customer's
-    back — only the activation handler's sibling sweep may retire one."""
+    back. Only the activation handler's sibling sweep may retire one."""
     with (
         patch.object(rzp, "_get_razorpay") as get_rzp,
         patch.object(rzp, "cancel_subscription_by_id") as cancel,
@@ -638,7 +638,7 @@ def test_upgrade_does_not_re_mint_over_an_already_paid_replacement(db, monkeypat
     """The Branch 2a twin of the reported defect.
 
     ``execute_paid_upgrade`` cleared ``upgrade_pending_subscription_id`` and
-    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None`` — which it
+    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None``, which it
     does for a PAID mandate exactly as for an abandoned one. It missed the
     incident only because both affected clients were first purchases; an
     existing paying customer upgrading is a more valuable account to
@@ -723,8 +723,8 @@ def test_a_different_plan_upgrade_cancels_the_superseded_replacement(db, monkeyp
     A customer who started an upgrade to plan A, changed their mind and took
     plan B, kept a live payment handle for A: Razorpay leaves a ``created``
     subscription authorizable indefinitely, and nothing else on this path ever
-    retired it. Reopening that stale checkout — from an email, a back button, a
-    tab left open — authorises and charges weeks later for a plan the customer
+    retired it. Reopening that stale checkout (from an email, a back button, a
+    tab left open) authorises and charges weeks later for a plan the customer
     never took. It is cancelled before its replacement is minted.
     """
     api, _client = _mk(db, monkeypatch)
@@ -756,7 +756,7 @@ def test_a_failed_cancel_does_not_block_the_new_purchase(db, monkeypatch):
 
     A Razorpay 5xx while tidying up a handle they abandoned must not surface as
     a failed checkout. The mandate was read as unpaid moments earlier, so this
-    is not minting beside a mandate of unknown state — only beside one whose
+    is not minting beside a mandate of unknown state. Only beside one whose
     cancel did not land, which is exactly the pre-existing behaviour on this
     path. Refusing here would newly break upgrades that succeed today.
     """
@@ -782,8 +782,8 @@ def test_a_paid_replacement_is_refused_not_cancelled(db, monkeypatch):
     """Ordering: the paid check runs BEFORE anything can cancel.
 
     Cancelling a mandate the customer has already paid would kill the
-    subscription they just bought, from a checkout path, behind their back —
-    strictly worse than the double-charge this module exists to prevent. The
+    subscription they just bought, from a checkout path, behind their back.
+    Strictly worse than the double-charge this module exists to prevent. The
     paid mandate is refused with a 409 and left untouched at the gateway.
     """
     api, _client = _mk(db, monkeypatch)
@@ -805,7 +805,7 @@ def test_a_paid_replacement_is_refused_not_cancelled(db, monkeypatch):
     assert not cancel.called
     assert not mint.called
     db.refresh(sub)
-    # The marker survives — the activation still has to consume it.
+    # The marker survives, the activation still has to consume it.
     assert sub.upgrade_pending_subscription_id == "sub_upgrade_paid_handle"
 
 
@@ -840,7 +840,7 @@ def test_a_replacement_that_went_active_midflight_blocks_the_mint(db, monkeypatc
 @pytest.mark.parametrize(
     "entity",
     [
-        # Never authorised — the customer closed the sheet.
+        # Never authorised, the customer closed the sheet.
         {"status": "created", "paid_count": 0},
         # Mandate approved, first charge not taken yet (deferred start / promo).
         {"status": "authenticated", "paid_count": 0},
@@ -859,8 +859,8 @@ def test_a_payment_that_never_landed_never_claims_it_did(entity):
     If a FAILED payment could reach that message it would be worse than the bug
     this fixes.
 
-    Every state in which money has NOT moved must answer False, so the refusal —
-    and therefore the claim — cannot be raised at all.
+    Every state in which money has NOT moved must answer False, so the refusal
+    (and therefore the claim) cannot be raised at all.
     """
     rzp_client = MagicMock()
     rzp_client.subscription.fetch.return_value = entity
@@ -870,7 +870,7 @@ def test_a_payment_that_never_landed_never_claims_it_did(entity):
 
 def test_the_claim_requires_money_to_have_actually_moved():
     """The mirror of the above: it is True only when Razorpay says a cycle was
-    charged (``paid_count``) or the subscription is live (``active`` — Razorpay
+    charged (``paid_count``) or the subscription is live (``active``. Razorpay
     only moves it there after the first successful charge)."""
     rzp_client = MagicMock()
     for entity in ({"status": "created", "paid_count": 1}, {"status": "active", "paid_count": 1}):
@@ -924,7 +924,7 @@ def test_concurrent_mints_serialise_on_the_billing_lock(pg_engine):
 
     thread = threading.Thread(target=request_b, daemon=True)
     try:
-        # Request A: lock, see no marker, mint, record — not yet committed.
+        # Request A: lock, see no marker, mint, record, not yet committed.
         plan_service.lock_client_for_billing(session_a, client_id)
         row_a = session_a.get(Client, client_id)
         assert row_a.pending_checkout_subscription_id is None

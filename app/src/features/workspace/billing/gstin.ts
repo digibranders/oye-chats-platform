@@ -11,7 +11,7 @@
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-/** GST state codes 01–38 plus 97 (Other Territory) - matches VALID_STATE_CODES. */
+/** GST state codes 01 to 38 plus 97 (Other Territory) - matches VALID_STATE_CODES. */
 export const GST_STATE_CODES: ReadonlySet<string> = new Set([
   ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, '0')),
   '97',

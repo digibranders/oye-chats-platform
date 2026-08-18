@@ -16,7 +16,7 @@ Three consequences, all reachable from a public widget socket:
 * **Unenforced contracts.** The ``submit_offline_form`` branch carries a
   comment saying its validation "matches the existing HTTP endpoint contract".
   It did not: the HTTP endpoint syntax-checks the address, the socket only
-  truncated it — so the socket was the way to store an unvalidated address
+  truncated it, so the socket was the way to store an unvalidated address
   that later becomes an email recipient.
 * **Per-branch drift.** Each branch invented its own truncation constants, so
   the same field had a different ceiling depending on which socket it came in
@@ -24,7 +24,7 @@ Three consequences, all reachable from a public widget socket:
 
 Validating the frame once, up front, fixes all three. ``parse_frame`` is
 deliberately non-raising: a socket is a long-lived session and a single
-malformed frame should cost the sender that frame, not the conversation — so
+malformed frame should cost the sender that frame, not the conversation, so
 it returns ``None`` and the loop answers with an error frame and continues.
 
 Frames are discriminated on ``type``, so an unknown ``type`` is rejected here
@@ -98,7 +98,7 @@ class MessageFrame(_Frame):
     # Client-generated correlation id echoed back in ``message_ack`` so the
     # widget can move its optimistic entry to sent/delivered/read.
     client_msg_id: Identifier | None = None
-    # Operator socket only — which conversation the message is for.
+    # Operator socket only, which conversation the message is for.
     session_id: SessionId | None = None
 
 
@@ -116,7 +116,7 @@ class FileFrame(_Frame):
 class ReadReceiptFrame(_Frame):
     type: Literal["read_receipt"]
     # A ``chat_messages.id``. Previously forwarded to the peer as whatever
-    # JSON value arrived — including an object or an array.
+    # JSON value arrived, including an object or an array.
     last_read_id: int = Field(..., ge=1)
     session_id: SessionId | None = None
 
@@ -154,7 +154,7 @@ class TranscriptTurn(BaseModel):
 class SubmitOfflineFormFrame(_Frame):
     """Mid-flow fallback to the offline form.
 
-    Field-for-field the same contract as ``POST /offline-messages`` — including
+    Field-for-field the same contract as ``POST /offline-messages``, including
     the email syntax check the socket path was missing, which matters because
     every one of these fields is rendered into a notification email and into
     the admin inbox.
@@ -220,4 +220,4 @@ def parse_frame(raw: object, allowed: dict[str, type[_Frame]]) -> tuple[_Frame |
     except ValidationError as exc:
         first = exc.errors()[0]
         field = ".".join(str(p) for p in first.get("loc", ())) or "frame"
-        return None, f"Invalid '{msg_type}' frame: {field} — {first.get('msg', 'invalid')}"
+        return None, f"Invalid '{msg_type}' frame: {field} - {first.get('msg', 'invalid')}"

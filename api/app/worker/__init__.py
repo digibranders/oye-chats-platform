@@ -1,4 +1,4 @@
-"""OyeChats background worker — ARQ-based async task queue.
+"""OyeChats background worker. ARQ-based async task queue.
 
 Start the worker:
     uv run arq app.worker.settings.WorkerSettings

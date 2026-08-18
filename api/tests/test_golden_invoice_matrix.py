@@ -1,4 +1,4 @@
-"""The golden invoice matrix (blueprint §8.4) — the intl-launch code gate.
+"""The golden invoice matrix (blueprint §8.4), the intl-launch code gate.
 
 Every supply classification × document type, asserted TO THE PAISA against
 hand-verified figures. These are deliberately literal numbers, not re-derived
@@ -7,11 +7,11 @@ rounding, inclusive-price math, or the largest-remainder split fails a test a
 CA can re-verify by hand.
 
 Matrix rows (supply kinds):
-  * IN intra-state B2C   — CGST+SGST, place of supply = buyer state
-  * IN inter-state B2C   — IGST
-  * IN inter-state B2B   — IGST + buyer GSTIN on the document (ITC)
-  * export + LUT         — zero-rated, USD document with INR mirror
-  * export, no LUT       — Rule 96A: IGST carved out of the export charge
+  * IN intra-state B2C   (CGST+SGST, place of supply = buyer state
+  * IN inter-state B2C) IGST
+  * IN inter-state B2B   (IGST + buyer GSTIN on the document (ITC)
+  * export + LUT) zero-rated, USD document with INR mirror
+  * export, no LUT      . Rule 96A: IGST carved out of the export charge
 
 Columns (document types): subscription charge · renewal (serial continuity +
 identical math) · top-up · credit note (Section 34 reversal from FROZEN
@@ -235,7 +235,7 @@ def test_export_lut_full_credit_note_stays_zero_rated(db, enabled):
 
 
 def test_export_lut_survives_a_later_lut_lapse(db, enabled):
-    # Section 34: the note unwinds with the ORIGINAL's frozen parameters — the
+    # Section 34: the note unwinds with the ORIGINAL's frozen parameters, the
     # seller letting the LUT lapse later must not turn an old zero-rated
     # export's reversal into an IGST-bearing note.
     _seller(db, lut_active=True)
@@ -248,7 +248,7 @@ def test_export_lut_survives_a_later_lut_lapse(db, enabled):
     assert note.total_tax_minor == 0  # frozen zero-rating, not today's config
 
 
-# ── Row 5: export without LUT (Rule 96A — IGST on the export) ────────────────
+# ── Row 5: export without LUT (Rule 96A. IGST on the export) ────────────────
 
 
 def test_export_without_lut_carries_igst_to_the_cent(db, enabled):
@@ -276,7 +276,7 @@ def test_export_without_lut_document_shows_the_igst_line(db, enabled):
 
 
 def test_export_lut_pdf_renders(db, enabled):
-    """The export document must survive the REAL PDF pipeline, not just HTML —
+    """The export document must survive the REAL PDF pipeline, not just HTML.
     WeasyPrint chokes on layout constructs plain-string assertions never see.
     Skips where pango is unavailable (bare dev boxes); runs fully in CI/prod
     environments that render real invoices."""

@@ -6,7 +6,7 @@ Studio via ``?preview=true&bot_id=`` + ``X-API-Key``:
     owner, not an anonymous widget visitor),
   - a non-owner cannot preview someone else's bot (404),
   - non-preview requests fall through to ``get_current_bot`` unchanged,
-  - preview replies are FREE (no ``ai_chat`` credit deduction) — proven by a
+  - preview replies are FREE (no ``ai_chat`` credit deduction). Proven by a
     credit-less client getting 200 instead of the 402 the paid path would raise.
 
 Real-Postgres via the shared ``db`` fixture; skips without DB_URL.
@@ -73,7 +73,7 @@ def test_owner_preview_resolves_bot_and_bypasses_origin(db):
     )
     with _patch_session(db):
         # domain_check_enabled=True + a non-matching allowlist, yet preview must
-        # succeed — the origin check is intentionally skipped for the owner.
+        # succeed, the origin check is intentionally skipped for the owner.
         result = get_bot_for_chat(
             request=None,
             preview=True,
@@ -117,7 +117,7 @@ def test_non_preview_falls_through_to_get_current_bot():
 
 
 def test_preview_reply_is_free_for_credit_less_client(db):
-    """A client with zero credits still gets a 200 preview reply — proving the
+    """A client with zero credits still gets a 200 preview reply. Proving the
     ai_chat deduction (which would 402 on the paid path) is skipped."""
     from app.api import chat_routes
     from app.api.auth import get_bot_for_chat

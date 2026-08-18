@@ -39,7 +39,7 @@ A NOTE ON SETUP, LEARNED THE HARD WAY
 returns ``suggested_action: offline_form`` and leaves the session in ``bot``; with
 one online it auto-routes straight to ``live``. ``waiting`` only occurs in the
 narrow window where an operator is online but not routable. So the accept test
-establishes its precondition directly in the database — the precondition is not
+establishes its precondition directly in the database, the precondition is not
 what is under test, the atomicity of the claim is.
 """
 
@@ -103,7 +103,7 @@ async def _recv_until(sock, predicate, timeout: float = RECV_TIMEOUT):
             break
         try:
             raw = await asyncio.wait_for(sock.recv(), timeout=remaining)
-        except Exception:  # noqa: BLE001 — a timeout or a closed socket both just end the read loop
+        except Exception:  # noqa: BLE001  a timeout or a closed socket both just end the read loop
             break
         try:
             payload = json.loads(raw)
@@ -170,7 +170,7 @@ async def _ensure_live(base: str, sid: str) -> None:
     This precondition is load-bearing and easy to get wrong. The operator's
     ``message`` handler drops the frame silently unless
     ``chat_session.status == 'live'`` (``ws_routes.py`` ~line 145), so a test that
-    skips this asserts nothing about delivery — it just observes a dropped frame
+    skips this asserts nothing about delivery, it just observes a dropped frame
     for the wrong reason.
 
     Depending on live presence, ``/operators/handoff`` either auto-routes straight
@@ -189,7 +189,7 @@ async def _ensure_live(base: str, sid: str) -> None:
 
     if status != "live" or assignee is None:
         pytest.skip(
-            f"session {sid} is status={status!r} assignee={assignee!r}, not a live assigned chat — "
+            f"session {sid} is status={status!r} assignee={assignee!r}, not a live assigned chat. "
             "the delivery assertion would be meaningless"
         )
 
@@ -201,7 +201,7 @@ def _release_operator_capacity():
     An operator has a ``max_concurrent_chats`` ceiling (5 by default). Every test
     here accepts a chat and never closes it, so after a handful of runs the
     seeded operator sits at capacity and the API answers *every* accept with
-    ``429 Operator already at max capacity`` — which looks exactly like a rate
+    ``429 Operator already at max capacity``, which looks exactly like a rate
     limit and has nothing to do with what is being asserted. Left unfixed it
     would poison this module permanently on any shared environment.
 
@@ -240,8 +240,8 @@ async def test_operator_message_reaches_visitor_on_other_process():
     backplane lands).
 
     Both halves of the routing state are process-local. ``visitor_connections``
-    on node A holds the only socket to this visitor, and ``assignments`` — read at
-    ``live_chat_service.py:263`` and ``:956`` to choose a delivery target — is
+    on node A holds the only socket to this visitor, and ``assignments``. Read at
+    ``live_chat_service.py:263`` and ``:956`` to choose a delivery target. Is
     populated on whichever process handled the accept. Node B therefore has
     neither the socket nor the assignment, and drops the message with no error.
     """
@@ -251,7 +251,7 @@ async def test_operator_message_reaches_visitor_on_other_process():
 
     # Visitor socket on node A; operator socket on node B, so the handoff has a
     # human to route to and the two halves of the conversation are in different
-    # processes — the whole point of the test.
+    # processes, the whole point of the test.
     async with (
         websockets.connect(
             _ws_url(NODE_A, f"/ws/chat/{sid}"),
@@ -267,9 +267,7 @@ async def test_operator_message_reaches_visitor_on_other_process():
 
         decision = await _request_human(NODE_A, sid)
         if decision.get("state") == "all_offline":
-            pytest.skip(
-                "handoff saw no online operator — presence had not propagated; re-run, or raise LC_RECV_TIMEOUT"
-            )
+            pytest.skip("handoff saw no online operator. Presence had not propagated; re-run, or raise LC_RECV_TIMEOUT")
         # The operator's message handler drops frames unless the chat is live and
         # assigned, so establish that before asserting on delivery.
         await _ensure_live(NODE_B, sid)
@@ -303,7 +301,7 @@ async def test_offline_message_reaches_operator_on_other_process():
 
     so a submission handled by a process holding no operator sockets notifies
     nobody. The Web Push fallback right below it does not cover the gap, because it
-    deliberately skips operators "currently on WS" using *Redis* presence — which
+    deliberately skips operators "currently on WS" using *Redis* presence, which
     correctly reports this operator as online. Neither channel fires.
 
     The fix pattern already exists in this repo: ``worker/tasks.py`` hit exactly
@@ -359,7 +357,7 @@ async def test_connect_request_is_visible_from_another_process():
     HTTP requests that can land on different processes, so while the record lived
     in a per-process dict the poll asked a process that had never heard of it,
     got ``{"pending": false}``, and the popup simply never appeared. Nothing
-    errored — the request evaporated.
+    errored, the request evaporated.
 
     Fails before the record moved to shared storage; passes after.
     """
@@ -453,5 +451,5 @@ async def test_accept_claim_is_atomic_across_processes():
     assert accepted_rows == 1, (
         f"expected exactly one 'accepted' audit row for a single successful claim, found "
         f"{accepted_rows} (statuses were {statuses}). More than one means the atomic "
-        "UPDATE ... WHERE status='waiting' guard was bypassed — the invariant this test exists to hold."
+        "UPDATE ... WHERE status='waiting' guard was bypassed, the invariant this test exists to hold."
     )

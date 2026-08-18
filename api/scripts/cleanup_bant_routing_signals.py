@@ -1,6 +1,6 @@
 """Delete BANT signals that were extracted from routing-intent messages.
 
-Background — see ``app/services/rag_service.py``'s ``_HANDOFF_INTENT_PATTERNS``
+Background. See ``app/services/rag_service.py``'s ``_HANDOFF_INTENT_PATTERNS``
 and the broader extraction prompt rewrite shipped in mid-2026: the extractor
 historically treated "Connect me with support" / "Last year we spent 50k on
 tools" / similar messages as positive BANT signals. The fix prevents new bad
@@ -16,13 +16,13 @@ known bad patterns, deletes them, then rebuilds each affected
 
 ## Usage
 
-    # Dry run — count what would be deleted, report per-session impact.
+    # Dry run. Count what would be deleted, report per-session impact.
     python -m scripts.cleanup_bant_routing_signals
 
     # Apply the changes.
     python -m scripts.cleanup_bant_routing_signals --apply
 
-    # Scope to a single client (defensive — start narrow before going broad).
+    # Scope to a single client (defensive. Start narrow before going broad).
     python -m scripts.cleanup_bant_routing_signals --client-id 42 --apply
 
     # Reset bant_tier even when no signals were deleted (e.g. a tier was
@@ -87,7 +87,7 @@ def _is_bad_signal(signal: BANTSignal) -> bool:
 
     Two checks:
     * Any dimension where ``signal_text`` matches the routing-intent
-      family — these were Need false positives in practice but the pattern
+      family. These were Need false positives in practice but the pattern
       can drift across dimensions, so we treat any match as bad.
     * Specifically for ``budget`` dimension, past-spend phrasing.
 
@@ -225,7 +225,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"BANT cleanup — mode: {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"BANT cleanup. Mode: {'APPLY' if args.apply else 'DRY RUN'}")
     if args.client_id is not None:
         print(f"Scope: client_id = {args.client_id}")
 
@@ -233,7 +233,7 @@ def main():
         # 1. Find candidate bad signals.
         stmt = select(BANTSignal)
         if args.client_id is not None:
-            # BANTSignal doesn't have client_id directly — join via ChatSession.
+            # BANTSignal doesn't have client_id directly. Join via ChatSession.
             stmt = stmt.join(ChatSession, BANTSignal.session_id == ChatSession.id).where(
                 ChatSession.client_id == args.client_id
             )
@@ -311,7 +311,7 @@ def main():
             session.commit()
             print("\n✓ Changes committed.")
         else:
-            print("\nDry run complete — no changes persisted. Re-run with --apply to commit.")
+            print("\nDry run complete, no changes persisted. Re-run with --apply to commit.")
 
         # Aggregate stats.
         if args.apply:

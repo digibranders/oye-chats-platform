@@ -1,4 +1,4 @@
-"""Tests for ``app.services.intent_service`` — sales + handoff intent detection.
+"""Tests for ``app.services.intent_service``. Sales + handoff intent detection.
 
 The LLM call (``generate_response``) is monkeypatched at the module seam so the
 branch logic is exercised deterministically. The keyword regex is pure and is

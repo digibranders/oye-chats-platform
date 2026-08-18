@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Maps ``session_id`` → last-sent timestamp. The window is short (default 60s)
 # so a chatty visitor doesn't flood the operator inbox while still ensuring a
 # follow-up message *does* re-ping if the operator never picked up the first.
-# In a multi-worker deployment each worker has its own dict — worst case is N
+# In a multi-worker deployment each worker has its own dict. Worst case is N
 # emails per window where N = uvicorn worker count, which is acceptable for
 # this signal class. Bounded at 1000 entries; oldest are evicted FIFO.
 _visitor_msg_email_dedup: dict[str, datetime] = {}
@@ -48,7 +48,7 @@ def _should_email_visitor_message(session_id: str) -> bool:
     if last is not None and (now - last).total_seconds() < PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS:
         return False
     _visitor_msg_email_dedup[session_id] = now
-    # Bounded eviction — drop oldest half when we hit the cap. This is cheap
+    # Bounded eviction. Drop oldest half when we hit the cap. This is cheap
     # compared to maintaining a true LRU and the cap is hit only under unusual
     # traffic patterns.
     if len(_visitor_msg_email_dedup) > _VISITOR_MSG_EMAIL_DEDUP_MAX:
@@ -79,7 +79,7 @@ def _is_safe_file_url(url: str) -> bool:
         if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
             return False
     except ValueError:
-        # Not an IP — it's a hostname, which is fine
+        # Not an IP, it's a hostname, which is fine
         pass
 
     # Block known internal hostnames
@@ -130,7 +130,7 @@ async def _heartbeat(ws: WebSocket) -> None:
 
 # One DB write per this many server heartbeats. `touch_last_seen` exists to keep
 # `Operator.last_seen_at` fresh enough for the Redis-outage fallback (120s
-# window) without hammering Postgres — at a 30s heartbeat, every other tick is
+# window) without hammering Postgres, at a 30s heartbeat, every other tick is
 # a write every 60s, inside that window with room to spare.
 _LAST_SEEN_EVERY_N_BEATS = 2
 
@@ -140,8 +140,8 @@ async def _operator_presence_heartbeat(ws: WebSocket, operator_id: int, client_i
 
     Presence used to be refreshed ONLY when the operator's client sent a
     ``{"type": "heartbeat"}`` message. The Redis key lives 60s, so any client
-    that does not send it — the mobile app, or a web client on a tab the browser
-    has throttled — went invisible one minute after connecting while its socket
+    that does not send it (the mobile app, or a web client on a tab the browser
+    has throttled) went invisible one minute after connecting while its socket
     stayed open and its own UI still showed "connected". Every handoff after
     that minute resolved to ``all_offline`` and the visitor got the offline
     form, with an operator sitting right there. Observed in production on
@@ -152,7 +152,7 @@ async def _operator_presence_heartbeat(ws: WebSocket, operator_id: int, client_i
     the dependency on client behaviour entirely; the client-sent ``heartbeat``
     message still works and is now belt-and-braces rather than load-bearing.
 
-    Also drives ``touch_last_seen``, which had no callers at all — so
+    Also drives ``touch_last_seen``, which had no callers at all, so
     ``last_seen_at`` was NULL for every operator and ``is_online``'s documented
     "if Redis is down, fall back to the DB" path could never return True.
     """
@@ -181,7 +181,7 @@ async def _operator_presence_heartbeat(ws: WebSocket, operator_id: int, client_i
 # These used to be plain read-then-write status mutations inside the handlers,
 # which raced the operator-accept guarded UPDATE (waiting→live): an accept
 # committing between the read and the write was silently clobbered back to
-# "bot" — the operator kept chatting into a dead session. Each helper routes
+# "bot", the operator kept chatting into a dead session. Each helper routes
 # through the row-locked state machine with an expected_current CAS; False
 # means the CAS lost (or the session is terminal) and the caller must skip its
 # side effects (system message, close broadcast).
@@ -267,7 +267,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
     Auth resolution order (most→least preferred):
     1. ``X-Bot-Key`` request header (non-browser / native clients)
     2. ``Sec-WebSocket-Protocol`` header encoded as ``bot-key.<value>``
-    3. ``bot_key`` query parameter (browser Widget — browsers cannot set WS headers)
+    3. ``bot_key`` query parameter (browser Widget. Browsers cannot set WS headers)
 
     Note: the query-parameter fallback is intentional.  Browser clients cannot
     set arbitrary headers on WebSocket connections.  The value is encrypted
@@ -337,7 +337,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             raw = await ws.receive_json()
             # One schema check for the whole frame, before any branch reaches
             # into it. A rejected frame costs the sender that frame, not the
-            # conversation — so we answer and keep the socket open.
+            # conversation, so we answer and keep the socket open.
             frame, reject_reason = parse_frame(raw, VISITOR_FRAMES)
             if frame is None:
                 await ws.send_json({"type": "error", "message": reject_reason})
@@ -391,7 +391,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                         session_id,
                         cs_bot_id,
                         None,  # department resolved at dispatch time from session
-                        None,  # visitor name irrelevant here — preview already in content
+                        None,  # visitor name irrelevant here. Preview already in content
                         content[:140],
                         DEFAULT_QUEUE_TIMEOUT_SECONDS,
                     )
@@ -415,7 +415,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
             elif msg_type == "file":
                 # File shares consume the same per-connection rate budget as
-                # messages — otherwise a single connection could flood the DB
+                # messages. Otherwise a single connection could flood the DB
                 # with unlimited file inserts (audit F32).
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
@@ -461,7 +461,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await manager.send_read_receipt_to_operator(session_id, frame.last_read_id)
 
             elif msg_type == "status_check":
-                # Widget polls for current status — recovers from lost WS messages
+                # Widget polls for current status. Recovers from lost WS messages
                 await manager._restore_visitor_state(session_id)
 
             elif msg_type == "submit_offline_form":
@@ -476,7 +476,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # HTTP endpoint contract.
                 # Required fields, the email syntax check, the per-field
                 # ceilings and the transcript shape are all enforced by
-                # ``SubmitOfflineFormFrame`` — the same contract as
+                # ``SubmitOfflineFormFrame``, the same contract as
                 # ``POST /offline-messages``, which this path claimed to match
                 # but previously only truncated.
                 name = frame.name
@@ -502,7 +502,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     session.add(offline_msg)
                     session.commit()
 
-                    # Send team notification — mirrors offline_message_routes.py
+                    # Send team notification. Mirrors offline_message_routes.py
                     # so the team is alerted regardless of whether the visitor
                     # arrived here via the REST form or the mid-flow WS fallback.
                     ws_bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
@@ -561,7 +561,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 )
 
             elif msg_type == "leave_queue":
-                # Visitor decided not to wait — drop them from the queue and
+                # Visitor decided not to wait. Drop them from the queue and
                 # let the bot conversation resume. Cleaner than them just
                 # closing the widget (which would also clear queue state but
                 # leaves the audit trail unclear). CAS from "waiting": if an
@@ -575,7 +575,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
             # Visitor deliberately ended the chat (clicked "End chat and return
             # to AI"). Close the session immediately in DB and notify the
-            # operator — do NOT start the 120s grace period, as this is an
+            # operator. Do NOT start the 120s grace period, as this is an
             # intentional user action. CAS from "live" (F31): the side effects
             # below only fire when this write actually won; a concurrent
             # transfer/close skips them.
@@ -601,7 +601,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         # A visitor closing their tab reaches here as a bare RuntimeError from
         # Starlette ("WebSocket is not connected...") rather than
         # WebSocketDisconnect, because the socket died mid-operation. That is
-        # routine, not an incident — logging it at ERROR buried genuine
+        # routine, not an incident. Logging it at ERROR buried genuine
         # failures and inflated Sentry. Real protocol errors still log at
         # ERROR; nothing is swallowed either way.
         detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
@@ -626,7 +626,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
             session.commit()
             return operator.id, operator.name, operator.client_id, operator.department_id, True
 
-        # Client api_key auth — find or create the owner's operator record.
+        # Client api_key auth. Find or create the owner's operator record.
         # Use role='owner' to avoid matching sub-operators created for the same client.
         client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
         if not client:
@@ -637,11 +637,11 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
         ).scalar_one_or_none()
 
         if not operator:
-            # bot_id is NOT NULL on operators (one operator, one bot — see
+            # bot_id is NOT NULL on operators (one operator, one bot. See
             # b1c7e9d3f2a5_operator_bot_one_to_one.py). Bind the auto-provisioned
             # owner to the client's oldest bot, matching that migration's backfill
-            # rule. Clients with no bots yet can't use the operator dashboard —
-            # fail auth cleanly rather than crashing on a NOT NULL violation.
+            # rule. Clients with no bots yet can't use the operator dashboard.
+            # Fail auth cleanly rather than crashing on a NOT NULL violation.
             first_bot_id = session.execute(
                 select(Bot.id).where(Bot.client_id == client.id).order_by(Bot.created_at.asc()).limit(1)
             ).scalar_one_or_none()
@@ -679,7 +679,7 @@ async def operator_websocket(
     """WebSocket for operator (admin dashboard) side of live chat.
 
     Supports dual auth via query params (legacy) **or** Sec-WebSocket-Protocol
-    header (preferred — avoids leaking credentials in URL/logs):
+    header (preferred. Avoids leaking credentials in URL/logs):
 
     Query params (legacy, kept for backward compat):
     - api_key: Client API key (owner/backward compat, resolves to first operator)
@@ -687,8 +687,8 @@ async def operator_websocket(
     - agent_key: Legacy alias for operator_key
 
     Subprotocol header (preferred):
-    - ``operator-key.<value>``  — operator's own key
-    - ``api-key.<value>``       — client/owner key
+    - ``operator-key.<value>`` . Operator's own key
+    - ``api-key.<value>``      . Client/owner key
     """
     # --- Resolve auth: prefer subprotocol header over query params ---
     accepted_subprotocol: str | None = None
@@ -723,7 +723,7 @@ async def operator_websocket(
     # path above already set this operator's flag to True, so the count includes
     # self. If the total exceeds the seat allowance, roll back and reject.
     # A negative mirror is the codebase-wide UNLIMITED (-1) sentinel, carried
-    # over from a plan with ``included_operator_seats = -1`` — no cap to apply.
+    # over from a plan with ``included_operator_seats = -1``, no cap to apply.
     with get_session() as db:
         sub = get_client_subscription(db, client_id)
         if sub is not None and (seat_quantity := int(sub.operator_quantity or 1)) >= 0:
@@ -763,7 +763,7 @@ async def operator_websocket(
 
     try:
         # Queue snapshot is already sent by connect_operator() via _notify_operator_queue.
-        # No additional send needed here — the manager is the single source of truth.
+        # No additional send needed here, the manager is the single source of truth.
         while True:
             raw = await ws.receive_json()
             frame, reject_reason = parse_frame(raw, OPERATOR_FRAMES)
@@ -776,7 +776,7 @@ async def operator_websocket(
                 await ws.send_json({"type": "pong"})
 
             elif msg_type == "heartbeat":
-                # Operator presence refresh — extends Redis TTL so the state
+                # Operator presence refresh. Extends Redis TTL so the state
                 # resolver keeps this operator in the "online" candidate set.
                 # The widget heartbeat ("ping") is separate; this one is for
                 # cross-process presence and only operators send it.
@@ -786,7 +786,7 @@ async def operator_websocket(
 
             elif msg_type == "set_availability":
                 # Manual DND toggle. accepting=False means "stay online but
-                # stop receiving new chat assignments" — active chats keep
+                # stop receiving new chat assignments". Active chats keep
                 # running. accepting=True puts the operator back in the pool.
                 accepting = frame.accepting
                 with get_session() as session:
@@ -807,7 +807,7 @@ async def operator_websocket(
                 if not target_session or not content:
                     continue
 
-                # Validate session ownership — operator can only message sessions
+                # Validate session ownership. Operator can only message sessions
                 # belonging to their client's bots and in "live" status
                 with get_session() as session:
                     chat_session = session.execute(
@@ -819,7 +819,7 @@ async def operator_websocket(
                     if not bot or bot.client_id != client_id:
                         logger.warning(
                             f"Operator {operator_id} attempted to message session {target_session} "
-                            f"belonging to a different client — rejected"
+                            f"belonging to a different client. Rejected"
                         )
                         continue
 
@@ -829,7 +829,7 @@ async def operator_websocket(
                 await manager.route_operator_message(target_session, content, operator_name)
 
             elif msg_type == "file":
-                # File sharing — operator sends a file URL. Rate-limited on the
+                # File sharing. Operator sends a file URL. Rate-limited on the
                 # same per-connection budget as messages (audit F32).
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
@@ -882,7 +882,7 @@ async def operator_websocket(
                             if not bot or bot.client_id != client_id:
                                 logger.warning(
                                     f"Operator {operator_id} attempted to close session {target_session} "
-                                    f"belonging to a different client — rejected"
+                                    f"belonging to a different client. Rejected"
                                 )
                                 continue
                             # Capture bot_name before session closes (avoid DetachedInstanceError)
@@ -926,5 +926,5 @@ async def legacy_agent_websocket(
     agent_key: str | None = None,
     operator_key: str | None = None,
 ):
-    """Legacy WebSocket endpoint — delegates to operator_websocket."""
+    """Legacy WebSocket endpoint. Delegates to operator_websocket."""
     await operator_websocket(ws, api_key=api_key, operator_key=operator_key, agent_key=agent_key)

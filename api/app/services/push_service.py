@@ -1,4 +1,4 @@
-"""Web Push (VAPID) — operator notifications when the dashboard tab is closed.
+"""Web Push (VAPID). Operator notifications when the dashboard tab is closed.
 
 This service is the **delivery layer**. It does not decide *when* to push;
 that lives in ``operator_routes.py`` (handoff) and ``ws_routes.py`` (visitor
@@ -11,7 +11,7 @@ Why "all subscriptions per operator":
     first wins (via ``accept_chat``'s race-safe lock). Subsequent pushes for
     the same chat carry the same ``tag``, which tells the browser to replace
     the earlier notification on the other devices with the "Claimed by X"
-    update — preventing the operator from racing against themselves.
+    update. Preventing the operator from racing against themselves.
 
 Failures:
     Push providers (FCM, Mozilla autopush, APNs bridge) return ``410 Gone``
@@ -54,7 +54,7 @@ DEFAULT_TTL_SECONDS = 60
 
 # Cached ``Vapid`` instance built from the configured private key. pywebpush
 # accepts a ``Vapid`` object via ``vapid_private_key``, sidestepping its
-# internal ``Vapid.from_string()`` call which only handles raw / DER base64 —
+# internal ``Vapid.from_string()`` call which only handles raw / DER base64.
 # **not** PEM strings. Building this once at module load avoids re-parsing
 # the key on every push send.
 _VAPID_INSTANCE: Vapid | None = None
@@ -228,7 +228,7 @@ def send_push_to_operator(
     """Send the same payload to every subscription owned by an operator.
 
     Prunes subscriptions that return 410 in the same DB transaction. Returns
-    the number of successful deliveries (best-effort — push is fire-and-forget,
+    the number of successful deliveries (best-effort. Push is fire-and-forget,
     not delivery-guaranteed).
 
     ``web`` / ``expo`` select which transports to use. Callers suppress *web*
@@ -324,7 +324,7 @@ def send_push_to_operators(
 #   }
 #
 # Absent / null prefs = fully opted in (backward compat). Malformed prefs are
-# treated as fully opted in too — an operator missing a push in a config-parse
+# treated as fully opted in too, an operator missing a push in a config-parse
 # edge case is a worse outcome than one extra push.
 
 _EVENT_CATEGORY = {
@@ -366,7 +366,7 @@ def _in_quiet_hours(quiet: dict[str, Any], now_utc: datetime) -> bool:
     if start < end:
         # Same-day window (e.g. 13:00-17:00).
         return start <= local_now < end
-    # Wraps midnight (e.g. 22:00-07:00) — quiet if either side of midnight.
+    # Wraps midnight (e.g. 22:00-07:00). Quiet if either side of midnight.
     return local_now >= start or local_now < end
 
 

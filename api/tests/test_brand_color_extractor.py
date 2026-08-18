@@ -53,7 +53,7 @@ def test_ranks_by_frequency_then_first_seen():
     </style>
     """
     result = extract_colors_from_html(html, top_n=2)
-    # #ff0000 appears 3x, #00aa00 once — red should rank first.
+    # #ff0000 appears 3x, #00aa00 once. Red should rank first.
     assert result[0] == "#ff0000"
     assert result[1] == "#00aa00"
 
@@ -65,7 +65,7 @@ def test_filters_near_neutrals():
       .a { color: #808080; }
     </style>
     """
-    # All four are low-saturation greys — nothing should survive the filter.
+    # All four are low-saturation greys, nothing should survive the filter.
     assert extract_colors_from_html(html) == []
 
 
@@ -96,7 +96,7 @@ def test_extracts_rgb_percentage_components():
 
 def test_extracts_hsl_and_hsla():
     # HSL(0, 100%, 50%) = pure red. HSL(210, 50%, 50%) resolves to a slate
-    # blue whose green channel is 127.4999… — float-precision rounding lands
+    # blue whose green channel is 127.4999…. Float-precision rounding lands
     # on ``0x7f`` rather than ``0x80``, which is fine for palette seeding.
     html = "<style>.a { color: hsl(0, 100%, 50%); } .b { color: hsla(210 50% 50% / 0.6); }</style>"
     result = extract_colors_from_html(html)
@@ -112,7 +112,7 @@ def test_extracts_hsl_with_turn_hue_unit():
 
 
 def test_dedupes_hex_and_rgb_pointing_at_same_color():
-    # #0F172A and rgb(15, 23, 42) are the same slate — should collide as one
+    # #0F172A and rgb(15, 23, 42) are the same slate. Should collide as one
     # entry in the counter rather than split the ranking signal.
     html = """
     <style>
@@ -127,7 +127,7 @@ def test_dedupes_hex_and_rgb_pointing_at_same_color():
 
 
 def test_ignores_malformed_rgb():
-    # Missing channels, garbage tokens — must not throw or emit anything.
+    # Missing channels, garbage tokens. Must not throw or emit anything.
     html = "<style>.a { color: rgb(1, 2); background: rgb(foo, bar, baz); }</style>"
     assert extract_colors_from_html(html) == []
 
@@ -179,7 +179,7 @@ async def test_fetch_returns_empty_for_empty_url():
 
 @pytest.mark.asyncio
 async def test_fetch_follows_linked_stylesheets(monkeypatch):
-    # Homepage lists brand color only in a linked stylesheet — before this
+    # Homepage lists brand color only in a linked stylesheet. Before this
     # feature ``fetch_recommended_colors`` would return ``[]``.
     html = """
     <html><head>
@@ -209,8 +209,8 @@ async def test_fetch_follows_linked_stylesheets(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_survives_stylesheet_error(monkeypatch):
-    # A 404 on a linked stylesheet must not break the whole extraction —
-    # colors from the homepage still come through.
+    # A 404 on a linked stylesheet must not break the whole extraction.
+    # Colors from the homepage still come through.
     html = """
     <html><head>
       <link rel="stylesheet" href="/missing.css">

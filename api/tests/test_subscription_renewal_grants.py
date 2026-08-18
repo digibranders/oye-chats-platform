@@ -1,4 +1,4 @@
-"""Per-period subscription grant idempotency — remediation H4 (real Postgres).
+"""Per-period subscription grant idempotency. Remediation H4 (real Postgres).
 
 The renewal grant in ``subscription.charged`` used a fragile 24h time-window
 heuristic to avoid double-granting the first cycle. We replace it with an
@@ -115,7 +115,7 @@ def test_charged_grants_once_per_period(db, monkeypatch):
 def test_charged_for_unknown_subscription_raises_for_retry(db):
     """First-charge race: ``subscription.charged`` can beat ``subscription.
     activated``. The handler must RAISE (→ dead-letter + 5xx → Razorpay
-    redelivers after activation lands), never ack-drop — a 2xx is final and
+    redelivers after activation lands), never ack-drop, a 2xx is final and
     permanently loses the period's invoice (prod, 2026-07-02)."""
     with pytest.raises(rzp.WebhookOutOfOrder):
         rzp._handle_subscription_charged(db, _charged("sub_never_linked", E1))
@@ -238,7 +238,7 @@ def test_cron_renews_account_and_bot_scopes_independently(db, monkeypatch):
 
 
 def test_cron_is_noop_on_second_run(db, monkeypatch):
-    """Running the cron twice must not double-grant — the per-period marker
+    """Running the cron twice must not double-grant, the per-period marker
     (``last_granted_period_end``) plus the roll-forward makes the second pass a
     no-op. The period end is one day stale so a single monthly roll-forward
     lands it in the future and the sub is no longer due."""
@@ -268,7 +268,7 @@ def test_cron_is_noop_on_second_run(db, monkeypatch):
 
 
 def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
-    """A per-bot renewal must reset/grant only the bot ledger — it must NOT wipe
+    """A per-bot renewal must reset/grant only the bot ledger, it must NOT wipe
     the account pool. Regression guard for the cross-scope reset mismatch: the
     old cron reset the account pool while granting into the bot ledger."""
     client = _make_client(db, "cron-cross@e.com", "cron-cross")
@@ -309,7 +309,7 @@ def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
 # marker check then mis-decides to grant the period a SECOND time.
 #
 # The shared ``db`` fixture (conftest) is ``autoflush=True``, so ``refresh``'s
-# own SELECT auto-flushes the dirty marker first — the existing tests above pass
+# own SELECT auto-flushes the dirty marker first, the existing tests above pass
 # with or without the flush line and therefore do NOT guard it. This test pins
 # ``autoflush=False`` (mirroring test_credit_deduct_grant_boundary.py, where
 # autoflush-off is likewise a required ingredient of the bug) so that deleting
@@ -318,7 +318,7 @@ def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
 
 def _autoflush_off_session(pg_engine) -> Session:
     """A session bound to the throwaway PG that mirrors production's
-    ``autoflush=False`` — the precondition that makes the flush-before-refresh
+    ``autoflush=False``, the precondition that makes the flush-before-refresh
     fix observable."""
     return Session(pg_engine, autoflush=False)
 
@@ -331,7 +331,7 @@ def _truncate_all(session: Session) -> None:
 
 def test_flush_before_refresh_preserves_same_txn_marker(pg_engine):
     """Same-transaction activation→charged for one period grants exactly once,
-    even with ``autoflush=False`` — regression guard for the ``session.flush()``
+    even with ``autoflush=False``. Regression guard for the ``session.flush()``
     before ``refresh`` in ``grant_subscription_period_once`` (commit 4dae732).
 
     Fails (returns ``True`` and writes a second ``plan_grant``) if that flush is
@@ -387,7 +387,7 @@ def test_flush_before_refresh_preserves_same_txn_marker(pg_engine):
 # webhook keys on Razorpay's NEW ``current_end``. The monotonic marker guard
 # (``period_end <= last_granted_period_end`` → no-op) therefore let a DELAYED
 # webhook redelivery re-run reset+grant for a period the cron had already
-# granted — wiping the period's consumption. Both callers must key the SAME
+# granted. Wiping the period's consumption. Both callers must key the SAME
 # value: the period end of the cycle being granted (the new one).
 
 
@@ -427,7 +427,7 @@ def test_cron_then_delayed_webhook_grants_once(db, monkeypatch):
 
 
 def test_cron_skips_trialing_rows(db, monkeypatch):
-    """Trials never 'renew' — the expiry cron owns them. A trialing row whose
+    """Trials never 'renew', the expiry cron owns them. A trialing row whose
     period lapsed must get neither a free full-plan grant nor a period roll."""
     client = _make_client(db, "cron-trial@e.com", "cron-trial")
     plan = _make_plan(db, "plan-trial", 1000)
@@ -443,7 +443,7 @@ def test_cron_skips_trialing_rows(db, monkeypatch):
 
 def test_cron_withholds_gateway_renewal_without_paid_invoice(db, monkeypatch):
     """A Razorpay-billed row with NO captured payment for the renewal must not
-    be granted (unbounded free service when webhooks are down — F2). The
+    be granted (unbounded free service when webhooks are down. F2). The
     period is left un-rolled so the row re-matches once evidence arrives."""
     client = _make_client(db, "cron-unpaid@e.com", "cron-unpaid")
     plan = _make_plan(db, "plan-unpaid", 1000)
@@ -463,7 +463,7 @@ def test_cron_withholds_gateway_renewal_without_paid_invoice(db, monkeypatch):
 
 
 def test_cron_still_renews_manual_rows_without_invoice(db, monkeypatch):
-    """Free/manual subscriptions have no gateway and no invoices — the cron is
+    """Free/manual subscriptions have no gateway and no invoices, the cron is
     their ONLY renewal trigger and must keep granting them."""
     client = _make_client(db, "cron-manual@e.com", "cron-manual")
     plan = _make_plan(db, "plan-manual", 300)
@@ -488,7 +488,7 @@ def test_cron_still_renews_manual_rows_without_invoice(db, monkeypatch):
 
 
 def test_cron_seat_invoice_is_not_renewal_evidence(db, monkeypatch):
-    """Review fix — a paid SEAT invoice stamps the main sub's id but must not
+    """Review fix, a paid SEAT invoice stamps the main sub's id but must not
     evidence a plan renewal: a ₹449 seat debit funding a full plan grant is
     the same masking class the F5 revoke probe closes."""
     client = _make_client(db, "cron-seatmask@e.com", "cron-seatmask")
@@ -505,7 +505,7 @@ def test_cron_seat_invoice_is_not_renewal_evidence(db, monkeypatch):
 
 
 def test_marker_tolerance_absorbs_month_end_anchor_divergence(db):
-    """Review fix (residual P1-3) — the cron keys on add_months (day-clamped:
+    """Review fix (residual P1-3), the cron keys on add_months (day-clamped:
     Mar 28) while the webhook keys on Razorpay's current_end (anchor: Mar 31).
     A ≤4-day advance is the same paid cycle and must no-op; a real next cycle
     (~1 month) must still grant."""

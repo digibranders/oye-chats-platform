@@ -263,7 +263,7 @@ export function BillingDetailsModal({
                 onChange={(e) => {
                   const value = e.target.value;
                   setForm((prev) => {
-                    // A complete Indian PIN identifies the GST state — fill it
+                    // A complete Indian PIN identifies the GST state. Fill it
                     // in so the customer never has to know their state CODE.
                     // Only when the country is (or defaults to) India, and only
                     // as an autofill: the State dropdown stays editable.

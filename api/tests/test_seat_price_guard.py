@@ -4,7 +4,7 @@ Extra seats always bill the single global seat add-on at the canonical price
 (₹449 INR / $5 USD), so a plan row must never advertise a seat price it won't
 actually charge. ``_reject_seat_price_drift`` enforces that at write time:
 allow 0 (no paid seats) or the canonical value, reject anything else. Pure
-function over a dict — no DB, no auth.
+function over a dict, no DB, no auth.
 """
 
 from __future__ import annotations

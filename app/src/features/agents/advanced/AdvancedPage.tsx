@@ -82,7 +82,7 @@ export function AdvancedPage(): ReactElement {
   //   the client owns, while the server gates on the plan funding THIS bot
   //   (`is_visitor_intelligence_enabled_for_bot`).
   // * `useSelectedBotPlanSlug()` resolves against the shell SWITCHER's bot, not
-  //   the `:agentId` in the URL — this page edits the URL agent — and it
+  //   the `:agentId` in the URL (this page edits the URL agent) and it
   //   derives the slug from the credit-balance payload, which omits Free
   //   agents entirely (they have no per-bot ledger), so a Free agent silently
   //   inherited the account slug.

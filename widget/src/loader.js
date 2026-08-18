@@ -7,7 +7,7 @@
 //   4. Mount the shadow DOM container, fetch the app manifest from CDN,
 //      and dynamic-import the ESM app entry chunk.
 //
-// Kept tiny on purpose — every byte here ships on every customer page load.
+// Kept tiny on purpose. Every byte here ships on every customer page load.
 
 const VERSION = typeof __WIDGET_VERSION__ !== 'undefined' ? __WIDGET_VERSION__ : '0.0.0'
 const BUILD = typeof __WIDGET_BUILD__ !== 'undefined' ? __WIDGET_BUILD__ : 'dev'
@@ -179,7 +179,7 @@ const boot = async (overrides = {}) => {
   })()
 
   // Swallow the rejection at the top level so the unhandledrejection handler
-  // doesn't fire — we already logged it inside the IIFE. Callers who want
+  // doesn't fire. We already logged it inside the IIFE. Callers who want
   // explicit error handling should chain `.catch()` themselves.
   return _bootPromise.catch(() => undefined)
 }
@@ -198,7 +198,7 @@ void _stubInit  // satisfy lint about unused variable
 
 // ── Auto-init unless deferred. ─────────────────────────────────────────────
 if (typeof window !== 'undefined' && window.OYECHATS_ASYNC_INIT === true) {
-  console.log(`${PREFIX} v${VERSION} loader ready (deferred — call OyeChats.init() to mount)`)
+  console.log(`${PREFIX} v${VERSION} loader ready (deferred. Call OyeChats.init() to mount)`)
 } else {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => boot())

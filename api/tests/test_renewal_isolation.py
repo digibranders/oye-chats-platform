@@ -4,7 +4,7 @@
 once at the end. Because ``get_session()`` rolls the whole session back on any
 exception, a single bad subscription (e.g. a plan/ledger error in
 ``grant_subscription_period_once``) discarded the credit grants + period rolls
-of every *other* subscription in the run — and the cron repeated the failure
+of every *other* subscription in the run, and the cron repeated the failure
 daily. Each subscription must be isolated: a failure on one skips only that one.
 """
 
@@ -96,6 +96,6 @@ def test_one_bad_subscription_does_not_block_the_others(db, monkeypatch):
     for s in (s1, s3):
         db.refresh(s)
         assert s.current_period_end > _E, f"{s.razorpay_subscription_id} should have rolled forward"
-    # s2 was rolled back — its period did not advance.
+    # s2 was rolled back, its period did not advance.
     db.refresh(s2)
     assert s2.current_period_end == _E

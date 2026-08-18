@@ -1,13 +1,13 @@
 """The blur-check verdict cache, and why its two answers keep different time.
 
 `/chat/validate-email` is unmetered and authenticated only by the widget's bot
-key, which is embedded in every customer's page — so it was 20 free Reoon calls
+key, which is embedded in every customer's page, so it was 20 free Reoon calls
 a minute per key on OyeChats' own account. Caching the verdict fixes that.
 
 What caching must NOT do is turn a transient vendor error into a lockout. An
 "undeliverable" verdict BLOCKS the visitor (`HandoffForm` refuses to submit on
 it), it comes from a live DNS/SMTP probe with known false positives, and the
-cache key is the address rather than the tenant — so a single bad probe held
+cache key is the address rather than the tenant, so a single bad probe held
 for a day would pin a real person out of every OyeChats widget on the internet
 with no invalidation path. The deliverable verdict carries no such risk.
 
@@ -123,7 +123,7 @@ class TestAnOutageIsNeverCached:
 class TestTheKeyIsNamespaced:
     def test_the_key_carries_the_platform_prefix(self, cache, post):
         """`core.cache.PREFIX` namespaces every key this platform writes, so a
-        shared Redis can't collide and a prefix flush can reach it — which
+        shared Redis can't collide and a prefix flush can reach it, which
         matters here because there is no other invalidation path."""
         from app.core.cache import PREFIX
 

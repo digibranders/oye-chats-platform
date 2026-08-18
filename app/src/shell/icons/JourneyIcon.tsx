@@ -2,7 +2,7 @@ import { forwardRef } from 'react';
 import type { LucideProps } from 'lucide-react';
 
 /**
- * JourneyIcon — custom sidebar glyph for the /journey route. Renders
+ * JourneyIcon. Custom sidebar glyph for the /journey route. Renders
  * the "two circles connected by a right-angle path to a third circle"
  * shape (a compact journey/tree waypoint) matching the reference
  * screenshot. Signature mirrors LucideIcon so it drops straight into

@@ -18,7 +18,7 @@ export function getSessionKey(botKey) {
 
 // ── Cross-subdomain session continuity ──────────────────────────────────────
 // The session id normally lives in ``localStorage``, which the browser
-// hard-partitions per origin — so a visitor moving from ``example.com`` to
+// hard-partitions per origin, so a visitor moving from ``example.com`` to
 // ``academy.example.com`` would start a fresh conversation. When the bot has
 // ``session_share_domain`` configured (Admin → Channels), we ALSO mirror the id
 // into a cookie scoped to that parent domain (``Domain=.example.com``), which a
@@ -44,13 +44,13 @@ function sessionCookieName(botKey) {
 // A bare single label (``localhost``) or an IP returns null: browsers reject a
 // ``Domain`` attribute for those, so the caller writes a HOST-ONLY cookie
 // instead. A host-only cookie ignores port, so two localhost origins on
-// different ports — the standard local embed-test setup — still share it.
+// different ports (the standard local embed-test setup) still share it.
 function toCookieDomain(shareDomain) {
     if (!shareDomain || typeof shareDomain !== 'string') return null;
     const host = shareDomain.trim().toLowerCase().replace(/^\.+/, '');
     if (!host) return null;
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return null; // IPv4 — no Domain cookie
-    if (!host.includes('.')) return null; // localhost / single label — host-only
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return null; // IPv4, no Domain cookie
+    if (!host.includes('.')) return null; // localhost / single label. Host-only
     return `.${host}`;
 }
 
@@ -86,12 +86,12 @@ function expireCookie(name, cookieDomain) {
 // Cross-subdomain continuity needs a cookie scoped to the shared PARENT domain
 // (``Domain=.example.com``), not to the current host. Deriving that parent from
 // ``location.hostname`` naively (last two labels) is wrong for multi-level
-// public suffixes — ``academy.example.co.uk`` would yield ``co.uk``, which the
+// public suffixes. ``academy.example.co.uk`` would yield ``co.uk``, which the
 // browser refuses a Domain cookie for anyway. Rather than ship a public-suffix
 // list, we probe: set a throwaway cookie at each candidate parent, narrow → wide,
 // and keep the FIRST that actually sticks. The browser silently drops a
 // candidate that is a public suffix, so the first that survives is exactly the
-// registrable domain. Memoized per hostname — ``location.hostname`` is stable
+// registrable domain. Memoized per hostname. ``location.hostname`` is stable
 // for a real page's lifetime, and each probe touches ``document.cookie``.
 let _apexCache = { host: undefined, value: null };
 
@@ -103,7 +103,7 @@ export function detectApexDomain() {
     if (typeof document !== 'undefined' && host) {
         // Single label (``localhost``) or a raw IPv4 can't carry a Domain
         // attribute; report the host as-is so ``toCookieDomain`` falls back to a
-        // host-only cookie (which still bridges two ports on the same host — the
+        // host-only cookie (which still bridges two ports on the same host, the
         // local embed-test setup).
         if (!host.includes('.') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
             value = host;
@@ -157,15 +157,15 @@ export function readSessionId(botKey) {
     return readCookie(sessionCookieName(botKey));
 }
 
-// Persist the session id to localStorage, and — when the bot enables
-// cross-subdomain sharing — mirror it into a parent-domain cookie.
+// Persist the session id to localStorage, and (when the bot enables
+// cross-subdomain sharing) mirror it into a parent-domain cookie.
 export function writeSessionId(sessionId, { botKey, shareDomain } = {}) {
     if (!sessionId) return;
     try { localStorage.setItem(getSessionKey(botKey), sessionId); } catch { /* ignore */ }
     if (!shareDomain) return; // sharing off → localStorage only
     lastShareDomain = shareDomain;
     // ``toCookieDomain`` is null for hosts that can't take a Domain attribute
-    // (localhost, IPs) — writeCookie then emits a host-only cookie, still shared
+    // (localhost, IPs). WriteCookie then emits a host-only cookie, still shared
     // across ports for local multi-origin testing.
     writeCookie(sessionCookieName(botKey), sessionId, toCookieDomain(shareDomain));
 }
@@ -213,14 +213,14 @@ export function markLeadCaptured(storage = (typeof localStorage !== 'undefined' 
     try {
         storage.setItem(getLeadCapturedKey(botKey), String(Date.now()));
     } catch {
-        /* storage disabled (private mode, quota) — no-op */
+        /* storage disabled (private mode, quota), no-op */
     }
 }
 
 // Per-bot flag remembering that the visitor has opened the slash-command
 // palette at least once this tab session. When present, ChatInput drops
 // the "press / for commands" placeholder hint back to a plain "Write a
-// message..." — repeat exposure after the visitor has clearly figured out
+// message...". Repeat exposure after the visitor has clearly figured out
 // the palette reads as nagging. Stored in ``sessionStorage`` (not
 // ``localStorage``) so a return visit weeks later gets the hint again if
 // they've forgotten, but a current session stops being lectured.

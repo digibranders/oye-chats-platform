@@ -27,13 +27,13 @@ const LiveChatMode = ({
     setOperatorDepartment,
     onConnectionStatusChange,
     // Lifted state callbacks
-    onLiveMessagesChange,   // (updaterFn | array) => void  — controls liveMessages in parent
+    onLiveMessagesChange,   // (updaterFn | array) => void  (controls liveMessages in parent
     onOperatorTyping,       // (bool) => void
-    onLastReadAtChange,     // (isoString) => void — kept for backwards compat (file-list/legacy callers)
+    onLastReadAtChange,     // (isoString) => void) kept for backwards compat (file-list/legacy callers)
     onReconnectingChange,   // (bool) => void
     onWsReady,              // ({ send, typing, triggerFilePick, endChat }) => void
-    onChatEnded,            // () => void — called when chat ends (show rating or return to bot)
-    onUploadProgressChange, // (number|null) => void — syncs upload progress to parent
+    onChatEnded,            // () => void (called when chat ends (show rating or return to bot)
+    onUploadProgressChange, // (number|null) => void) syncs upload progress to parent
 }) => {
     const [ws, setWs] = useState(null);
     const reconnectAttempt = useRef(0);
@@ -55,7 +55,7 @@ const LiveChatMode = ({
     const [pendingFile, setPendingFile] = useState(null);
     // Full-screen image lightbox
     const [lightboxSrc, setLightboxSrc] = useState(null);
-    // Pending messages that failed to send — retried on reconnect
+    // Pending messages that failed to send. Retried on reconnect
     const [pendingMessages, setPendingMessages] = useState([]);
     const [fileError, setFileError] = useState(null);
 
@@ -65,7 +65,7 @@ const LiveChatMode = ({
         onUploadProgressChange?.(val);
     };
 
-    // ─── Periodic status check — recovers from lost "connected" messages ────────
+    // ─── Periodic status check. Recovers from lost "connected" messages ────────
     useEffect(() => {
         if (chatMode === 'waiting' && ws && ws.readyState === WebSocket.OPEN) {
             statusCheckRef.current = setInterval(() => {
@@ -163,7 +163,7 @@ const LiveChatMode = ({
                             setOperatorName(data.operator_name || 'Our team');
                             setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
-                            // Always re-fetch history on (re)connect — covers the
+                            // Always re-fetch history on (re)connect. Covers the
                             // window where the visitor's WS dropped and operator
                             // messages were sent into a dead socket. Without this,
                             // those messages live in the DB but never reach the UI.
@@ -175,7 +175,7 @@ const LiveChatMode = ({
                                     const fileRe = /^\[File:\s*(.+?)\]\((.+?)\)$/;
                                     // Live-chat scope only: history rows include messages
                                     // the visitor sent to the bot BEFORE the handoff. Those
-                                    // are not "to the operator" — restoring them into
+                                    // are not "to the operator". Restoring them into
                                     // liveMessages would (incorrectly) give them delivered/
                                     // read ticks once the operator reads the conversation.
                                     //
@@ -184,7 +184,7 @@ const LiveChatMode = ({
                                     // start point. Keep all operator messages, plus only
                                     // user messages sent AT OR AFTER that timestamp. If
                                     // there are no operator messages yet, the operator
-                                    // just connected for the first time — restore nothing
+                                    // just connected for the first time. Restore nothing
                                     // (every prior user message was bot-mode).
                                     const earliestOperatorTs = history.reduce((acc, m) => {
                                         if (m.role !== 'operator') return acc;
@@ -211,7 +211,7 @@ const LiveChatMode = ({
                                                 ...(isUser ? {
                                                     dbId: typeof m.id === 'number' ? m.id : undefined,
                                                     // Restored visitor messages are by definition persisted
-                                                    // — start them at "delivered". A subsequent read_receipt
+                                                    //. Start them at "delivered". A subsequent read_receipt
                                                     // (sent by the operator when they open the chat) will
                                                     // upgrade them to "read".
                                                     status: 'delivered',
@@ -253,7 +253,7 @@ const LiveChatMode = ({
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
-                            // Don't wipe messages — preserve conversation for rating survey.
+                            // Don't wipe messages. Preserve conversation for rating survey.
                             // Messages are cleared in handleReturnToBot after rating is submitted.
                             setOperatorName(null);
                             onChatEnded?.();
@@ -346,7 +346,7 @@ const LiveChatMode = ({
                         // Per-message "read" upgrade: only the visitor's own
                         // outgoing messages whose dbId is ≤ last_read_id flip
                         // to green. Messages without a dbId (pre-ack, queued)
-                        // are left alone — they'll flip on the next receipt
+                        // are left alone. They'll flip on the next receipt
                         // after the ack arrives.
                         onLiveMessagesChange?.(prev =>
                             (prev || []).map(m => {
@@ -383,7 +383,7 @@ const LiveChatMode = ({
             };
 
             socket.onerror = () => {
-                // onclose fires after onerror — reconnect handled there
+                // onclose fires after onerror. Reconnect handled there
             };
 
             setWs(socket);
@@ -548,7 +548,7 @@ const LiveChatMode = ({
             // Presigned POST: send the policy fields first, then the file LAST
             // (required by the S3/R2 POST spec). R2 enforces the size ceiling
             // from the policy's content-length-range. Let the browser set the
-            // multipart Content-Type (with boundary) — don't set it manually.
+            // multipart Content-Type (with boundary). Don't set it manually.
             const formData = new FormData();
             Object.entries(fields || {}).forEach(([k, v]) => formData.append(k, v));
             formData.append('file', file);
@@ -593,7 +593,7 @@ const LiveChatMode = ({
                     }]);
                 }
             } else {
-                setFileError('Connection lost — please try again.');
+                setFileError('Connection lost. Please try again.');
             }
         } catch (err) {
             console.error('[OyeChats] File upload error:', err);

@@ -1,4 +1,4 @@
-"""Pure currency-display helpers — which amount + currency a visitor sees.
+"""Pure currency-display helpers, which amount + currency a visitor sees.
 
 Single source of truth for the dual-currency display rule (billing ADR
 D2/D3): there is **no live FX in the charge path** (charges are taken in INR
@@ -14,7 +14,7 @@ discount); this module owns currency selection + formatting, plus the one
 regulatory bound a *price* has to clear (:func:`emandate_warning`). They are
 kept separate because they change for different reasons.
 
-Nothing here touches the database or the network — pure value helpers, safe
+Nothing here touches the database or the network. Pure value helpers, safe
 to call from anywhere (routes, services, scripts, tests).
 """
 
@@ -49,8 +49,8 @@ def resolve_billing_context(
     ``request_country`` (this call's explicit confirmation) → ``stored_country``
     (the account's tax fact) → ``detected_country`` (IP geo, display-grade) →
     unresolved. Currency always maps through :func:`charge_currency`, so an
-    unresolved buyer is domestic/INR — matching every legacy account (NULL
-    country, INR mandate) — instead of one surface guessing USD while another
+    unresolved buyer is domestic/INR (matching every legacy account (NULL
+    country, INR mandate)) instead of one surface guessing USD while another
     charges rupees.
 
     Pure and HTTP-free: routes translate trust rules into status codes (e.g.
@@ -77,7 +77,7 @@ def display_price(
 ) -> tuple[int, str]:
     """Return ``(minor_units, currency)`` for the visitor.
 
-    * ``country == "IN"`` → ``(inr_paise, "INR")`` — stored INR, untouched.
+    * ``country == "IN"`` → ``(inr_paise, "INR")``. Stored INR, untouched.
     * Otherwise → ``(usd_cents, "USD")`` using the fixed USD column.
     * If ``usd_cents`` is ``None`` (legacy row), fall back to converting
       ``inr_paise`` via ``rate`` (rupees per dollar). A non-positive ``rate``
@@ -92,7 +92,7 @@ def display_price(
     if usd_cents is not None:
         return int(usd_cents), "USD"
 
-    # Non-positive rate would divide by zero — fall back to 0 (legacy rows
+    # Non-positive rate would divide by zero. Fall back to 0 (legacy rows
     # should always have a USD column set; this is defence-in-depth).
     converted = round((int(inr_paise or 0) / 100) / rate * 100) if rate and rate > 0 else 0
     return converted, "USD"
@@ -103,7 +103,7 @@ def charge_currency(country: str | None) -> str:
 
     Deliberately stricter than :func:`display_price`'s country rule: an unknown
     country (``None``/blank) means "not confirmed", and an unconfirmed customer
-    is a domestic one — every account that predates the country-confirmation
+    is a domestic one. Every account that predates the country-confirmation
     step has a NULL ``billing_country`` and an INR mandate. Defaulting those to
     USD would repoint live customers at the wrong rail, so display may guess
     USD for an unknown visitor while the charge path never does.
@@ -120,7 +120,7 @@ def annual_saving_percent(monthly_minor: int | None, annual_minor: int | None) -
     The ONE definition of that number for the whole backend. Every plan payload
     serves it under the existing ``annual_discount_percent`` key, so the marketing
     site, the admin app and the super-admin editor read one figure computed one
-    way — the response shape is unchanged, only the value is now true.
+    way, the response shape is unchanged, only the value is now true.
 
     Deliberately NOT the stored ``Plan.annual_discount_percent`` column. That is a
     single hand-maintained int on a row carrying BOTH an INR and a USD price pair,
@@ -132,13 +132,13 @@ def annual_saving_percent(monthly_minor: int | None, annual_minor: int | None) -
     described and the rail every price surface renders today (the USD savings for
     the same plans are 18.77 / 18.76 / 17.40 / 20.00%, so one int never covered
     both). When a surface starts choosing its rail via :func:`display_price`, pass
-    that rail's two amounts here instead — the arithmetic is currency-agnostic.
+    that rail's two amounts here instead, the arithmetic is currency-agnostic.
 
     Integer-only and multiply-before-divide: both operands stay exact, so a saving
     that is exactly N% divides to exactly N and cannot floor down to N-1.
 
     Rounds DOWN, never to nearest. This number sits next to a Subscribe button, so
-    the failure modes are not symmetric — understating a saving costs nothing,
+    the failure modes are not symmetric. Understating a saving costs nothing,
     while overstating one tells a customer they will be charged less than they
     will be. 21.674% must read as 21, never 22.
 
@@ -170,8 +170,8 @@ def seat_price(
 ) -> tuple[int, str]:
     """Return ``(minor_units, currency)`` for ONE extra operator seat.
 
-    The seat price is global — one INR amount actually charged by the single
-    seat add-on plan, and one USD equivalent for the international rail — so
+    The seat price is global (one INR amount actually charged by the single
+    seat add-on plan, and one USD equivalent for the international rail) so
     unlike :func:`display_price` there is no per-plan USD fallback: callers pass
     the canonical ``config.RAZORPAY_SEAT_PLAN_PRICE_CENTS`` /
     ``config.EXTRA_SEAT_PRICE_USD_CENTS`` so every surface shows exactly what the
@@ -180,7 +180,7 @@ def seat_price(
     Currency selection: an explicit ``currency`` wins (``"usd"`` → USD, anything
     else → INR); otherwise a non-Indian ``country`` (``!= "IN"``, matching
     :func:`display_price`) selects USD. ``country`` of ``None`` with no currency
-    defaults to INR — the live single rail.
+    defaults to INR, the live single rail.
     """
     # Explicit currency wins; otherwise a non-Indian country selects USD.
     is_usd = currency.lower() == "usd" if currency is not None else (country is not None and country != "IN")
@@ -189,11 +189,11 @@ def seat_price(
     return int(inr_cents or 0), "INR"
 
 
-# RBI Digital Payments — E-mandate Framework, 2026 (notified 21 Apr 2026):
+# RBI Digital Payments. E-mandate Framework, 2026 (notified 21 Apr 2026):
 # a recurring debit above this amount requires Additional Factor of
 # Authentication on EVERY charge, so the renewal stops being silent and the
 # customer must re-authenticate each cycle. The Rs 1,00,000 ceiling applies
-# only to insurance, mutual funds and credit card bills — SaaS does not
+# only to insurance, mutual funds and credit card bills. SaaS does not
 # qualify. Expressed in paise to match the price columns.
 EMANDATE_AFA_CEILING_MINOR = 1_500_000
 
@@ -204,7 +204,7 @@ def emandate_warning(amount_minor: int | None, currency: str | None) -> str | No
     Deliberately a WARNING, not a hard block: pricing above the ceiling is a
     legitimate business decision (an enterprise tier may accept per-renewal
     re-authentication, or bill by invoice instead of by mandate). The failure
-    this prevents is crossing the line *unknowingly* — and the catalogue is
+    this prevents is crossing the line *unknowingly*, and the catalogue is
     already well across it: Professional annual is Rs 28,188 (88% ABOVE the
     ceiling) and Enterprise annual Rs 57,588 (3.8x it). Every monthly amount
     still clears it, as do Starter and Standard annual (Rs 5,748 / Rs 11,508).
@@ -235,7 +235,7 @@ def emandate_warning(amount_minor: int | None, currency: str | None) -> str | No
 def _group_indian(major: int) -> str:
     """Group an integer with the Indian numbering system (lakh/crore).
 
-    ``1234567 → "12,34,567"`` — the last three digits, then pairs. Western
+    ``1234567 → "12,34,567"``, the last three digits, then pairs. Western
     grouping (``f"{n:,}"``) renders INR wrong (M2).
     """
     s = str(major)
@@ -256,7 +256,7 @@ def format_amount(minor_units: int, currency: str) -> str:
     """Format integer minor units as a human string.
 
     Computed purely from integers via ``divmod`` (no float equality, which is
-    imprecise for large paise totals — M2). Drops the fractional part when the
+    imprecise for large paise totals. M2). Drops the fractional part when the
     amount is a whole major unit, and uses Indian (lakh) grouping for INR:
     ``1900, "USD" → "$19"``; ``179900, "INR" → "₹1,799"``;
     ``1234567, "INR" → "₹12,345.67"``; ``15050, "USD" → "$150.50"``. Unknown

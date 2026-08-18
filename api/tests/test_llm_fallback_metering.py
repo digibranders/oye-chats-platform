@@ -1,7 +1,7 @@
 """Tests for LLM fallback-rate metering (AR-16).
 
 Before this, primary->fallback stream degradation only logged warning/error
-with no counter — a primary provider flaky for an hour silently recovered
+with no counter, a primary provider flaky for an hour silently recovered
 via fallback on every request, health stayed green, and nobody knew without
 manually grepping logs.
 """

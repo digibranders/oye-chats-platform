@@ -1,6 +1,6 @@
 """The Free fallback must carry a `bots` limit.
 
-Not because losing the key would open the creation gate — it fails CLOSED.
+Not because losing the key would open the creation gate, it fails CLOSED.
 `limit_for` answers 0 for a missing key, so `within_limit("bots", n)` becomes
 `n < 0`, false for every n, and `bot_routes._plan_bots_limit_allows` simply
 never widens the per-bot-billing default. A plan-less account keeps the one
@@ -11,7 +11,7 @@ What the key really guards is this constant's job: standing in for the seeded
 Free plan whenever no plan row resolves. Drop it and `/me/entitlements` ships a
 `limits` dict with no agent quota, so the dashboard's mirror of the gate
 (`app/src/features/agents/agentLimit.ts`) reads 0 and stops telling the user
-what their plan includes — and the fallback no longer matches the plan it
+what their plan includes, and the fallback no longer matches the plan it
 claims to mirror.
 """
 

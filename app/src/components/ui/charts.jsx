@@ -128,7 +128,7 @@ export function MiniBarChart({
 
 /**
  * Semicircular radial gauge with a big centered value.
- * `value` is 0–100. Renders a ticked arc (muted track + colored progress).
+ * `value` is 0 to 100. Renders a ticked arc (muted track + colored progress).
  */
 export function RadialGauge({
   value = 0,

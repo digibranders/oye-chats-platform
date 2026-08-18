@@ -1,13 +1,13 @@
 """Cross-tenant isolation regression test for search_similar_documents (AR-21).
 
 Before this fix, search_similar_documents' raw SQL filtered only on bot_id
-when bot_id was provided — never AND-ing client_id even when both were
+when bot_id was provided, never AND-ing client_id even when both were
 available, unlike search_keyword_documents and every other owner-scoped
 query in this module (which route through `_owner_filter`'s bot_id AND
 client_id defense-in-depth pattern). Not currently exploitable (bot_id and
 client_id are both derived from the same authenticated Bot row on every
 existing call path), but this is the single hottest query path in the
-system — a future caller passing an attacker-influenced bot_id with a fixed
+system, a future caller passing an attacker-influenced bot_id with a fixed
 client_id would have had no second gate.
 """
 
@@ -61,7 +61,7 @@ def _make_document(db: Session, client: Client, bot: Bot, content: str) -> Docum
         source="upload",
         file_hash=f"hash-{bot.id}-{content[:8]}",
         content=content,
-        embedding=_unit_vector(1),  # same embedding for both tenants — worst case for isolation
+        embedding=_unit_vector(1),  # same embedding for both tenants. Worst case for isolation
     )
     db.add(doc)
     db.commit()
@@ -81,20 +81,20 @@ class TestSearchSimilarDocumentsClientIdAndFilter:
 
         query_embedding = _unit_vector(1)
 
-        # Correct tenant: bot_a + client_a — must find the document.
+        # Correct tenant: bot_a + client_a. Must find the document.
         results = search_similar_documents(db, bot_id=bot_a.id, client_id=client_a.id, query_embedding=query_embedding)
         assert len(results) == 1
         assert results[0][0].client_id == client_a.id
 
         # Mismatched tenant: bot_a (client_a's bot) queried with client_b's
-        # client_id — must return nothing, proving the AND-filter is real
+        # client_id. Must return nothing, proving the AND-filter is real
         # and not just bot_id being silently sufficient on its own.
         results = search_similar_documents(db, bot_id=bot_a.id, client_id=client_b.id, query_embedding=query_embedding)
         assert results == []
 
     def test_bot_id_only_still_works_unchanged(self, db):
         """Existing callers that only pass bot_id (no client_id) must see
-        unchanged behavior — this fix is additive, not a breaking change."""
+        unchanged behavior. This fix is additive, not a breaking change."""
         client = _make_client(db)
         bot = _make_bot(db, client)
         _make_document(db, client, bot, "Some knowledge base content")
@@ -119,7 +119,7 @@ class TestOwnerFilterClientIdAndScope:
     (mutations TI1/TI2 survived the original suite)."""
 
     def test_missing_scope_raises_loudly(self, db):
-        """Neither bot_id nor client_id must fail loudly — falling through would
+        """Neither bot_id nor client_id must fail loudly. Falling through would
         emit ``client_id IS NULL`` and match legacy null-tenant rows (TI2)."""
         with pytest.raises(ValueError):
             _owner_filter(Document)
@@ -136,7 +136,7 @@ class TestOwnerFilterClientIdAndScope:
         own = get_ingested_documents(db, bot_id=bot_a.id, client_id=client_a.id)
         assert len(own) == 1
 
-        # bot_a's id with the WRONG client_id must return nothing — proving the
+        # bot_a's id with the WRONG client_id must return nothing. Proving the
         # client_id AND-clause is real, not bot_id silently sufficient on its own.
         cross = get_ingested_documents(db, bot_id=bot_a.id, client_id=client_b.id)
         assert cross == []

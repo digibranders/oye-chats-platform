@@ -16,7 +16,7 @@ def test_fetch_ip_intel_parses_business_company(monkeypatch):
     """ipapi.is nests company/asn as OBJECTS; this service must flatten them.
 
     Previously this asserted the nested dict was passed through verbatim,
-    which is exactly what broke the Leads UI — it reads these as strings, so
+    which is exactly what broke the Leads UI, it reads these as strings, so
     a dict rendered as nothing. Assert primitives, not the vendor's shape.
     """
     monkeypatch.setenv("IPAPI_IS_KEY", "test-key")

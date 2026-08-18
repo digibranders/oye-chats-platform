@@ -3,10 +3,10 @@
 The embed rate limiter is a single project-wide bucket shared by bulk
 ingestion and the chat query path. Under crawl contention the bucket runs into
 deep token debt, and a query embed could be told to sleep up to
-``_MAX_WAIT_SECONDS`` (5 minutes) — pinning a request-serving thread while the
+``_MAX_WAIT_SECONDS`` (5 minutes). Pinning a request-serving thread while the
 visitor stares at a spinner. The fix: ``acquire`` accepts a per-caller wait
 ceiling; the query path passes a small one and, when the ceiling is exceeded,
-gets ``EmbedWaitExceeded`` instead of a sleep — which the RAG layer already
+gets ``EmbedWaitExceeded`` instead of a sleep, which the RAG layer already
 degrades to keyword-only retrieval.
 """
 
@@ -43,7 +43,7 @@ def test_acquire_raises_when_wait_exceeds_ceiling(monkeypatch):
     with pytest.raises(rl.EmbedWaitExceeded):
         rl.acquire(1, max_wait=2.0)
 
-    assert not slept  # fail fast — the whole point is not to pin the thread
+    assert not slept  # fail fast, the whole point is not to pin the thread
 
 
 def test_acquire_refunds_reservation_on_abort(monkeypatch):

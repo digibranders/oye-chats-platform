@@ -39,8 +39,8 @@ _TITLE_FALLBACK_PATTERN = re.compile(r"^##\s+(.+)", re.MULTILINE)
 # but the actual crawled page BODY (Spider/Jina scrape result) had no size
 # cap before clean_text/chunk_text/embed_chunks. A pathologically large page
 # (a mis-rendered SPA dump, or a maliciously crafted one) produced unbounded
-# chunks and embed calls for a single page — consuming disproportionate
-# embed-RPM quota — while the credit ledger still charged only one page's
+# chunks and embed calls for a single page (consuming disproportionate
+# embed-RPM quota) while the credit ledger still charged only one page's
 # worth, a cost/quota mismatch. 750KB is comfortably above any legitimate
 # marketing/docs page's text content (a 750KB *cleaned-text* page would
 # already be tens of thousands of words) while bounding the pathological case.
@@ -53,7 +53,7 @@ def _cap_crawled_page_content(content: str, url: str) -> str:
     if len(content) <= _MAX_CRAWLED_PAGE_CHARS:
         return content
     logger.warning(
-        "Crawled page content exceeds %d chars (%d) — truncating: %s",
+        "Crawled page content exceeds %d chars (%d). Truncating: %s",
         _MAX_CRAWLED_PAGE_CHARS,
         len(content),
         url,
@@ -76,8 +76,8 @@ def _extract_title_from_markdown(content: str) -> str | None:
 
 # Failed uploads are quarantined (rather than archived) so they leave the
 # input folder and don't get reprocessed on every run (the "poison pill"
-# pattern). Both archive and quarantine are namespaced per tenant — see
-# ``_tenant_archive_dir`` / ``_tenant_quarantine_dir`` — so one tenant's cold
+# pattern). Both archive and quarantine are namespaced per tenant (see
+# ``_tenant_archive_dir`` / ``_tenant_quarantine_dir``) so one tenant's cold
 # storage can never mix with another's, mirroring the per-tenant upload dir.
 _QUARANTINE_SUBDIR = "_quarantine"
 
@@ -124,7 +124,7 @@ _DEDUP_TIMESTAMP_LINE_PATTERNS = (
     re.compile(
         r"(?im)^[\s>\-*\"'|]*"
         r"(?:last\s+(?:updated|modified|reviewed)|published(?:\s+on)?|updated(?:\s+on)?|posted(?:\s+on)?|created(?:\s+on)?|copyright|©)"
-        r"\s*[:\-—]?\s*.*$"
+        r"\s*[:\--]?\s*.*$"
     ),
     # Bare "(c) 2026" / "© 2026 Company Name" footer lines
     re.compile(r"(?im)^[\s>\-*\"'|]*(?:©|\(c\))\s*\d{4}.*$"),
@@ -134,7 +134,7 @@ _DEDUP_TIMESTAMP_LINE_PATTERNS = (
 def _normalize_for_dedup_hash(text: str) -> str:
     """Strip volatile-boilerplate patterns before computing the dedup hash.
 
-    The *stored* content always preserves the original text — only the hash
+    The *stored* content always preserves the original text. Only the hash
     uses the normalised form. This means:
       * A re-crawl where only "© 2025" → "© 2026" changed produces the SAME
         hash → page is skipped → no credits charged. ✓
@@ -172,12 +172,12 @@ def _ingest_document(
     """
     # 1. Clean every page so the hash AND the chunks derive from the same
     #    text. Previously the hash was computed on ``clean_text(full_text)``
-    #    while chunks were produced from the raw ``pages_data`` — meaning two
+    #    while chunks were produced from the raw ``pages_data``. Meaning two
     #    templated landing pages that only differed in their nav/footer
     #    boilerplate could collide on hash and be silently skipped, even
     #    though their actual unique-content chunks differed.
     #    Media URL extraction runs on the *raw* page text (pre-clean) because
-    #    the cleaner strips ``[label](url)`` markdown link wrappers — capture
+    #    the cleaner strips ``[label](url)`` markdown link wrappers. Capture
     #    YouTube/downloadable URLs first, attach them to page metadata, and
     #    let chunking propagate that metadata to every chunk of the page.
     cleaned_pages_data: list[dict[str, Any]] = []
@@ -201,7 +201,7 @@ def _ingest_document(
         cleaned_text = clean_text(p["text"])
         cleaned_texts.append(cleaned_text)
         cleaned_pages_data.append({"text": cleaned_text, "metadata": page_meta})
-    # Parallel ``list[str]`` of the text values so ``str.join`` type-checks —
+    # Parallel ``list[str]`` of the text values so ``str.join`` type-checks.
     # ``cleaned_pages_data`` has mixed value types (str + dict), so a bare
     # ``p["text"] for p in cleaned_pages_data`` widens to ``str | dict``.
     cleaned_full_text = " ".join(cleaned_texts)
@@ -220,7 +220,7 @@ def _ingest_document(
             logger.info(f"Skipping {source_name} (Already processed for client {client_id}, bot {bot_id})")
             return 0
 
-        # KB char quota gate — raises KnowledgeQuotaExceeded (mapped to 402
+        # KB char quota gate. Raises KnowledgeQuotaExceeded (mapped to 402
         # at the route layer). Runs BEFORE chunking + embedding so we never
         # burn embedding quota on content we can't accept. Takes a row-level
         # lock on the client row so concurrent uploads race-safely against
@@ -279,7 +279,7 @@ def _ingest_document(
             # crawled pages: uploaded PDFs/DOCX are almost never event
             # calendars, and the ``source_url`` we need as part of the
             # dedup key isn't available for uploads anyway. Extraction
-            # failures never abort ingestion — the extractor already
+            # failures never abort ingestion, the extractor already
             # swallows LLM errors and returns [] on any problem.
             if bot_id and source == "crawl":
                 for page in cleaned_pages_data:
@@ -307,7 +307,7 @@ def _ingest_document(
                         )
             session.commit()
             # Invalidate cached QA responses AND stale relevance-gate judgments
-            # — the knowledge base just changed, so any prior "off-topic" cache
+            # , the knowledge base just changed, so any prior "off-topic" cache
             # entry would otherwise haunt this bot for up to an hour.
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))
@@ -333,7 +333,7 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     subsequent files behind it indefinitely.
     """
     if not os.path.isdir(folder_path):
-        logger.info("run_folder_ingestion: folder %s does not exist — nothing to ingest", folder_path)
+        logger.info("run_folder_ingestion: folder %s does not exist, nothing to ingest", folder_path)
         return 0
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     files = [f for f in os.listdir(folder_path) if any(f.lower().endswith(ext) for ext in supported_extensions)]
@@ -394,7 +394,7 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     logger.info(f"Folder ingestion complete! Processed {processed_count} files.")
     # Uploads run no crawl, so nothing else would ever mark this bot as trained:
     # before this, uploading documents left the dashboard reading "Nothing
-    # learned yet" forever. Best-effort — a bookkeeping failure must not fail an
+    # learned yet" forever. Best-effort, a bookkeeping failure must not fail an
     # ingest whose chunks are already committed. A legacy client-scoped ingest
     # (``bot_id=None``) re-derives every bot of the client: the rows landed in
     # an unknown subset of them, and skipping the sync recreates the exact
@@ -480,7 +480,7 @@ def batch_web_ingestion(
         force_reingest: When True, skip the SHA-256 content dedup check so every
             page is re-embedded and re-charged even if its content is identical
             to what's already stored. Set by the ``mode=full`` path on
-            ``POST /crawl`` — the intended behavior on Free/Starter, where a
+            ``POST /crawl``, the intended behavior on Free/Starter, where a
             "recrawl the entire website" action must bill for the entire
             website regardless of what actually changed. Standard+ delta-mode
             leaves this False so the dedup skip continues to make unchanged
@@ -489,14 +489,14 @@ def batch_web_ingestion(
             constant across a job's retries but fresh per user-initiated crawl.
             When set (and ``cost_per_page`` > 0), each page's deduction carries a
             per-(job, url) idempotency key so an ARQ retry of a partially-charged
-            crawl never re-charges pages it already billed (finding H) — even in
+            crawl never re-charges pages it already billed (finding H), even in
             ``force_reingest`` mode where the content dedup that normally makes a
             re-run free is deliberately bypassed. ``None`` (non-ARQ callers) keeps
             per-page charging exactly as before.
 
     Returns:
         ``{"chunks": int, "pages_charged": int, "credits_deducted": int,
-        "aborted": bool}`` — ``aborted`` is True when ingestion stopped early
+        "aborted": bool}``. ``aborted`` is True when ingestion stopped early
         because billing can no longer proceed (insufficient credits / kill
         switch). Streaming callers use it to stop scheduling further waves
         instead of wasting embedding quota on pages that can't be paid for.
@@ -505,7 +505,7 @@ def batch_web_ingestion(
         return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
 
     # Local import: credit_service depends on db.models which already imports
-    # heavily — keep this lazy so importing pipeline.py stays cheap and there
+    # heavily. Keep this lazy so importing pipeline.py stays cheap and there
     # is no risk of a circular import via app.services.
     from app.db.models import Bot
     from app.services import credit_service
@@ -531,7 +531,7 @@ def batch_web_ingestion(
             url = page["url"]
             content = _cap_crawled_page_content(page["content"], url)
 
-            # Clean and hash for dedup — and chunk on the SAME cleaned text so
+            # Clean and hash for dedup, and chunk on the SAME cleaned text so
             # the dedup fingerprint matches what's actually stored. Mismatched
             # sources let templated landing pages collide on hash and silently
             # skip the second page.
@@ -552,7 +552,7 @@ def batch_web_ingestion(
                 logger.info(f"Skipping {url} (already processed)")
                 continue
 
-            # Title extraction runs on raw content — markdown ``# Title`` survives
+            # Title extraction runs on raw content. Markdown ``# Title`` survives
             # cleaning and the title metadata is useful for retrieval prefix.
             title = _extract_title_from_markdown(content)
             page_meta = {"page": 1, "url": url}
@@ -630,8 +630,8 @@ def batch_web_ingestion(
         pages_charged = 0
         credits_deducted = 0
         aborted = False
-        # ``pages_changed`` counts pages whose fresh chunks were committed —
-        # i.e. re-ingested pages that made it past the hash-skip AND the
+        # ``pages_changed`` counts pages whose fresh chunks were committed.
+        # I.e. re-ingested pages that made it past the hash-skip AND the
         # insert TX succeeded. Bumped inside the successful-commit branch so
         # rollbacks (bad insert, ``InsufficientCredits``, kill switch, generic
         # DB error) don't inflate the number the summary reports upstream.
@@ -652,7 +652,7 @@ def batch_web_ingestion(
                 # produce duplicates; hash dedup still skips unchanged pages above.
                 # Re-ingest: the OLD source_char_count of this URL is about to
                 # disappear, so its contribution to the account counter needs to
-                # be reclaimed BEFORE the quota check — otherwise a re-crawl of
+                # be reclaimed BEFORE the quota check. Otherwise a re-crawl of
                 # the same URL would double-count itself and could 402 spuriously.
                 from app.services.knowledge_quota_service import chars_used_by_source
 
@@ -664,7 +664,7 @@ def batch_web_ingestion(
                     increment_kb_usage(session, client_id, -old_source_chars)
 
                 # Per-page KB char quota gate. Raises KnowledgeQuotaExceeded when
-                # a page would push the account past its cap — caught below,
+                # a page would push the account past its cap. Caught below,
                 # aborts the crawl same as InsufficientCredits so we don't burn
                 # embed quota on pages that can't be stored.
                 check_kb_quota(session, client_id, page_source_chars)
@@ -703,9 +703,9 @@ def batch_web_ingestion(
                         cost_per_page,
                         reason=deduct_reason,
                         reference_id=deduct_reference_id,
-                        bot_id=ledger_bot_id,  # scope — None when pooled
+                        bot_id=ledger_bot_id,  # scope (None when pooled
                         idempotency_key=idem_key,
-                        attributed_bot_id=bot_id,  # attribution — always the real bot
+                        attributed_bot_id=bot_id,  # attribution) always the real bot
                     )
                 session.commit()
                 total += count
@@ -723,7 +723,7 @@ def batch_web_ingestion(
                     exc.required,
                     exc.available,
                 )
-                # Stop ingesting further pages — the user can't pay for them.
+                # Stop ingesting further pages, the user can't pay for them.
                 aborted = True
                 break
             except KnowledgeQuotaExceeded as exc:
@@ -755,7 +755,7 @@ def batch_web_ingestion(
                 session.rollback()
                 continue
 
-    # Invalidate cached QA responses AND stale relevance-gate judgments —
+    # Invalidate cached QA responses AND stale relevance-gate judgments,
     # the bot's knowledge base just expanded, so prior off-topic verdicts
     # should not survive the upload.
     if total > 0 and bot_id:

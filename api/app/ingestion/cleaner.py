@@ -2,7 +2,7 @@ import re
 
 from app.security.injection_patterns import compile_line_anchored_strip_pattern
 
-# A "cell" that is nothing but a single markdown link — i.e. a nav-bar entry.
+# A "cell" that is nothing but a single markdown link. I.e. a nav-bar entry.
 # Used to distinguish pipe-separated nav rows from real markdown data tables.
 _NAV_LINK_CELL_RE = re.compile(r"^\s*\[[^\]]+\]\([^)]+\)\s*$")
 
@@ -16,7 +16,7 @@ _NAV_LINK_CELL_RE = re.compile(r"^\s*\[[^\]]+\]\([^)]+\)\s*$")
 # caught, but many crawled pages format their video/file references as
 # markdown links, which is why this pass is unconditional at ingest time.
 
-# YouTube URL patterns — canonical, short, embed, and shorts forms. The
+# YouTube URL patterns. Canonical, short, embed, and shorts forms. The
 # 11-char video ID is YouTube's stable identifier and is what the widget
 # uses to build the thumbnail URL, so extraction focuses on that.
 _YOUTUBE_URL_RE = re.compile(
@@ -27,7 +27,7 @@ _YOUTUBE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Downloadable file URLs — extensions we surface as attachment cards in
+# Downloadable file URLs. Extensions we surface as attachment cards in
 # chat. Kept conservative on purpose: only formats a visitor would expect
 # to open or download from a business site.
 _DOWNLOAD_EXTENSIONS = ("pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "zip", "rtf", "odt", "ods", "odp")
@@ -41,13 +41,13 @@ _DOWNLOAD_EXTENSIONS = ("pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv
 #   3. ``https://cdn.x.com/foo.pdf.backup`` → ``.pdf.backup`` isn't a
 #      PDF; the extension is followed by ``.b`` which is another label.
 # The lookahead rejects a following alphanumeric OR a ``.<alphanumeric>``
-# sequence — but ALLOWS a trailing ``.`` at the end of a sentence
+# sequence, but ALLOWS a trailing ``.`` at the end of a sentence
 # (``.pdf.`` followed by whitespace or end of string), which is
 # subsequently swept off by ``_URL_TRAILING_PUNCT`` on the caller side.
-# Result: real URLs — ``foo.pdf``, ``foo.pdf/preview``, ``foo.pdf?v=1``,
-# ``foo.pdf#page=3``, ``foo.pdf.`` at end of sentence — all match; domain
-# labels containing an extension prefix — ``hub.docker.com``,
-# ``help.xlsx.io`` — do not.
+# Result: real URLs. ``foo.pdf``, ``foo.pdf/preview``, ``foo.pdf?v=1``,
+# ``foo.pdf#page=3``, ``foo.pdf.`` at end of sentence. All match; domain
+# labels containing an extension prefix. ``hub.docker.com``,
+# ``help.xlsx.io``. Do not.
 _FILE_URL_RE = re.compile(
     r"https?://[^\s\"'<>()\[\]]+\.(?:" + "|".join(_DOWNLOAD_EXTENSIONS) + r")"
     r"(?!(?:[A-Za-z0-9]|\.[A-Za-z0-9]))"
@@ -55,11 +55,11 @@ _FILE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Trailing punctuation that URL regexes commonly sweep up — strip before
+# Trailing punctuation that URL regexes commonly sweep up. Strip before
 # using the URL so we don't emit ``https://example.com/file.pdf.`` etc.
 _URL_TRAILING_PUNCT = ".,;:!?)]}>\"'"
 
-# YouTube CHANNEL URL — the ``@handle`` / ``/c/`` / ``/user/`` / ``/channel/UC...``
+# YouTube CHANNEL URL, the ``@handle`` / ``/c/`` / ``/user/`` / ``/channel/UC...``
 # shapes. Almost every content-producing customer's website links to
 # their channel from a "Follow us" section, header, or footer. Detecting
 # that channel URL at ingest time lets Layer 1.5 auto-expand it into the
@@ -67,7 +67,7 @@ _URL_TRAILING_PUNCT = ".,;:!?)]}>\"'"
 # ``enrich_media_urls_with_channel_videos`` in youtube_metadata.py).
 #
 # The four capture groups match the four URL forms. At least ONE group
-# is always populated on a match — the caller doesn't need to
+# is always populated on a match, the caller doesn't need to
 # distinguish which, just needs the full matched URL to hand to the
 # channel fetcher.
 _YOUTUBE_CHANNEL_URL_RE = re.compile(
@@ -76,7 +76,7 @@ _YOUTUBE_CHANNEL_URL_RE = re.compile(
     r"|c/([A-Za-z0-9_\-.]{1,64})"
     r"|user/([A-Za-z0-9_\-.]{1,64})"
     r"|channel/(UC[A-Za-z0-9_-]{22}))"
-    r"(?![A-Za-z0-9_\-.])",  # boundary — @cleanstart shouldn't match @cleanstart2 as a prefix
+    r"(?![A-Za-z0-9_\-.])",  # boundary - @cleanstart shouldn't match @cleanstart2 as a prefix
     re.IGNORECASE,
 )
 
@@ -84,7 +84,7 @@ _YOUTUBE_CHANNEL_URL_RE = re.compile(
 def extract_media_urls(text: str) -> dict:
     """Scan raw text for YouTube video URLs and downloadable file URLs.
 
-    MUST run BEFORE :func:`clean_text` — the cleaner strips markdown link
+    MUST run BEFORE :func:`clean_text`, the cleaner strips markdown link
     wrappers, so URLs that lived inside ``[text](url)`` markup would be
     permanently lost by the time it returns.
 
@@ -125,12 +125,12 @@ def extract_media_urls(text: str) -> dict:
         name = path.rsplit("/", 1)[-1] or "download"
         files.append({"url": url, "name": name})
 
-    # YouTube channel URLs — Layer 1.5 auto-discover. Almost every content
+    # YouTube channel URLs. Layer 1.5 auto-discover. Almost every content
     # customer links to their YouTube channel somewhere on their site
     # ("Follow us on YouTube" in the footer, social icons, About page).
     # We capture those URLs here so the ingestion pipeline can auto-fetch
     # every video on the channel and inject them into the bot's media
-    # catalog — customers get their full video library surfaced without
+    # catalog. Customers get their full video library surfaced without
     # ever having to configure it manually.
     channels_seen: set[str] = set()
     channels: list[str] = []
@@ -162,7 +162,7 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*
 # Crawled web pages and uploaded documents end up inside the LLM's context
 # window. A malicious or compromised source can embed instructions designed
 # to hijack the model ("ignore previous instructions and …"). We strip the
-# obvious markers — model chat-template tokens and the most common
+# obvious markers. Model chat-template tokens and the most common
 # instruction-override phrases. This is intentionally conservative: it can
 # only catch the easy cases. A determined attacker can still evade these
 # patterns; defence-in-depth (structured prompting with XML-tagged context
@@ -180,15 +180,15 @@ _CONTROL_TOKEN_RE = re.compile(
 # Phrases that try to override the system prompt. Anchored to start-of-line
 # (after optional whitespace and quote/punctuation) to avoid false positives
 # in legitimate writing like "we should not ignore previous feedback". Phrase
-# list is shared with rag_service.py's visitor-input detector (AR-17) —
-# see app/security/injection_patterns.py for why and where to add a new one.
+# list is shared with rag_service.py's visitor-input detector (AR-17).
+# See app/security/injection_patterns.py for why and where to add a new one.
 _INJECTION_PHRASES_RE = compile_line_anchored_strip_pattern()
 
 
 def _strip_injection_markers(text: str) -> str:
     """Remove obvious prompt-injection markers from ingested content.
 
-    Conservative pattern-based strip — does not catch sophisticated attacks,
+    Conservative pattern-based strip. Does not catch sophisticated attacks,
     but blocks the copy-paste injections that show up in the wild.
     """
     text = _CONTROL_TOKEN_RE.sub("", text)
@@ -200,13 +200,13 @@ def _is_nav_bar_row(line: str) -> bool:
     """Return True for pipe-separated rows whose cells are all bare nav links.
 
     A real data-table row contains substantive cell content. A nav bar row
-    looks like ``| [Home](/) | [About](/about) | [Pricing](/pricing) |`` —
-    every non-empty cell is a single markdown link with no surrounding text.
+    looks like ``| [Home](/) | [About](/about) | [Pricing](/pricing) |``.
+    Every non-empty cell is a single markdown link with no surrounding text.
     """
     cells = [c.strip() for c in line.split("|")]
     cells = [c for c in cells if c]
     if not cells:
-        return True  # ``| | |`` — separators with no content
+        return True  # ``| | |``. Separators with no content
     return all(_NAV_LINK_CELL_RE.match(c) for c in cells)
 
 
@@ -234,7 +234,7 @@ def clean_text(text: str) -> str:
 
         # 3. Filter Navigation & Menu Items
         # Only remove lines that are PURELY a navigation link (no descriptive text).
-        # e.g., "* [Home](/)" is stripped, but "* [Learn more](/pricing) — our flexible plans" is kept.
+        # e.g., "* [Home](/)" is stripped, but "* [Learn more](/pricing). Our flexible plans" is kept.
         if re.match(r"^[*\-]\s*\[.*?\]\(.*?\)\s*$", line):
             continue
 
@@ -246,7 +246,7 @@ def clean_text(text: str) -> str:
                 continue
             if _is_nav_bar_row(line):
                 continue
-            # Real data-table row — keep it.
+            # Real data-table row. Keep it.
 
         # Remove lines that are JUST a standalone link "[Link](Url)"
         if re.match(r"^\[.*?\]\(.*?\)$", line):

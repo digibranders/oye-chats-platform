@@ -1,7 +1,7 @@
 """Tests for the global request-body ceiling.
 
 The point of this middleware is that it holds for endpoints that never see a
-Pydantic model — most importantly ``POST /webhooks/razorpay``, which has to
+Pydantic model. Most importantly ``POST /webhooks/razorpay``, which has to
 read the raw body before it can verify the HMAC, so an unauthenticated caller
 controls that allocation.
 """

@@ -3,11 +3,11 @@ import { UserCheck, Loader2 } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 
 /**
- * ConnectRequestPopup — modal shown to the visitor when an operator proactively
+ * ConnectRequestPopup. Modal shown to the visitor when an operator proactively
  * asks to take over an AI conversation. The visitor sees the operator's name
  * and chooses Yes (switch to live chat) or No (continue with AI).
  *
- * The visitor's bot conversation is NOT interrupted — they can keep typing while
+ * The visitor's bot conversation is NOT interrupted. They can keep typing while
  * the popup is open; only their explicit choice changes the chat mode.
  *
  * Props:
@@ -15,9 +15,9 @@ import { sanitizeColor } from '../services/sanitize';
  *   - expiresAt    : optional unix-seconds deadline. If provided we render a
  *                    live countdown and auto-call ``onExpire`` when it hits 0.
  *   - submitting   : disables the buttons while the response is in flight
- *   - onAccept     : () => void  — visitor clicks Yes
- *   - onDecline    : () => void  — visitor clicks No (also Escape / overlay)
- *   - onExpire     : () => void  — fired exactly once when the countdown ends
+ *   - onAccept     : () => void . Visitor clicks Yes
+ *   - onDecline    : () => void . Visitor clicks No (also Escape / overlay)
+ *   - onExpire     : () => void . Fired exactly once when the countdown ends
  *   - primaryColor : brand accent for the primary CTA
  */
 const ConnectRequestPopup = ({
@@ -32,7 +32,7 @@ const ConnectRequestPopup = ({
     const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
     const displayName = operatorName || 'Our team';
 
-    // Countdown — drives the small timer chip in the corner. We only render
+    // Countdown. Drives the small timer chip in the corner. We only render
     // the chip if ``expiresAt`` is supplied so the popup remains useful for
     // ad-hoc / testing flows without a TTL.
     const targetMs = useMemo(

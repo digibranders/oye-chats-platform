@@ -96,7 +96,7 @@ def mark_read(notification_id: RowId, auth=Depends(get_current_client_or_operato
     with get_session() as session:
         ok = notification_service.mark_read(session, auth["client_id"], notification_id)
         if not ok:
-            # Either non-existent or already read — both are safe no-ops, so
+            # Either non-existent or already read, both are safe no-ops, so
             # return success with the current count rather than 404'ing the
             # frontend on a fast double-click.
             pass
@@ -140,7 +140,7 @@ def _auth_from_subprotocol(ws: WebSocket) -> tuple[int | None, str | None]:
     if not candidates:
         return None, None
 
-    # Match the way ws_routes.py parses /ws/operator — scan every
+    # Match the way ws_routes.py parses /ws/operator. Scan every
     # offered subprotocol. Accepts both the project-standard
     # ``api-key.``/``operator-key.`` forms and the original
     # ``client.``/``operator.`` aliases for rolling-deploy compatibility.
@@ -176,7 +176,7 @@ async def notifications_ws(ws: WebSocket):
         events as they happen. Other event types may be added later.
       • Client sends ``ping`` strings every 30s; server replies ``pong``.
     """
-    # Origin allowlist (parity with the dashboard CORS policy) — checked before
+    # Origin allowlist (parity with the dashboard CORS policy). Checked before
     # auth so a foreign page is rejected outright (PR #209 review #5).
     if not _dashboard_origin_allowed(ws.headers.get("origin") or ws.headers.get("referer")):
         logger.warning("notifications_ws rejected by origin check: origin=%r", ws.headers.get("origin"))
@@ -192,7 +192,7 @@ async def notifications_ws(ws: WebSocket):
 
     await ws.accept(subprotocol=accepted)
     if not await broadcaster.connect(client_id, ws):
-        # Workspace is at the connection cap — ask the client to retry later.
+        # Workspace is at the connection cap. Ask the client to retry later.
         await ws.close(code=1013)
         return
 
@@ -205,7 +205,7 @@ async def notifications_ws(ws: WebSocket):
             msg = await ws.receive_text()
             if msg == "ping":
                 await ws.send_text("pong")
-            # Any other inbound payload is currently ignored — the channel
+            # Any other inbound payload is currently ignored, the channel
             # is server-push-only.
     except WebSocketDisconnect:
         pass

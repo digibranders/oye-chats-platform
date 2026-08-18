@@ -2,12 +2,12 @@
 
 Before this, tapping a qualification CTA pill just resent the button's label
 as an ordinary chat message (``ChatWindow.jsx``'s ``onSelect`` called
-``handleSend(null, option)``), so it was scored — if at all — by the same
+``handleSend(null, option)``), so it was scored (if at all) by the same
 probabilistic free-text LLM extraction as anything a visitor typed. Two of
 the five default BANT "budget" pill labels ("$1K-5K/mo" = 9 chars,
 "$20K+/mo" = 8 chars) are shorter than ``_should_skip_bant_extraction``'s
 10-character floor, so tapping either of those two exact buttons produced
-*zero* signal at all — not a mis-scored one, none.
+*zero* signal at all, not a mis-scored one, none.
 
 ``_score_cta_answer`` resolves a CTA-tagged answer directly against the
 framework's rubric with no LLM round-trip and no length floor, and the two
@@ -44,7 +44,7 @@ class TestStripTrailingQuestion:
         assert _strip_trailing_question(text) == text
 
     def test_never_returns_empty_when_answer_is_only_a_question(self):
-        # Degenerate: nothing but a question — keep it rather than send nothing.
+        # Degenerate: nothing but a question. Keep it rather than send nothing.
         text = "What size fleet are you migrating?"
         assert _strip_trailing_question(text) == text
 
@@ -113,7 +113,7 @@ class TestScoreCtaAnswer:
     def test_matches_short_budget_label_that_the_length_floor_would_drop(self):
         config = get_framework_config(None)  # default BANT preset
 
-        # Both of these are shorter than the 10-char skip floor — confirm
+        # Both of these are shorter than the 10-char skip floor. Confirm
         # the free-text path would in fact have dropped them.
         assert _should_skip_bant_extraction("$1K-5K/mo", {}, config) is True
         assert _should_skip_bant_extraction("$20K+/mo", {}, config) is True

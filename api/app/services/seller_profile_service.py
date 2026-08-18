@@ -1,4 +1,4 @@
-"""Seller-of-record profile — the legal identity that will be printed on
+"""Seller-of-record profile, the legal identity that will be printed on
 every invoice once the invoicing track (Phase 3+) is live.
 
 Stored as one JSONB document in ``pricing_config`` (key
@@ -42,7 +42,7 @@ class SellerProfileError(ValueError):
 
 
 def _safe_int(value: Any, fallback: int) -> int:
-    """Coerce to int, falling back on garbage — a stored bad row (e.g. via the
+    """Coerce to int, falling back on garbage, a stored bad row (e.g. via the
     generic pricing-config route or a manual psql edit) must never wedge reads.
     Mirrors the defensive-cast convention in ``runtime_config.py``.
     """
@@ -71,7 +71,7 @@ class SellerProfile:
     # Companies Act 2013 s.12(3)(c): every company must print its CIN,
     # registered office address, telephone, email and website on all business
     # letters, billheads and official publications. An invoice is a billhead,
-    # so these belong on the document — this is a Companies Act obligation,
+    # so these belong on the document. This is a Companies Act obligation,
     # separate from anything GST requires.
     cin: str | None = None
     phone: str | None = None
@@ -128,7 +128,7 @@ def get_seller_profile(session: Session) -> SellerProfile:
 
 def _validate(payload: dict[str, Any]) -> dict[str, Any]:
     # Explicit JSON null means "clear / restore the code default" for every
-    # field — dropping None keys up front makes that uniform and prevents
+    # field. Dropping None keys up front makes that uniform and prevents
     # str(None) → "None" from ever reaching a statutory field (legal name,
     # SAC) or silently flipping price_inclusive to exclusive.
     payload = {k: v for k, v in payload.items() if v is not None}
@@ -165,7 +165,7 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
 
     sac_code = str(payload.get("sac_code", defaults.sac_code)).strip()
     # 4-8 digits: SAC is 6 digits (e.g. 997331), HSN 4/6/8. Also keeps it
-    # inside invoices.hsn_sac VARCHAR(8) — an overlong value here would make
+    # inside invoices.hsn_sac VARCHAR(8), an overlong value here would make
     # every finalize fail silently inside its savepoint.
     if not re.fullmatch(r"[0-9]{4,8}", sac_code):
         raise SellerProfileError("sac_code must be 4-8 digits (SAC/HSN)")
@@ -205,7 +205,7 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
 
     # CIN is 21 chars: L/U + 5-digit industry code + 2-letter state + 4-digit
     # year + 3-letter ownership + 6-digit registration number. Validated so a
-    # typo cannot reach a statutory document, but optional — a non-company
+    # typo cannot reach a statutory document, but optional, a non-company
     # seller (LLP, proprietorship) has no CIN.
     cin = str(payload.get("cin") or "").strip().upper() or None
     if cin and not re.fullmatch(r"[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}", cin):
@@ -244,7 +244,7 @@ def save_seller_profile(session: Session, payload: dict[str, Any], *, actor_id: 
     """Merge ``payload`` over the currently stored profile, then validate + upsert.
 
     PATCH semantics: fields absent from ``payload`` keep their stored values
-    (or code defaults on first save) rather than resetting — so a partial edit
+    (or code defaults on first save) rather than resetting, so a partial edit
     from the admin UI can never silently wipe the GSTIN or tax rate. To clear a
     field, send it explicitly (e.g. ``{"gstin": null}``).
     """
@@ -265,7 +265,7 @@ def save_seller_profile(session: Session, payload: dict[str, Any], *, actor_id: 
     session.execute(stmt)
     session.flush()
     # The FOR UPDATE read above pins the row in the identity map and the Core
-    # upsert does not expire it — without this, the re-read below (and the
+    # upsert does not expire it, without this, the re-read below (and the
     # route's response/audit "after") would return the pre-save values.
     if existing is not None:
         session.expire(existing)

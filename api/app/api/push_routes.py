@@ -1,7 +1,7 @@
-"""Web Push (VAPID) endpoints — VAPID key + subscribe / unsubscribe.
+"""Web Push (VAPID) endpoints. VAPID key + subscribe / unsubscribe.
 
 Extracted from ``operator_routes.py`` so the push surface has its own file.
-URL layout is preserved (``/operators/push/*``) — the frontend and CDN clients
+URL layout is preserved (``/operators/push/*``), the frontend and CDN clients
 don't need to change.
 
 Both operator (``X-Operator-Key``) and workspace-owner (``X-API-Key``) logins
@@ -35,7 +35,7 @@ WebPushKey = Annotated[
 class PushSubscriptionKeys(BaseModel):
     # Browser-generated ECDH public key and auth secret, both URL-safe base64.
     # They are persisted and later fed to the Web Push encryption routine, so
-    # the charset and the ceiling both matter — a P-256 key is 87 characters
+    # the charset and the ceiling both matter, a P-256 key is 87 characters
     # and the auth secret 22, base64url-encoded.
     p256dh: WebPushKey
     auth: WebPushKey
@@ -49,7 +49,7 @@ class PushSubscribeRequest(BaseModel):
     @classmethod
     def _validate_endpoint(cls, v: str) -> str:
         v = v.strip()
-        # Web Push endpoints are always https:// — provider-issued URLs.
+        # Web Push endpoints are always https://. Provider-issued URLs.
         if not v.startswith("https://"):
             raise ValueError("endpoint must be an https:// URL")
         if len(v) > 2048:
@@ -73,7 +73,7 @@ class ExpoPushSubscribeRequest(BaseModel):
 def get_vapid_public_key():
     """Return the server's VAPID public key (URL-safe base64).
 
-    Public information — the frontend uses it as ``applicationServerKey`` when
+    Public information, the frontend uses it as ``applicationServerKey`` when
     calling ``pushManager.subscribe()``. Safe to expose without auth.
     """
     from app.config import PUSH_ENABLED, VAPID_PUBLIC_KEY
@@ -90,7 +90,7 @@ def push_subscribe(
     """Register a Web Push subscription for the calling user.
 
     Accepts both operator and workspace-owner (client) logins. The row's
-    ``operator_id`` or ``client_id`` is set depending on the auth type — a DB
+    ``operator_id`` or ``client_id`` is set depending on the auth type, a DB
     CHECK constraint guarantees exactly one is populated. Upsert by
     ``endpoint`` so the same browser re-subscribing simply re-binds to the
     current account (e.g. after re-login from the same machine, possibly as
@@ -146,7 +146,7 @@ def push_unsubscribe(
 
     The frontend calls this when the user manually disables notifications or
     after ``pushManager.unsubscribe()`` returns. Idempotent: a delete on a
-    non-existent endpoint is a no-op. Scoped to the calling user's own row —
+    non-existent endpoint is a no-op. Scoped to the calling user's own row,
     a subscriber cannot delete another account's subscription even if they
     happen to know the endpoint.
     """

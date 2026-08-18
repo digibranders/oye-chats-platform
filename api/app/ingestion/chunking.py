@@ -34,7 +34,7 @@ def _propagate_section_headers(chunks: list[LCDocument]) -> list[LCDocument]:
         content = chunk.page_content
         match = _HEADER_RE.match(content)
         if match:
-            # This chunk begins with a header — update tracker
+            # This chunk begins with a header. Update tracker
             last_header = match.group(1).strip()
         elif last_header:
             # Orphaned chunk: inject the last seen header as a prefix tag

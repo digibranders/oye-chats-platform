@@ -4,7 +4,7 @@ Bug: ``patch_client`` only gated writes behind ``_require_write`` (blocks the
 ``readonly`` role) before writing ``is_superadmin`` / ``superadmin_role`` from
 the request body. Any non-readonly super-admin ("admin"-tier) could therefore
 promote themselves to ``owner`` or mint a brand-new super-admin from any
-customer row — the ``owner`` tier was checked nowhere.
+customer row, the ``owner`` tier was checked nowhere.
 
 Fix: privilege-field writes (``is_superadmin``, ``superadmin_role``) now
 require ``_require_owner`` (only ``superadmin_role == "owner"``), and even an
@@ -55,7 +55,7 @@ def _http_client(db, monkeypatch, actor: Client) -> HttpClient:
 
 def test_admin_tier_cannot_grant_superadmin_to_another_client(db, monkeypatch):
     """(a) an admin-tier actor patching ANOTHER client's is_superadmin/
-    superadmin_role must be rejected with 403 — closes the escalation."""
+    superadmin_role must be rejected with 403. Closes the escalation."""
     actor = _make_client(db, name="Admin", email="admin-tier@test.example", role="admin", is_superadmin=True)
     target = _make_client(db, name="Target", email="target-a@test.example", role=None, is_superadmin=False)
 
@@ -85,7 +85,7 @@ def test_owner_tier_can_grant_superadmin_to_another_client(db, monkeypatch):
 @pytest.mark.parametrize("role", ["admin", "owner"])
 def test_actor_cannot_patch_own_privilege_fields(db, monkeypatch, role):
     """(c) any actor (admin- or owner-tier) patching their OWN privilege
-    fields is rejected — prevents self-escalation and accidental lockout."""
+    fields is rejected. Prevents self-escalation and accidental lockout."""
     actor = _make_client(db, name="Self", email=f"self-{role}@test.example", role=role, is_superadmin=True)
 
     c = _http_client(db, monkeypatch, actor)
@@ -98,7 +98,7 @@ def test_actor_cannot_patch_own_privilege_fields(db, monkeypatch, role):
 
 def test_admin_tier_can_still_patch_non_privilege_fields(db, monkeypatch):
     """(d) an admin-tier actor patching a non-privilege field (e.g. name) on
-    another client is still allowed — only privilege writes are gated."""
+    another client is still allowed. Only privilege writes are gated."""
     actor = _make_client(db, name="Admin2", email="admin-tier2@test.example", role="admin", is_superadmin=True)
     target = _make_client(db, name="Old Name", email="target-c@test.example", role=None, is_superadmin=False)
 

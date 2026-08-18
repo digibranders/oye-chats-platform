@@ -19,17 +19,17 @@ logger = logging.getLogger(__name__)
 # visitor's name, email, or phone number verbatim. Once Langfuse is
 # re-enabled in prod (currently blocked separately by AR-04), that data would
 # be stored unredacted in a third-party service with no scrubbing pass.
-# Patterns cover the common, high-confidence cases (email, phone numbers) —
+# Patterns cover the common, high-confidence cases (email, phone numbers),
 # not a general PII-detection system, matching the same pragmatic scope as
 # the injection-pattern module.
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 # Phone numbers: requires a leading "+" (international) or parens around the
-# area code — deliberately NOT a bare digit-dash sequence like "\d[\d-]{5,}",
+# area code. Deliberately NOT a bare digit-dash sequence like "\d[\d-]{5,}",
 # because this codebase's prompts are full of ISO dates ("2026-07-08") and
 # those would otherwise collide with a plain digit/dash phone pattern and get
 # silently mangled in every trace. This trades phone-number recall (misses
 # bare "4155550100"/"415-555-0100" formats) for zero false positives on
-# dates — an acceptable trade for a best-effort redaction pass.
+# dates, an acceptable trade for a best-effort redaction pass.
 _PHONE_RE = re.compile(r"(?<!\d)(\+\d[\d\-.\s()]{5,}\d|\(\d{2,4}\)[\d\-.\s]{5,}\d)(?!\d)")
 
 
@@ -42,7 +42,7 @@ def redact_pii(text: str | None) -> str | None:
     payloads against the Langfuse SDK directly, and call this instead of
     carrying a second copy of the patterns above.
 
-    Never raises — a redaction bug must not break tracing or, worse, an LLM
+    Never raises, a redaction bug must not break tracing or, worse, an LLM
     call. Falls back to returning the original text unredacted on error
     (tracing already treats Langfuse failures as non-fatal; this keeps the
     same posture rather than dropping the trace entirely).
@@ -83,7 +83,7 @@ class _GenerationRecorder:
     """Handle yielded by :func:`langfuse_generation` to record the result.
 
     All methods are safe no-ops when Langfuse is disabled (``span is None``) or
-    the underlying SDK call raises — tracing must never break an LLM path.
+    the underlying SDK call raises. Tracing must never break an LLM path.
     """
 
     def __init__(self, span, model: str | None):
@@ -120,13 +120,13 @@ class _GenerationRecorder:
 def langfuse_generation(name: str, *, model: str | None = None, prompt: str | None = None, input=None):
     """Wrap an LLM call as a Langfuse ``generation`` observation.
 
-    The single place LLM tracing is defined — LiteLLM's auto-callback is disabled
+    The single place LLM tracing is defined. LiteLLM's auto-callback is disabled
     (v2/v3-only, incompatible with our v4 SDK), so every traced LLM call goes
     through this. No-op context (yields an inert recorder) when Langfuse is
     disabled or the SDK is unavailable, so call sites need no conditionals.
 
     AR-30: ``prompt`` is redacted (emails, phone numbers) before being sent as
-    ``input=`` — every call site in this codebase passes ``prompt=``, not the
+    ``input=``. Every call site in this codebase passes ``prompt=``, not the
     raw ``input=`` escape hatch, so this covers every *generation* span today.
     A caller that ever passes pre-built ``input=`` directly is responsible for
     redacting it itself first.
@@ -134,7 +134,7 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
     It does not, however, cover observations built against the SDK directly.
     The ``rag-pipeline`` / ``rag-pipeline-stream`` chain spans in
     ``rag_service`` never pass through here, so they call :func:`redact_pii`
-    themselves — an earlier revision of this docstring claimed the coverage was
+    themselves, an earlier revision of this docstring claimed the coverage was
     total, which left a visitor's typed email verbatim on the parent trace
     while the identical string was scrubbed on the generation nested inside it.
     Any new observation built straight from the SDK owes the same call.
@@ -160,9 +160,9 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
         span = mgr.__enter__()
     except Exception as exc:  # never let tracing setup break the LLM call
         # AR-29: was logged at debug, invisible at the normal info/warning
-        # level an operator actually scans — a Langfuse connectivity blip
+        # level an operator actually scans, a Langfuse connectivity blip
         # silently dropped tracing for that call with zero visible signal.
-        logger.warning("langfuse_generation start failed (%s) — continuing untraced", exc)
+        logger.warning("langfuse_generation start failed (%s). Continuing untraced", exc)
         yield _GenerationRecorder(None, model)
         return
 

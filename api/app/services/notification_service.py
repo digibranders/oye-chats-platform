@@ -13,7 +13,7 @@ Three responsibilities:
 
 The service is intentionally synchronous on the DB side and *fires the
 WebSocket broadcast as a best-effort background task*. A failed broadcast
-must not roll back the persisted row — the operator will still see the
+must not roll back the persisted row, the operator will still see the
 notification on next page load via the REST list endpoint.
 """
 
@@ -32,7 +32,7 @@ from app.db.models import Notification
 logger = logging.getLogger(__name__)
 
 
-# Notification types — kept as module-level constants so triggers don't
+# Notification types. Kept as module-level constants so triggers don't
 # hard-code free-form strings (and the frontend can mirror this list).
 TYPE_PLAN_PURCHASED = "plan_purchased"
 TYPE_BOT_CREATED = "bot_created"
@@ -55,7 +55,7 @@ KNOWN_TYPES = frozenset(
 )
 
 # Workspace ▸ Billing. The Admin 2.0 rebuild moved this from the old
-# ``/settings?tab=billing``, which no longer resolves — every notification
+# ``/settings?tab=billing``, which no longer resolves. Every notification
 # deep-link must use this constant so a future move is a one-line change.
 BILLING_LINK = "/workspace/billing"
 
@@ -115,7 +115,7 @@ def create_notification(
     from a Celery worker without a loop).
     """
     if type_ not in KNOWN_TYPES:
-        logger.warning("Unknown notification type %r — persisting anyway", type_)
+        logger.warning("Unknown notification type %r. Persisting anyway", type_)
 
     row = Notification(
         client_id=client_id,
@@ -262,7 +262,7 @@ def notify_crawl_completed(
         client_id=client_id,
         type_=TYPE_CRAWL_COMPLETED,
         title="Website training complete",
-        body=f"{source} — {pages} page{'' if pages == 1 else 's'}, {chunks} chunks ingested{dur}.",
+        body=f"{source} - {pages} page{'' if pages == 1 else 's'}, {chunks} chunks ingested{dur}.",
         link="/knowledge?tab=list",
         data={
             "source": source,
@@ -400,7 +400,7 @@ def notify_payment_failed(
     """In-app counterpart to the dunning emails.
 
     Email deliverability is imperfect and the billing email may differ from the
-    login email — a customer who never opens email still opens the product, so
+    login email, a customer who never opens email still opens the product, so
     the in-app signal is not a nice-to-have.
 
     ``recoverable`` reflects whether Razorpay's hosted recovery page is
@@ -417,7 +417,7 @@ def notify_payment_failed(
         session,
         client_id=client_id,
         type_=TYPE_PAYMENT_FAILED,
-        title="Payment failed — action needed",
+        title="Payment failed. Action needed",
         body=body,
         link=BILLING_LINK,
         data={"plan_name": plan_name, "days_left": days_left, "recoverable": recoverable},

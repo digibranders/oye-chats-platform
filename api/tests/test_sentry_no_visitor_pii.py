@@ -6,11 +6,11 @@ or email past it:
 
 1. ``CF-Connecting-IP`` in the request headers ``SentryAsgiMiddleware`` attaches
    to every event. Nginx rewrites ``X-Forwarded-For`` to the Cloudflare edge
-   address — so the header the SDK scrubs is the empty one and the header
+   address, so the header the SDK scrubs is the empty one and the header
    ``chat_routes`` actually trusts is the one that shipped.
 2. Raw addresses interpolated into WARNING log records, which Sentry's
    LoggingIntegration turns into breadcrumbs on a shared background thread.
-3. A recipient address set verbatim as an ``email.*`` Sentry tag — and, one line
+3. A recipient address set verbatim as an ``email.*`` Sentry tag, and, one line
    above the capture that sets it, the same address in the WARNING record that
    becomes a breadcrumb on that very event.
 4. A recipient address as the *message* of an ERROR record, which
@@ -49,7 +49,7 @@ VISITOR_EMAIL = "priya.sharma@example.com"
 
 # ``_resolve_and_update_location`` returns early for private addresses, and
 # Python counts every RFC 5737 documentation range as private
-# (``ipaddress.ip_address("203.0.113.42").is_private`` is True) — so the tests
+# (``ipaddress.ip_address("203.0.113.42").is_private`` is True), so the tests
 # that drive that function need one it will actually work on. This is the
 # address IANA holds for example.com: publicly routable, and nobody's visitor.
 PUBLIC_IPV4 = "93.184.216.34"
@@ -76,8 +76,8 @@ class _JsonResponse:
 def _asgi_scope(headers: dict[str, str]) -> dict:
     """An ASGI HTTP scope shaped the way uvicorn builds one.
 
-    Header names are lower-cased bytes and values are bytes, per the ASGI spec —
-    matching the real thing matters, because it is the only reason
+    Header names are lower-cased bytes and values are bytes, per the ASGI spec.
+    Matching the real thing matters, because it is the only reason
     ``_get_request_data`` produces the dict the hook then has to match against.
     """
     return {
@@ -114,7 +114,7 @@ REALISTIC_HEADERS = {
 
 class TestSdkGapIsReal:
     """The premise of the whole module. If these ever fail, the SDK closed the
-    gap on its own and ``sentry_scrub`` can be pruned — that is a good failure,
+    gap on its own and ``sentry_scrub`` can be pruned. That is a good failure,
     not a flaky one."""
 
     def test_sdk_scrubs_the_header_nginx_already_emptied(self):
@@ -130,7 +130,7 @@ class TestSdkGapIsReal:
         """Keeps the list honest: nothing in it duplicates the SDK's own work."""
         for header in VISITOR_IP_HEADERS | CREDENTIAL_HEADERS:
             assert header.upper().replace("-", "_") not in SENSITIVE_HEADERS, (
-                f"{header} is scrubbed by the SDK already — drop it from sentry_scrub"
+                f"{header} is scrubbed by the SDK already. Drop it from sentry_scrub"
             )
 
 
@@ -171,8 +171,8 @@ class TestVisitorIpHeaders:
         assert headers["user-agent"].startswith("Mozilla/5.0")
         assert headers["referer"] == "https://customer.example.com/pricing"
         assert headers["host"] == "api.oyechats.com"
-        # The bot key is public — it ships in the embed snippet on the
-        # customer's own site — and it is how you tell which agent errored.
+        # The bot key is public (it ships in the embed snippet on the
+        # customer's own site) and it is how you tell which agent errored.
         assert headers["x-bot-key"] == "bot-6a427d4529b9"
         # Country is not a visitor, and it is the only geography left.
         assert headers["cf-ipcountry"] == "IN"
@@ -215,7 +215,7 @@ class TestHookNeverBreaksErrorReporting:
 
     def test_fails_closed_on_an_internal_error(self, monkeypatch):
         """If the scrub itself breaks, the request block goes rather than going
-        out unscrubbed — but the event, with its stack trace, still ships."""
+        out unscrubbed, but the event, with its stack trace, still ships."""
 
         def _boom(_event):
             raise RuntimeError("scrub is broken")
@@ -247,7 +247,7 @@ class TestInitWiring:
         app.main._init_sentry_for_api()
         assert captured["before_send"] is scrub_event
         # Transactions do NOT go through before_send, and they carry the same
-        # request block — at traces_sample_rate=0.1, one chat request in ten.
+        # request block, at traces_sample_rate=0.1, one chat request in ten.
         assert captured["before_send_transaction"] is scrub_event
         assert captured["send_default_pii"] is False
 
@@ -318,7 +318,7 @@ class TestNoAddressInLogRecords:
     def test_resolved_location_is_logged_as_geography_and_still_stored_whole(self, monkeypatch, caplog):
         """The one site where redaction beats dropping: ``format_visitor_location``
         leaves a real city behind, so the line still says what the vendor
-        resolved. And the DB column keeps the address — this task changes what
+        resolved. And the DB column keeps the address. This task changes what
         is transmitted, never what is stored."""
         from app.api import chat_routes
 
@@ -352,7 +352,7 @@ class TestNoAddressInLogRecords:
         with caplog.at_level(logging.INFO):
             chat_routes._resolve_and_update_location("sess-xyz", PUBLIC_IPV4, None)
 
-        assert row.location == f"Mumbai, India | {PUBLIC_IPV4}", "storage is unchanged — address and all"
+        assert row.location == f"Mumbai, India | {PUBLIC_IPV4}", "storage is unchanged. Address and all"
         assert "Background geolocation resolved" in caplog.text
         assert "Mumbai, India" in caplog.text
         assert PUBLIC_IPV4 not in caplog.text
@@ -419,7 +419,7 @@ class TestBackgroundTasksDoNotShareASentryScope:
     """Three pool threads serve every caller of ``submit_background``, and
     Sentry's ThreadingIntegration forks the scope once per *thread*, not per
     task. So every task submitted after a pool thread was created shared one
-    isolation scope with every other task that thread ever ran — and a
+    isolation scope with every other task that thread ever ran, and a
     breadcrumb left by one visitor's geolocation lookup attached itself to the
     next error an unrelated task raised there. ``webhook_service`` dispatches
     into this same pool, and its deliveries do report errors to Sentry.
@@ -452,7 +452,7 @@ class TestBackgroundTasksDoNotShareASentryScope:
             assert finished.wait(timeout=10), "background task never ran"
 
         assert len(scopes) == self.TASKS
-        assert len(set(threads)) < self.TASKS, "no thread was reused — the test proves nothing"
+        assert len(set(threads)) < self.TASKS, "no thread was reused, the test proves nothing"
         assert len({id(scope) for scope in scopes}) == self.TASKS, (
-            "two tasks shared an isolation scope — the per-task fork in core.thread_pool.submit_background is gone"
+            "two tasks shared an isolation scope, the per-task fork in core.thread_pool.submit_background is gone"
         )

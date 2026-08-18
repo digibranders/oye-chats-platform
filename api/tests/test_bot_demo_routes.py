@@ -36,7 +36,7 @@ def _session_context(session):
 
 def _build_test_client():
     app = FastAPI()
-    # /demo is rate-limited (audit F11) — wire slowapi as main.py does so the
+    # /demo is rate-limited (audit F11). Wire slowapi as main.py does so the
     # decorated route resolves app.state.limiter under TestClient.
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -286,7 +286,7 @@ class TestPreviewSSRF:
     """F11: the iframe-preview HEAD must not be a server-side SSRF primitive."""
 
     def test_check_iframe_allowed_blocks_internal_hosts(self):
-        """A non-public target is refused outright — no server-side request."""
+        """A non-public target is refused outright, no server-side request."""
         from app.api import bot_routes
 
         assert bot_routes._check_iframe_allowed("http://127.0.0.1/") is False
@@ -330,7 +330,7 @@ class TestPreviewSSRF:
 
     def test_check_iframe_allowed_treats_redirect_as_not_embeddable(self, monkeypatch):
         """A redirecting site (http->https, apex->www) returns a 3xx we don't
-        follow — treat it as not-embeddable so the demo serves the working hero
+        follow. Treat it as not-embeddable so the demo serves the working hero
         fallback instead of embedding a likely frame-blocked page (RV6)."""
         import httpx
 

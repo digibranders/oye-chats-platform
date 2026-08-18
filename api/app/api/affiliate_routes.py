@@ -1,13 +1,13 @@
-"""Affiliate program v1 — FastAPI routes (money-free).
+"""Affiliate program v1. FastAPI routes (money-free).
 
 Three audiences live in this file:
 
-* **Public** (no auth) — ``/affiliates/validate``, ``/affiliates/click``.
+* **Public** (no auth). ``/affiliates/validate``, ``/affiliates/click``.
   Used by the marketing site to verify a code and record a click before
   the visitor signs up. Aggressively rate-limited.
-* **Affiliate** (auth: ``get_current_affiliate``) — code CRUD + per-affiliate
+* **Affiliate** (auth: ``get_current_affiliate``). Code CRUD + per-affiliate
   stats. Strict X-API-Key only; bot/operator keys cannot reach these.
-* **Super admin** (auth: ``get_superadmin``) — invite, list, override,
+* **Super admin** (auth: ``get_superadmin``). Invite, list, override,
   deactivate. Same auth gate as the existing super-admin v2 routes.
 
 The route handlers are thin: they delegate every read/write to
@@ -94,7 +94,7 @@ superadmin_router = APIRouter(
 
 # The affiliate's referral code as it appears in a ``?ref=`` URL. It is looked
 # up verbatim, echoed into signup audit rows, and rendered in the affiliate
-# dashboard — so it is an allow-listed slug, not free text.
+# dashboard, so it is an allow-listed slug, not free text.
 AffiliateCode = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=3, max_length=20, pattern=r"^[A-Za-z0-9_\-]+$"),
@@ -118,8 +118,8 @@ class ClickRequest(BaseModel):
 class CreateCodeRequest(BaseModel):
     code: AffiliateCode
     label: str | None = Field(default=None, max_length=120)
-    # Per-code split — what the affiliate keeps + what the referred customer
-    # gets. Both whole-percent (0–100). Their sum must not exceed the
+    # Per-code split. What the affiliate keeps + what the referred customer
+    # gets. Both whole-percent (0 to 100). Their sum must not exceed the
     # affiliate's pool (enforced server-side). Both default to 0.
     affiliate_commission_pct: float | None = Field(default=None, ge=0, le=100)
     customer_discount_pct: float | None = Field(default=None, ge=0, le=100)
@@ -133,7 +133,7 @@ class CreateCodeRequest(BaseModel):
 class UpdateCodeRequest(BaseModel):
     # ``code`` (rename) is optional. When present it goes through the same
     # format + uniqueness checks as create_code. Renaming breaks the old
-    # ?ref= URL — frontend must warn before sending.
+    # ?ref= URL. Frontend must warn before sending.
     code: AffiliateCode | None = None
     label: str | None = Field(default=None, max_length=120)
     active: bool | None = None
@@ -186,7 +186,7 @@ class MeResponse(BaseModel):
 class InviteAffiliateRequest(BaseModel):
     email: EmailAddress
     max_active_codes: int | None = Field(default=None, gt=0, le=100)
-    # Whole-percent input (0–100). Backend stores as basis points internally.
+    # Whole-percent input (0 to 100). Backend stores as basis points internally.
     # 0 = no commission (the default for v1's money-free path).
     commission_pct: float | None = Field(default=None, ge=0, le=100)
 
@@ -204,7 +204,7 @@ class AffiliateRow(BaseModel):
     client_email: str | None
     client_name: str | None
     max_active_codes: int
-    # Commission shown to UI as a human percent (0–100). Backend stores
+    # Commission shown to UI as a human percent (0 to 100). Backend stores
     # basis points internally; ``commission_pct`` is just bps/100.
     commission_pct: float
     commission_bps: int
@@ -247,7 +247,7 @@ class AcceptInviteLookupResponse(BaseModel):
 
 class AcceptInviteRequest(BaseModel):
     # Unauthenticated: the token IS the credential, so it is bounded before
-    # the lookup. Not ``min_length``-constrained — a malformed token must get
+    # the lookup. Not ``min_length``-constrained, a malformed token must get
     # the same rejection as a wrong one.
     token: Token
     name: RequiredName
@@ -297,15 +297,15 @@ def _to_http(exc: AffiliateProgramError) -> HTTPException:
     ):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if isinstance(exc, InviteAlreadyUsed):
-        # 410 Gone is more accurate than 409 here — the invite resource
+        # 410 Gone is more accurate than 409 here, the invite resource
         # existed but its valid lifecycle window is over.
         return HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc))
     if isinstance(exc, InviteExpired):
         return HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc))
     if isinstance(exc, InviteEmailMismatch):
-        # 403 — the principal is authenticated but not authorised for this
+        # 403, the principal is authenticated but not authorised for this
         # specific token. UI uses the distinct status to render targeted
-        # "this invite is for X — sign in with that email" copy.
+        # "this invite is for X. Sign in with that email" copy.
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, ClientNotFound | CodeNotFound | NotAffiliate | InviteNotFound):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -313,7 +313,7 @@ def _to_http(exc: AffiliateProgramError) -> HTTPException:
 
 
 def _client_ip(request: Request) -> str | None:
-    """Best-effort client IP — respects X-Forwarded-For when behind nginx."""
+    """Best-effort client IP. Respects X-Forwarded-For when behind nginx."""
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         # First entry is the original client; the rest are proxies.
@@ -333,7 +333,7 @@ def validate_code(request: Request, code: AffiliateCode = Query(...)):
 
     Aggressively rate-limited (60/min/IP) so the endpoint cannot be used
     to enumerate the code namespace. Always returns 200 with
-    ``{valid: bool}`` — using HTTP status to leak validity would defeat
+    ``{valid: bool}``. Using HTTP status to leak validity would defeat
     the rate-limit defense.
     """
     with get_session() as session:
@@ -351,7 +351,7 @@ def validate_code(request: Request, code: AffiliateCode = Query(...)):
 def record_click(request: Request, body: ClickRequest):
     """Record a click on a referral link.
 
-    Fire-and-forget from the client perspective — we always return 204,
+    Fire-and-forget from the client perspective. We always return 204,
     even for invalid codes, so the caller cannot time-attack to enumerate
     valid codes. The body's IP and User-Agent are extracted from the
     request headers (not the body) so callers cannot spoof them.
@@ -369,7 +369,7 @@ def record_click(request: Request, body: ClickRequest):
             )
             session.commit()
         except Exception as e:
-            # Never propagate — click recording must not affect UX.
+            # Never propagate. Click recording must not affect UX.
             logger.warning("affiliate_click_record_failed", extra={"error": str(e)})
     return None
 
@@ -390,10 +390,10 @@ class ApplyReferralResponse(BaseModel):
     attributed: bool
     # Human-readable message surfaced directly in the UI toast.
     message: str
-    # Normalized code (uppercased) — surfaced back so the UI can render an
+    # Normalized code (uppercased). Surfaced back so the UI can render an
     # "Applied: CODE" badge from a single source of truth.
     code: str | None = None
-    # Customer-facing discount percentage (0–100). Present for both freshly-
+    # Customer-facing discount percentage (0 to 100). Present for both freshly-
     # attributed and previously-attributed valid codes so the modal can
     # render the strikethrough/new-price UX regardless of when attribution
     # happened.
@@ -411,8 +411,8 @@ def referral_status(client: Client = Depends(get_current_client)):
     """Return the account's standing referral attribution, if any.
 
     The checkout modal calls this on open so an already-attributed account
-    shows its permanent discount badge instead of an editable code field —
-    attribution is first-touch and cannot be removed, and the server applies
+    shows its permanent discount badge instead of an editable code field.
+    Attribution is first-touch and cannot be removed, and the server applies
     the discount at checkout regardless of what the UI shows.
     """
     with get_session() as session:
@@ -437,14 +437,14 @@ def apply_referral(
 
     Called from the checkout modal when the user enters a referral code before
     buying a plan or top-up. Delegates to ``attribute_signup`` which enforces
-    first-touch wins and self-referral prevention — idempotent, never blocks.
+    first-touch wins and self-referral prevention. Idempotent, never blocks.
 
     Returns ``{ attributed, code, discount_pct }``:
-      * ``attributed=true`` — freshly attributed on this call.
-      * ``attributed=false`` with non-null ``code`` and ``discount_pct`` — the
+      * ``attributed=true``. Freshly attributed on this call.
+      * ``attributed=false`` with non-null ``code`` and ``discount_pct``, the
         account was already attributed to this same code; UX should still
         show the discount applied (idempotent re-entry by the same user).
-      * ``attributed=false`` with ``code=None`` — invalid code OR account
+      * ``attributed=false`` with ``code=None``. Invalid code OR account
         is already attributed to a *different* code (collision).
     Always returns 200 so checkout is never blocked.
     """
@@ -459,7 +459,7 @@ def apply_referral(
     if attributed and code_row is not None:
         return ApplyReferralResponse(
             attributed=True,
-            message=f"Referral code {body.code} applied — thank you!",
+            message=f"Referral code {body.code} applied. Thank you!",
             code=code_row.code,
             discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
         )
@@ -470,9 +470,9 @@ def apply_referral(
             message=f"'{body.code}' is not a valid referral code.",
         )
 
-    # Valid code but not attributed this call — either previously attributed
-    # to the same code (idempotent — surface the discount), the caller's OWN
-    # code (self-referral — say so plainly; the old catch-all falsely claimed
+    # Valid code but not attributed this call (either previously attributed
+    # to the same code (idempotent) surface the discount), the caller's OWN
+    # code (self-referral. Say so plainly; the old catch-all falsely claimed
     # "a different code is applied"), a genuine collision with another code,
     # or a lost race on the last redemption slot.
     with get_session() as session:
@@ -482,17 +482,17 @@ def apply_referral(
     if existing_code_id == code_row.id:
         return ApplyReferralResponse(
             attributed=False,
-            message=f"Referral code {code_row.code} already applied — discount stays on.",
+            message=f"Referral code {code_row.code} already applied. Discount stays on.",
             code=code_row.code,
             discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
         )
     if own_code:
         return ApplyReferralResponse(
             attributed=False,
-            message="You can't use your own referral code — share it with someone else instead.",
+            message="You can't use your own referral code. Share it with someone else instead.",
         )
     if existing_code_id is None:
-        # Not attributed, not their own code, no prior code — the atomic claim
+        # Not attributed, not their own code, no prior code, the atomic claim
         # failed: the code ran out of redemptions (or expired) between
         # validation and the claim.
         return ApplyReferralResponse(
@@ -538,7 +538,7 @@ class ReferralPricing(BaseModel):
     paid_cents: int  # what the customer actually pays after discount
     affiliate_earns_cents: int  # what the affiliate gets per month
     customer_saved_cents: int  # the discount amount
-    # Super-admin only — what stays with the platform after both shares.
+    # Super-admin only. What stays with the platform after both shares.
     platform_cents: int | None = None
 
 
@@ -555,7 +555,7 @@ class CommissionBreakdown(BaseModel):
     affiliate_pct: float | None
     customer_discount_pct: float | None
     code_unused_pool_pct: float | None
-    # Only populated for the super-admin route — the affiliate must never see
+    # Only populated for the super-admin route, the affiliate must never see
     # the platform's revenue cut.
     platform_pct: float | None = None
 
@@ -750,7 +750,7 @@ def invite(
     body: InviteAffiliateRequest,
     admin: Client = Depends(get_current_client_strict),
 ):
-    """Invite anyone to the affiliate program — existing customer or stranger.
+    """Invite anyone to the affiliate program. Existing customer or stranger.
 
     Two paths, selected automatically by the service:
 
@@ -760,10 +760,10 @@ def invite(
     * **Stranger**: creates an ``AffiliateInvite`` row + raw token, and
       fires a magic-link email pointing at ``/affiliate-invite?token=...``.
       Response ``kind == "pending_invite"``. The raw token is never
-      returned to the caller (super admin) — only embedded in the email,
+      returned to the caller (super admin). Only embedded in the email,
       so a compromised admin session can't replay invites.
 
-    The 5-seat cap is enforced at invite time AND again at accept time —
+    The 5-seat cap is enforced at invite time AND again at accept time,
     a long-running pending invite can't sneak past the cap.
     """
     with get_session() as session:
@@ -801,7 +801,7 @@ def invite(
 
         if result["kind"] == "instant":
             aff = result["affiliate"]
-            # Fire the welcome email after commit — never block the response
+            # Fire the welcome email after commit, never block the response
             # on Brevo. send_email_async is itself non-blocking but the
             # commit MUST land first so the affiliate row exists by the time
             # the recipient clicks through.
@@ -812,10 +812,10 @@ def invite(
                 logger.warning("affiliate_welcome_email_failed: %s", e)
             return InviteResponse(kind="instant", affiliate=_affiliate_row(session, aff.id))
 
-        # pending_invite — magic-link path
+        # pending_invite (magic-link path
         invite_row = result["invite"]
         raw_token = result["raw_token"]
-        # New URL — landing page handles both sign-in and sign-up branches
+        # New URL) landing page handles both sign-in and sign-up branches
         # based on whether the recipient already has an account. The old
         # ``/affiliate-accept`` path is kept as a redirect for any email
         # delivered before the cut-over.
@@ -856,7 +856,7 @@ def list_invites():
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def revoke(invite_id: int):
-    """Revoke a pending invite — its token can no longer be used to onboard."""
+    """Revoke a pending invite, its token can no longer be used to onboard."""
     with get_session() as session:
         try:
             affiliate_service.revoke_invite(session, invite_id)
@@ -866,7 +866,7 @@ def revoke(invite_id: int):
     return None
 
 
-# ─── Public — magic-link acceptance ─────────────────────────────────────
+# ─── Public. Magic-link acceptance ─────────────────────────────────────
 
 
 @router.get("/affiliate-invites/lookup", response_model=AcceptInviteLookupResponse)
@@ -875,7 +875,7 @@ def lookup_invite(request: Request, token: str):
     """Resolve a magic-link token to its target email + expiry.
 
     Called by the ``/affiliate-invite`` landing page before deciding which
-    branch to render — the recipient sees their invited email + expiry
+    branch to render, the recipient sees their invited email + expiry
     deadline, and (when logged in) the page auto-fires accept-existing.
     Rate-limited to slow token enumeration. Returns 404/410 for invalid /
     used / expired tokens.
@@ -894,7 +894,7 @@ def lookup_invite(request: Request, token: str):
 @router.post("/affiliate-invites/accept", response_model=AcceptInviteResponse)
 @limiter.limit("10/minute")
 def accept_invite(request: Request, body: AcceptInviteRequest):
-    """Accept a magic-link invite — atomically create Client + Affiliate.
+    """Accept a magic-link invite. Atomically create Client + Affiliate.
 
     Rate-limited (10/min/IP) on top of the token's natural one-shot
     constraint. On success, returns the same shape as /auth/register so
@@ -918,7 +918,7 @@ def accept_invite(request: Request, body: AcceptInviteRequest):
         except AffiliateProgramError as e:
             raise _to_http(e) from e
 
-        # Best-effort welcome email — same content as the existing-customer
+        # Best-effort welcome email, same content as the existing-customer
         # path, so newly-accepted invitees get the "open my dashboard" CTA
         # right after onboarding.
         try:
@@ -955,21 +955,21 @@ def accept_invite_existing(
 ):
     """Accept an invite while already signed in as an OyeChats client.
 
-    The other accept endpoint creates a brand-new Client+Affiliate pair —
-    this one wires an Affiliate row to the client who's already
+    The other accept endpoint creates a brand-new Client+Affiliate pair.
+    This one wires an Affiliate row to the client who's already
     authenticated. Used by the unified `/affiliate-invite` landing page
     when the recipient already has an account.
 
     Status codes:
-      * 200 — affiliate row created, fire the welcome email
-      * 403 — token's email doesn't match the logged-in client
-      * 404 — token doesn't exist
-      * 409 — client is already an active affiliate
-      * 410 — token expired or already used
+      * 200 (affiliate row created, fire the welcome email
+      * 403) token's email doesn't match the logged-in client
+      * 404 (token doesn't exist
+      * 409) client is already an active affiliate
+      * 410. Token expired or already used
     """
     with get_session() as session:
         try:
-            # Re-load client into this session — the Depends gives us a
+            # Re-load client into this session, the Depends gives us a
             # detached row from the auth check.
             db_client = session.get(Client, client.id)
             if db_client is None:
@@ -1009,7 +1009,7 @@ def list_code_referrals_super(affiliate_id: int, code_id: int):
     ``get_superadmin`` dependency.
 
     Returns 404 when ``code_id`` doesn't exist OR isn't owned by
-    ``affiliate_id`` — the latter is a 404 (not 403) so the global code
+    ``affiliate_id``, the latter is a 404 (not 403) so the global code
     namespace isn't probeable by URL-walking.
     """
     with get_session() as session:
@@ -1074,11 +1074,11 @@ def delete_affiliate_route(
 ):
     """Hard-delete an affiliate, all their codes, and the click history.
 
-    Referred clients survive — their ``referral_code_id`` becomes NULL via
-    the FK's ``ON DELETE SET NULL``. Historical attribution is irreversibly
-    lost from those client rows. This is a destructive operation by design
-    — the super-admin UI requires an explicit two-step confirm before it
-    fires.
+     Referred clients survive. Their ``referral_code_id`` becomes NULL via
+     the FK's ``ON DELETE SET NULL``. Historical attribution is irreversibly
+     lost from those client rows. This is a destructive operation by design
+    , the super-admin UI requires an explicit two-step confirm before it
+     fires.
     """
     with get_session() as session:
         try:

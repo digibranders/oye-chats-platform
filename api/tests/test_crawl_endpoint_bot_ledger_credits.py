@@ -3,7 +3,7 @@
 # deducts crawl credits from the RESOLVED BOT LEDGER bucket
 # (credit_service.check_and_deduct(..., bot_id=ledger_bot_id)), so the
 # pre-flight gate in crawl_endpoint must check that SAME bucket via
-# credit_service.get_balance(db, client_id, bot_id=ledger_bot_id) — not the
+# credit_service.get_balance(db, client_id, bot_id=ledger_bot_id), not the
 # client pool (bot_id=None). Otherwise a per-bot subscriber with an empty
 # client pool but a funded bot ledger gets hard-402'd forever, or (the
 # inverse) a subscriber with an empty bot ledger but stale client-pool
@@ -54,7 +54,7 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_p
     and "bot_ledger" -> balance when a bot_id IS passed through, so the fake
     ``get_balance`` can prove which bucket the endpoint actually queried.
     """
-    # SSRF hostname check on CrawlRequest.url — bypass for the fake test domain.
+    # SSRF hostname check on CrawlRequest.url. Bypass for the fake test domain.
     monkeypatch.setattr("app.schemas.client._is_public_hostname", lambda h: True)
 
     # A session whose ORM query for bot ownership (_verify_bot_ownership) and
@@ -79,7 +79,7 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_p
     )
     monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 1)
 
-    # This bot IS resolved to its own ledger bucket — the credit routing
+    # This bot IS resolved to its own ledger bucket, the credit routing
     # decision itself (resolve_bot_ledger_bot_id) is exercised for real by
     # crawl_endpoint; what we control is what each bucket's balance reports.
     monkeypatch.setattr("app.services.credit_service.resolve_bot_ledger_bot_id", lambda bot: 7)
@@ -108,8 +108,8 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_p
 
 def test_crawl_allowed_when_bot_ledger_funded_but_client_pool_empty(monkeypatch):
     """Per-bot subscription: client pool is drained to zero (all its free/legacy
-    credits spent elsewhere) but the bot's OWN ledger — the bucket the pipeline
-    will actually deduct from — is funded. The crawl must be ALLOWED."""
+    credits spent elsewhere) but the bot's OWN ledger (the bucket the pipeline
+    will actually deduct from) is funded. The crawl must be ALLOWED."""
     _patch_common(monkeypatch, balances_by_bucket={"client_pool": 0, "bot_ledger": 500})
 
     resp = TestClient(_build_app()).post(
@@ -125,8 +125,8 @@ def test_crawl_allowed_when_bot_ledger_funded_but_client_pool_empty(monkeypatch)
 
 
 def test_crawl_blocked_when_bot_ledger_empty_even_if_client_pool_funded(monkeypatch):
-    """Inverse case: the bot's own ledger — the bucket that will actually be
-    charged — is empty, even though the client pool has plenty. The crawl must
+    """Inverse case: the bot's own ledger (the bucket that will actually be
+    charged) is empty, even though the client pool has plenty. The crawl must
     be BLOCKED (402), proving the gate checks the deduction bucket and not
     stale/irrelevant client-pool credits."""
     _patch_common(monkeypatch, balances_by_bucket={"client_pool": 500, "bot_ledger": 0})
@@ -153,7 +153,7 @@ def test_crawl_blocked_when_bot_ledger_empty_even_if_client_pool_funded(monkeypa
 
 def test_initial_crawl_gated_at_plan_max_without_discovered_pages(monkeypatch):
     """Pre-fix worst case: a fixed-cap plan with no max_pages / no discovered_pages
-    reserves the full plan ceiling — a 5-credit balance can't clear the 20-page
+    reserves the full plan ceiling, a 5-credit balance can't clear the 20-page
     reservation even though the real site may be far smaller."""
     _patch_common(
         monkeypatch,
@@ -175,7 +175,7 @@ def test_initial_crawl_gated_at_plan_max_without_discovered_pages(monkeypatch):
 
 def test_initial_crawl_credit_gate_sized_to_discovered_pages(monkeypatch):
     """Fix: an initial crawl that reports discovered_pages sizes the pre-flight to
-    min(plan_max, discovered) — a 3-page site reserves 3 credits, so a balance of
+    min(plan_max, discovered), a 3-page site reserves 3 credits, so a balance of
     5 is enough and the crawl is ALLOWED."""
     _patch_common(
         monkeypatch,
@@ -194,7 +194,7 @@ def test_initial_crawl_credit_gate_sized_to_discovered_pages(monkeypatch):
 
 
 def test_discovered_pages_does_not_exceed_plan_cap(monkeypatch):
-    """discovered_pages only ever TIGHTENS the reservation — a discovered count
+    """discovered_pages only ever TIGHTENS the reservation, a discovered count
     above the plan cap is clamped to the cap (never loosens it)."""
     _patch_common(
         monkeypatch,
@@ -215,7 +215,7 @@ def test_discovered_pages_does_not_exceed_plan_cap(monkeypatch):
 
 def test_discovered_pages_ignored_on_recrawl(monkeypatch):
     """discovered_pages is an INITIAL-crawl signal only: with replace_source set
-    (a recrawl) it must NOT loosen the pre-flight — the recrawl path
+    (a recrawl) it must NOT loosen the pre-flight, the recrawl path
     (expected_new_pages) governs instead, so here it falls back to the plan cap."""
     _patch_common(
         monkeypatch,

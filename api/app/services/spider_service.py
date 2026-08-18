@@ -10,7 +10,7 @@ consume it unchanged:
      "queue_remaining": int}
 
 Browser rendering happens on Spider's infrastructure, so this path uses no
-local Chromium — that is the whole point of the migration.
+local Chromium. That is the whole point of the migration.
 """
 
 import asyncio
@@ -34,12 +34,12 @@ from app.services.crawler_service import CrawlCancelled, CrawlerError, is_cancel
 # Called once per page as it finishes fetching: ``(url, ok)`` where ``ok`` is
 # True if the page yielded content. Lets the orchestrator emit live progress.
 PageProgressCallback = Callable[[str, bool], None]
-# Called (and awaited — AR-23) with the full ``{"url", "content"}`` dict for
+# Called (and awaited. AR-23) with the full ``{"url", "content"}`` dict for
 # every *successful* page, as it lands. Lets the orchestrator stream pages
 # into ingestion while the rest of the crawl is still fetching (see
 # crawl_orchestrator). Async so the orchestrator can put pages onto a
 # bounded queue and have this await naturally suspend just this page's fetch
-# slot when the ingest side falls behind — real producer-side backpressure
+# slot when the ingest side falls behind. Real producer-side backpressure
 # instead of unbounded buffering, without blocking the event loop or other
 # concurrent fetches (asyncio.gather keeps running the rest).
 PageResultCallback = Callable[[dict], Awaitable[None]]
@@ -81,8 +81,8 @@ async def crawl_website(
     # Domain scope. Spider's own docs say external_domains/subdomains/tld
     # default to off, but a real crawl of a page embedding our own widget
     # script (`<script src="https://cdn.oyechats.com/...">`) escaped onto
-    # cdn.oyechats.com's *host site* and pulled in 2000+ unrelated pages —
-    # whatever Spider's actual default turned out to be in practice, it
+    # cdn.oyechats.com's *host site* and pulled in 2000+ unrelated pages.
+    # Whatever Spider's actual default turned out to be in practice, it
     # wasn't "stay on this domain." `whitelist` is a hard guarantee
     # regardless: only paths on the seed's own host are ever crawled.
     seed_netloc = urlparse(url).netloc
@@ -146,7 +146,7 @@ async def crawl_website(
         len(pages),
     )
     # The recursive POST is one blocking call, so cancel can only land after it
-    # returns — but honour it here so we don't proceed to embed a cancelled crawl.
+    # returns, but honour it here so we don't proceed to embed a cancelled crawl.
     if client_id is not None and is_cancellation_requested(client_id):
         raise CrawlCancelled({"results": results, "recommended_colors": []})
     return {
@@ -161,7 +161,7 @@ async def crawl_website(
 
 # Transient scrape failures (a burst 502/503/504 from the origin under crawl
 # load, a timeout, or a 200-with-empty-content that masks an upstream 5xx) are
-# retried — verified: pages that 502 mid-crawl return 200 when re-fetched. Only
+# retried. Verified: pages that 502 mid-crawl return 200 when re-fetched. Only
 # these statuses retry; a real 4xx (404/401) drops immediately.
 _SCRAPE_ATTEMPTS = 3
 _SCRAPE_RETRY_BASE = 1.5  # seconds; delay = base * attempt (backoff between tries)
@@ -214,19 +214,19 @@ async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: as
                 content, upstream = _extract_page_content(resp)
                 if content:
                     return {"url": url, "content": content}
-                # 200 but empty — usually a transient upstream 5xx; worth a retry.
+                # 200 but empty. Usually a transient upstream 5xx; worth a retry.
                 last_reason = f"empty content (upstream status={upstream})"
             elif resp.status_code not in _RETRYABLE_SCRAPE_STATUS:
-                logger.warning("Spider scrape %s returned %s — dropped (not retryable)", url, resp.status_code)
+                logger.warning("Spider scrape %s returned %s. Dropped (not retryable)", url, resp.status_code)
                 return None
             else:
                 last_reason = f"HTTP {resp.status_code}"
         if attempt < _SCRAPE_ATTEMPTS:
             await asyncio.sleep(_SCRAPE_RETRY_BASE * attempt)
-    # Exhausted retries — log so these drops are visible when reconciling
+    # Exhausted retries. Log so these drops are visible when reconciling
     # "N discovered vs M ingested".
     logger.warning(
-        "Spider scrape %s failed after %d attempts (%s) — dropped",
+        "Spider scrape %s failed after %d attempts (%s). Dropped",
         url,
         _SCRAPE_ATTEMPTS,
         last_reason,
@@ -242,7 +242,7 @@ class ScrapeOutcome:
     conflates two completely different situations:
 
     * Spider answered about the URL and the **target** said there is nothing
-      there — a 404 or a 410 on a parked or retired domain. A fact about the
+      there, a 404 or a 410 on a parked or retired domain. A fact about the
       target.
     * We never got a usable answer: no API key, an expired key, quota
       exhausted, Spider down, Spider's endpoint moved, our request malformed,
@@ -252,7 +252,7 @@ class ScrapeOutcome:
     Any caller that persists "this URL yielded nothing" must distinguish them,
     or one expired key silently writes that verdict against every URL it sees.
 
-    **``answered`` is fail-CLOSED**: it is True only on positive evidence — a
+    **``answered`` is fail-CLOSED**: it is True only on positive evidence, a
     2xx from Spider, a parseable page object, and a per-page upstream status
     the target itself produced. Anything unrecognised is our problem, because
     the cost of wrongly blaming a real company is a lasting cache entry while
@@ -271,11 +271,11 @@ class ScrapeOutcome:
 # a caller is permitted to record a lasting verdict about a domain.
 #
 # Notably absent:
-#   * 2xx-with-empty-content — ``_scrape_one`` in this same module documents
+#   * 2xx-with-empty-content. ``_scrape_one`` in this same module documents
 #     that as "usually a transient upstream 5xx; worth a retry", and retries it
 #     three times. It must not become a permanent fact somewhere else.
-#   * 5xx — the target is broken today, not absent.
-#   * 403 — usually the target's WAF refusing Spider specifically. A real
+#   * 5xx, the target is broken today, not absent.
+#   * 403. Usually the target's WAF refusing Spider specifically. A real
 #     company behind Cloudflare must not be blacklisted for it.
 _TARGET_ATTRIBUTABLE_UPSTREAM = frozenset({404, 410})
 
@@ -286,10 +286,10 @@ async def fetch_html_outcome(
     use_js: bool = False,
     _client: httpx.AsyncClient | None = None,
 ) -> ScrapeOutcome:
-    """:func:`fetch_html`, but reporting whether Spider answered — see
+    """:func:`fetch_html`, but reporting whether Spider answered. See
     :class:`ScrapeOutcome` for why that distinction has to be available."""
     if not SPIDER_API_KEY:
-        logger.debug("fetch_html skipped for %s — SPIDER_API_KEY not configured", url)
+        logger.debug("fetch_html skipped for %s. SPIDER_API_KEY not configured", url)
         return ScrapeOutcome(content=None, answered=False)
 
     payload = {
@@ -325,7 +325,7 @@ async def fetch_html_outcome(
 
         # 2xx but nothing usable. `upstream is None` means the body did not
         # parse at all (a proxy error page, a WAF interstitial, an empty list)
-        # — no evidence about the target whatsoever.
+        # , no evidence about the target whatsoever.
         answered = upstream in _TARGET_ATTRIBUTABLE_UPSTREAM
         logger.warning("fetch_html %s: empty content, upstream=%s answered=%s", url, upstream, answered)
         return ScrapeOutcome(content=None, answered=answered)
@@ -343,12 +343,12 @@ async def fetch_html(
     """Fetch the raw HTML of a single URL via Spider ``/scrape``.
 
     Unlike :func:`fetch_urls`, this asks Spider for ``return_format=html`` and
-    disables readability so the DOM comes back intact — needed by the footer
+    disables readability so the DOM comes back intact. Needed by the footer
     harvester, which isolates ``<footer>`` / ``[role=contentinfo]`` regions
     from the raw markup that the main markdown crawl would otherwise strip.
 
     Returns the HTML body on success, or ``None`` on any failure (missing API
-    key, HTTP error, empty body). Best-effort by design — the caller is a
+    key, HTTP error, empty body). Best-effort by design, the caller is a
     log-only, non-billable side channel and must never abort a real crawl. A
     caller that needs to tell those failures apart wants
     :func:`fetch_html_outcome`.
@@ -369,9 +369,9 @@ async def fetch_urls(
     """Fetch an explicit, ordered list of URLs via Spider scrape → crawl_data shape.
 
     Preserves input order. Failed/empty pages are dropped (Spider bills $0 for
-    them). Returns the same shape as ``crawl_website``. ``on_page(url, ok)`` — if
-    given — fires as each page completes so callers can emit live progress;
-    ``on_result(page)`` — if given — fires with the full page dict for each
+    them). Returns the same shape as ``crawl_website``. ``on_page(url, ok)`` (if
+    given) fires as each page completes so callers can emit live progress;
+    ``on_result(page)`` (if given) fires with the full page dict for each
     *successful* page so callers can stream ingestion while the crawl runs. A
     misbehaving callback is swallowed so it can never abort the crawl.
     """

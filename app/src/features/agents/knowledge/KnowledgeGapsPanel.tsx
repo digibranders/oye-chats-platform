@@ -87,7 +87,7 @@ export function KnowledgeGapsPanel({
       width: '9rem',
       render: (row) => (
         <span className="text-[var(--ds-text-subtle)]">
-          {row.last_asked ? formatRelativeDate(row.last_asked) : '—'}
+          {row.last_asked ? formatRelativeDate(row.last_asked) : '-'}
         </span>
       ),
     },

@@ -53,7 +53,7 @@ class TestClassifyAndLogLlmError:
 
     def test_bad_request_is_classified_as_config_error(self):
         """BadRequestError (malformed request, unsupported params) is a config
-        problem, not a transient one — retrying it is pointless."""
+        problem, not a transient one. Retrying it is pointless."""
         with (
             patch("app.services.llm_service.increment_metric_counter") as mock_incr,
             patch("app.services.llm_service.forward_to_sentry_if_alertable"),
@@ -66,9 +66,9 @@ class TestClassifyAndLogLlmError:
 
     def test_context_window_exceeded_is_its_own_distinct_tag_not_config_error(self):
         """AR-20: ContextWindowExceededError IS a BadRequestError subclass in
-        litellm, so it must be checked BEFORE the generic config-error branch
-        — otherwise a retryable-with-trimmed-prompt overflow gets silently
-        lumped in with "someone revoked the API key"."""
+         litellm, so it must be checked BEFORE the generic config-error branch
+        . Otherwise a retryable-with-trimmed-prompt overflow gets silently
+         lumped in with "someone revoked the API key"."""
         with (
             patch("app.services.llm_service.increment_metric_counter") as mock_incr,
             patch("app.services.llm_service.forward_to_sentry_if_alertable") as mock_forward,
@@ -81,15 +81,15 @@ class TestClassifyAndLogLlmError:
             )
         mock_incr.assert_called_once_with("llm_context_overflow")
         mock_incr.assert_called_once()  # never ALSO counted as llm_config_error
-        mock_forward.assert_not_called()  # not a config error — no Sentry page needed
+        mock_forward.assert_not_called()  # not a config error, no Sentry page needed
 
 
 class TestContextOverflowMessage:
     def test_generate_response_returns_distinct_message_on_context_overflow(self):
-        """Must not say 'please try again' — see LLM_CONTEXT_OVERFLOW_MESSAGE
+        """Must not say 'please try again'. See LLM_CONTEXT_OVERFLOW_MESSAGE
         docstring for why. This test wholesale-mocks `litellm` (the same
         pattern used throughout this test file/codebase) specifically to
-        prove the except clause survives that — a live `litellm.XxxError`
+        prove the except clause survives that, a live `litellm.XxxError`
         attribute lookup inside `except` would raise TypeError against a
         Mock instead of catching the raised exception."""
         from app.services.llm_service import LLM_API_ERROR_MESSAGE, LLM_CONTEXT_OVERFLOW_MESSAGE

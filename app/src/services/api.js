@@ -440,7 +440,7 @@ export const registerClient = async (
     try {
         const payload = { name, email, password, company_name: companyName, website };
         if (billingCountry) payload.billing_country = billingCountry;
-        // Launch-promo code from the campaign link (?code=) — makes the offer
+        // Launch-promo code from the campaign link (?code=). Makes the offer
         // link-exclusive. Silently ignored server-side when unknown.
         if (promoCode) payload.promo_code = promoCode;
         const response = await api.post('/auth/register', payload);
@@ -570,10 +570,10 @@ export const resetPassword = async (email, otp, new_password) => {
  * credit charge per file plus the grand total and the caller's current
  * credit balance. The Knowledge panel calls this after the user drops
  * files so we can render "Upload for N credits" with an explicit
- * confirmation step — no surprise deductions.
+ * confirmation step, no surprise deductions.
  *
  * On failure, returns null so the caller can fall through to a plain
- * upload (best-effort: preview is UX sugar, not a correctness gate — the
+ * upload (best-effort: preview is UX sugar, not a correctness gate, the
  * real deduct happens on POST /ingest).
  *
  * @param {File[]} files - files the user is about to upload
@@ -598,7 +598,7 @@ export const previewUploadCost = async (files, botId) => {
         });
         return response.data;
     } catch (error) {
-        console.warn('Cost preview failed — proceeding without preview:', error);
+        console.warn('Cost preview failed. Proceeding without preview:', error);
         return null;
     }
 };
@@ -778,7 +778,7 @@ export const getDocuments = async (botId) => {
 
 /**
  * Whether this bot's knowledge was deactivated by a plan lapse to Free.
- * `deactivated` is true when the bot has any inactive chunk — drives the
+ * `deactivated` is true when the bot has any inactive chunk. Drives the
  * "re-crawl / re-upload to reactivate" banner on the Knowledge page.
  * @param {number} botId
  * @returns {Promise<{active_count:number, inactive_count:number, deactivated:boolean}>}
@@ -1532,7 +1532,7 @@ export const createBot = async (data) => {
 /**
  * Fetch the onboarding "seed questions" for a bot - LLM-proposed and
  * retrieval-verified as answerable from the bot's content (see the backend
- * seed_questions_service). Returns an array of 0–3 question strings; an empty
+ * seed_questions_service). Returns an array of 0 to 3 question strings; an empty
  * array is normal ("show only the open input"), so this resolves to `[]` on any
  * error rather than throwing - the Prove step must never be blocked by it.
  * @param {number} botId
@@ -1595,7 +1595,7 @@ function previewStreamHeaders() {
     // Impersonation MUST be handled here as well as in the axios interceptor:
     // this path uses raw fetch(), so the interceptor never runs. Sending the
     // shared localStorage `admin_token` from an impersonated tab would
-    // authenticate the preview as the SUPER-ADMIN'S OWN Account — 404-ing on
+    // authenticate the preview as the SUPER-ADMIN'S OWN Account. 404-ing on
     // the impersonated bot_id, or leaking the admin's identity into a session
     // whose banner says otherwise. Send only the impersonation credential and
     // suppress the other four headers, exactly as the interceptor does.
@@ -1893,7 +1893,7 @@ export const markAllLeadsViewed = async (botId) => {
 };
 
 // Manually trigger a follow-up email for a captured lead. Every gate (valid
-// email, cooldown, unsubscribe, bot pause) is enforced server-side — this
+// email, cooldown, unsubscribe, bot pause) is enforced server-side. This
 // call can come back 400/403/409/423 with a human-readable `detail`, which
 // callers should surface rather than treat as a generic failure.
 export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
@@ -2435,11 +2435,11 @@ export const getInvoices = async (botId) => {
  * @returns {Promise<{legal_name, company_name, gstin, billing_address, billing_country, billing_state_code, billing_email}>}
  */
 /**
- * Recovery state for a failing subscription — drives the app-wide past-due
+ * Recovery state for a failing subscription. Drives the app-wide past-due
  * banner. Read-only and safe to poll: the backend resolves Razorpay's EXISTING
  * hosted page and never mints a second mandate.
  *
- * `recoverable` is tri-state: true (link usable), false (settled — terminal
+ * `recoverable` is tri-state: true (link usable), false (settled. Terminal
  * mandate or no hosted page), null (the gateway couldn't be reached, so we
  * don't know). Never render a button on null or false.
  */
@@ -2533,7 +2533,7 @@ export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billing
 /**
  * Fire-and-forget payment-funnel telemetry: the customer closed the Razorpay
  * sheet ('checkout_abandoned') or the gateway declined ('payment_failed').
- * Never throws — losing a telemetry event must not affect the checkout UX.
+ * Never throws. Losing a telemetry event must not affect the checkout UX.
  */
 export const recordBillingEvent = (event, surface, meta) => {
     try {
@@ -2618,7 +2618,7 @@ export const cancelSubscription = async (reason = null, botId = null) => {
  *
  * MUST carry the same `botId` scope `cancelSubscription` used. Without it the
  * backend resolves the account subscription, which for a customer with
- * per-agent plans is a DIFFERENT row than the one Cancel just acted on — so
+ * per-agent plans is a DIFFERENT row than the one Cancel just acted on, so
  * Reactivate either 400s ("not scheduled for cancellation") or mints a fresh
  * Razorpay mandate against the wrong subscription.
  */
@@ -2838,7 +2838,7 @@ export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
  * @param {string} code
  * @param {string|null} label
  * @param {{ affiliateCommissionPct?: number, customerDiscountPct?: number }} split
- *   - per-code commission split. Each is 0–100 (whole percent). Their sum
+ *   - per-code commission split. Each is 0 to 100 (whole percent). Their sum
  *     must not exceed the affiliate's pool (set by super-admin).
  */
 export const createAffiliateCode = async (
@@ -2862,7 +2862,7 @@ export const createAffiliateCode = async (
  *   - ``code``                       - rename (breaks old ?ref= URL)
  *   - ``label``                      - internal label (empty string clears)
  *   - ``active``                     - toggle deactivation/reactivation
- *   - ``affiliateCommissionPct``     - what the affiliate keeps (0–100)
+ *   - ``affiliateCommissionPct``     - what the affiliate keeps (0 to 100)
  *   - ``customerDiscountPct``        - what the referred customer gets
  *
  * The split pair is validated together: their sum must not exceed the
@@ -2914,7 +2914,7 @@ export const listSuperadminAffiliates = async () => {
  * Invite an existing customer OR send a magic-link to a stranger.
  * @param {string} email
  * @param {number|null} maxActiveCodes - optional override of the 10-code default
- * @param {number|null} commissionPct - optional commission % (0–100). Defaults to 0.
+ * @param {number|null} commissionPct - optional commission % (0 to 100). Defaults to 0.
  */
 export const inviteSuperadminAffiliate = async (
     email,

@@ -70,7 +70,7 @@ _ROLE_RANK = {"operator": 0, "admin": 1, "owner": 2}
 def _prevent_role_escalation(auth: dict, target_role: str) -> None:
     """Block an operator from assigning a role higher than their own.
 
-    Direct client logins (auth type "client") are unrestricted — they are the
+    Direct client logins (auth type "client") are unrestricted. They are the
     workspace owner by definition.  Operator-authenticated callers may only
     assign roles up to their own level (e.g. an admin cannot create an owner).
     """
@@ -80,7 +80,7 @@ def _prevent_role_escalation(auth: dict, target_role: str) -> None:
     if _ROLE_RANK.get(target_role, -1) > _ROLE_RANK.get(caller_role, 0):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"You cannot assign the '{target_role}' role — it exceeds your own privilege level.",
+            detail=f"You cannot assign the '{target_role}' role, it exceeds your own privilege level.",
         )
 
 
@@ -147,7 +147,7 @@ class CreateDepartmentRequest(BaseModel):
 class UpdateDepartmentRequest(BaseModel):
     name: RequiredName | None = None
     description: MediumText | None = None
-    # Per-department business hours — the same shape, and now the same model,
+    # Per-department business hours, the same shape, and now the same model,
     # as ``bot.business_hours``. Sentinel ``{}`` (all days unset) clears the
     # schedule; ``live_chat_availability_service`` reads both columns through
     # one evaluator, so one schema for both is the point.
@@ -213,7 +213,7 @@ def update_department(
     """Update a department.
 
     Writable under a super-admin impersonation session (design §6.1,
-    "Department edits (not invites)") — name, description and business hours are
+    "Department edits (not invites)"). Name, description and business hours are
     configuration only. Creating and deleting departments stay denied: §6.1 says
     *edits*, and a delete also re-parents every operator in the department.
     """
@@ -229,11 +229,11 @@ def update_department(
         if request.description is not None:
             dept.description = request.description
         if request.business_hours is not None:
-            # Empty dict means "clear" — treat as None in the DB so the
+            # Empty dict means "clear". Treat as None in the DB so the
             # resolver short-circuits to "always open" cleanly.
             dept.business_hours = request.business_hours or None
-            # Invalidate state caches for every bot in this workspace —
-            # otherwise visitors keep seeing the stale "out of hours" UI
+            # Invalidate state caches for every bot in this workspace.
+            # Otherwise visitors keep seeing the stale "out of hours" UI
             # for up to 5 seconds after the admin saves.
             from app.db.models import Bot
             from app.services.live_chat_availability_service import invalidate as invalidate_state
@@ -303,7 +303,7 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
             depts = session.execute(select(Department).where(Department.id.in_(dept_ids))).scalars().all()
             dept_names = {d.id: d.name for d in depts}
 
-        # Build bot name lookup — one-to-one operator↔bot binding surfaces the
+        # Build bot name lookup, one-to-one operator↔bot binding surfaces the
         # bot the operator handles in the team list UI.
         bot_ids = {a.bot_id for a in operators if a.bot_id}
         bot_names: dict[int, str] = {}
@@ -337,7 +337,7 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
                     "active_chats": active_count,
                     "last_seen_at": a.last_seen_at.isoformat() if a.last_seen_at else None,
                     "created_at": a.created_at.isoformat() if a.created_at else None,
-                    # ``linked_client_id`` — the underlying Client identity for
+                    # ``linked_client_id``, the underlying Client identity for
                     # invite-created operators, or ``self.id`` for a workspace
                     # owner who added themselves via /me/self-operator. NULL
                     # for legacy password-authenticated operators. Frontend
@@ -411,7 +411,7 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         if bot is None:
             raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
 
-        # Check for duplicate email — scoped to this workspace only
+        # Check for duplicate email. Scoped to this workspace only
         existing = session.execute(
             select(Operator).where(Operator.email == request.email, Operator.client_id == client_id)
         ).scalar_one_or_none()
@@ -474,7 +474,7 @@ async def update_operator(
         if not operator:
             raise HTTPException(status_code=404, detail="Operator not found.")
 
-        # Name + email are personal-identity fields — only the operator being
+        # Name + email are personal-identity fields. Only the operator being
         # edited can change them. An admin editing SOMEONE ELSE's row must not
         # be able to silently rebadge or reassign them by changing the email.
         # Self-edit is either: a legacy operator hitting this endpoint about
@@ -529,8 +529,8 @@ async def update_operator(
             ).scalar_one_or_none()
             if new_bot is None:
                 raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
-            # Reassignment must not leave dangling live chats on the old bot —
-            # they belong to a bot this operator no longer serves. End them
+            # Reassignment must not leave dangling live chats on the old bot.
+            # They belong to a bot this operator no longer serves. End them
             # cleanly by clearing the assignment; the WS layer will bounce them
             # back to waiting so another operator on the old bot can pick up.
             session.execute(
@@ -556,7 +556,7 @@ async def update_operator(
             operator.notification_preferences = request.notification_preferences
 
         session.commit()
-        # Capture name BEFORE the session context closes — accessing
+        # Capture name BEFORE the session context closes. Accessing
         # ``operator.name`` after the ``with`` block raises
         # ``DetachedInstanceError`` because SQLAlchemy tries to refresh
         # the expired attribute against a closed session. Mirrors the same
@@ -604,22 +604,22 @@ def delete_operator(operator_id: RowId, auth=Depends(get_current_client_or_opera
 
 @router.post("/handoff")
 async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_current_bot)):
-    """Visitor-initiated live chat request — runs through the state machine.
+    """Visitor-initiated live chat request. Runs through the state machine.
 
     The state machine ``LiveChatAvailabilityService`` decides what the widget
     should do based on the workspace's current live-chat reality (feature
     flag, operator presence, business hours, queue capacity). The endpoint
     returns a structured response the widget reads to pick its UI mode:
 
-    * ``suggested_action == "route"`` — queue + notify operators (current path)
-    * ``suggested_action == "wait"``  — queue + tell widget to show queue UI
+    * ``suggested_action == "route"`` (queue + notify operators (current path)
+    * ``suggested_action == "wait"``) queue + tell widget to show queue UI
       with auto-fallback timer
-    * ``suggested_action == "offline_form"`` — do NOT queue, tell widget to
+    * ``suggested_action == "offline_form"``. Do NOT queue, tell widget to
       switch to the offline message form with the matching ``state`` as the
       fallback reason
 
     Side effects (audit log, webhook, email notifications) only fire when
-    the visitor will actually be queued — no point waking operators when the
+    the visitor will actually be queued, no point waking operators when the
     state machine has already decided to fall back to the form.
     """
     from app.services import live_chat_availability_service as availability_svc
@@ -637,7 +637,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         # cannot fold ``bot_id == bot.id`` into the query above because a genuine
         # miss must fall through to the create-path below; a foreign-but-existing
         # id would then look absent and trigger a primary-key-colliding insert.
-        # Return 404 (not 403) so session existence isn't leaked — matching the
+        # Return 404 (not 403) so session existence isn't leaked. Matching the
         # cancel_handoff / session-status siblings.
         if chat_session is not None and chat_session.bot_id != bot.id:
             logger.warning(
@@ -681,7 +681,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
         # When the state machine says "show the offline form", we used to
         # short-circuit straight to the offline form. With Web Push enabled
-        # that's the wrong call in the most important case — "nobody on WS,
+        # that's the wrong call in the most important case. "nobody on WS,
         # but the workspace has push subscribers" is exactly the scenario push
         # was built for. So before falling back, ask the DB whether anyone in
         # this workspace can be reached via push; if so, promote the request
@@ -715,7 +715,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             has_active_ws = broadcaster.connection_count(db_bot.client_id) > 0
 
             if not has_push_subscriber and not has_active_ws:
-                # Original behaviour — no realtime channel reaches anyone, so
+                # Original behaviour, no realtime channel reaches anyone, so
                 # the visitor's only useful action is the offline form.
                 session.add(
                     ChatAuditLog(
@@ -743,14 +743,14 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                     "next_available_at": availability.next_available_at,
                 }
 
-            # Push/WS-promotion path — at least one subscriber/connection exists, so push/WS
+            # Push/WS-promotion path, at least one subscriber/connection exists, so push/WS
             # has a meaningful chance of waking someone. Fall through into
             # the standard "queue + notify" flow below; the existing code
             # there marks the session waiting, fires the audit + webhook,
             # enqueues the push dispatch, and returns the wait UI metadata.
             # The ``promoted_from_offline_form`` flag tells the response
             # builder to override the state machine's lingering OFFLINE_FORM
-            # suggested_action — otherwise the widget would still render the
+            # suggested_action. Otherwise the widget would still render the
             # form instead of the queue UI.
             promoted_from_offline_form = True
             logger.info(
@@ -776,7 +776,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
-        # Audit log — handoff requested
+        # Audit log. Handoff requested
         session.add(
             ChatAuditLog(
                 session_id=request.session_id,
@@ -790,7 +790,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         )
         session.commit()
 
-        # Bust the state cache — the queue size just changed.
+        # Bust the state cache, the queue size just changed.
         availability_svc.invalidate(db_bot.id)
 
         # Get visitor name for queue display
@@ -813,14 +813,14 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             }
         fire_webhook(bot.id, "handoff_requested", webhook_data)
 
-        # Cache queue timeout for the response — read BEFORE the session
+        # Cache queue timeout for the response. Read BEFORE the session
         # closes so the value travels out cleanly.
         queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
 
         # Fan-out Web Push to any eligible operator who isn't already
         # watching the dashboard via WebSocket. The "user is trying to
-        # connect" email has been deliberately removed in favour of push —
-        # email now only fires when the visitor actually *sends a message*
+        # connect" email has been deliberately removed in favour of push.
+        # Email now only fires when the visitor actually *sends a message*
         # in a waiting/unattended session (handled in ws_routes).
         from app.worker.enqueue import enqueue_sync
 
@@ -887,7 +887,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
     # Echo the resolved state so the widget can pick its UI mode without
     # waiting for the first WebSocket status push. When we promoted from
     # OFFLINE_FORM (push subscribers exist), tell the widget to render the
-    # queue UI — "wait" matches the ALL_BUSY suggestion and renders the same
+    # queue UI. "wait" matches the ALL_BUSY suggestion and renders the same
     # "Finding an available operator…" copy with the queue-timeout fallback.
     suggested_action_value = "wait" if promoted_from_offline_form else availability.suggested_action.value
     return {
@@ -924,7 +924,7 @@ async def cancel_handoff(session_id: SessionId, bot: Bot = Depends(get_current_b
         chat_session.assigned_operator_id = None
         session.add(ChatAuditLog(session_id=session_id, action="visitor_cancelled"))
         session.commit()
-        # Capture the workspace while the row is attached — the fan-out below
+        # Capture the workspace while the row is attached, the fan-out below
         # runs after this block closes, where ``bot`` is detached.
         notify_client_id = bot.client_id
 
@@ -1051,7 +1051,7 @@ async def accept_chat(
     """Operator accepts a waiting chat.
 
     Writable under a super-admin impersonation session (design §6.1,
-    "Conversation status / assignment changes") — claiming a queued conversation
+    "Conversation status / assignment changes"). Claiming a queued conversation
     is the entry point for reproducing Support triage bugs. The visitor here has
     already asked for a human, so this answers a request rather than initiating
     contact (which is why ``/takeover`` and ``/connect-request`` stay denied).
@@ -1131,7 +1131,7 @@ async def accept_chat(
         if not claimed:
             raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
-        # Audit log — chat accepted
+        # Audit log. Chat accepted
         session.add(
             ChatAuditLog(
                 session_id=session_id,
@@ -1143,14 +1143,14 @@ async def accept_chat(
         operator_name = operator.name
         operator_id = operator.id
 
-    # DB already committed status='live' — the in-memory manager is secondary.
+    # DB already committed status='live', the in-memory manager is secondary.
     # If accept_chat returns False (already assigned in memory to another operator),
     # that means DB and memory diverged. Force-sync memory to match DB truth.
     accepted = await manager.accept_chat(session_id, operator_id, operator_name)
     if not accepted:
         logger.warning(
             f"DB accepted chat {session_id} for operator {operator_id} but in-memory "
-            f"state shows a different assignee. DB is authoritative — proceeding."
+            f"state shows a different assignee. DB is authoritative. Proceeding."
         )
 
     return {"success": True, "status": "live", "operator_name": operator_name}
@@ -1173,10 +1173,10 @@ async def close_chat(session_id: SessionId, auth=Depends(get_current_client_or_o
         if not bot or bot.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
 
-        # Capture bot_name inside the session block — accessing bot.name after session.close()
+        # Capture bot_name inside the session block. Accessing bot.name after session.close()
         # raises DetachedInstanceError because SQLAlchemy expires objects on commit.
         bot_name = bot.name
-        # Audit log — chat closed by operator
+        # Audit log. Chat closed by operator
         operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
         session.add(
             ChatAuditLog(
@@ -1273,7 +1273,7 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
     """Transfer a live chat to another operator or department.
 
     Writable under a super-admin impersonation session (design §6.1,
-    "Conversation status / assignment changes") — reassignment is the other half
+    "Conversation status / assignment changes"). Reassignment is the other half
     of Support triage, and every notification it fires goes to the Account's own
     operators, never to the Lead.
     """
@@ -1318,7 +1318,7 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
             chat_session.assigned_operator_id = target_operator.id
             if target_operator.department_id:
                 chat_session.department_id = target_operator.department_id
-            # Audit log — transferred to operator
+            # Audit log. Transferred to operator
             session.add(
                 ChatAuditLog(
                     session_id=session_id,
@@ -1350,7 +1350,7 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
         chat_session.status = "waiting"
         chat_session.assigned_operator_id = None
         chat_session.department_id = request.target_department_id
-        # Audit log — transferred to department
+        # Audit log. Transferred to department
         session.add(
             ChatAuditLog(
                 session_id=session_id,
@@ -1393,7 +1393,7 @@ def get_my_operator_status(
     """Get the caller's online status for a specific bot.
 
     ``bot_id`` scopes the lookup to the caller's operator row bound to that
-    bot — a workspace with two bots must not report ``is_online=True`` for
+    bot, a workspace with two bots must not report ``is_online=True`` for
     bot B just because the admin is online as bot A's operator. Absent
     ``bot_id`` the endpoint retains its historic "any of my operator rows"
     behaviour for callers that haven't been updated yet.
@@ -1480,7 +1480,7 @@ class PushPreferencesModel(BaseModel):
     @field_validator("events")
     @classmethod
     def _known_events(cls, v: dict[str, bool]) -> dict[str, bool]:
-        # Drop unknown keys rather than 400 — a newer client sending a category
+        # Drop unknown keys rather than 400, a newer client sending a category
         # this deploy doesn't know about shouldn't fail the whole save.
         return {k: bool(val) for k, val in v.items() if k in _PUSH_EVENT_KEYS}
 
@@ -1490,7 +1490,7 @@ class NotificationPreferencesRequest(BaseModel):
 
 
 def _default_prefs() -> dict:
-    """Absent prefs mean fully opted in — render that explicitly for clients."""
+    """Absent prefs mean fully opted in. Render that explicitly for clients."""
     return {
         "push": {
             "enabled": True,
@@ -1585,8 +1585,8 @@ async def set_operator_status(
     Falls back to toggle behavior (backward compat) when no body is provided.
 
     When an operator transitions to offline, any sessions still assigned to
-    them are immediately re-queued and the affected visitors are notified —
-    otherwise the visitor's widget would stay glued to a dead live session.
+    them are immediately re-queued and the affected visitors are notified.
+    Otherwise the visitor's widget would stay glued to a dead live session.
     """
     operator_id_to_release: int | None = None
 
@@ -1629,7 +1629,7 @@ async def set_operator_status(
             if not operator:
                 # Refuse to silently mint an operator row. The frontend catches
                 # this structured error and prompts "Add yourself as an operator
-                # for this workspace?" — on confirm it calls the explicit
+                # for this workspace?", on confirm it calls the explicit
                 # ``POST /me/self-operator`` endpoint which requires an
                 # explicit ``bot_id`` so the caller consciously picks which
                 # bot they're going to handle. This matches the pre-merge UX
@@ -1648,7 +1648,7 @@ async def set_operator_status(
             previously_online = operator.is_online
             # Explicit set when the caller sent ``is_online``; otherwise pure
             # toggle. A body that only carries ``bot_id`` for scoping still
-            # counts as a toggle — treat that identically to no body at all.
+            # counts as a toggle. Treat that identically to no body at all.
             explicit = request is not None and request.is_online is not None
             new_online = request.is_online if explicit else (not operator.is_online)
             operator.is_online = new_online
@@ -1708,12 +1708,12 @@ def get_session_details(session_id: SessionId, auth=Depends(get_current_client_o
             "status": chat_session.status,
             # ``None`` rather than "Unknown" when there is no geography to
             # name, because the Inbox details panel renders this field verbatim
-            # and hides the row on a falsy value — it used to print the raw
+            # and hides the row on a falsy value, it used to print the raw
             # "IP: 1.2.3.4" stamp at an operator.
             "location": redact_visitor_ip(chat_session.location),
             "device": chat_session.device,
             # The same visitor address reaches the wire a second way, as the
-            # ``ip_intel.resolved_for_ip`` dedup marker inside this blob — and
+            # ``ip_intel.resolved_for_ip`` dedup marker inside this blob, and
             # here on every plan, since this route has no visitor-intelligence
             # gate at all. The company/ASN/threat fields the operator actually
             # reads survive; see ``redact_visitor_metadata``.
@@ -1747,7 +1747,7 @@ def get_session_details(session_id: SessionId, auth=Depends(get_current_client_o
 
 class QualificationOverrideRequest(BaseModel):
     # A rubric dimension key ("budget", "authority", "metrics", …). The set is
-    # bot-configurable, so it cannot be a ``Literal`` here — the handler checks
+    # bot-configurable, so it cannot be a ``Literal`` here, the handler checks
     # membership against that bot's own config. This bounds the shape so a
     # non-identifier never reaches the lookup or the audit row.
     dimension: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
@@ -1779,13 +1779,13 @@ def override_qualification_dimension(
 
     The automated extraction path (``rag_service._background_bant_extraction``)
     deliberately never downgrades a dimension's score, and budget/authority
-    scores never decay — by design, so a weak follow-up can't erase a strong
+    scores never decay, by design, so a weak follow-up can't erase a strong
     earlier signal. But that also means a single false-positive extraction, or
     a visitor typing an implausible statement in bad faith ("we have a
     $50k/month budget approved"), permanently misclassifies a lead with no
     remedy short of direct database editing. This gives operators an audited
     way to correct or reset (score=0) a dimension without weakening the
-    never-downgrade guarantee for the automated path — every override is
+    never-downgrade guarantee for the automated path. Every override is
     still logged as an append-only ``BANTSignal`` row, same as an LLM or
     CTA-click signal, just tagged ``source="operator_override"``.
     """
@@ -1934,7 +1934,7 @@ async def submit_visitor_rating(
 ):
     """Record a visitor's post-chat satisfaction rating and resolution status.
 
-    Auth: X-Bot-Key header (widget). Both fields are optional — subsequent
+    Auth: X-Bot-Key header (widget). Both fields are optional. Subsequent
     calls silently overwrite previous values.
     """
     if body.rating is None and body.resolved is None:
@@ -1980,11 +1980,11 @@ def _bant_dimensions_marked(cs: ChatSession) -> dict[str, bool]:
 
 @router.get("/qualified-bot-sessions/debug")
 def debug_qualified_bot_sessions(auth=Depends(get_current_client_or_operator)):
-    """Diagnostic view — returns every session in this workspace alongside the
+    """Diagnostic view. Returns every session in this workspace alongside the
     fields the qualifier evaluates so we can see why a row didn't surface.
 
     Strictly admin-only; not consumed by the UI. Useful when a session you
-    expected to see in "Chatting with AI" is missing — usually because the
+    expected to see in "Chatting with AI" is missing. Usually because the
     status moved off ``bot`` or the BANT signals never landed in the
     expected columns.
     """
@@ -2045,7 +2045,7 @@ def get_qualified_bot_sessions(
     """List visitors who are **currently** chatting with the AI and whose
     BANT qualification has captured at least 2 of 4 dimensions.
 
-    "Currently" is enforced by a real-time presence heartbeat — the widget
+    "Currently" is enforced by a real-time presence heartbeat, the widget
     pings the connect-request endpoint every 5s while in bot mode, and the
     in-memory manager tracks which sessions have a fresh ping. As soon as
     the visitor closes the tab or navigates away, polling stops and the row
@@ -2055,7 +2055,7 @@ def get_qualified_bot_sessions(
     client_id = auth["client_id"]
     operator_dept_id = auth["entity"].department_id if auth["type"] == "operator" else None
 
-    # Plan gate — Starter+Free plans don't get BANT surfacing at all. We
+    # Plan gate. Starter+Free plans don't get BANT surfacing at all. We
     # short-circuit here so BANT signals never leak via this endpoint even
     # if a stale frontend keeps polling. The Live Chat page also hides the
     # panel and skips the poll, but backend defence is authoritative.
@@ -2070,7 +2070,7 @@ def get_qualified_bot_sessions(
             "min_dimensions": _QUALIFIED_MIN_DIMENSIONS,
         }
 
-    # Pull the live presence set first — the widget's poll-driven heartbeat
+    # Pull the live presence set first, the widget's poll-driven heartbeat
     # is what makes this a "right-now" view rather than a historical list.
     present_session_ids = manager.get_present_bot_session_ids()
     if not present_session_ids:
@@ -2163,7 +2163,7 @@ def get_qualified_bot_sessions(
                         "need": chat_session.bant_need_score or 0,
                         "timeline": chat_session.bant_timeline_score or 0,
                     },
-                    # Total recorded evidence rows per dimension — populated
+                    # Total recorded evidence rows per dimension. Populated
                     # below in a single grouped query so the loop above stays
                     # O(N) instead of doing one extra query per row.
                     "bant_signal_counts": {
@@ -2187,7 +2187,7 @@ def get_qualified_bot_sessions(
         # ── One grouped query for evidence counts ───────────────────────────
         # Counts how many BANTSignal rows the extractor has recorded per
         # (session, dimension). Operators use this to distinguish a passing
-        # mention from sustained engagement — a session with NEED×6 is hotter
+        # mention from sustained engagement, a session with NEED×6 is hotter
         # than one with NEED×1 even when their composite scores match.
         item_session_ids = [it["session_id"] for it in items]
         if item_session_ids:
@@ -2231,8 +2231,8 @@ async def operator_connect_request(
     live conversation. The visitor sees a Yes/No popup; nothing changes
     server-side until they accept (then the takeover transition fires).
 
-    Idempotent re-issuing for the same session simply refreshes the popup —
-    e.g. operator clicks Connect twice. The visitor only ever sees the latest
+    Idempotent re-issuing for the same session simply refreshes the popup.
+    E.g. operator clicks Connect twice. The visitor only ever sees the latest
     operator's name.
     """
     with get_session() as session:
@@ -2273,7 +2273,7 @@ async def operator_connect_request(
         if target.status != "bot":
             raise HTTPException(
                 status_code=409,
-                detail=f"Session is currently '{target.status}' — connect requests only apply to bot conversations.",
+                detail=f"Session is currently '{target.status}'. Connect requests only apply to bot conversations.",
             )
 
         operator_id = operator.id
@@ -2297,7 +2297,7 @@ async def operator_cancel_connect_request(
     existing = manager.get_connect_request(session_id)
     if not existing:
         return {"success": True, "cancelled": False}
-    # Validate ownership — only the workspace that owns the bot may cancel.
+    # Validate ownership. Only the workspace that owns the bot may cancel.
     with get_session() as session:
         target = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not target:
@@ -2377,7 +2377,7 @@ async def takeover_bot_session(
                 detail=f"Session is already in '{target.status}' state and cannot be taken over.",
             )
 
-        # Atomic claim — only transition if still in bot/waiting.
+        # Atomic claim. Only transition if still in bot/waiting.
         claimed = session.execute(
             update(ChatSession)
             .where(
@@ -2422,7 +2422,7 @@ async def takeover_bot_session(
     if not accepted:
         logger.warning(
             "Takeover for %s succeeded in DB but manager.accept_chat reported "
-            "a divergent assignee. DB is authoritative — proceeding.",
+            "a divergent assignee. DB is authoritative. Proceeding.",
             session_id,
         )
 
@@ -2438,5 +2438,5 @@ async def takeover_bot_session(
     }
 
 
-# Web Push subscription endpoints moved to app/api/push_routes.py — same URLs
+# Web Push subscription endpoints moved to app/api/push_routes.py, same URLs
 # (`/operators/push/*`), separate router registered in main.py.

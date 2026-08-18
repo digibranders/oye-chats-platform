@@ -9,17 +9,17 @@
 ``_handle_payment_captured`` treated every ``payment.captured`` / ``order.paid``
 as a possible top-up and fetched the order to read its notes. For a SUBSCRIPTION
 payment that fetch fails, and the handler raised ``RazorpayTransientError`` to
-force a retry — a retry that can never succeed. Razorpay retries failed webhooks
+force a retry, a retry that can never succeed. Razorpay retries failed webhooks
 aggressively and disables endpoints that keep failing, so this is an outage
 risk for every customer's billing events, not a log-noise problem.
 
 The classification already existed (the handler logs "ignored (not a topup)" on
-the path where the fetch succeeds) — it just ran too late. It now runs first,
+the path where the fetch succeeds), it just ran too late. It now runs first,
 from the webhook body alone.
 
 What must NOT change: a genuinely UNKNOWN payment whose order fetch fails
 transiently still raises, so the event dead-letters and Razorpay redelivers
-(finding C — swallowing it permanently lost a paid top-up). And
+(finding C. Swallowing it permanently lost a paid top-up). And
 ``WebhookOutOfOrder`` must still produce a non-2xx, or ``subscription.charged``
 events that arrive before their subscription is linked would be lost forever.
 """
@@ -122,7 +122,7 @@ def test_subscription_payment_webhook_returns_2xx(monkeypatch):
 
 def test_unknown_payment_with_a_transient_fetch_failure_still_raises():
     """Finding C, preserved: we do not know whether this was a top-up, and a
-    timeout says nothing about the order — so retry rather than ack."""
+    timeout says nothing about the order, so retry rather than ack."""
     payload = {"payment": {"entity": {"id": "pay_1", "order_id": "order_xyz", "amount": 49900, "notes": {}}}}
     rzp_client = MagicMock()
     rzp_client.order.fetch.side_effect = TimeoutError("razorpay 5xx")
@@ -134,7 +134,7 @@ def test_unknown_payment_with_a_transient_fetch_failure_still_raises():
 
 
 def test_a_permanent_fetch_failure_acks_and_dead_letters():
-    """A 4xx will still be a 4xx on the tenth redelivery. ACK — but never
+    """A 4xx will still be a 4xx on the tenth redelivery. ACK, but never
     silently: the row lands in the dead-letter list ops already triages."""
     from razorpay.errors import BadRequestError
 
@@ -185,7 +185,7 @@ def test_a_real_topup_is_still_granted_from_a_fetched_order():
 
 def test_webhook_out_of_order_still_returns_non_2xx(monkeypatch):
     """``subscription.charged`` arriving before its subscription is linked is a
-    LEGITIMATE retry signal. Fixing the 500 storm must not ack it — a 2xx here
+    LEGITIMATE retry signal. Fixing the 500 storm must not ack it, a 2xx here
     permanently loses the period's invoice (prod, client 11, 2026-07-02)."""
     monkeypatch.setattr(webhook_billing_routes, "RAZORPAY_WEBHOOK_SECRET", "shh")
     monkeypatch.setattr(webhook_billing_routes, "WEBHOOK_RETRY_ON_ERROR", True)

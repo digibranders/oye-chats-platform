@@ -7,10 +7,10 @@ from app.db.models import Bot, ChatSession
 # BR-04: every dimension across every preset defaults ``cta_enabled`` to
 # False. The BANT preset's need/timeline dimensions already documented why
 # (interrogative pill questions read as qualification fishing to modern B2B
-# visitors — Drift/Intercom Fin/HubSpot all default this off; background LLM
+# visitors. Drift/Intercom Fin/HubSpot all default this off; background LLM
 # extraction still scores the dimension without an intrusive prompt). MEDDIC/
 # CHAMP/GPCTBA+C&I previously left several dimensions on by default with no
-# equivalent rationale — an oversight from the presets being authored
+# equivalent rationale, an oversight from the presets being authored
 # independently, not a deliberate framework-specific design choice. Customers
 # who want the more interrogative flow can still flip individual dimensions
 # on per-bot from the admin Qualification page.
@@ -28,7 +28,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Critical / blocking", "score": 25},
             ],
             # Need-tier pill questions ("what's your situation?") feel like
-            # qualification fishing to modern B2B visitors — Drift, Intercom Fin,
+            # qualification fishing to modern B2B visitors. Drift, Intercom Fin,
             # and HubSpot all default these OFF. Scoring still happens in the
             # background via post-chat LLM extraction in ``qualification_service``
             # so leads still get tiered; the visitor just doesn't get an
@@ -49,7 +49,7 @@ PRESET_FRAMEWORKS = {
             ],
             # Timeline pill defaulted OFF too. The conversational utility ("so
             # I can tune my answer to your horizon") is real but most visitors
-            # read it as another qualification chip — the background LLM
+            # read it as another qualification chip, the background LLM
             # extraction at ``qualification_service`` still infers timeline
             # from the conversation text, so the tier signal is preserved
             # while the visitor gets a cleaner, less interrogated experience.
@@ -333,7 +333,7 @@ PRESET_FRAMEWORKS = {
 # Probe-question variants, keyed ``"framework:dimension"``. Each list rewords the
 # SAME ask so a re-probed dimension never shows the identical sentence twice in a
 # row (see ``pick_probe_variant``). Index 0 is the canonical default and MUST
-# match the dimension's ``cta_prompt`` above — that lets the picker tell a stock
+# match the dimension's ``cta_prompt`` above. That lets the picker tell a stock
 # prompt (safe to rotate) from a customer's custom wording (left untouched). Pill
 # ``options``/scores are unaffected: only the intro wording rotates.
 CTA_PROMPT_VARIANTS: dict[str, list[str]] = {
@@ -548,7 +548,7 @@ def pick_probe_variant(
     chosen by ``seed``, excluding any variant already present in ``avoid_text``
     (the previous bot turn) so it never repeats back-to-back. Falls back to
     ``base_prompt`` when there are no variants for the pair, or when
-    ``base_prompt`` differs from the stock default (index 0) — i.e. the customer
+    ``base_prompt`` differs from the stock default (index 0). I.e. the customer
     set custom wording, which is respected rather than overwritten.
     """
     base = base_prompt or ""

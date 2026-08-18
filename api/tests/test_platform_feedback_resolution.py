@@ -1,14 +1,14 @@
-"""Platform Feedback Resolution & Status Loop — backend coverage (real Postgres).
+"""Platform Feedback Resolution & Status Loop. Backend coverage (real Postgres).
 
 Exercises the resolution loop end-to-end against a throwaway Postgres DB:
 
-  * ``PATCH /superadmin/platform-feedback/{id}`` — status transitions stamp
+  * ``PATCH /superadmin/platform-feedback/{id}``. Status transitions stamp
     ``resolved_at``/``resolved_by``, write an audit row, and enqueue an in-app
     ``feedback_resolved`` notification for the owning client on resolve.
   * Invalid status → 400.
-  * ``GET /client/feedback`` — returns only the caller's rows with status +
+  * ``GET /client/feedback``. Returns only the caller's rows with status +
     admin response, and requires auth.
-  * ``get_all_platform_feedback`` — serialises the new fields and honours the
+  * ``get_all_platform_feedback``. Serialises the new fields and honours the
     optional status filter.
 """
 
@@ -56,7 +56,7 @@ def _build_client(db, *, superadmin: Client | None = None, current_client: Clien
 
     @contextmanager
     def _session():
-        # Yield the test's session without closing — the ``db`` fixture owns
+        # Yield the test's session without closing, the ``db`` fixture owns
         # teardown. Both the route and the post-commit notification path go
         # through this, so everything lands in the same throwaway DB.
         yield db

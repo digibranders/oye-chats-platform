@@ -1,7 +1,7 @@
 """Tests for LLM token-usage metering (AR-26).
 
 The credit ledger charges a flat 1 credit per `ai_chat` reply regardless of
-actual token volume — cross-subsidizing heavy-context bots off light ones.
+actual token volume. Cross-subsidizing heavy-context bots off light ones.
 Changing the credit model itself is a pricing/product decision requiring
 business sign-off, so this pass only adds the measurement half: real
 per-bot prompt/completion token counts, both for non-streaming responses

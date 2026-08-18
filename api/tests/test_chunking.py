@@ -1,4 +1,4 @@
-"""Tests for app.ingestion.chunking — text splitting and metadata propagation."""
+"""Tests for app.ingestion.chunking. Text splitting and metadata propagation."""
 
 from unittest.mock import patch
 
@@ -72,7 +72,7 @@ class TestChunkText:
 
     def test_respects_runtime_chunk_size(self):
         """chunk_text must read sizing from runtime_config (super-admin tunable),
-        not a frozen env constant — otherwise the dashboard knob is a no-op.
+        not a frozen env constant. Otherwise the dashboard knob is a no-op.
 
         Regression guard for the wiring fix: a smaller runtime chunk_size yields
         strictly more chunks for the same input.

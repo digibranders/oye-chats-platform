@@ -2,7 +2,7 @@
  * Tests for the branding link helper (brandingLink.js).
  *
  * Run with: `node --test src/services/brandingLink.test.js`
- * (Node 18+ has a built-in test runner — no vitest/jest dep needed.)
+ * (Node 18+ has a built-in test runner, no vitest/jest dep needed.)
  */
 
 import { test } from 'node:test';

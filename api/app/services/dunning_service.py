@@ -7,7 +7,7 @@ WITHOUT a new subscription being created.
 
 That is why this module only ever RESOLVES a link. It never mints a mandate.
 ``/resume`` mints one because an at-cycle-end cancellation is irreversible at
-the gateway — there is nothing left to authorise. A halted subscription is
+the gateway. There is nothing left to authorise. A halted subscription is
 still alive, so minting here would leave two live mandates and double-charge a
 customer who authorises the new one.
 """
@@ -31,7 +31,7 @@ RECOVERABLE_GATEWAY_STATES = frozenset({"pending", "halted"})
 # a calm heads-up ("we'll retry automatically") and the urgent messaging starts
 # at day 3 when retries are genuinely exhausted. Every key must land strictly
 # inside PAYMENT_FAILED_GRACE_DAYS or we would promise a deadline that has
-# already passed — enforced by test.
+# already passed. Enforced by test.
 # Read-only: a plain dict here is process-wide mutable state that any caller or
 # test could reshape, and it decides when customers get told their service is
 # ending. Mirrors the frozenset above.
@@ -77,16 +77,16 @@ def get_recovery_link(razorpay_subscription_id: str | None) -> RecoveryLink:
     """Resolve the hosted recovery page for a failing subscription.
 
     Raises ``DunningError`` on a gateway failure rather than returning
-    ``recoverable=False`` — the two mean very different things, and reporting a
+    ``recoverable=False``, the two mean very different things, and reporting a
     transient timeout as "your subscription is dead" is worse than an error.
     """
     if not razorpay_subscription_id:
-        # Manual/comped subscription — no gateway mandate exists to recover.
+        # Manual/comped subscription, no gateway mandate exists to recover.
         return RecoveryLink(recoverable=False, url=None, gateway_status=None)
 
     try:
         entity = _client().subscription.fetch(razorpay_subscription_id) or {}
-    except Exception as exc:  # noqa: BLE001 — normalised into our own error type
+    except Exception as exc:  # noqa: BLE001  Normalised into our own error type
         # exception(), not warning(): a mis-keyed environment (RAZORPAY_ENABLED
         # off, bad credentials) surfaces here as a permanent fault wearing a
         # transient message, and without the traceback nobody can tell the two
@@ -104,7 +104,7 @@ def get_recovery_link(razorpay_subscription_id: str | None) -> RecoveryLink:
     if status not in RECOVERABLE_GATEWAY_STATES or not url:
         if status in RECOVERABLE_GATEWAY_STATES and not url:
             logger.warning(
-                "dunning: subscription %s is %s but has no short_url — customer cannot self-recover",
+                "dunning: subscription %s is %s but has no short_url. Customer cannot self-recover",
                 razorpay_subscription_id,
                 status,
             )
@@ -118,7 +118,7 @@ def due_email(days_in_past_due: float, sent: Mapping[str, str] | None) -> str | 
 
     Catches up to the NEWEST unsent bucket at or before today, rather than
     firing only on an exact day match. Exact-match would silently drop an
-    email permanently whenever a tick was missed — and not just on a worker
+    email permanently whenever a tick was missed, and not just on a worker
     outage: any tick where the gateway lookup fails leaves the marker unwritten
     and burns that bucket forever. Losing the day-5 email means a customer is
     suspended having received only "don't worry, we'll retry".

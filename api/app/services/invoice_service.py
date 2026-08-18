@@ -1,11 +1,11 @@
-"""Invoice finalization — turns a freshly-created payment-history row into a
+"""Invoice finalization. Turns a freshly-created payment-history row into a
 numbered, tax-computed, immutable tax invoice (invoicing v2 Phase 3).
 
-No-op unless ``INVOICING_V2_ENABLED`` — legacy rows are left untouched. When
+No-op unless ``INVOICING_V2_ENABLED``. Legacy rows are left untouched. When
 enabled it runs in shadow mode: invoices are numbered, taxed, and snapshotted,
 but not yet emailed or shown to customers (Phase 4/6). Finalization is
 idempotent (an already-numbered invoice is never re-finalized) and issued
-documents are immutable — corrections are credit notes, never edits.
+documents are immutable. Corrections are credit notes, never edits.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def request_pdf_render_soon() -> None:
 
     Call AFTER the transaction that finalized an invoice has committed. The
     job is deferred a few seconds so it can't race the caller's commit, and
-    it's the same idempotent sweep the 5-minute cron runs — the cron remains
+    it's the same idempotent sweep the 5-minute cron runs, the cron remains
     the safety net, this just makes the Download button appear within seconds
     of payment instead of minutes. Never raises: a Redis blip must not fail
     a payment response.
@@ -69,11 +69,11 @@ def request_pdf_render_soon() -> None:
 
 
 def financial_year_label(dt: datetime) -> str:
-    """Indian financial year label for ``dt`` — FY runs 1 Apr – 31 Mar **IST**.
+    """Indian financial year label for ``dt`` (FY runs 1 Apr) 31 Mar **IST**.
 
     The FY boundary is an Indian-calendar fact, so the instant is converted to
     Asia/Kolkata before reading the month (a webhook at 20:00 UTC on 31 Mar is
-    already 1 Apr in India — numbering it in the old FY would be an audit
+    already 1 Apr in India. Numbering it in the old FY would be an audit
     flag). Naive datetimes are treated as UTC.
 
     e.g. 2 Jul 2026 → ``"26-27"``; 31 Mar 2026 00:00 UTC → ``"25-26"``.
@@ -93,7 +93,7 @@ def allocate_invoice_number(session: Session, prefix: str, dt: datetime) -> str:
     the ORM. The row lock serializes concurrent finalizers so serials are
     consecutive with no gaps or duplicates, and the ORM write keeps
     ``updated_at`` honest. Serials are only allocated here (at finalize), so an
-    abandoned/failed payment never burns a number — a Rule 46 audit
+    abandoned/failed payment never burns a number, a Rule 46 audit
     requirement.
     """
     fy = financial_year_label(dt)
@@ -125,7 +125,7 @@ def _seller_snapshot(seller: SellerProfile) -> dict:
         "lut_number": seller.lut_number,
         # Companies Act s.12(3)(c) identity, snapshotted like everything else so
         # a later profile edit never rewrites an issued document. Absent on
-        # invoices numbered before these fields existed — the PDF renders each
+        # invoices numbered before these fields existed, the PDF renders each
         # one only when present.
         "cin": seller.cin,
         "phone": seller.phone,
@@ -172,7 +172,7 @@ def _resolve_fx(invoice: Invoice, kind: str) -> _Fx | None:
     in rupees. Every branch here is a refusal to issue rather than a best
     guess: an invoice number is allocated from a gapless statutory series and
     the row is frozen the moment it lands, so a wrong document cannot be
-    corrected — only credit-noted. A missing one can simply be issued later,
+    corrected. Only credit-noted. A missing one can simply be issued later,
     and the self-heal sweep does exactly that.
     """
     currency = (invoice.currency or "inr").lower()
@@ -186,7 +186,7 @@ def _resolve_fx(invoice: Invoice, kind: str) -> _Fx | None:
     # columns are in rupees. Ops must re-point the mandate first.
     if kind != "export":
         raise _FxUnavailable(
-            f"currency {currency!r} on a {kind!r} supply — a foreign charge must be an export; "
+            f"currency {currency!r} on a {kind!r} supply, a foreign charge must be an export; "
             "re-point the mandate to the domestic rail before this can be documented"
         )
 
@@ -205,7 +205,7 @@ def _resolve_fx(invoice: Invoice, kind: str) -> _Fx | None:
     if not is_plausible_rate(rate_micros):
         raise _FxUnavailable(
             f"implied rate {rate_micros / MICROS:.4f} INR per {currency.upper()} is outside the plausible band "
-            f"({MIN_PLAUSIBLE_RATE_MICROS // MICROS}–{MAX_PLAUSIBLE_RATE_MICROS // MICROS}) — "
+            f"({MIN_PLAUSIBLE_RATE_MICROS // MICROS}-{MAX_PLAUSIBLE_RATE_MICROS // MICROS}). "
             "likely a minor-unit mismatch in base_amount"
         )
 
@@ -222,12 +222,12 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     """
     if not config.INVOICING_V2_ENABLED:
         return False
-    if invoice.invoice_number:  # already finalized — immutable, never re-touch
+    if invoice.invoice_number:  # already finalized. Immutable, never re-touch
         return False
     seller = get_seller_profile(session)
     # ACTIVATION GATE: the flags default ON, so the seller profile is what
     # actually turns invoicing on. Until the super-admin saves the company's
-    # legal identity, no document is issued — a receipt/invoice bearing an
+    # legal identity, no document is issued, a receipt/invoice bearing an
     # empty legal name would be worse than no document.
     if not seller.configured:
         return False
@@ -239,7 +239,7 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
 
     # Export backstop (P0-2): ``billing_country`` is customer-writable history,
     # so an INR-settled charge classified as an export needs corroboration from
-    # a fact the customer cannot write — has this account EVER been charged in
+    # a fact the customer cannot write. Has this account EVER been charged in
     # a foreign currency? A genuine international buyer bills on the USD rail
     # (Razorpay settles it in INR, but the charge currency is USD); an account
     # with an all-rupee charge history claiming an export is the self-declared
@@ -259,7 +259,7 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         if not has_foreign_charge:
             logger.warning(
                 "invoice %s not finalized: INR-settled charge classified as export for client %s "
-                "with no foreign-currency charge history — likely a self-declared billing_country "
+                "with no foreign-currency charge history. Likely a self-declared billing_country "
                 "flip; leaving unnumbered for reconciliation",
                 invoice.id,
                 invoice.client_id,
@@ -271,7 +271,7 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     try:
         fx = _resolve_fx(invoice, kind)
     except _FxUnavailable as exc:
-        # Not an error — a deliberate refusal. A charge we cannot report is
+        # Not an error, a deliberate refusal. A charge we cannot report is
         # left legacy so ``backfill_unnumbered_invoices`` retries it and
         # ``reconciliation_anomalies`` surfaces it, rather than being numbered
         # off a rate we cannot defend. Numbering is irreversible; waiting is not.
@@ -305,7 +305,7 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         invoice.supply_kind = breakup.supply_kind
         invoice.is_export = breakup.is_export
         # Place of supply: the buyer's state for a domestic sale (supplier's
-        # own state when B2C with no state on record — Circular 242); undefined
+        # own state when B2C with no state on record. Circular 242); undefined
         # for exports.
         # Phase 7: GSTR-1 Table 6A (exports) needs a POS code ("96"/port state);
         # the NULL here is resolved in the GSTR export, not stored on the doc.
@@ -363,7 +363,7 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
             if not (has_name and has_address):
                 logger.warning(
                     "Rule 46(f): high-value B2C tax invoice %s (₹%.2f) is missing recipient "
-                    "%s — capture buyer details for GST compliance.",
+                    "%s. Capture buyer details for GST compliance.",
                     invoice.invoice_number,
                     int(invoice.amount_cents or 0) / 100,
                     "name and address" if not (has_name or has_address) else ("name" if not has_name else "address"),
@@ -378,8 +378,8 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
 
     Invoicing runs in shadow mode inside the payment webhook's transaction, so
     it must NEVER block the money path (credit grants, renewals). A failed
-    finalize rolls back only its own writes — including any counter increment,
-    so no serial is burned — leaving a legacy row for a later reconciliation
+    finalize rolls back only its own writes (including any counter increment,
+    so no serial is burned) leaving a legacy row for a later reconciliation
     pass, while the outer transaction (and the customer's credits) proceeds.
     """
     try:
@@ -396,9 +396,9 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
 def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
     """Re-finalize paid charges that were left un-numbered (finding H-B).
 
-    A charge whose finalize returned ``False`` — because the seller profile
+    A charge whose finalize returned ``False``. Because the seller profile
     wasn't saved yet (pre-config window), a transient error rolled back the
-    savepoint, or the invoicing flag was off at capture time — leaves a legacy
+    savepoint, or the invoicing flag was off at capture time. Leaves a legacy
     row with no ``invoice_number`` and no tax document, and *nothing else ever
     re-numbers it*: the PDF sweep and every reconciliation query filter on
     ``invoice_number IS NOT NULL``, so the charge is silently un-documented and
@@ -409,7 +409,7 @@ def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
     transient error passes) the row becomes a proper numbered invoice and the
     PDF sweep picks it up. Rows that still can't finalize (non-INR, invoicing
     off, seller still unconfigured) no-op harmlessly via ``finalize_invoice``'s
-    own gates and are retried next sweep — so this is safe to run unconditionally
+    own gates and are retried next sweep, so this is safe to run unconditionally
     and idempotent.
 
     Each row finalizes inside its own SAVEPOINT (``finalize_invoice_safely``), so
@@ -423,7 +423,7 @@ def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
             select(Invoice)
             # Refund state must not hide a missing document (P1-6c): a charge
             # that missed finalize and was then partially refunded still left
-            # the customer holding part of the supply with no tax invoice —
+            # the customer holding part of the supply with no tax invoice,
             # and create_credit_note refuses unnumbered originals, so the
             # refund side could never get its Section 34 note either.
             .where(
@@ -457,19 +457,19 @@ def create_credit_note(
 
     The reversal is computed with the ORIGINAL document's frozen parameters
     (rate, supply kind, LUT status from its seller snapshot) so a later config
-    change can never alter how an old invoice unwinds — and a full refund
+    change can never alter how an old invoice unwinds, and a full refund
     reproduces the original figures exactly. Amounts are positive magnitudes;
     ``invoice_type='credit_note'`` carries the semantic negation.
 
     Idempotent on ``provider_ref`` (the Razorpay refund/dispute id, stored in
-    ``razorpay_payment_id`` — the provider reference of THIS document — whose
+    ``razorpay_payment_id`` (the provider reference of THIS document) whose
     unique index also backstops races). Returns the existing note on replay,
     ``None`` when there is nothing to reverse (flag off, legacy/unnumbered
     original, zero amount).
     """
     if not config.INVOICING_V2_ENABLED:
         return None
-    if not original.invoice_number:  # legacy row — no legal document to reverse
+    if not original.invoice_number:  # legacy row, no legal document to reverse
         return None
     refund_minor = int(refund_minor)
     if refund_minor <= 0:
@@ -486,9 +486,9 @@ def create_credit_note(
         return existing
 
     # Serialize reversals against the SAME original invoice with a row lock.
-    # Without this, two independent reversal events for the same invoice —
-    # e.g. a partial refund and a dispute-lost chargeback delivered by
-    # separate, overlapping webhook transactions — can each read
+    # Without this, two independent reversal events for the same invoice.
+    # E.g. a partial refund and a dispute-lost chargeback delivered by
+    # separate, overlapping webhook transactions. Can each read
     # ``already_reversed`` before either commits, both see 0 already
     # reversed, and both issue a full-amount credit note: over-reversing the
     # document's tax beyond what it ever collected. The second caller blocks
@@ -498,7 +498,7 @@ def create_credit_note(
     # it does not protect against two DISTINCT events racing each other.
     session.execute(select(Invoice.id).where(Invoice.id == original.id).with_for_update())
 
-    # Reversals can never exceed the invoiced consideration CUMULATIVELY —
+    # Reversals can never exceed the invoiced consideration CUMULATIVELY.
     # Razorpay caps refunds at the captured amount, but a partial refund
     # followed by a full-amount chargeback (distinct provider_refs) would
     # otherwise over-reverse the document's tax.
@@ -522,7 +522,7 @@ def create_credit_note(
         bot_id=original.bot_id,
         amount_cents=refund_minor,
         currency=original.currency,
-        status="issued",  # a credit note is not a paid charge — distinct chip in the UI
+        status="issued",  # a credit note is not a paid charge. Distinct chip in the UI
         razorpay_payment_id=provider_ref,
         razorpay_invoice_id=original.razorpay_invoice_id,
         invoice_type="credit_note",
@@ -538,7 +538,7 @@ def create_credit_note(
         description=f"Credit note against {original.invoice_number}",
         line_items=[
             {
-                "description": f"Refund — {original.description or 'service'}",
+                "description": f"Refund - {original.description or 'service'}",
                 "amount_minor": refund_minor,
                 "against_invoice": original.invoice_number,
                 # Rule 53(1A): the corresponding tax invoice's serial AND date.
@@ -556,7 +556,7 @@ def create_credit_note(
         note.fx_rate_micros = original.fx_rate_micros
         note.fx_rate_source = original.fx_rate_source
         # A FULL reversal reuses the original's exact figure rather than
-        # re-deriving it, so the two documents net to precisely zero — a
+        # re-deriving it, so the two documents net to precisely zero, a
         # re-conversion can land a paisa off and leave phantom turnover.
         inr_refund_minor = (
             original.inr_amount_minor
@@ -609,9 +609,9 @@ def create_credit_note_safely(
     """``create_credit_note`` inside a SAVEPOINT, swallowing failures.
 
     Runs inside the refund/dispute webhook transaction after the credit
-    clawback — a credit-note failure must never undo the clawback or fail the
+    clawback, a credit-note failure must never undo the clawback or fail the
     webhook. CAVEAT: the refund is deduped upstream on the refund id, so a
-    swallowed failure here is NOT retried by webhook redelivery — the missed
+    swallowed failure here is NOT retried by webhook redelivery, the missed
     note surfaces in the Phase 7 reconciliation (numbered refunds without a
     linked credit note) and can be re-issued from the superadmin console.
     """

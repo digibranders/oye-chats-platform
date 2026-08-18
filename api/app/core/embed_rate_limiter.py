@@ -1,8 +1,8 @@
 """Project-wide throughput limiter for Gemini embedding requests.
 
 Gemini's embedding quota is enforced **per project, per minute**, counting every
-content item (not every HTTP batch call). Concurrent crawls — e.g. several
-accounts ingesting at once — all draw from that one bucket, so uncoordinated
+content item (not every HTTP batch call). Concurrent crawls. E.g. several
+accounts ingesting at once. All draw from that one bucket, so uncoordinated
 bursting slams into 429s and then wastes wall-clock sleeping on the server's
 retry backoff. This limiter paces outbound requests to stay just under the quota
 so the 429s never happen in the first place.
@@ -10,10 +10,10 @@ so the 429s never happen in the first place.
 Backend, mirroring the rest of the codebase (see ``core/rate_limit.py`` and
 ``core/cache.py``):
 
-- **Redis** when configured — a single atomic token bucket shared across every
+- **Redis** when configured, a single atomic token bucket shared across every
   process (ARQ worker *and* the API's query-embedding path), so the limit is
   truly project-wide. This is the production path.
-- **In-process** fallback otherwise (dev only) — a thread-safe bucket that still
+- **In-process** fallback otherwise (dev only), a thread-safe bucket that still
   coordinates the worker's own embed threads.
 
 The bucket uses *reservation* semantics: an ``acquire`` that can't be satisfied
@@ -22,7 +22,7 @@ sleep before proceeding. Concurrent callers therefore queue fairly and the
 aggregate rate converges on the configured ceiling, with no re-check spin loop.
 
 AR-45 (decision, not a gap): this limiter protects shared Gemini quota
-project-wide — it bounds LATENCY (how fast requests are paced), not any one
+project-wide, it bounds LATENCY (how fast requests are paced), not any one
 tenant's total spend VOLUME. That's intentional, not missing: the credit
 ledger is the actual per-tenant cost ceiling (every crawled page charges
 credits at ingestion time), and AR-41 (``pipeline._cap_crawled_page_content``)
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class EmbedWaitExceeded(RuntimeError):
     """The reserved wait exceeds the caller's ceiling (latency-sensitive path).
 
-    Raised only when ``acquire`` is given an explicit ``max_wait`` — the query
+    Raised only when ``acquire`` is given an explicit ``max_wait``, the query
     path uses this to fail fast and degrade to keyword-only retrieval instead of
     pinning a request-serving thread behind bulk-ingestion token debt.
     """
@@ -62,8 +62,8 @@ _MAX_WAIT_SECONDS = 300.0
 _KEY_TTL_MS = 120_000
 
 # Atomic reservation token bucket. Returns the seconds the caller must wait
-# (0 when tokens were available). Tokens may go negative — that debt is what
-# makes the caller wait — and refill by elapsed·rate, capped at capacity.
+# (0 when tokens were available). Tokens may go negative (that debt is what
+# makes the caller wait) and refill by elapsed·rate, capped at capacity.
 _LUA_RESERVE = """
 local rate = tonumber(ARGV[1])
 local capacity = tonumber(ARGV[2])
@@ -93,7 +93,7 @@ return tostring(wait)
 class _TokenBucket:
     """Thread-safe reservation token bucket (in-process fallback).
 
-    ``acquire`` is a pure state transition given ``now`` — it never sleeps — so
+    ``acquire`` is a pure state transition given ``now`` (it never sleeps) so
     the caller controls the clock and it is deterministically testable. Returns
     the seconds to wait before the reserved capacity is actually available.
     """
@@ -115,7 +115,7 @@ class _TokenBucket:
             wait = 0.0
             if self.tokens < cost:
                 wait = (cost - self.tokens) / self.rate
-            self.tokens -= cost  # reserve (may go negative — that is the debt)
+            self.tokens -= cost  # reserve (may go negative. That is the debt)
             return wait
 
     def refund(self, cost: float) -> None:
@@ -185,7 +185,7 @@ def _refund(cost: int) -> None:
 def acquire(cost: int, *, max_wait: float | None = None) -> None:
     """Block until ``cost`` embedding request-units fit under the RPM ceiling.
 
-    ``cost`` is the number of content items in the batch — each counts as one
+    ``cost`` is the number of content items in the batch. Each counts as one
     request against Gemini's per-minute quota. A non-positive cost or a
     disabled limit (``EMBED_RPM_LIMIT <= 0``) is a no-op.
 
@@ -207,7 +207,7 @@ def acquire(cost: int, *, max_wait: float | None = None) -> None:
             raise EmbedWaitExceeded(f"embed limiter wait {wait:.1f}s exceeds caller ceiling {max_wait:.1f}s")
         if wait > _MAX_WAIT_SECONDS:
             logger.warning(
-                "embed rate limiter: computed wait %.1fs exceeds cap %.0fs — proceeding without full throttle",
+                "embed rate limiter: computed wait %.1fs exceeds cap %.0fs. Proceeding without full throttle",
                 wait,
                 _MAX_WAIT_SECONDS,
             )

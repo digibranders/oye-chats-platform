@@ -1,9 +1,9 @@
-"""Integration tests for ``app.services.knowledge_quota_service`` — real Postgres.
+"""Integration tests for ``app.services.knowledge_quota_service``. Real Postgres.
 
 Uses the shared ``db`` fixture (throwaway Postgres from ``conftest.py``). The
 quota logic is DB-bound: the counter lives on ``clients.kb_characters_used``,
 the cap comes from a real ``Plan`` row, and the drift-correction queries rely on
-``DISTINCT ON`` — none of which a mock can exercise faithfully.
+``DISTINCT ON``. None of which a mock can exercise faithfully.
 """
 
 import os
@@ -155,7 +155,7 @@ class TestCheckKbQuota:
     def test_non_integer_limit_fails_open(self, db):
         make_plan(db, kb_limit="not-a-number")
         client = make_client(db, kb_used=10_000_000)
-        # A non-int JSONB limit means the quota path isn't real — don't 402.
+        # A non-int JSONB limit means the quota path isn't real. Don't 402.
         svc.check_kb_quota(db, client.id, 5_000_000)
 
 

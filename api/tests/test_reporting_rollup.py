@@ -1,4 +1,4 @@
-"""Per-bot reporting rollup — service aggregation + the /analytics/by-bot route.
+"""Per-bot reporting rollup. Service aggregation + the /analytics/by-bot route.
 
 The load-bearing case is the pooled deduction: an agency account spends from a
 shared pool, so the ledger *scope* (``bot_id``) is NULL on every row while
@@ -173,7 +173,7 @@ def test_pooled_deduction_is_attributed_to_the_spending_bot(db) -> None:
     alpha = _make_bot(db, client, name="Alpha", key="bot-pool-alpha")
     beta = _make_bot(db, client, name="Beta", key="bot-pool-beta")
 
-    # bot_id IS NULL — every row lives in the client-level pool ledger.
+    # bot_id IS NULL. Every row lives in the client-level pool ledger.
     _ledger(db, client, delta=-4, reason="ai_chat", attributed_bot_id=alpha.id, bot_id=None)
     _ledger(db, client, delta=-6, reason="ai_chat", attributed_bot_id=beta.id, bot_id=None)
     _ledger(db, client, delta=-10, reason="email_verification", attributed_bot_id=beta.id, bot_id=None)
@@ -185,7 +185,7 @@ def test_pooled_deduction_is_attributed_to_the_spending_bot(db) -> None:
     rows = _rollup(db, client)
     by_id = {row["bot_id"]: row["credits_spent"] for row in rows}
     assert by_id == {beta.id: 16, alpha.id: 4}
-    # Descending by credits — Beta first despite being created second.
+    # Descending by credits. Beta first despite being created second.
     assert rows[0]["bot_id"] == beta.id
 
 
@@ -213,7 +213,7 @@ def test_another_clients_data_never_appears(db) -> None:
 
     theirs_rows = _rollup(db, theirs)
     assert [row["bot_id"] for row in theirs_rows] == [their_bot.id]
-    # 50 only — my mis-attributed 77 never lands on their report either.
+    # 50 only. My mis-attributed 77 never lands on their report either.
     assert theirs_rows[0] == {
         "bot_id": their_bot.id,
         "bot_name": "Theirs",
@@ -237,7 +237,7 @@ def test_each_aggregate_is_tenant_scoped_on_its_own(db) -> None:
 
     _ledger(db, mine, delta=-1, reason="ai_chat", attributed_bot_id=my_bot.id, bot_id=None)
     _ledger(db, theirs, delta=-50, reason="ai_chat", attributed_bot_id=their_bot.id, bot_id=None)
-    # On MY ledger, attributed to THEIR bot — only the Bot.client_id join drops it.
+    # On MY ledger, attributed to THEIR bot. Only the Bot.client_id join drops it.
     _ledger(db, mine, delta=-77, reason="ai_chat", attributed_bot_id=their_bot.id, bot_id=None)
     _session_row(db, my_bot, sid="s-scope-mine")
     _session_row(db, their_bot, sid="s-scope-theirs")
@@ -416,7 +416,7 @@ def test_csv_sends_a_dated_attachment(db) -> None:
 
 
 def test_csv_rows_match_the_json_endpoint(db) -> None:
-    """Same window, same auth, same rows — in the same order, tenant-scoped."""
+    """Same window, same auth, same rows, in the same order, tenant-scoped."""
     client = _make_client(db, email="rollup-csv-rows@e.com")
     other = _make_client(db, email="rollup-csv-rows-other@e.com")
     alpha = _make_bot(db, client, name="Alpha", key="bot-csv-rows-alpha")
@@ -436,7 +436,7 @@ def test_csv_rows_match_the_json_endpoint(db) -> None:
 
     rows = _parse_csv(res)
     # Header, then one row per active agent. Columns are agent name,
-    # conversations, leads, credits used — credits LAST, unlike the JSON row
+    # conversations, leads, credits used. Credits LAST, unlike the JSON row
     # shape, so the reading order matches how the report is talked about.
     assert rows == [
         ["Agent", "Conversations", "Leads", "Credits used"],
@@ -445,7 +445,7 @@ def test_csv_rows_match_the_json_endpoint(db) -> None:
         ["Beta", "1", "1", "3"],
     ]
 
-    # The other account's agent appears nowhere in the file — not as a row,
+    # The other account's agent appears nowhere in the file, not as a row,
     # not as a stray name.
     assert "Intruder" not in res.text
 
@@ -461,7 +461,7 @@ def test_csv_is_empty_but_well_formed_for_a_quiet_account(db) -> None:
 
     res = _call_csv(db, client)
     assert res.status_code == 200, res.text
-    # Still a valid CSV a spreadsheet can open — a header and nothing else.
+    # Still a valid CSV a spreadsheet can open, a header and nothing else.
     assert _parse_csv(res) == [["Agent", "Conversations", "Leads", "Credits used"]]
 
 
@@ -535,7 +535,7 @@ def test_csv_export_neutralises_a_cr_prefixed_agent_name(db) -> None:
 
 
 def test_csv_export_leaves_an_ordinary_agent_name_alone(db) -> None:
-    """RFC-4180 territory — handled by the writer's quoting, not by the escape."""
+    """RFC-4180 territory. Handled by the writer's quoting, not by the escape."""
     client = _make_client(db, email="rollup-csv-plain@e.com")
     bot = _make_bot(db, client, name='Acme, Inc. "Main"', key="bot-csv-plain")
     _ledger(db, client, delta=-4, reason="ai_chat", attributed_bot_id=bot.id, bot_id=None)

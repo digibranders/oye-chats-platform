@@ -1,4 +1,4 @@
-"""Tests for app.ingestion.embedder — Google Gemini as the sole provider."""
+"""Tests for app.ingestion.embedder. Google Gemini as the sole provider."""
 
 import asyncio
 

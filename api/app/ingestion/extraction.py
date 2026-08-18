@@ -17,7 +17,7 @@ def load_pdf(file_path: str) -> list[dict]:
     containing text and metadata (page number).
 
     Raises:
-        ExtractionError: when every page yielded empty text — almost always
+        ExtractionError: when every page yielded empty text. Almost always
             a scanned PDF. Run OCR before upload.
     """
     with open(file_path, "rb") as f:

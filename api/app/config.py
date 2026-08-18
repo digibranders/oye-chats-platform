@@ -6,8 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Anchor the .env lookup to the api/ directory (this file lives at api/app/config.py)
-# so any launcher — dev.sh, the ARQ worker, a REPL from the project root, systemd
-# — resolves the same file. Without this, load_dotenv() searches CWD upward and
+# so any launcher. Dev.sh, the ARQ worker, a REPL from the project root, systemd
+# . Resolves the same file. Without this, load_dotenv() searches CWD upward and
 # silently misses api/.env when invoked from anywhere but api/, which surfaces as
 # "REDIS_URL is required" in the worker.
 _API_DIR = Path(__file__).resolve().parent.parent
@@ -21,7 +21,7 @@ def _env(key: str, default: str) -> str:
 
     Absent deploy secrets arrive as ``""`` (not ``None``) through the CI env, so
     a bare ``int(_env(..., "768"))`` or ``.strip()`` would crash or silently
-    misconfigure on import — an empty ``EMBED_DIMENSIONS`` once took a prod deploy
+    misconfigure on import, an empty ``EMBED_DIMENSIONS`` once took a prod deploy
     down this way. Empty → default, always.
     """
     value = os.getenv(key)
@@ -36,12 +36,12 @@ if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM — primary and fallback models are env-configurable (LiteLLM format)
+# LLM. Primary and fallback models are env-configurable (LiteLLM format)
 # ─────────────────────────────────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Primary and fallback models — override via env vars if needed
+# Primary and fallback models. Override via env vars if needed
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5.4-mini")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gemini/gemini-2.5-flash")
 
@@ -52,7 +52,7 @@ def _model_key_is_set(model: str) -> bool:
         return bool(GOOGLE_API_KEY)
     if model.startswith(("openai/", "gpt-")):
         return bool(OPENAI_API_KEY)
-    # Unknown provider — assume available and let LiteLLM surface the error
+    # Unknown provider. Assume available and let LiteLLM surface the error
     return True
 
 
@@ -72,17 +72,17 @@ else:
 if FALLBACK_MODEL_KEY_SET:
     logger.info(f"LLM fallback: {LLM_MODEL} → {FALLBACK_MODEL}")
 else:
-    logger.warning(f"Fallback LLM key not set for '{FALLBACK_MODEL}' — no fallback available.")
+    logger.warning(f"Fallback LLM key not set for '{FALLBACK_MODEL}', no fallback available.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Embeddings & RAG
 # ─────────────────────────────────────────────────────────────────────────────
 # "google" (Gemini API, off-box) is the sole embedding provider. It reuses the
-# same GOOGLE_API_KEY as the Gemini LLM fallback — no GCP/Vertex setup. Model:
+# same GOOGLE_API_KEY as the Gemini LLM fallback, no GCP/Vertex setup. Model:
 # gemini-embedding-001 at 768-dim (Matryoshka-truncated + L2-normalized in the
 # client). There is NO cross-model fallback: mixing embedding models corrupts
 # vector search, so on failure we rely on ARQ retry (ingestion) and full-text
-# degradation (query — see rag_service).
+# degradation (query. See rag_service).
 EMBED_PROVIDER = _env("EMBED_PROVIDER", "google").strip().lower()
 GEMINI_EMBED_MODEL = _env("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 GEMINI_EMBED_URL = _env("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
@@ -92,7 +92,7 @@ EMBED_DIMENSIONS = int(_env("EMBED_DIMENSIONS", "768"))  # matches Vector(768) c
 # pole; concurrency cuts that near-linearly. Kept well under the paid-tier RPM.
 EMBED_CONCURRENCY = int(_env("EMBED_CONCURRENCY", "8"))
 # Gemini counts every content item (not every HTTP call) against a per-minute,
-# per-project embedding-request quota — on the paid tier the default is 3000 RPM.
+# per-project embedding-request quota, on the paid tier the default is 3000 RPM.
 # Concurrent crawls all draw from that single project-wide bucket, so without
 # pacing a large or multi-account crawl bursts past it and thrashes on 429s.
 # EMBED_RPM_LIMIT is the ceiling the client throttles itself to; keep a safety
@@ -104,7 +104,7 @@ EMBED_RPM_LIMIT = int(_env("EMBED_RPM_LIMIT", "2850"))
 EMBED_RATE_BURST = int(_env("EMBED_RATE_BURST", "100"))
 # Latency ceiling for QUERY-time embeds against the shared bucket. Bulk crawls
 # can run the bucket minutes into token debt; a chat request must not sleep
-# that off (it would pin a request thread — audit F38). Past this ceiling the
+# that off (it would pin a request thread. Audit F38). Past this ceiling the
 # query embed aborts and retrieval degrades to keyword-only for that message.
 EMBED_QUERY_MAX_WAIT_S = float(_env("EMBED_QUERY_MAX_WAIT_S", "2.0"))
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
@@ -126,14 +126,14 @@ R2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
 # share-able file URLs can emit one that actually loads in the browser.
 R2_PUBLIC_BASE_URL = (os.getenv("R2_PUBLIC_BASE_URL") or "").rstrip("/")
 
-# Backwards-compatibility aliases — keep older imports working.
+# Backwards-compatibility aliases. Keep older imports working.
 B2_KEY_ID = R2_KEY_ID
 B2_APPLICATION_KEY = R2_APPLICATION_KEY
 B2_BUCKET_NAME = R2_BUCKET_NAME
 B2_ENDPOINT = R2_ENDPOINT
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Observability — Langfuse (LLM tracing) + Sentry (error tracking)
+# Observability. Langfuse (LLM tracing) + Sentry (error tracking)
 # ─────────────────────────────────────────────────────────────────────────────
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
@@ -141,7 +141,7 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 # Set LANGFUSE_FORCE_DISABLE=true to explicitly suppress Langfuse even when keys are present.
 # Kill switch for the Langfuse v4 SDK's OTEL BatchSpanProcessor (app/core/langfuse_client.py),
 # which caused APIConnectionError under memory pressure on the production droplet.
-# (LiteLLM's own built-in "langfuse" callback is unrelated and not registered at all — see
+# (LiteLLM's own built-in "langfuse" callback is unrelated and not registered at all. See
 # the comment above `_litellm.drop_params` in main.py.) Remove this env var once diagnosed/fixed.
 _LANGFUSE_FORCE_DISABLE = os.getenv("LANGFUSE_FORCE_DISABLE", "").lower() in ("1", "true", "yes")
 LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY) and not _LANGFUSE_FORCE_DISABLE
@@ -186,8 +186,8 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # ─────────────────────────────────────────────────────────────────────────────
 # Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
 # Named constants so the DEFAULTS themselves are testable. Simulating "unset"
-# by reloading this module cannot work — `load_dotenv()` at import repopulates
-# from `api/.env` — which is precisely how a localhost default reached
+# by reloading this module cannot work. `load_dotenv()` at import repopulates
+# from `api/.env`, which is precisely how a localhost default reached
 # production unnoticed.
 DEFAULT_MARKETING_URL = "https://www.oyechats.com"
 DEFAULT_APP_URL = "https://app.oyechats.com"
@@ -199,12 +199,12 @@ MARKETING_URL = os.getenv("MARKETING_URL", DEFAULT_MARKETING_URL).rstrip("/")
 APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip("/")
 # Public API root, e.g. "https://api.oyechats.com". No trailing slash.
 #
-# Defaults to the PRODUCTION host, like MARKETING_URL and APP_URL above — it
+# Defaults to the PRODUCTION host, like MARKETING_URL and APP_URL above, it
 # used to default to "http://localhost:8000" and was the only one of the three
 # that did. It is also the only one that lands in a customer's inbox: the
 # unsubscribe link in a manual follow-up is built from it
 # (`lead_routes.send_manual_follow_up`). Unset in production, every follow-up
-# email shipped an unsubscribe pointing at http://localhost:8000 — dead for the
+# email shipped an unsubscribe pointing at http://localhost:8000. Dead for the
 # recipient, and an unsubscribe that cannot be actioned is a compliance
 # problem, not a cosmetic one. Local development overrides it in `api/.env`.
 API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
@@ -222,7 +222,7 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Web Push (VAPID) — operator notifications when their dashboard tab is closed
+# Web Push (VAPID). Operator notifications when their dashboard tab is closed
 # ─────────────────────────────────────────────────────────────────────────────
 # Generate a keypair locally:
 #     uv run python -m app.scripts.generate_vapid_keys
@@ -232,14 +232,14 @@ else:
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
 VAPID_PRIVATE_KEY_FILE = os.getenv("VAPID_PRIVATE_KEY_FILE", "").strip()
-# Required by the Web Push protocol — push providers use this to contact you
+# Required by the Web Push protocol. Push providers use this to contact you
 # if a subscription misbehaves. Must be a `mailto:` URL or an HTTPS site root.
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", f"mailto:{SUPPORT_EMAIL}").strip()
 # How long after the operator's last WS heartbeat we still consider them
 # "actively watching the dashboard" (and therefore skip push, since the
 # in-dashboard toast covers them). Tunable; 30s matches the WS ping cadence.
 PUSH_WS_GRACE_SECONDS = int(_env("PUSH_WS_GRACE_SECONDS", "30"))
-# Visitor-message email debounce — if a visitor in a waiting/unattended session
+# Visitor-message email debounce. If a visitor in a waiting/unattended session
 # sends multiple messages in quick succession, only one email per window.
 PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(_env("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
 
@@ -266,7 +266,7 @@ else:
 logger.info("Expo (mobile) push notifications %s", "enabled" if EXPO_PUSH_ENABLED else "disabled")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Redis (required in production — enables distributed rate limiting + caching)
+# Redis (required in production. Enables distributed rate limiting + caching)
 # ─────────────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = bool(REDIS_URL)
@@ -280,7 +280,7 @@ if APP_ENV == "production" and not REDIS_URL:
 if REDIS_ENABLED:
     logger.info("Redis caching enabled")
 else:
-    logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend (dev only)")
+    logger.info("Redis not configured. Caching disabled, rate limiter uses in-memory backend (dev only)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Billing (Razorpay)
@@ -294,36 +294,36 @@ RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 # Scope the ₹1 override to specific client IDs only, so real customers are
 # never affected even when this is set in production.
 #
-# CHECKOUT_TEST_CLIENT_IDS — comma-separated list of client.id integers whose
+# CHECKOUT_TEST_CLIENT_IDS. Comma-separated list of client.id integers whose
 #   checkouts are overridden to ₹1. Leave empty (or unset) to disable entirely.
 #   Example: CHECKOUT_TEST_CLIENT_IDS=3,7
 #
-# RAZORPAY_TEST_PLAN_ID — Razorpay Plan ID for a ₹1/month recurring plan.
+# RAZORPAY_TEST_PLAN_ID. Razorpay Plan ID for a ₹1/month recurring plan.
 #   Required for subscription checkouts when a test client ID is matched.
 #   Create once in the Razorpay dashboard: ₹1/month, e.g. "OyeChats Test ₹1".
-#   Top-up orders don't need this — their amount is overridden directly.
+#   Top-up orders don't need this. Their amount is overridden directly.
 _raw_test_ids = os.getenv("CHECKOUT_TEST_CLIENT_IDS", "")
 CHECKOUT_TEST_CLIENT_IDS: frozenset[int] = frozenset(
     int(x.strip()) for x in _raw_test_ids.split(",") if x.strip().isdigit()
 )
 RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 
-# RAZORPAY_SEAT_PLAN_ID — Razorpay Plan ID for the ₹449/month extra-seat add-on.
+# RAZORPAY_SEAT_PLAN_ID. Razorpay Plan ID for the ₹449/month extra-seat add-on.
 #   Extra operator seats are billed on a SEPARATE add-on subscription against
 #   this plan (quantity = number of extra seats); never as quantity on the main
 #   plan, which would multiply the whole plan price. Env-driven with NO baked-in
-#   default — set the test-mode plan id in local/staging .env and the live plan id
+#   default. Set the test-mode plan id in local/staging .env and the live plan id
 #   in production, so a plan id is never hardcoded in the repo. Empty/unset means
 #   the seat add-on is disabled until configured.
 #
 #   OPS INVARIANT: the Razorpay plan behind this id MUST charge exactly
 #   ``RAZORPAY_SEAT_PLAN_PRICE_CENTS`` (below). To change the seat price, mint a
 #   NEW Razorpay seat plan at the new amount and repoint BOTH this id and the
-#   price env together — Razorpay plans are immutable, so the price and the id
+#   price env together. Razorpay plans are immutable, so the price and the id
 #   always move as a pair.
 RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 
-# RAZORPAY_SEAT_PLAN_ID_USD — the same add-on for the USD (international) rail.
+# RAZORPAY_SEAT_PLAN_ID_USD, the same add-on for the USD (international) rail.
 #   A Razorpay plan's currency is fixed at creation, so the INR seat plan above
 #   cannot bill an international customer; this is a separate plan charging
 #   ``EXTRA_SEAT_PRICE_USD_CENTS``. Same invariants as the INR id: env-driven,
@@ -331,13 +331,13 @@ RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 #   means seat add-ons are unavailable on the USD rail.
 RAZORPAY_SEAT_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID_USD") or None
 
-# Canonical extra-operator-seat price — the SINGLE source of truth for both what
+# Canonical extra-operator-seat price, the SINGLE source of truth for both what
 # the customer is charged and what every surface displays, so the two can never
 # drift (finding H3 / J). All extra seats bill against the one global seat plan
 # (``RAZORPAY_SEAT_PLAN_ID``); the INR amount below is that plan's actual charge,
 # and the USD amount is the international-rail equivalent. A plan row's
 # ``extra_seat_price_cents`` is kept equal to this by the seed + the plan-edit
-# guard — display always equals charge.
+# guard. Display always equals charge.
 #   INR: ₹449/seat/month · International: $5/seat/month
 RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "44900"))
 EXTRA_SEAT_PRICE_USD_CENTS: int = int(os.getenv("EXTRA_SEAT_PRICE_USD_CENTS", "500"))
@@ -355,12 +355,12 @@ BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "INR").upper()
 # While False, non-Indian checkout requests are short-circuited to a
 # "contact sales" response so the UI can surface a CTA instead of a failed
 # gateway call. Flip to True (env: ``INTL_PAYMENTS_ENABLED=true``) once the
-# add-on is live — no code change needed.
+# add-on is live, no code change needed.
 INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in ("1", "true", "yes")
 
 # ── Live-chat cross-process delivery ────────────────────────────────────────
 # ConnectionManager holds sockets in per-process dicts, so a frame produced by
-# one process cannot reach a socket held by another — it is dropped silently.
+# one process cannot reach a socket held by another, it is dropped silently.
 # With WEB_CONCURRENCY=1 that never happens; above it, live chat breaks quietly.
 # When enabled, producers that cannot find the socket locally publish to a Redis
 # channel and the process owning the socket writes the frame
@@ -371,7 +371,7 @@ INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in (
 WS_BACKPLANE_ENABLED = os.getenv("WS_BACKPLANE_ENABLED", "false").lower() in ("1", "true", "yes")
 
 # Display-only USD/INR rate used when rendering non-Indian quotes on the
-# pricing page. The gateway never sees this — INR remains the only currency
+# pricing page. The gateway never sees this. INR remains the only currency
 # that flows to Razorpay for actual charges. Per-plan USD prices live on the
 # Plan row long-term (super-admin editor); until that column lands, this
 # fallback keeps the marketing site self-consistent. Treated as ``rupees
@@ -382,7 +382,7 @@ DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "94.67"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Google OAuth — "Sign in with Google" for the admin dashboard
+# Google OAuth. "Sign in with Google" for the admin dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 # Credentials issued by Google Cloud Console → APIs & Services → Credentials.
 # All three values are required to enable the OAuth login flow; if any is
@@ -390,7 +390,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 # downgrade gracefully (hide the button) without breaking other auth paths.
 #
 # ``GOOGLE_REDIRECT_URI`` MUST be registered as an Authorized redirect URI in
-# the same OAuth client in Google Cloud Console — Google rejects the
+# the same OAuth client in Google Cloud Console. Google rejects the
 # token-exchange step otherwise. For local dev:
 #     http://localhost:8000/auth/google/callback
 # For production:
@@ -408,13 +408,13 @@ OAUTH_SUCCESS_REDIRECT_URL = os.getenv("OAUTH_SUCCESS_REDIRECT_URL", f"{FRONTEND
 
 # HMAC key for signing the short-lived OAuth ``state`` cookie. Falls back to
 # the SECRET_KEY env var if set, otherwise to a process-local random value
-# (which means OAuth attempts in flight across a process restart will fail —
-# acceptable since the state cookie lives for <10 minutes).
+# (which means OAuth attempts in flight across a process restart will fail.
+# Acceptable since the state cookie lives for <10 minutes).
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET") or os.getenv("SECRET_KEY") or _secrets.token_urlsafe(48)
 
 # HMAC key for signing manual-follow-up unsubscribe links (bot_id + email).
 # Without this a bare `?bot_id=&email=` query param could be used to
-# suppress an arbitrary address for any bot — see
+# suppress an arbitrary address for any bot. See
 # docs/superpowers/plans/2026-08-08-visitor-intelligence.md post-implementation review.
 UNSUBSCRIBE_SECRET = os.getenv("UNSUBSCRIBE_SECRET") or os.getenv("SECRET_KEY") or _secrets.token_urlsafe(48)
 
@@ -439,12 +439,12 @@ logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})"
 # documents/sessions (worker/tasks.py).
 #
 # Trial DURATION is sourced from ``Plan.trial_days`` (seeded by alembic), NOT
-# an env var — keeping it on the plan row lets super admins change trial
+# an env var. Keeping it on the plan row lets super admins change trial
 # length per-tier without a redeploy.
 TRIAL_CREDITS = int(_env("TRIAL_CREDITS", "750"))
 TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 
-# Dunning grace window — how long a subscription stays in ``past_due`` (full
+# Dunning grace window. How long a subscription stays in ``past_due`` (full
 # feature access for the customer) before the auto-expire cron flips it to
 # ``expired`` and the regular gates kick in. Razorpay's own dunning sequence
 # is typically 3 retries over ~7 days, so the default lines up with "we've
@@ -456,7 +456,7 @@ PAYMENT_FAILED_GRACE_DAYS = int(_env("PAYMENT_FAILED_GRACE_DAYS", "7"))
 # subscription is only a local intent flag and the customer can reactivate for
 # free; Razorpay has no un-cancel, so every day of lead time is a day the
 # customer loses that option. Two days is the smallest window that still
-# tolerates a full day of worker downtime before Razorpay's renewal debit —
+# tolerates a full day of worker downtime before Razorpay's renewal debit,
 # and ``_handle_subscription_charged`` backstops even that.
 GATEWAY_CANCEL_LEAD_DAYS = int(_env("GATEWAY_CANCEL_LEAD_DAYS", "2"))
 
@@ -467,7 +467,7 @@ GATEWAY_CANCEL_LEAD_DAYS = int(_env("GATEWAY_CANCEL_LEAD_DAYS", "2"))
 # chat_routes.py) so a bot owner can freely test their own bot from the
 # dashboard. Left completely unbounded, an owner-authenticated caller could
 # proxy real visitor traffic through the preview path and run unlimited free
-# LLM completions — that's the bug PREVIEW_DAILY_LIMIT closes. It caps preview
+# LLM completions. That's the bug PREVIEW_DAILY_LIMIT closes. It caps preview
 # chats per bot per UTC day (enforced by app/services/preview_quota.py); once
 # hit, the endpoint returns 429 instead of generating a reply.
 PREVIEW_DAILY_LIMIT = int(_env("PREVIEW_DAILY_LIMIT", "50"))
@@ -495,7 +495,7 @@ def _env_flag(name: str, *, default: bool) -> bool:
 # is the fast lever (flip from the super-admin UI, no deploy, no restart); this
 # env var is the one that survives a DB outage or a rogue DB edit, which is
 # exactly the situation an operator would be reaching for a kill switch in.
-# Read via ``runtime_config.is_impersonation_enabled()`` — never directly.
+# Read via ``runtime_config.is_impersonation_enabled()``, never directly.
 IMPERSONATION_ENABLED = _env_flag("IMPERSONATION_ENABLED", default=True)
 
 # Local-dev ONLY: auto-verify new signups so the signup -> checkout flow is
@@ -510,7 +510,7 @@ DEV_AUTO_VERIFY_EMAIL = _env_flag("DEV_AUTO_VERIFY_EMAIL", default=False) and AP
 # ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──
 #
 # WEBHOOK_RETRY_ON_ERROR (default ON): when a verified webhook's processing
-# raises, return 5xx so the provider retries (safe — event-id idempotency makes
+# raises, return 5xx so the provider retries (safe. Event-id idempotency makes
 # retries no-ops) and dead-letter the raw event instead of silently ACKing 200.
 # Default ON because the legacy "200 on error" behaviour drops paid events; the
 # flag is an emergency rollback switch only.
@@ -523,7 +523,7 @@ PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False
 
 # ── Invoicing v2 feature flags (docs/billing/2026-07-02-invoicing-implementation-plan-v2.md) ──
 #
-# Both default ON — invoicing is a launch feature, not a gradual rollout. The
+# Both default ON. Invoicing is a launch feature, not a gradual rollout. The
 # real activation gate is the SELLER PROFILE: until the super-admin saves the
 # company's legal identity (billing.seller_profile), charges stay plain
 # payment records; once saved, every new charge gets a numbered document.
@@ -559,16 +559,16 @@ ARCHIVE_DIR = "archive"
 # ─────────────────────────────────────────────────────────────────────────────
 # Retrieval & Reranking
 # ─────────────────────────────────────────────────────────────────────────────
-# RERANK_ENABLED=false  — set true to activate FlashRank cross-encoder reranking
-# RERANK_TOP_N=5        — final top-n docs passed to LLM after reranking
-# CAG_LITE_THRESHOLD=20 — bots with ≤ this many chunks skip retrieval; all chunks injected directly
-# RELEVANCE_GATE_ENABLED=false — set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
-# GATE_MODEL=gemini/gemini-2.5-flash — model used for relevance scoring (cheapest capable)
-# RELEVANCE_THRESHOLD=0.5 — chunks scoring below this cause the gate to fire and block generation
+# RERANK_ENABLED=false  (set true to activate FlashRank cross-encoder reranking
+# RERANK_TOP_N=5) final top-n docs passed to LLM after reranking
+# CAG_LITE_THRESHOLD=20. Bots with ≤ this many chunks skip retrieval; all chunks injected directly
+# RELEVANCE_GATE_ENABLED=false. Set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
+# GATE_MODEL=gemini/gemini-2.5-flash. Model used for relevance scoring (cheapest capable)
+# RELEVANCE_THRESHOLD=0.5. Chunks scoring below this cause the gate to fire and block generation
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Crawl provider — Spider.cloud managed API (sole primary crawler)
+# Crawl provider. Spider.cloud managed API (sole primary crawler)
 # ─────────────────────────────────────────────────────────────────────────────
 SPIDER_API_KEY = os.getenv("SPIDER_API_KEY")
 SPIDER_API_URL = _env("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
@@ -577,7 +577,7 @@ SPIDER_REQUEST_MODE = _env("SPIDER_REQUEST_MODE", "smart").strip().lower()
 # Per-crawl wall-clock budget (seconds).
 SPIDER_TIMEOUT = int(_env("SPIDER_TIMEOUT", "1600"))
 # Parallel Spider /scrape calls for sitemap-seeded and ordered fetches (Spider
-# handles the render load server-side). Env default only — the super-admin
+# handles the render load server-side). Env default only, the super-admin
 # Crawler card overrides it at runtime (crawl.spider_fetch_concurrency).
 SPIDER_FETCH_CONCURRENCY = int(_env("SPIDER_FETCH_CONCURRENCY", "10"))
 
@@ -594,7 +594,7 @@ JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in
 )
 JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
 # Which scrape backend page-list fetches try first: "spider" or "jina". The
-# other one becomes the fallback. Env default only — the super-admin Models &
+# other one becomes the fallback. Env default only, the super-admin Models &
 # RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
 CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "jina").strip().lower()
 
@@ -619,7 +619,7 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 # This flag was added because review of the commit that introduced the feature
 # found the network-facing half unsafe. All three of those defects are fixed:
 #
-#   * SSRF — the extractor built its own `httpx.AsyncClient` with
+#   * SSRF, the extractor built its own `httpx.AsyncClient` with
 #     `follow_redirects=True` and validated only the PRE-redirect URL. It now
 #     goes through `core/ssrf`'s `fetch_text_safely` / `fetch_bytes_safely`,
 #     which re-validate every hop and connect to a pinned pre-validated IP.
@@ -630,7 +630,7 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 #     step runs after the terminal result is published, and the whole thing is
 #     wrapped in `asyncio.wait_for(_FAVICON_TOTAL_BUDGET_S)`.
 #
-# STILL DEFAULT OFF — nothing here has run against real customer sites yet, and
+# STILL DEFAULT OFF, nothing here has run against real customer sites yet, and
 # the write touches a customer-visible brand asset. The write path is covered
 # by behavioural tests in `tests/test_favicon_extractor.py`; flip the GitHub
 # Actions repository variable of the same name to `true` and redeploy to try it.
@@ -639,7 +639,7 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 # that plan puts provenance in a new `Bot.bot_logo_source` column. This
 # implementation has no such column. It never touches `avatar_type` and only
 # ever fills a slot that is empty on BOTH fields, so it cannot overwrite an
-# avatar the customer currently has — but "empty" is not the same as "never
+# avatar the customer currently has, but "empty" is not the same as "never
 # chosen", and without provenance the two are indistinguishable:
 #
 #   * A customer who REMOVES their avatar lands in exactly the empty state
@@ -657,21 +657,21 @@ CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").str
     "yes",
 )
 
-# Verify TLS certificates on the SSRF-guarded fetches in `core/ssrf` — sitemap
+# Verify TLS certificates on the SSRF-guarded fetches in `core/ssrf`. Sitemap
 # and robots.txt discovery, the liveness probe, the footer/colour/favicon reads.
 #
 # DEFAULT ON, which is the correction: every one of those fetches passed
 # `ssl=False`, so an https:// URL was fetched with no certificate check at all
 # and an on-path attacker could substitute the sitemap that decides which pages
 # get ingested, or the icon that becomes the agent's avatar. Pinning the
-# resolved IP never required this — `_PinnedResolver` reports the real hostname,
+# resolved IP never required this. `_PinnedResolver` reports the real hostname,
 # so SNI and hostname verification still work against the URL's own name.
 #
 # The switch exists because verifying can only reduce what we successfully
 # fetch: a customer whose certificate is expired or mismatched now fails where
 # they used to succeed, silently and only for them (discovery falls back to a
 # recursive crawl; the brand extras yield nothing). Set this to false to restore
-# service for them from a variable while the certificate is fixed — it is a
+# service for them from a variable while the certificate is fixed, it is a
 # stopgap, not a setting. `core/ssrf` logs a distinct warning per rejected
 # certificate so the affected host is identifiable before you reach for it.
 SSRF_TLS_VERIFY_ENABLED = _env("SSRF_TLS_VERIFY_ENABLED", "true").strip().lower() in (

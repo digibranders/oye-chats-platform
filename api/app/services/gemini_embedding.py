@@ -1,28 +1,28 @@
 """Google Gemini embeddings via the batchEmbedContents REST API (httpx).
 
-Uses the existing GOOGLE_API_KEY (the same key as the Gemini LLM fallback) — no
+Uses the existing GOOGLE_API_KEY (the same key as the Gemini LLM fallback), no
 Google SDK dependency, no GCP/Vertex setup. Returns EMBED_DIMENSIONS-wide,
 L2-normalized vectors matching the pgvector column.
 
 At 768-dim the API returns Matryoshka-truncated but *un-normalized* vectors
 (verified: raw L2 norm ~0.58), so cosine similarity requires client-side
-normalization — we do it here.
+normalization. We do it here.
 
 Batching: ``batchEmbedContents`` takes up to ``_MAX_BATCH`` (100) texts per
 call, and ``embed_texts`` fans batches out across ``EMBED_CONCURRENCY``
 threads. Note the quota is charged **per content item, not per HTTP call**
-(hence ``embed_rate_limiter.acquire(len(batch))`` below) — batching removes
+(hence ``embed_rate_limiter.acquire(len(batch))`` below). Batching removes
 round-trips, not quota. Sustained throughput is bounded by
 ``EMBED_RPM_LIMIT``, not by the batch size or the worker count.
 
-AR-28: this is the ONLY embedding provider in the codebase today — there is
+AR-28: this is the ONLY embedding provider in the codebase today. There is
 no jina-embeddings-v3 provider, config flag, or eval harness anywhere in the
 repo, despite a standing engineering note about evaluating one. The live
 arguments for that evaluation are **cost** and a **native 768-dim** output
 (no Matryoshka truncation, and no client-side normalization needed), with the
 same 768-dim shape so no pgvector schema change. Batching is NOT one of them:
 an earlier version of this note said Jina offered "true multi-text batching",
-which wrongly implied Gemini has none — it batches 100/call, as above. That
+which wrongly implied Gemini has none, it batches 100/call, as above. That
 misreading reached an architecture review, so state the tradeoff precisely.
 
 That comparison has never been started; if it is picked up, extend the
@@ -72,7 +72,7 @@ def _retry_delay_from_429(resp: httpx.Response) -> float | None:
     """Extract the server-specified retry delay (seconds) from a 429 body.
 
     Gemini does not send a ``Retry-After`` header; it puts the delay in the JSON
-    body — a structured ``RetryInfo`` detail (``retryDelay: "11.5s"``) and/or the
+    body, a structured ``RetryInfo`` detail (``retryDelay: "11.5s"``) and/or the
     message text ("Please retry in 11.5s"). Returns None when neither is present.
     """
     try:
@@ -103,16 +103,16 @@ def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float |
     last_err: str = "unknown error"
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         # Reserve this batch's request-units against the project-wide per-minute
-        # quota before every POST (retries included — each POST is billed) so we
+        # quota before every POST (retries included. Each POST is billed) so we
         # pace under the ceiling instead of bursting into 429s. A caller-supplied
         # ``max_wait_s`` (the query path) raises EmbedWaitExceeded here rather
-        # than sleeping behind bulk-ingestion debt — deliberately NOT caught by
+        # than sleeping behind bulk-ingestion debt. Deliberately NOT caught by
         # this retry loop: retrying can't make the bucket drain faster.
         embed_rate_limiter.acquire(len(batch), max_wait=max_wait_s)
         try:
             resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
         except httpx.HTTPError as exc:
-            # Network-level failure — retry with exponential backoff.
+            # Network-level failure. Retry with exponential backoff.
             last_err = f"{type(exc).__name__}: {exc}"
             delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
         else:
@@ -125,7 +125,7 @@ def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float |
                     raise RuntimeError(f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs")
                 return [_l2_normalize(item["values"]) for item in embeddings]
             if resp.status_code == 429:
-                # Quota — honour the server's own retry hint; fall back to backoff.
+                # Quota. Honour the server's own retry hint; fall back to backoff.
                 server_delay = _retry_delay_from_429(resp)
                 backoff = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
                 delay = min((server_delay if server_delay is not None else backoff) + 0.5, _RETRY_MAX_429)
@@ -134,13 +134,13 @@ def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float |
                 last_err = f"{resp.status_code}: {resp.text[:200]}"
                 delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
             else:
-                # 4xx other than 429 (bad request, auth) — not retryable.
+                # 4xx other than 429 (bad request, auth), not retryable.
                 raise RuntimeError(f"Gemini embedding rejected ({resp.status_code}): {resp.text[:300]}")
 
         if attempt == _RETRY_ATTEMPTS:
             break
         logger.warning(
-            "Gemini embed retryable error (%s) — retry %d/%d in %.1fs",
+            "Gemini embed retryable error (%s). Retry %d/%d in %.1fs",
             last_err.split(":")[0],
             attempt,
             _RETRY_ATTEMPTS,
@@ -161,10 +161,10 @@ def embed_texts(
 
     Batches of ``_MAX_BATCH`` are sent to Gemini **concurrently** (up to the
     runtime-tunable ``embed.concurrency``, super-admin Models & RAG card) since
-    embedding is network-bound — this is the main lever on large-crawl
+    embedding is network-bound. This is the main lever on large-crawl
     wall-clock. Output order matches input order regardless of completion order.
     ``progress_cb(done, total)`` fires as batches finish. ``max_wait_s`` bounds
-    how long any batch may queue behind the shared rate-limiter's token debt —
+    how long any batch may queue behind the shared rate-limiter's token debt,
     the query path passes a small ceiling and treats the resulting
     ``EmbedWaitExceeded`` as an embedding failure (keyword-only fallback).
 
@@ -208,7 +208,7 @@ def embed_texts(
             # default shutdown block-until-complete on them. Without this, a
             # large concurrent batch (e.g. a 500-page crawl re-embed) that
             # hits one immediate 4xx keeps 7+ other in-flight batches running
-            # — consuming billed Gemini quota and wall-clock — for a result
+            # (consuming billed Gemini quota and wall-clock) for a result
             # that's about to be discarded anyway, since embed_texts is
             # guaranteed to raise once this exception surfaces. Futures
             # already running can't be cancelled (not PENDING anymore) and
@@ -223,7 +223,7 @@ def embed_texts(
 
     # Throughput line for the crawl/embed speed test: texts/s is the number to
     # watch. gemini-embedding-001 embeds one input per request, so this is
-    # RPM-bound — the ceiling is EMBED_RPM_LIMIT ÷ 60, not raw worker count.
+    # RPM-bound, the ceiling is EMBED_RPM_LIMIT ÷ 60, not raw worker count.
     elapsed = perf_counter() - start
     logger.info(
         "embed throughput: %d texts / %d batches in %.2fs (%.0f texts/s, %d workers, dim=%d)",

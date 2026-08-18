@@ -1,9 +1,9 @@
-"""`bots.bot_logo_source` — who last set the agent's avatar.
+"""`bots.bot_logo_source`, who last set the agent's avatar.
 
 `bot_logo IS NULL` cannot distinguish an agent nobody has touched from one
 whose owner deliberately removed the picture. Both are an empty slot, so the
 crawl's favicon step read a deletion as an invitation and re-derived the avatar
-the customer had just deleted — and there was no way to say no, because
+the customer had just deleted, and there was no way to say no, because
 `avatar_type` stays `upload` either way and the removal was recorded nowhere.
 
 The stamp is what closes that. Every customer write to the avatar marks the
@@ -34,7 +34,7 @@ def _bot(db, bot_id: int, **overrides) -> Bot:
 
 class TestTheStampItself:
     def test_a_fresh_agent_has_no_stamp(self, db):
-        """NULL is a real state — "nobody has ever set this" — and it is the
+        """NULL is a real state ("nobody has ever set this") and it is the
         only state in which the crawl may derive an avatar."""
         assert _bot(db, 8300).bot_logo_source is None
 
@@ -48,7 +48,7 @@ class TestTheStampItself:
         state of an agent that never had one, so if this did not stamp, the
         next crawl would put the picture straight back.
 
-        Starts from `derived` on purpose — a customer deleting the avatar the
+        Starts from `derived` on purpose, a customer deleting the avatar the
         crawl gave them is the exact scenario, and seeding `manual` here would
         let a stamp that never runs pass the assertion."""
         bot = _bot(db, 8302, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
@@ -56,7 +56,7 @@ class TestTheStampItself:
         assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
 
     def test_a_derived_avatar_is_claimed_the_moment_the_customer_edits_it(self, db):
-        """Replacing a derived avatar makes it theirs — it must not keep
+        """Replacing a derived avatar makes it theirs, it must not keep
         claiming to have come from their website."""
         bot = _bot(db, 8303, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
         stamp_manual_avatar(bot, {"bot_logo": "logos/mine.png"})

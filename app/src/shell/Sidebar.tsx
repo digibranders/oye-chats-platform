@@ -21,7 +21,7 @@ import type { UpgradeIntentKey } from '../context/upgradeIntents';
  *  without touching the render loop.
  *
  *  - `/inbox`    Support / live chat requires the `live_chat` feature (Free
- *                is the only plan without it — Starter and up ship it).
+ *                is the only plan without it. Starter and up ship it).
  *  - `/journey`  Journey analytics is Standard+; on the backend it's a slug
  *                gate (`JOURNEY_ANALYTICS_SLUGS = {standard, professional,
  *                enterprise}`), on the frontend the `bant` feature has the

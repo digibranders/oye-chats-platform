@@ -1,7 +1,7 @@
 """Regression test for the operator-key -> super-admin escalation fix (roadmap §0.2).
 
 ``get_superadmin`` must depend on ``get_current_client_strict`` (X-API-Key only),
-NOT ``get_current_client`` — the latter also resolves an ``X-Operator-Key`` to
+NOT ``get_current_client``, the latter also resolves an ``X-Operator-Key`` to
 its workspace's owning Client, which would let any operator of a super-admin's
 workspace authenticate *as* that super-admin and reach ``/superadmin/*``.
 
@@ -28,7 +28,7 @@ def test_get_superadmin_uses_strict_auth():
 
 
 def test_strict_auth_rejects_operator_only_request():
-    """With no X-API-Key, strict auth 401s before any DB lookup — an operator
+    """With no X-API-Key, strict auth 401s before any DB lookup, an operator
     key alone (which get_current_client_strict ignores) can never satisfy it."""
     request = Request({"type": "http", "method": "GET", "path": "/superadmin/clients", "headers": []})
     with pytest.raises(HTTPException) as exc:

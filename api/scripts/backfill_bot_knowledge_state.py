@@ -10,7 +10,7 @@ fully-trained bot reading "Nothing learned yet" forever:
 
 1. **Document uploads.** They run no crawl, so nothing ever stamped the counter.
 2. **Delta recrawls of an unchanged site.** SHA-256 dedup skips every page, so
-   the crawl ingests zero new chunks and the stamp was skipped — even though the
+   the crawl ingests zero new chunks and the stamp was skipped, even though the
    crawl correctly reported ``done`` because the bot already held content.
 3. **Best-effort write failures.** The stamp is wrapped in a swallowed
    ``except``, so a transient DB error silently lost it.
@@ -64,7 +64,7 @@ def main() -> int:
             session.commit()
 
     if not drifted:
-        print(f"All {len(bots)} bots already consistent — nothing to do.")
+        print(f"All {len(bots)} bots already consistent, nothing to do.")
         return 0
 
     verb = "Corrected" if args.execute else "Would correct"
@@ -74,7 +74,7 @@ def main() -> int:
         flag = "  ← claimed untrained" if stored == 0 and actual > 0 else ""
         print(f"{bot_id:>6}  {name[:32]:<32} {stored:>8} → {actual:>8}{flag}")
     if not args.execute:
-        print("\nDry run — re-run with --execute to write these values.")
+        print("\nDry run. Re-run with --execute to write these values.")
     return 0
 
 

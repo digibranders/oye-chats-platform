@@ -3,7 +3,7 @@
  * The contract that matters: while the bot list is loading they must return
  * `null` (so the caller holds the gate closed / omits the chip rather than
  * flashing the wrong plan), and once resolved they read the SELECTED bot's own
- * `plan_name` / `plan_slug` — never the account-level entitlement.
+ * `plan_name` / `plan_slug`, never the account-level entitlement.
  *
  * The bot context is mocked so each case sets `selectedBot` + `loading`.
  */

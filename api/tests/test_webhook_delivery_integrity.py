@@ -76,8 +76,8 @@ def test_successful_enqueue_clears_the_marker(db, monkeypatch):
 
 
 def test_final_exhaustion_logs_at_error(db, monkeypatch, caplog):
-    # A webhook whose LAST attempt fails goes permanently dark for the event —
-    # that must surface at ERROR (Sentry), not as one more silent attempt row.
+    # A webhook whose LAST attempt fails goes permanently dark for the event.
+    # That must surface at ERROR (Sentry), not as one more silent attempt row.
     client = Client(name="WX", email="wh-x@test.example", api_key="key-wh-x")
     db.add(client)
     db.flush()
@@ -102,10 +102,10 @@ def test_final_exhaustion_logs_at_error(db, monkeypatch, caplog):
 def test_locked_rows_are_skipped_not_double_claimed(db, monkeypatch):
     # M-4: a row locked by another sweeper must be SKIPPED, not waited on or
     # double-enqueued. A second raw connection holds FOR UPDATE on the due row
-    # while the sweep runs — with skip_locked the sweep claims zero and the
+    # while the sweep runs, with skip_locked the sweep claims zero and the
     # enqueue is never called. Deleting .with_for_update(skip_locked=True)
     # makes this test HANG (lock wait), which fails via the enqueue assert
-    # after the statement timeout — either way it cannot pass.
+    # after the statement timeout, either way it cannot pass.
     import sqlalchemy
 
     delivery = _due_delivery(db, attempt=3)
