@@ -672,6 +672,18 @@ async def _bind_notification_broadcaster_loop():
     except Exception:
         logger.exception("Failed to bind notification broadcaster loop")
 
+    # Cross-process live-chat delivery. No-op unless WS_BACKPLANE_ENABLED — see
+    # app/services/ws_backplane.py for why this exists and why it is off by
+    # default. Started here rather than at import so it binds to the running loop.
+    try:
+        from app.services.live_chat_service import manager as _manager
+        from app.services.ws_backplane import start as _ws_backplane_start
+
+        await _ws_backplane_start(_manager)
+    except Exception:
+        # Delivery degrades to local-only, which is exactly today's behaviour.
+        logger.exception("Failed to start the live-chat WS backplane")
+
     # Belt-and-braces: make sure the ``notifications`` table actually exists.
     # On a fresh local DB or a deploy where alembic was skipped, the REST
     # endpoints would 500 every call and the bell would look "broken" with

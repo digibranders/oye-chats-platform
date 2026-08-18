@@ -358,6 +358,18 @@ BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "INR").upper()
 # add-on is live — no code change needed.
 INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in ("1", "true", "yes")
 
+# ── Live-chat cross-process delivery ────────────────────────────────────────
+# ConnectionManager holds sockets in per-process dicts, so a frame produced by
+# one process cannot reach a socket held by another — it is dropped silently.
+# With WEB_CONCURRENCY=1 that never happens; above it, live chat breaks quietly.
+# When enabled, producers that cannot find the socket locally publish to a Redis
+# channel and the process owning the socket writes the frame
+# (app/services/ws_backplane.py).
+#
+# OFF by default: it is a prerequisite for raising WEB_CONCURRENCY, not a change
+# to today's single-worker behaviour. Enable it BEFORE adding workers, never after.
+WS_BACKPLANE_ENABLED = os.getenv("WS_BACKPLANE_ENABLED", "false").lower() in ("1", "true", "yes")
+
 # Display-only USD/INR rate used when rendering non-Indian quotes on the
 # pricing page. The gateway never sees this — INR remains the only currency
 # that flows to Razorpay for actual charges. Per-plan USD prices live on the

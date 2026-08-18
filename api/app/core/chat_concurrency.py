@@ -49,6 +49,49 @@ MAX_CONCURRENCY = max(1, int(os.getenv("CHAT_MAX_CONCURRENCY", "10")))
 ACQUIRE_TIMEOUT_S = float(os.getenv("CHAT_ACQUIRE_TIMEOUT_S", "8"))
 
 
+def _warn_if_gate_exceeds_pool() -> None:
+    """Warn loudly when the gate is sized at or above the per-worker DB pool.
+
+    The gate's whole purpose is to sit BELOW the pool ceiling so chat can never
+    exhaust it. Invert that and the failure is spectacular but misleading: the
+    pool empties, requests queue on ``pool_timeout`` (30s), and gunicorn's 120s
+    reaper starts killing workers — while the database sits idle. It reads
+    exactly like "the database cannot keep up" and sends you debugging the wrong
+    tier.
+
+    This is not hypothetical. Tuning the pool down to 3+2 while leaving the gate
+    at 10 produced precisely that during cluster load testing: ten and twelve
+    worker kills in fifteen minutes, a 34-second p95, and a database at 100%
+    idle throughout.
+
+    A warning rather than a hard failure: an operator may have a deliberate
+    reason, and refusing to boot the API over a tuning choice is worse than
+    saying so clearly. Anything raising WEB_CONCURRENCY should divide the global
+    pool budget rather than multiply it, and re-check this line.
+    """
+    try:
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+    except ValueError:
+        return
+    ceiling = pool_size + max_overflow
+    if ceiling <= MAX_CONCURRENCY:
+        logger.warning(
+            "CHAT_MAX_CONCURRENCY=%s is >= the per-worker DB pool ceiling of %s "
+            "(DB_POOL_SIZE=%s + DB_MAX_OVERFLOW=%s). The gate is meant to sit BELOW "
+            "the pool so chat cannot exhaust it; inverted, chat saturates the pool, "
+            "requests queue on pool_timeout and gunicorn reaps workers while the "
+            "database looks idle. Lower CHAT_MAX_CONCURRENCY or raise the pool.",
+            MAX_CONCURRENCY,
+            ceiling,
+            pool_size,
+            max_overflow,
+        )
+
+
+_warn_if_gate_exceeds_pool()
+
+
 class ChatConcurrencyGate:
     """A counting gate around the expensive chat path. Not reentrant; each
     acquired slot must be released exactly once (use ``slot()``)."""

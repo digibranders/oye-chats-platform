@@ -68,6 +68,22 @@ ORIGIN = os.getenv("LC_WS_ORIGIN", "http://localhost")
 RECV_TIMEOUT = float(os.getenv("LC_RECV_TIMEOUT", "8"))
 
 
+def _client_ip() -> str:
+    """A fresh client IP per call.
+
+    Operator endpoints are rate-limited per IP. Without this, running the module
+    a few times in a row starts returning 429 and the assertions fail for a
+    reason unrelated to what they test. The load scenarios rotate the header for
+    exactly the same reason; this is load shaping, not a limit bypass.
+    """
+    n = uuid.uuid4().int
+    return f"10.{(n >> 16) % 240}.{(n >> 8) % 256}.{n % 254 + 1}"
+
+
+def _operator_headers() -> dict[str, str]:
+    return {"X-Operator-Key": OPERATOR_KEY, "X-Forwarded-For": _client_ip()}
+
+
 def _ws_url(base: str, path: str) -> str:
     return base.replace("http://", "ws://").replace("https://", "wss://") + path
 
@@ -117,7 +133,7 @@ async def _request_human(base: str, sid: str) -> dict:
     async with httpx.AsyncClient(timeout=30) as http:
         r = await http.post(
             f"{base}/operators/handoff",
-            headers={"X-Bot-Key": BOT_KEY},
+            headers={"X-Bot-Key": BOT_KEY, "X-Forwarded-For": _client_ip()},
             json={"session_id": sid},
         )
     assert r.status_code == 200, f"handoff failed: {r.status_code} {r.text[:200]}"
@@ -165,7 +181,7 @@ async def _ensure_live(base: str, sid: str) -> None:
         async with httpx.AsyncClient(timeout=30) as http:
             r = await http.post(
                 f"{base}/operators/accept/{sid}",
-                headers={"X-Operator-Key": OPERATOR_KEY},
+                headers=_operator_headers(),
             )
         if r.status_code not in (200, 409):
             pytest.skip(f"could not bring the session to 'live' (accept -> {r.status_code}): {r.text[:160]}")
@@ -176,6 +192,44 @@ async def _ensure_live(base: str, sid: str) -> None:
             f"session {sid} is status={status!r} assignee={assignee!r}, not a live assigned chat — "
             "the delivery assertion would be meaningless"
         )
+
+
+@pytest.fixture(autouse=True)
+def _release_operator_capacity():
+    """Close chats these tests leave behind, before and after each test.
+
+    An operator has a ``max_concurrent_chats`` ceiling (5 by default). Every test
+    here accepts a chat and never closes it, so after a handful of runs the
+    seeded operator sits at capacity and the API answers *every* accept with
+    ``429 Operator already at max capacity`` — which looks exactly like a rate
+    limit and has nothing to do with what is being asserted. Left unfixed it
+    would poison this module permanently on any shared environment.
+
+    Only sessions this module creates (``xproc_%``) are touched.
+    """
+    from sqlalchemy import text
+
+    def _close_leaked():
+        db_url = os.getenv("DB_URL")
+        if not db_url:
+            return
+        from sqlalchemy import create_engine
+
+        engine = create_engine(db_url)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE chat_sessions SET status='closed', assigned_operator_id=NULL "
+                        "WHERE id LIKE 'xproc\\_%' ESCAPE '\\' AND status IN ('live','waiting')"
+                    )
+                )
+        finally:
+            engine.dispose()
+
+    _close_leaked()
+    yield
+    _close_leaked()
 
 
 @pytest.mark.asyncio
@@ -297,6 +351,45 @@ async def test_offline_message_reaches_operator_on_other_process():
 
 
 @pytest.mark.asyncio
+async def test_connect_request_is_visible_from_another_process():
+    """A visitor's poll must see a connect-request raised on another process.
+
+    An operator asks to join a chat; the widget then polls REST until the visitor
+    accepts or declines. The operator's POST and the visitor's GET are separate
+    HTTP requests that can land on different processes, so while the record lived
+    in a per-process dict the poll asked a process that had never heard of it,
+    got ``{"pending": false}``, and the popup simply never appeared. Nothing
+    errored — the request evaporated.
+
+    Fails before the record moved to shared storage; passes after.
+    """
+    sid = await _new_session(NODE_A)
+
+    async with httpx.AsyncClient(timeout=30) as http:
+        created = await http.post(
+            f"{NODE_A}/operators/connect-request/{sid}",
+            headers=_operator_headers(),
+        )
+        if created.status_code not in (200, 201):
+            pytest.skip(f"could not raise a connect-request (-> {created.status_code}): {created.text[:160]}")
+
+        # The visitor polls the OTHER process.
+        polled = await http.get(
+            f"{NODE_B}/chat/connect-request/{sid}",
+            headers={"X-Bot-Key": BOT_KEY, "X-Forwarded-For": _client_ip()},
+        )
+
+    assert polled.status_code == 200, f"poll failed: {polled.status_code} {polled.text[:200]}"
+    body = polled.json()
+    assert body.get("pending") is True, (
+        "The visitor's poll on node B did not see the connect-request raised on node A.\n"
+        "While this record lived in a per-process dict the popup never appeared for any "
+        "deployment with more than one process, and nothing logged an error.\n"
+        f"Node B returned: {json.dumps(body)[:300]}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_accept_claim_is_atomic_across_processes():
     """Exactly one claim may win, even when two processes race.
 
@@ -329,8 +422,8 @@ async def test_accept_claim_is_atomic_across_processes():
 
         async with httpx.AsyncClient(timeout=30) as http:
             a, b = await asyncio.gather(
-                http.post(f"{NODE_A}/operators/accept/{sid}", headers={"X-Operator-Key": OPERATOR_KEY}),
-                http.post(f"{NODE_B}/operators/accept/{sid}", headers={"X-Operator-Key": OPERATOR_KEY}),
+                http.post(f"{NODE_A}/operators/accept/{sid}", headers=_operator_headers()),
+                http.post(f"{NODE_B}/operators/accept/{sid}", headers=_operator_headers()),
                 return_exceptions=True,
             )
 

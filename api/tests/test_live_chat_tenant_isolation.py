@@ -26,31 +26,31 @@ def test_should_notify_operator_is_scoped_to_session_client():
     assert m._should_notify_operator(999, None, session_client_id=2) is False
 
 
-def test_notify_operator_queue_hides_other_tenant_sessions():
-    m = ConnectionManager()
-    m._operator_client_ids = {10: 1, 20: 2}
+def test_queue_row_visibility_is_scoped_to_client():
+    """The queue's tenant/department rules, asserted without a database.
 
-    sid = "sess-client2"
-    m.waiting_queue.append(sid)
-    m._session_client_ids[sid] = 2
-    m._session_departments[sid] = None
-    m._session_metadata[sid] = {"name": "Bob", "reason": "help", "bot_id": 5, "bot_name": "B2"}
+    The operator queue is now derived from ``ChatSession.status == 'waiting'``
+    rather than an in-process list (see ``_visible_queue_for_operator``), so the
+    old version of this test — which seeded ``waiting_queue`` and the sidecar
+    dicts — was exercising storage that no longer backs the feature. The rules
+    it guards are unchanged and are what matter, so they are asserted directly
+    on the pure predicate instead of through a query.
+    """
+    visible = ConnectionManager._queue_row_is_visible
 
-    captured: dict[int, dict] = {}
-
-    async def fake_send(operator_id, data):
-        captured[operator_id] = data
-
-    m._send_to_operator = fake_send
-
-    asyncio.run(m._notify_operator_queue(10))  # client-1 operator
-    asyncio.run(m._notify_operator_queue(20))  # client-2 operator
-
-    # Client-1 operator must not see client-2's queued visitor (no PII leak).
-    assert captured[10]["waiting"] == []
-    assert captured[10]["count"] == 0
-    # Client-2 operator sees their own queued session.
-    assert [w["session_id"] for w in captured[20]["waiting"]] == [sid]
+    # A client-2 session must never be visible to a client-1 operator (F03).
+    assert visible(session_client_id=2, session_dept=None, operator_client_id=1, operator_dept=None) is False
+    # ...and must be visible to its own tenant.
+    assert visible(session_client_id=2, session_dept=None, operator_client_id=2, operator_dept=None) is True
+    # An operator whose workspace is unknown sees nothing — fail closed.
+    assert visible(session_client_id=2, session_dept=None, operator_client_id=None, operator_dept=None) is False
+    # A session with no client_id stays visible, as it did in the in-memory
+    # implementation, which only skipped on a positive mismatch.
+    assert visible(session_client_id=None, session_dept=None, operator_client_id=1, operator_dept=None) is True
+    # Department filtering is unchanged: either side unset means no filter.
+    assert visible(session_client_id=1, session_dept=7, operator_client_id=1, operator_dept=7) is True
+    assert visible(session_client_id=1, session_dept=7, operator_client_id=1, operator_dept=9) is False
+    assert visible(session_client_id=1, session_dept=7, operator_client_id=1, operator_dept=None) is True
 
 
 def test_broadcast_operators_update_is_scoped_to_client():

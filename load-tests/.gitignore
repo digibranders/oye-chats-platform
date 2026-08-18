@@ -12,3 +12,4 @@ __pycache__/
 *.pyc
 results/matrix_*/
 results/ratio_*/
+results/soak_*/

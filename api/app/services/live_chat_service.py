@@ -48,6 +48,72 @@ def is_client_gone(exc: BaseException) -> bool:
     return False
 
 
+class _ConnectRequestStore:
+    """Shared storage for pending operator-to-visitor connect requests.
+
+    A connect request is coordination state, not a socket: an operator asks to
+    join a visitor's chat, the widget polls REST until the visitor accepts or
+    declines, and the record expires after ``CONNECT_REQUEST_TTL_SECONDS``.
+
+    It lived in a per-process dict, which quietly breaks above one worker: the
+    operator's request is registered on whichever process served that call, and
+    the visitor's poll — a separate HTTP request that can land anywhere — asks a
+    different process, sees nothing, and the popup never appears. Nothing errors;
+    the request simply evaporates.
+
+    Redis is the natural home. The record is small, has a natural TTL that Redis
+    enforces without the lazy pruning the dict needed, and the widget's poll is
+    already a round-trip. Writes go to both stores and reads prefer the shared
+    one, so behaviour is unchanged when Redis is absent and no deployment has to
+    flip anything to stay correct.
+
+    Deliberately NOT gated on ``WS_BACKPLANE_ENABLED``: unlike socket delivery
+    this needs no subscriber, degrades to exactly today's behaviour when Redis is
+    down, and a single-worker deployment cannot tell the difference.
+    """
+
+    _PREFIX = "ws:connect_request:"
+
+    def _key(self, session_id: str) -> str:
+        return f"{self._PREFIX}{session_id}"
+
+    def put(self, session_id: str, payload: dict, ttl: int) -> None:
+        try:
+            from app.core.cache import cache_set
+
+            cache_set(self._key(session_id), payload, ttl)
+        except Exception:
+            # Best-effort: the caller has already written the in-process copy, so
+            # a Redis problem degrades to single-process behaviour rather than
+            # losing the request.
+            logger.debug("connect-request shared write failed", exc_info=True)
+
+    def get(self, session_id: str) -> dict | None:
+        try:
+            from app.core.cache import cache_get
+
+            value = cache_get(self._key(session_id))
+            return value if isinstance(value, dict) else None
+        except Exception:
+            logger.debug("connect-request shared read failed", exc_info=True)
+            return None
+
+    def drop(self, session_id: str) -> dict | None:
+        """Remove and return the record, so callers keep pop() semantics."""
+        try:
+            from app.core.cache import cache_delete
+
+            existing = self.get(session_id)
+            cache_delete(self._key(session_id))
+            return existing
+        except Exception:
+            logger.debug("connect-request shared delete failed", exc_info=True)
+            return None
+
+
+_connect_request_store = _ConnectRequestStore()
+
+
 class ConnectionManager:
     """Manages WebSocket connections for live chat between visitors and operators."""
 
@@ -1118,27 +1184,35 @@ class ConnectionManager:
             "created_at": datetime.now(UTC).isoformat(),
         }
         self._connect_requests[session_id] = payload
+        _connect_request_store.put(session_id, payload, self.CONNECT_REQUEST_TTL_SECONDS)
         return payload
 
     def get_connect_request(self, session_id: str) -> dict | None:
         """Return the active connect-request for ``session_id`` or ``None``.
 
         Expired requests are pruned lazily on read so the widget polls always
-        see fresh state without us having to schedule a per-request timer.
+        see fresh state without us having to schedule a per-request timer. When
+        the shared store is active, Redis's own TTL does that pruning for us and
+        the lazy check below is belt-and-braces for the in-process fallback.
         """
         import time
 
-        req = self._connect_requests.get(session_id)
+        req = _connect_request_store.get(session_id)
+        if req is None:
+            req = self._connect_requests.get(session_id)
         if not req:
             return None
         if req["expires_at"] < time.time():
             self._connect_requests.pop(session_id, None)
+            _connect_request_store.drop(session_id)
             return None
         return req
 
     def clear_connect_request(self, session_id: str) -> dict | None:
         """Remove the pending request (used on accept/decline/expire)."""
-        return self._connect_requests.pop(session_id, None)
+        shared = _connect_request_store.drop(session_id)
+        local = self._connect_requests.pop(session_id, None)
+        return shared or local
 
     async def notify_connect_request_resolved(
         self,
@@ -1449,6 +1523,27 @@ class ConnectionManager:
             logger.warning(f"Failed to restore visitor state for {session_id}: {e}")
 
     async def _send_to_visitor(self, session_id: str, data: dict):
+        """Deliver to a visitor, wherever their socket lives.
+
+        Local socket first; otherwise hand the frame to the backplane so the
+        process holding it can write. Every existing caller keeps working and
+        gains cross-process delivery without changing, which is why the routing
+        lives behind this name rather than at each of the ~15 call sites.
+
+        The write itself is ``_send_to_visitor_local``. That separation is
+        load-bearing: the backplane's subscriber calls the local variant, so a
+        frame that arrives over Redis is written to the socket instead of being
+        published again — which would loop forever.
+        """
+        if self.visitor_connections.get(session_id) is not None:
+            await self._send_to_visitor_local(session_id, data)
+            return
+
+        from app.services.ws_backplane import publish_to_session
+
+        await publish_to_session(session_id, data)
+
+    async def _send_to_visitor_local(self, session_id: str, data: dict):
         ws = self.visitor_connections.get(session_id)
         if ws:
             try:
@@ -1469,6 +1564,20 @@ class ConnectionManager:
             logger.info(f"No WS for visitor {session_id}, message dropped: {data.get('type', 'unknown')}")
 
     async def _send_to_operator(self, operator_id: int, data: dict):
+        """Deliver to an operator, wherever their socket lives.
+
+        Mirror of ``_send_to_visitor`` — see that docstring for why the routing
+        sits behind the existing name and why the local write is separate.
+        """
+        if self.operator_connections.get(operator_id) is not None:
+            await self._send_to_operator_local(operator_id, data)
+            return
+
+        from app.services.ws_backplane import publish_to_operator
+
+        await publish_to_operator(operator_id, data)
+
+    async def _send_to_operator_local(self, operator_id: int, data: dict):
         ws = self.operator_connections.get(operator_id)
         if ws:
             try:
@@ -1477,30 +1586,107 @@ class ConnectionManager:
                 logger.warning(f"Failed to send to operator {operator_id}: {e}")
                 self.disconnect_operator(operator_id)
 
-    async def _notify_operator_queue(self, operator_id: int):
-        """Send current queue to a specific operator (filtered by department), with visitor metadata."""
-        operator_dept = self._operator_departments.get(operator_id)
-        operator_client_id = self._operator_client_ids.get(operator_id)
+    def _visible_queue_for_operator(self, operator_id: int) -> list[dict]:
+        """Build this operator's visible queue from the DATABASE.
 
-        visible_queue = []
-        for sid in self.waiting_queue:
-            # Tenant scoping first: never surface another workspace's queued
-            # visitor (name/reason/bot) to this operator (audit F03).
-            session_client_id = self._session_client_ids.get(sid)
-            if session_client_id is not None and session_client_id != operator_client_id:
-                continue
-            session_dept = self._session_departments.get(sid)
-            if session_dept is None or operator_dept is None or session_dept == operator_dept:
-                meta = self._session_metadata.get(sid, {})
-                visible_queue.append(
+        Derived from ``ChatSession.status == 'waiting'`` rather than the
+        in-process ``waiting_queue`` list and its three sidecar dicts.
+
+        WHY THE DATABASE, AND NOT REDIS. Above one process the in-memory queue
+        diverges immediately: a handoff served by one worker appends only to that
+        worker's list, so operators connected elsewhere never see the visitor,
+        and a cancellation prunes only the process that handled it. Mirroring
+        four structures into Redis would fix the symptom while keeping two
+        sources of truth. Postgres already maintains ``status`` on every
+        handoff / accept / timeout / leave-queue path — ``live_chat_availability_service``
+        derives queue size the same way for the same reason (audit F33, which
+        found the ``live_chat_queue`` table has no write path at all and is
+        permanently empty). Deriving here removes state rather than relocating it.
+
+        Runs sync SQLAlchemy, so callers must invoke it off the event loop.
+        """
+        with get_session() as db:
+            operator_client_id, operator_dept = self._resolve_operator_scope(operator_id, db)
+            if operator_client_id is None:
+                # Fail closed. An operator whose workspace cannot be established
+                # is never shown a queue — the same stance ``_should_notify_operator``
+                # takes for an unknown operator (audit F03).
+                return []
+
+            rows = db.execute(
+                select(ChatSession, Bot)
+                .outerjoin(Bot, Bot.id == ChatSession.bot_id)
+                .where(ChatSession.status == "waiting")
+            ).all()
+
+            visible: list[dict] = []
+            for chat_session, bot in rows:
+                if not self._queue_row_is_visible(
+                    session_client_id=chat_session.client_id,
+                    session_dept=chat_session.department_id,
+                    operator_client_id=operator_client_id,
+                    operator_dept=operator_dept,
+                ):
+                    continue
+
+                lead = get_lead_info_by_session(db, chat_session.id)
+                visible.append(
                     {
-                        "session_id": sid,
-                        "name": meta.get("name", "Anonymous"),
-                        "reason": meta.get("reason"),
-                        "bot_id": meta.get("bot_id"),
-                        "bot_name": meta.get("bot_name"),
+                        "session_id": chat_session.id,
+                        "name": (lead.name if lead and lead.name else "Anonymous"),
+                        "reason": chat_session.handoff_reason,
+                        "bot_id": chat_session.bot_id,
+                        "bot_name": bot.name if bot else None,
                     }
                 )
+            return visible
+
+    def _resolve_operator_scope(self, operator_id: int, db) -> tuple[int | None, int | None]:
+        """Return ``(client_id, department_id)`` for an operator.
+
+        Local maps first: they are populated when the operator connects to THIS
+        process, so for the common case this costs nothing and needs no query.
+        Falls back to the database for an operator connected elsewhere, which is
+        exactly the case that did not exist before the process split.
+        """
+        client_id = self._operator_client_ids.get(operator_id)
+        dept = self._operator_departments.get(operator_id)
+        if client_id is not None:
+            return client_id, dept
+
+        operator = db.get(Operator, operator_id)
+        if operator is None:
+            return None, None
+        return operator.client_id, operator.department_id
+
+    @staticmethod
+    def _queue_row_is_visible(
+        *,
+        session_client_id: int | None,
+        session_dept: int | None,
+        operator_client_id: int | None,
+        operator_dept: int | None,
+    ) -> bool:
+        """Whether one queued session may be shown to one operator.
+
+        Pure, so the tenant-isolation rules stay unit-testable without a database
+        — these are the checks audit F03 added, and they should be assertable in
+        isolation rather than only through a full query.
+
+        Tenant scoping: a session with no ``client_id`` stays visible, matching
+        the original in-memory check which only skipped on a positive mismatch.
+        Department: either side unset means no filtering.
+        """
+        if session_client_id is not None and session_client_id != operator_client_id:
+            return False
+        return session_dept is None or operator_dept is None or session_dept == operator_dept
+
+    async def _notify_operator_queue(self, operator_id: int):
+        """Send current queue to a specific operator (filtered by department), with visitor metadata."""
+        # Off the event loop: this file had no to_thread usage, so its DB work ran
+        # inline and every queue broadcast stalled the loop for all other sockets.
+        # Same reasoning as the chat-path offload in f0c0ef8.
+        visible_queue = await asyncio.to_thread(self._visible_queue_for_operator, operator_id)
 
         await self._send_to_operator(
             operator_id,
