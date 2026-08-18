@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -25,7 +26,8 @@ import {
   X,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
-import { Button, StatusBadge, cn } from '../../design-system';
+import { Button, DayDivider, StatusBadge, cn } from '../../design-system';
+import { formatDayLabel, isNewDay } from '../../lib/messageDay';
 import type { CannedResponse } from '../../types/domain';
 import type { ActiveChat, OperatorMessage, VisitorPresence } from './liveChatProtocol';
 import { clockTime, initials, isSafeFileUrl } from './liveChatHelpers';
@@ -494,7 +496,18 @@ export function ConversationView({
             No messages yet - say hello.
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.key} message={m} onOpenImage={openImage} />)
+          messages.map((m, index, all) => {
+            // Day divider ("Today / Yesterday / Aug 14") when the calendar day
+            // changes, so a multi-day live conversation stays readable. System
+            // rows carry no timestamp and never trigger a divider.
+            const showDivider = isNewDay(m.timestamp, all[index - 1]?.timestamp);
+            return (
+              <Fragment key={m.key}>
+                {showDivider && <DayDivider label={formatDayLabel(m.timestamp)} />}
+                <MessageBubble message={m} onOpenImage={openImage} />
+              </Fragment>
+            );
+          })
         )}
         {visitorTyping && (
           <div className="flex items-center gap-1.5 px-1 text-[12px] text-[var(--ds-text-muted)]" aria-live="polite">

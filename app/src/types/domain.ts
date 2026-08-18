@@ -232,6 +232,9 @@ export interface ChatMessage {
   role: 'user' | 'bot' | 'operator' | 'system';
   content?: string;
   message?: string;
+  /** The lead-detail API serializes a message's time as `timestamp`; other
+   *  endpoints use `created_at`. Read `timestamp ?? created_at`. */
+  timestamp?: string | null;
   created_at?: string;
   trace_id?: string | null;
 }
