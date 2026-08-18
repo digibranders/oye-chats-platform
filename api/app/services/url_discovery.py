@@ -1,21 +1,35 @@
 """
-Lightweight URL discovery — strictly robots.txt + sitemap.xml.
+Lightweight URL discovery — sitemap-first, with a same-domain link scan.
 
-Used by POST /crawl/discover to count pages before a full crawl starts.
 Does NOT extract page content; only discovers URLs. Intentionally avoids
 Playwright so it completes in a few seconds even for large sites.
 
-Algorithm:
+Two discovery functions, used together by ``POST /crawl/discover`` and by
+``crawl_provider.crawl_website``:
+
+``discover_website_urls`` — strictly robots.txt + sitemap.xml:
   1. Fetch robots.txt → extract Sitemap: directives
   2. Try standard sitemap paths (/sitemap.xml, /sitemap_index.xml) if
      robots.txt declared none
   3. Parse sitemaps (handles sitemap index, two levels deep)
   4. Guarantee the seed URL itself is included in the result so the
      customer's typed entry point is never silently dropped — even when
-     the sitemap omits it. No HTML link-scanning, no BFS expansion: if
-     a page isn't in the sitemap (or wasn't typed by the customer), it
-     won't be discovered or crawled. This matches the contract that
-     ``/crawl/discover`` and the real crawler now both follow.
+     the sitemap omits it.
+  It does no HTML link-scanning of its own; ``Disallow`` rules are honored.
+
+``discover_via_links`` — bounded same-domain ``<a href>`` scan, used as the
+  fallback when the sitemap path yields nothing usable (<= 1 URL). Browser-free
+  and bounded on every axis (depth, pages fetched, URLs returned).
+
+So a page absent from the sitemap can still be discovered, via the link scan.
+Only when NEITHER yields anything — typically a client-rendered SPA whose links
+exist only after JavaScript — does ``crawl_website`` fall back to Spider's
+recursive crawl.
+
+(An earlier version of this docstring claimed "no HTML link-scanning, no BFS
+expansion" as a module-wide contract. That described ``discover_website_urls``
+alone and went stale when ``discover_via_links`` was added; it since misled a
+reader into documenting the product as sitemap-only.)
 
 Also exports ``check_urls_alive`` for the recrawl-diff endpoint, which
 needs an authoritative liveness verdict for previously-stored URLs rather
