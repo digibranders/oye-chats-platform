@@ -9,12 +9,12 @@ dropping the customer's paid seats on plan changes:
    period end. The add-on now rides along with the DEFERRED plan cancel, which
    ``task_execute_pending_cancellations`` issues near period end.)
 2. ``_handle_subscription_activated``'s sibling-cancel sweep (immediate
-   upgrade / resume cutover) — the old seat add-on was never cancelled, and
+   upgrade / resume cutover), the old seat add-on was never cancelled, and
    the new subscription never got one, even if the customer had paid seats.
-3. ``promote_scheduled_change`` (scheduled downgrade cutover) — same gap.
+3. ``promote_scheduled_change`` (scheduled downgrade cutover), same gap.
 
 These tests are regression guards for the fix: seat add-ons must be cancelled
-with the subscription they're attached to — at the same time, not sooner — and
+with the subscription they're attached to, at the same time, not sooner, and
 carried forward (re-created) on any subscription that supersedes it.
 """
 
@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 def _seat_plan_configured():
     """Seat billing is env-only with no baked-in default (``RAZORPAY_SEAT_PLAN_ID``).
     Configure it for the suite so the seat add-on carry/create paths run instead of
-    raising ``RazorpayBillingError`` — mirrors the patch in ``test_razorpay_service``.
+    raising ``RazorpayBillingError``. Mirrors the patch in ``test_razorpay_service``.
     """
     with patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"):
         yield
@@ -176,7 +176,7 @@ def test_cancel_route_defers_the_seat_addon_cancel_with_the_plan(mock_db_session
 
 
 def test_sweep_cancels_the_seat_addon_and_parks_the_count_for_reactivation(mock_db_session):
-    """When the sweep finally runs it cancels both mandates — but stashes the
+    """When the sweep finally runs it cancels both mandates, but stashes the
     seat count as PENDING so a later reactivation can re-mint the add-on instead
     of silently dropping seats the customer bought."""
     from app.services import transition_service
@@ -203,8 +203,8 @@ def test_sweep_cancels_the_seat_addon_and_parks_the_count_for_reactivation(mock_
 
 
 def test_sweep_seat_addon_failure_does_not_block_the_plan_cancel(mock_db_session):
-    """A failing seat-addon cancel must not raise — the plan cancel already
-    succeeded — but it must NOT stamp the marker either.
+    """A failing seat-addon cancel must not raise (the plan cancel already
+    succeeded) but it must NOT stamp the marker either.
 
     The marker is what makes the sweep skip a row. Stamping it after a failed
     seat cancel abandons a live ₹499/seat/month mandate with nothing anywhere
@@ -285,7 +285,7 @@ def test_activation_cancels_old_seat_addon_and_carries_to_new_sub(db):
         rzp._handle_subscription_activated(db, payload)
     db.commit()
 
-    # Old seat add-on was cancelled at the gateway (immediate — cancel_at_cycle_end=0).
+    # Old seat add-on was cancelled at the gateway (immediate. Cancel_at_cycle_end=0).
     addon_cancel_calls = [c for c in fake.subscription.cancel.call_args_list if c.args[0] == "sub_addon_old"]
     assert len(addon_cancel_calls) == 1, fake.subscription.cancel.call_args_list
     assert addon_cancel_calls[0].kwargs["data"] == {"cancel_at_cycle_end": 0}
@@ -456,7 +456,7 @@ def test_promote_scheduled_change_cancels_old_seat_addon_and_carries_notes(db):
 
 def test_promote_scheduled_change_seat_carry_reaches_activation(db):
     """End-to-end: schedule a downgrade with seats, promote it, then feed the
-    resulting checkout's notes through the activation webhook — the new
+    resulting checkout's notes through the activation webhook, the new
     subscription should come out the other side with the seats intact."""
     from app.services import razorpay_service as rzp
     from app.services import transition_service

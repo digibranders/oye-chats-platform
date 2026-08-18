@@ -2,7 +2,7 @@
 
 When a customer trains a bot by crawling their site, the site almost always
 advertises a favicon or an Apple touch icon in its ``<head>``. That mark is a
-ready-made avatar for the bot — so this module fetches the homepage HTML,
+ready-made avatar for the bot, so this module fetches the homepage HTML,
 discovers the best icon it declares, downloads that icon, and returns the raw
 image bytes. The crawl orchestrator then uploads those bytes through the same
 logo pipeline used for a manual upload (square-crop + resize to a 512x512 PNG)
@@ -41,8 +41,8 @@ from app.core.ssrf import fetch_bytes_safely, fetch_text_safely
 logger = logging.getLogger(__name__)
 
 _FETCH_TIMEOUT_S = 10.0
-_MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MB — plenty for a marketing homepage <head>
-_MAX_ICON_BYTES = 2 * 1024 * 1024  # 2 MB — a real app icon is a few dozen KB
+_MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MB (plenty for a marketing homepage <head>
+_MAX_ICON_BYTES = 2 * 1024 * 1024  # 2 MB) a real app icon is a few dozen KB
 _MIN_ICON_BYTES = 48  # anything smaller can't be a decodable image
 
 # Browser-like UA: some CDNs serve an SPA shell (no icon links) to headless UA
@@ -63,7 +63,7 @@ _ICON_REL_PRIORITY = {
     "fluid-icon": 3,
 }
 
-# SVG icons can't be rasterized by the Pillow-based logo pipeline — skip them.
+# SVG icons can't be rasterized by the Pillow-based logo pipeline. Skip them.
 _SVG_HINTS = ("image/svg", ".svg")
 
 
@@ -105,7 +105,7 @@ def _discover_icon_urls(base_url: str, html: str) -> list[str]:
     ``/favicon.ico`` as fallbacks. De-duplicates while preserving rank order.
     """
     soup = BeautifulSoup(html, "html.parser")
-    # (priority, -size, order, absolute_url) — ``order`` keeps the sort stable
+    # (priority, -size, order, absolute_url). ``order`` keeps the sort stable
     # for equal-rank icons so document order breaks ties deterministically.
     candidates: list[tuple[int, int, int, str]] = []
     for order, link in enumerate(soup.find_all("link")):
@@ -135,7 +135,7 @@ def _discover_icon_urls(base_url: str, html: str) -> list[str]:
     candidates.sort()
     ordered = [url for _, _, _, url in candidates]
 
-    # Conventional root fallbacks — appended last so a site with no declared
+    # Conventional root fallbacks. Appended last so a site with no declared
     # icons (or only unusable ones) still resolves something.
     try:
         parsed = urlparse(base_url)
@@ -160,7 +160,7 @@ def _decode_is_valid_image(data: bytes) -> bool:
     """True when ``data`` decodes as a real raster image via Pillow.
 
     Guards against a site serving an HTML error page (or a 1x1 tracking pixel)
-    for a missing icon path — we only want bytes the logo pipeline can process
+    for a missing icon path. We only want bytes the logo pipeline can process
     into a usable avatar.
     """
     try:
@@ -173,7 +173,7 @@ def _decode_is_valid_image(data: bytes) -> bool:
 
 
 # The most candidates we will try for one site. A homepage can declare an
-# unbounded number of <link rel="icon"> tags — 300 tags produced 302
+# unbounded number of <link rel="icon"> tags. 300 tags produced 302
 # sequential candidates at up to 10s each, which is longer than the worker's
 # whole job timeout. Ranked best-first, so a cap costs nothing real.
 _MAX_ICON_CANDIDATES = 6
@@ -184,7 +184,7 @@ def _usable_by_the_avatar_pipeline(data: bytes) -> bool:
 
     Asking the real question, not a proxy for it. `_decode_is_valid_image`
     only checks that Pillow can open it, and Pillow opens plenty the avatar
-    pipeline rejects — ICO above all, which is the single most common favicon
+    pipeline rejects. ICO above all, which is the single most common favicon
     declaration on the web. The old code returned the ICO bytes, which STOPPED
     the candidate loop, so a site declaring `/favicon.ico` got no avatar AND
     never reached the `/apple-touch-icon.png` that would have worked.
@@ -192,11 +192,11 @@ def _usable_by_the_avatar_pipeline(data: bytes) -> bool:
     Answered by RUNNING the pipeline rather than by re-implementing its
     admission rules, because a re-implementation drifts and this one did.
     Reading `ALLOWED_IMAGE_FORMATS` modelled only the first of the pipeline's
-    three rejections and missed the other two — the decompression-bomb guard
+    three rejections and missed the other two, the decompression-bomb guard
     (`MAX_DECODED_PIXELS`) and the decode failure on truncated data with
     `LOAD_TRUNCATED_IMAGES` pinned off. A 9000x9000 solid-colour PNG is 78 KB
     on the wire, sails past the byte cap and past `_decode_is_valid_image`
-    (`verify()` never decompresses), and was declared usable here — which
+    (`verify()` never decompresses), and was declared usable here, which
     STOPPED the candidate loop, exactly the ICO failure again, and then had
     `upload_to_r2` raise on it. The site got no avatar and the perfectly good
     lower-ranked candidate was never tried.
@@ -221,7 +221,7 @@ async def _download_icon(session, url: str) -> bytes | None:
     hop, connects to a pinned pre-validated IP, and rejects an oversized body
     instead of truncating it. The previous version built its own httpx client
     with ``follow_redirects=True`` and validated only the pre-redirect URL, so
-    a customer's site could 302 the crawl worker into the VPC — while its
+    a customer's site could 302 the crawl worker into the VPC. While its
     docstring said redirects were not followed.
     """
     result = await fetch_bytes_safely(session, url, max_bytes=_MAX_ICON_BYTES)
@@ -247,7 +247,7 @@ async def fetch_favicon_image(url: str) -> bytes | None:
     rejection, a JS-only shell with no icons, or a site serving nothing usable
     all return ``None`` without raising.
 
-    Every fetch — the homepage and each icon — goes through the shared SSRF
+    Every fetch (the homepage and each icon) goes through the shared SSRF
     helpers in ``core/ssrf``, so redirects are re-validated per hop and DNS is
     pinned against rebinding.
     """

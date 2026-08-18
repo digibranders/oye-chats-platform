@@ -35,14 +35,14 @@ export function AgentSnapshotCards({
   let knowledgeTone: 'neutral' | 'info' | 'success' | 'warning' | 'danger' = 'neutral';
 
   // Chunks before crawl status (same rule as agent-health.ts): the last
-  // ATTEMPT failing must not report an agent that holds knowledge as broken —
+  // ATTEMPT failing must not report an agent that holds knowledge as broken,
   // it demotes to a warning about that attempt instead.
   if (crawlStatus === 'running') {
     knowledgeStatusText = 'Training now';
     knowledgeTone = 'info';
   } else if (chunkCount > 0) {
     const lastAttemptFailed = crawlStatus === 'failed' || crawlStatus === 'no_content';
-    knowledgeStatusText = lastAttemptFailed ? 'Ready — last training failed' : 'Ready';
+    knowledgeStatusText = lastAttemptFailed ? 'Ready. Last training failed' : 'Ready';
     knowledgeTone = lastAttemptFailed ? 'warning' : 'success';
   } else if (crawlStatus === 'failed' || crawlStatus === 'no_content') {
     knowledgeStatusText = 'Needs attention';

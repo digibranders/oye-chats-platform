@@ -2,7 +2,7 @@
 
 The helper is the single source of truth for the "N days left" count shown
 on the dashboard trial banner and the billing badge. It must round UP so a
-trial with a partial day left never under-counts — the floor-vs-ceil split
+trial with a partial day left never under-counts, the floor-vs-ceil split
 is exactly what caused the banner ("10 days left") and badge ("11 days left")
 to disagree before this helper existed.
 """
@@ -33,7 +33,7 @@ def test_whole_day_is_exact():
 
 
 def test_under_one_day_still_counts_as_one():
-    # A trial expiring in 2 hours still reads "1 day left" — matches how the
+    # A trial expiring in 2 hours still reads "1 day left". Matches how the
     # reminder cron and badge count remaining time.
     trial_end = _NOW + timedelta(hours=2)
     assert trial_days_remaining(trial_end, now=_NOW) == 1

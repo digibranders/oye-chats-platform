@@ -3,7 +3,7 @@
 Two halves, and the second is the one that kept getting skipped:
 
 * the pure ranking/validation helpers and the guarded fetcher, and
-* the WRITE — the orchestrator step that actually mutates a customer's bot row.
+* the WRITE, the orchestrator step that actually mutates a customer's bot row.
 
 The write half used to be covered by ``inspect.getsource()`` substring matches.
 Those assert that a line of source text exists; they pass if the logic is
@@ -101,7 +101,7 @@ def test_decode_is_valid_image_accepts_real_png_rejects_junk():
 
 
 def test_decode_rejects_too_small_image():
-    # 8x8 is below the 16px floor — a tracking pixel, not a usable avatar.
+    # 8x8 is below the 16px floor, a tracking pixel, not a usable avatar.
     assert _decode_is_valid_image(_image_bytes("PNG", (8, 8))) is False
 
 
@@ -114,8 +114,8 @@ def test_decode_rejects_too_small_image():
 
 
 class TestEveryByteComesFromTheGuardedHelpers:
-    """The fix was structural — route both fetches through `core/ssrf`, which
-    re-validates every redirect hop and pins DNS — but "no hand-rolled client"
+    """The fix was structural (route both fetches through `core/ssrf`, which
+    re-validates every redirect hop and pins DNS) but "no hand-rolled client"
     is still observable: sever every direct egress path, leave only the guarded
     helpers working, and check the extractor still produces an icon. If any
     part of it opened its own connection, the severed transport raises.
@@ -137,8 +137,8 @@ class TestEveryByteComesFromTheGuardedHelpers:
 
         # aiohttp funnels every request through `_request`; httpx (what the
         # original version used) through `AsyncClient.send`. `socket.connect`
-        # is the backstop that catches a rewrite using any other client —
-        # requests, urllib, a raw socket — since the guarded helpers are
+        # is the backstop that catches a rewrite using any other client
+        # (requests, urllib, a raw socket) since the guarded helpers are
         # stubbed here and nothing legitimate should reach the network at all.
         monkeypatch.setattr(aiohttp.ClientSession, "_request", _forbidden_async)
         monkeypatch.setattr(socket.socket, "connect", _forbidden)
@@ -156,8 +156,8 @@ class TestEveryByteComesFromTheGuardedHelpers:
 
     @pytest.mark.asyncio
     async def test_the_icon_download_is_guarded_too_not_just_the_homepage(self, monkeypatch):
-        """Guarding only the HTML fetch would still leave the icon URL — which
-        comes straight out of attacker-controlled markup — as an open redirect
+        """Guarding only the HTML fetch would still leave the icon URL (which
+        comes straight out of attacker-controlled markup) as an open redirect
         into private space."""
         from app.services import favicon_extractor
 
@@ -179,7 +179,7 @@ class TestEveryByteComesFromTheGuardedHelpers:
 class TestTheCandidateListIsBounded:
     def test_a_site_declaring_hundreds_of_icons_is_capped(self):
         """300 <link rel="icon"> tags produced 302 sequential candidates at up
-        to 10s each — longer than the worker's entire job timeout, on a crawl
+        to 10s each. Longer than the worker's entire job timeout, on a crawl
         that was already complete and billed."""
         from app.services.favicon_extractor import _MAX_ICON_CANDIDATES, _discover_icon_urls
 
@@ -217,14 +217,14 @@ class TestTheCandidateListIsBounded:
 class TestIcoIsRejectedRatherThanWinning:
     def test_an_ico_the_avatar_pipeline_cannot_use_is_not_accepted(self):
         """`/favicon.ico` is the most common favicon declaration on the web.
-        Pillow opens ICO happily, but `process_image_for_logo` rejects it — so
+        Pillow opens ICO happily, but `process_image_for_logo` rejects it, so
         the old code returned the bytes, STOPPED the candidate loop, and the
         site got no avatar even when `/apple-touch-icon.png` existed and would
         have worked."""
         from app.services.favicon_extractor import _decode_is_valid_image, _usable_by_the_avatar_pipeline
 
         ico = _image_bytes("ICO")
-        assert _decode_is_valid_image(ico) is True, "Pillow does open ICO — that is the trap"
+        assert _decode_is_valid_image(ico) is True, "Pillow does open ICO. That is the trap"
         assert _usable_by_the_avatar_pipeline(ico) is False
 
     def test_a_png_is_accepted(self):
@@ -244,7 +244,7 @@ class TestIcoIsRejectedRatherThanWinning:
         paths, because modelling only the first is how the predicate drifted:
         format (ICO), truncated data, and the decompression-bomb ceiling. A
         9000x9000 solid PNG is ~78 KB, so it passes the byte cap and
-        `_decode_is_valid_image` — `verify()` never decompresses — and used to
+        `_decode_is_valid_image` (`verify()` never decompresses) and used to
         be declared usable here.
 
         Parametrised over `ImageFile.LOAD_TRUNCATED_IMAGES` because it is a
@@ -285,7 +285,7 @@ class TestIcoIsRejectedRatherThanWinning:
         Image.new("L", (9000, 9000), 0).save(buf, format="PNG")
         bomb = buf.getvalue()
 
-        assert _decode_is_valid_image(bomb) is True, "verify() does not decompress — that is the trap"
+        assert _decode_is_valid_image(bomb) is True, "verify() does not decompress. That is the trap"
         assert _usable_by_the_avatar_pipeline(bomb) is False
 
 
@@ -293,7 +293,7 @@ class TestDownloadIconAppliesThePipelineCheck:
     """Testing the predicate is not testing the call site.
 
     Removing the `_usable_by_the_avatar_pipeline` guard from `_download_icon`
-    left the predicate's own tests green — exactly the hole this whole
+    left the predicate's own tests green, exactly the hole this whole
     workstream keeps rediscovering.
     """
 
@@ -345,7 +345,7 @@ def _make_bot(db, bot_id: int, **overrides) -> Bot:
 
 def _reread(db, bot_id: int) -> Bot:
     """Re-read through the fixture session after the code under test committed
-    on a session of its own — otherwise the identity map serves the stale row."""
+    on a session of its own. Otherwise the identity map serves the stale row."""
     db.expire_all()
     return db.get(Bot, bot_id)
 
@@ -375,7 +375,7 @@ class TestTheAvatarWrite:
 
     @pytest.mark.asyncio
     async def test_the_kill_switch_prevents_the_fetch_and_the_write(self, db, monkeypatch):
-        """Off means off: not "fetches but doesn't write" — no egress at all."""
+        """Off means off: not "fetches but doesn't write", no egress at all."""
         bot = _make_bot(db, 8001)
         monkeypatch.setattr(orch, "CRAWL_FAVICON_AVATAR_ENABLED", False)
         fetch = AsyncMock(return_value=_image_bytes("PNG"))
@@ -402,7 +402,7 @@ class TestTheAvatarWrite:
         assert written.bot_logo == _UPLOADED_KEY
         assert written.launcher_logo == _UPLOADED_KEY
         # `avatar_type` is a style selector, not provenance. This can't tell
-        # "never touched" from "reassigned to upload" — they're the same row —
+        # "never touched" from "reassigned to upload" (they're the same row)
         # but it does fail if the write ever puts a different value there,
         # which is the mistake that was made once.
         assert written.avatar_type == "upload"
@@ -453,7 +453,7 @@ class TestTheAvatarWrite:
 
     @pytest.mark.asyncio
     async def test_an_existing_avatar_short_circuits_before_any_network_call(self, db, monkeypatch):
-        """Not merely "doesn't overwrite" — a bot that already has an avatar
+        """Not merely "doesn't overwrite", a bot that already has an avatar
         must cost one indexed lookup and nothing else. This is what makes the
         step affordable on every crawl now that it no longer skips partial
         re-scrapes."""
@@ -471,7 +471,7 @@ class TestTheAvatarWrite:
     async def test_a_non_upload_avatar_type_is_left_alone(self, db, monkeypatch, avatar_type):
         """`bot_logo` empty is NOT "no avatar chosen". `avatar_type` has three
         legal values and a customer who picked Orb has bot_logo NULL, so the
-        old guard passed and then flipped avatar_type to 'upload' — silently
+        old guard passed and then flipped avatar_type to 'upload'. Silently
         replacing a deliberate choice with their favicon. Fixed once; this is
         what keeps it fixed."""
         bot_id = 8005 if avatar_type == "orb" else 8006
@@ -485,7 +485,7 @@ class TestTheAvatarWrite:
         assert written.bot_logo is None
         assert written.launcher_logo is None
         assert written.avatar_type == avatar_type
-        assert fetch.await_count == 0, "an orb/mascot bot can never pass the write guard — don't pay for the fetch"
+        assert fetch.await_count == 0, "an orb/mascot bot can never pass the write guard. Don't pay for the fetch"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("chosen", ["bot_logo", "avatar_type"])
@@ -559,7 +559,7 @@ class TestTheAvatarWrite:
     async def test_a_raising_upload_is_swallowed(self, db, monkeypatch):
         """The reachable R2 failure mode today: `upload_to_r2` re-raises on a
         ClientError, and `process_image_for_logo` raises `UnsupportedImage` for
-        bytes the pipeline won't take — which arrive here straight off a
+        bytes the pipeline won't take, which arrive here straight off a
         customer-controlled host."""
         bot = _make_bot(db, 8013)
 
@@ -576,7 +576,7 @@ class TestTheAvatarWrite:
     async def test_a_falsy_upload_key_is_never_written(self, db, monkeypatch, returned):
         """The `if not logo_key` guard. `upload_to_r2` raises rather than
         returning falsy today, so this pins the guard against a future version
-        that returns an empty key instead — which would otherwise be written
+        that returns an empty key instead, which would otherwise be written
         straight onto the bot and point the widget at nothing.
 
         The empty-string case is what gives this test teeth: with `None`,
@@ -597,7 +597,7 @@ class TestTheAvatarWrite:
     async def test_the_fetched_bytes_are_what_reaches_the_upload(self, db, monkeypatch):
         """The stored key comes from the upload, so the only thing linking the
         avatar to the customer's site is these bytes. Asserts they arrive
-        unmangled and that the real logo pipeline accepts them — the upload is
+        unmangled and that the real logo pipeline accepts them, the upload is
         stubbed here, and a byte path that only ever sees a stub is untested."""
         from app.services.r2_service import process_image_for_logo
 
@@ -698,7 +698,7 @@ class TestTheFaviconStepInsideTheCrawl:
     @pytest.mark.parametrize("ordered_urls", [None, ["https://acme.com/pricing"]])
     async def test_it_runs_for_a_partial_re_scrape_as_well_as_a_full_crawl(self, db, monkeypatch, ordered_urls):
         """The admin panel pre-ticks every discovered page on discovery, so
-        `ordered_urls` is set on essentially every crawl started from it —
+        `ordered_urls` is set on essentially every crawl started from it,
         including a customer's FIRST, which is precisely when the bot has no
         avatar. Gating the favicon step on `ordered_urls` (mirroring the
         footer harvest) made it dead code for the case it exists to serve.
@@ -716,8 +716,8 @@ class TestTheFaviconStepInsideTheCrawl:
     @pytest.mark.asyncio
     async def test_it_runs_only_after_the_terminal_status_is_published(self, db, monkeypatch):
         """It used to sit ABOVE the result payload and the terminal status
-        write. An ARQ cancellation raises CancelledError — a BaseException, so
-        neither handler caught it — on a crawl already fetched, ingested and
+        write. An ARQ cancellation raises CancelledError (a BaseException, so
+        neither handler caught it) on a crawl already fetched, ingested and
         BILLED, leaving the customer's spinner hung forever on completed work.
         """
         bot = _make_bot(db, 8102)
@@ -766,7 +766,7 @@ class TestProvenanceDecidesWhetherToDerive:
 
     A customer who REMOVES their avatar lands in exactly the same row state as
     one who never had one, so the crawl read a deliberate deletion as an empty
-    slot and re-derived the picture they had just deleted — with no way for
+    slot and re-derived the picture they had just deleted, with no way for
     them to say no, because `avatar_type` stays `upload` and the removal was
     never recorded anywhere. `Bot.bot_logo_source` is what makes the two
     distinguishable.
@@ -786,7 +786,7 @@ class TestProvenanceDecidesWhetherToDerive:
     @pytest.mark.asyncio
     async def test_a_removed_avatar_is_not_re_derived(self, db, monkeypatch):
         """The bug this column exists for. Row state is identical to a fresh
-        agent — `bot_logo` NULL, `avatar_type` 'upload' — and only the stamp
+        agent (`bot_logo` NULL, `avatar_type` 'upload') and only the stamp
         distinguishes them."""
         bot = _make_bot(db, 8201, bot_logo=None, bot_logo_source="manual")
         fetch = AsyncMock(return_value=_image_bytes("PNG"))

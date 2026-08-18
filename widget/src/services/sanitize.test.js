@@ -94,7 +94,7 @@ test('sanitizeFileUrl allows only http(s)', () => {
 });
 
 test('sanitizeFileUrl rejects data: URIs (unlike image variant)', () => {
-    // File links never legitimately use data: — even data:image is refused here.
+    // File links never legitimately use data:, even data:image is refused here.
     assert.equal(sanitizeFileUrl('data:image/png;base64,iVBORw0KGgo='), null);
     assert.equal(sanitizeFileUrl('data:application/pdf;base64,AAAA'), null);
 });

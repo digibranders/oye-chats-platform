@@ -5,7 +5,7 @@ Every plan row has declared it since the plans were seeded and nothing read it,
 so the only rule in force was the per-bot billing default in
 ``can_client_add_new_bot``: one agent per account here, every extra agent bought
 through ``POST /bots/checkout``. That made Enterprise (``bots: -1``, unlimited
-agents) unsellable — it behaved exactly like Free.
+agents) unsellable, it behaved exactly like Free.
 
 These tests pin both sides of the gate:
 
@@ -77,7 +77,7 @@ _DENIED = AddBotDecision(allowed=False, reason="upgrade_required", must_subscrib
 
 
 def test_finite_quota_already_used_still_requires_a_paid_subscription(monkeypatch):
-    """A ``bots: 1`` plan with one agent must keep 402-ing — no free second agent."""
+    """A ``bots: 1`` plan with one agent must keep 402-ing, no free second agent."""
     from app.api import bot_routes
 
     session = MagicMock()
@@ -137,7 +137,7 @@ def test_unlimited_quota_still_dedupes_a_same_site_double_submit(monkeypatch):
     """The widened gate must not turn a retry into a second agent.
 
     An unlimited-agents plan takes the ``_plan_bots_limit_allows`` branch, so
-    the create is ALLOWED — which used to skip the same-site idempotency check
+    the create is ALLOWED, which used to skip the same-site idempotency check
     entirely, because that check only guarded the 402. A double-submit on such
     an account wrote a second row for the same website with nothing to catch
     it (there is no unique constraint behind this route).
@@ -161,7 +161,7 @@ def test_unlimited_quota_still_dedupes_a_same_site_double_submit(monkeypatch):
             return_value=_entitlements(UNLIMITED),
         ),
     ):
-        # Bare host on the retry — the same site to ``normalize_domain_input``,
+        # Bare host on the retry, the same site to ``normalize_domain_input``,
         # a different string to any database constraint.
         response = tc.post("/bots", json={"name": "Client Site 12", "website": "client12.com"})
 
@@ -233,7 +233,7 @@ def test_agent_without_a_website_is_never_deduped(monkeypatch):
 
 
 def test_missing_bots_quota_denies_and_leaves_a_support_trail(monkeypatch, caplog):
-    """A contract plan that loses its ``bots`` term fails closed — and says so.
+    """A contract plan that loses its ``bots`` term fails closed, and says so.
 
     ``limit_for`` answers 0 for a missing key, so the widening simply stops and
     the account is pushed back through per-bot checkout. Nothing else about the

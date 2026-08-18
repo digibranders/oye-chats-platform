@@ -130,8 +130,8 @@ def test_dry_run_writes_nothing(db) -> None:
     )
     assert backfill_rows == []
 
-    # A subsequent real run still finds (and now grants) the same shortfall —
-    # proving the dry-run truly left the ledger untouched.
+    # A subsequent real run still finds (and now grants) the same shortfall.
+    # Proving the dry-run truly left the ledger untouched.
     real_result = run_backfill(db, execute=True)
     db.commit()
     assert real_result == {sub.id: 66000}
@@ -159,7 +159,7 @@ def test_annual_subscription_already_fully_granted_is_untouched(db) -> None:
     sub = _make_subscription(db, client, plan, billing_cycle="annual", rzp_id="sub_backfill_already_full")
 
     # Already granted the correct 12x amount for this period (e.g. by
-    # grant_for_subscription post-fix) — shortfall is zero.
+    # grant_for_subscription post-fix). Shortfall is zero.
     credit_service.grant_plan_credits(db, client.id, 72000, note="correct annual grant", bot_id=None)
     db.commit()
 

@@ -256,7 +256,7 @@ export function AddKnowledgePanel({
       setEstimate(result);
       // Pre-tick every discovered page; the user unchecks the ones to skip.
       // Canonicalise first so the seeded selection (and the submitted crawl
-      // list) matches the deduplicated tree exactly — no trailing-slash-style
+      // list) matches the deduplicated tree exactly, no trailing-slash-style
       // duplicates get carried into the request.
       setSelectedUrls(canonicalCrawlUrls(result.urls ?? []));
     } catch (err) {
@@ -324,7 +324,7 @@ export function AddKnowledgePanel({
 
     // Show the customer the credit cost BEFORE we charge them. The preview
     // endpoint extracts + counts words server-side without saving anything
-    // or touching the ledger — if it fails (network hiccup, backend older
+    // or touching the ledger. If it fails (network hiccup, backend older
     // than this feature), fall through to the direct upload path so the
     // panel keeps working.
     setUploadNote(null);
@@ -336,7 +336,7 @@ export function AddKnowledgePanel({
         setPreview(quote);
         return;
       }
-      // Preview unavailable — legacy behaviour: upload directly.
+      // Preview unavailable. Legacy behaviour: upload directly.
       await runUpload(accepted);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
@@ -892,7 +892,7 @@ function CrawlProgress({
 }
 
 /**
- * Cost-preview panel — appears after the user picks files but before any
+ * Cost-preview panel. Appears after the user picks files but before any
  * credits are deducted. Shows per-file word count + credit cost, the total,
  * and the caller's current balance. "Upload for N credits" is the explicit
  * consent; "Cancel" drops the selection with zero side-effects.
@@ -918,15 +918,15 @@ function UploadCostPanel({
     if (!r) return null;
     switch (r) {
       case 'unsupported_type':
-        return 'Unsupported file type — will be skipped';
+        return 'Unsupported file type. Will be skipped';
       case 'oversize_file':
-        return 'Over 10 MB — will be skipped';
+        return 'Over 10 MB. Will be skipped';
       case 'batch_oversize':
-        return 'Batch over 60 MB — will be skipped';
+        return 'Batch over 60 MB. Will be skipped';
       case 'extraction_failed':
-        return 'Could not read text (likely a scanned PDF) — will be skipped, no charge';
+        return 'Could not read text (likely a scanned PDF). Will be skipped, no charge';
       case 'extraction_error':
-        return 'Extraction error — will be skipped, no charge';
+        return 'Extraction error. Will be skipped, no charge';
       default:
         return r;
     }

@@ -36,7 +36,7 @@ const validateMeetingUrl = (url, provider = 'calendly') => {
  * Build the iframe src from a validated URL. Calendly only dispatches
  * postMessage events (including ``calendly.event_scheduled``, which drives our
  * auto-close) when the embed URL carries ``embed_domain`` and
- * ``embed_type=Inline`` — its own widget.js appends these, so a bare URL never
+ * ``embed_type=Inline``, its own widget.js appends these, so a bare URL never
  * fires the event and the panel would stay open after a successful booking.
  * ``hide_gdpr_banner`` also suppresses Calendly's in-frame cookie banner, which
  * otherwise crowds the small widget panel. Other providers load unchanged.
@@ -85,7 +85,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
         if (!safeUrl) return undefined;
         // When the HOST page's CSP has a frame-src that doesn't allow the
         // booking provider, the browser blocks the iframe and renders its own
-        // "content blocked" page — the iframe's load/error events tell us
+        // "content blocked" page, the iframe's load/error events tell us
         // nothing. The document does receive a securitypolicyviolation event,
         // so switch to our error state with the open-in-new-tab escape hatch
         // (new tabs aren't governed by the host page's frame-src).
@@ -129,7 +129,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
         const handleMessage = (event) => {
             // Bind the handler to OUR iframe, not just the provider's origin
             // (audit F42). The host page can embed the same provider elsewhere
-            // (its own Calendly popup, another widget) — those iframes share
+            // (its own Calendly popup, another widget). Those iframes share
             // event.origin, and without the source check their booking events
             // would flip this session to a false "meeting booked" state.
             if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
@@ -209,7 +209,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
             {/* Tap-to-dismiss backdrop (top ~15%) */}
             <div className="flex-[0.15]" onClick={onDismiss} />
 
-            {/* Modal panel — slides up from bottom, ~85% of widget */}
+            {/* Modal panel. Slides up from bottom, ~85% of widget */}
             <div className="flex-[0.85] bg-white rounded-t-2xl border-t border-gray-200 shadow-xl flex flex-col overflow-hidden">
                 <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100 shrink-0">
                     <h3 className="text-sm font-semibold text-gray-800">Book a Meeting</h3>
@@ -247,7 +247,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                                     : 'Could not load the booking page. An ad or privacy blocker may be preventing it.'}
                             </p>
                             <div className="flex items-center gap-2">
-                                {/* Retry is pointless for a CSP block — the policy won't change. */}
+                                {/* Retry is pointless for a CSP block, the policy won't change. */}
                                 {!cspBlocked && (
                                     <button
                                         onClick={handleRetry}
@@ -283,7 +283,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation allow-same-origin"
                     />
                 </div>
-                {/* Manual finish bar — always available. Calendly auto-closes
+                {/* Manual finish bar. Always available. Calendly auto-closes
                     the panel via its ``event_scheduled`` postMessage (see the
                     embed params in buildIframeSrc), but postMessage can be
                     stripped by ad/privacy blockers, Zcal's event API is

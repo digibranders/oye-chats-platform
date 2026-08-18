@@ -1,12 +1,12 @@
-"""``POST /auth/impersonation/redeem`` — turning a minted token into a session.
+"""``POST /auth/impersonation/redeem``. Turning a minted token into a session.
 
 The endpoint is deliberately unauthenticated: the token *is* the credential.
 It exchanges the raw token for the small profile the customer app needs to
-render its impersonation banner — and, critically, never for the Account's
+render its impersonation banner, and, critically, never for the Account's
 permanent ``api_key`` (constraint 3.1 of the design: that credential outlives
 the 30-minute window and ignores ``revoked_at``).
 
-Redemption does not burn the token — the tab may reload, so the token stays a
+Redemption does not burn the token, the tab may reload, so the token stays a
 bearer credential for its remaining life.
 """
 
@@ -74,7 +74,7 @@ def _mk_token(
 def _client(db, monkeypatch) -> TestClient:
     monkeypatch.setattr(auth_routes, "get_session", lambda: _ctx(db))
     app = FastAPI()
-    # /auth/impersonation/redeem is rate-limited — wire slowapi as main.py does
+    # /auth/impersonation/redeem is rate-limited. Wire slowapi as main.py does
     # so the decorated route resolves app.state.limiter under TestClient.
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -84,8 +84,8 @@ def _client(db, monkeypatch) -> TestClient:
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """The redeem limit is per-IP and TestClient always presents the same IP —
-    reset between tests so ordering never produces a spurious 429."""
+    """The redeem limit is per-IP and TestClient always presents the same IP.
+    Reset between tests so ordering never produces a spurious 429."""
     with suppress(Exception):
         limiter.reset()
     yield

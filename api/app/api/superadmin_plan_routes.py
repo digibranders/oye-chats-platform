@@ -1,7 +1,7 @@
 """Super admin plan and subscription management routes.
 
 Full CRUD for pricing plans + subscription overrides.  Plans are the core
-configuration entity — all prices, limits, and features are stored here
+configuration entity. All prices, limits, and features are stored here
 and can be modified at runtime without code changes.
 """
 
@@ -40,7 +40,7 @@ def _validate_included_seats(value: int) -> int:
 
     A plain ``ge=1`` bound made the seeded Enterprise row (unlimited seats)
     unable to round-trip through this editor, while a plain ``ge=-1`` would
-    admit ``0`` — a plan that includes no seats at all, which the seat add-on
+    admit ``0``, a plan that includes no seats at all, which the seat add-on
     floor and MRR maths both treat as a misconfiguration. ``-1`` is therefore
     the ONLY meaningful non-positive value.
     """
@@ -71,8 +71,8 @@ def _plan_monthly_usd_cents(plan: Plan, billing_cycle: str) -> int:
     """Monthly-equivalent USD cents for a plan on a given billing cycle.
 
     Prefers the plan's stored USD column (the exact gateway price) and falls
-    back to converting the INR column only for legacy rows with no USD price —
-    identical precedence to ``PlanModal``'s ``PriceBlock`` on the frontend.
+    back to converting the INR column only for legacy rows with no USD price.
+    Identical precedence to ``PlanModal``'s ``PriceBlock`` on the frontend.
     """
     if billing_cycle == "annual" and (plan.annual_price_cents or plan.annual_price_usd_cents):
         annual_usd, _ = display_price(
@@ -128,7 +128,7 @@ class CreatePlanRequest(BaseModel):
     annual_discount_percent: int | None = Field(None, ge=0, le=100)
     trial_days: int = Field(7, ge=0)
     # Plan config, stored as JSONB. The key sets are product-defined rather
-    # than API contract, so they stay open-ended — but bounded, so the plan
+    # than API contract, so they stay open-ended, but bounded, so the plan
     # table cannot be grown without limit.
     limits: BoundedJsonObject | None = None
     features: BoundedJsonObject | None = None
@@ -161,7 +161,7 @@ class UpdatePlanRequest(BaseModel):
     annual_discount_percent: int | None = Field(None, ge=0, le=100)
     trial_days: int | None = Field(None, ge=0)
     # Plan config, stored as JSONB. The key sets are product-defined rather
-    # than API contract, so they stay open-ended — but bounded, so the plan
+    # than API contract, so they stay open-ended, but bounded, so the plan
     # table cannot be grown without limit.
     limits: BoundedJsonObject | None = None
     features: BoundedJsonObject | None = None
@@ -195,7 +195,7 @@ class UpdateSubscriptionRequest(BaseModel):
 
 class PricingContentRequest(BaseModel):
     # Marketing copy rendered on the public pricing page. Item shape is
-    # content, not contract, so the lists stay untyped — but each is capped so
+    # content, not contract, so the lists stay untyped, but each is capped so
     # the public page cannot be handed an unbounded payload to render.
     faq: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
     feature_matrix: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
@@ -278,7 +278,7 @@ def _reject_seat_price_drift(data: dict) -> None:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Extra seats bill the global seat add-on at ₹{RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100}/mo — set "
+                f"Extra seats bill the global seat add-on at ₹{RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100}/mo. Set "
                 f"extra_seat_price_cents to {RAZORPAY_SEAT_PLAN_PRICE_CENTS} (₹{RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100}) "
                 "or 0 (no paid seats). To change the seat price, mint a new Razorpay seat plan and update the env."
             ),
@@ -288,7 +288,7 @@ def _reject_seat_price_drift(data: dict) -> None:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"International seat price is fixed at ${EXTRA_SEAT_PRICE_USD_CENTS // 100}/mo — set "
+                f"International seat price is fixed at ${EXTRA_SEAT_PRICE_USD_CENTS // 100}/mo. Set "
                 f"extra_seat_price_usd_cents to {EXTRA_SEAT_PRICE_USD_CENTS} or 0."
             ),
         )
@@ -298,8 +298,8 @@ def _resolve_annual_discount(*, monthly_minor: int | None, annual_minor: int | N
     """The ``annual_discount_percent`` a write may store: always the derived one.
 
     Reads serve :func:`app.core.pricing.annual_saving_percent` regardless, so the
-    stored column can no longer publish anything. This keeps it in sync anyway —
-    one number in the row, in the payload and on every surface — rather than
+    stored column can no longer publish anything. This keeps it in sync anyway
+    (one number in the row, in the payload and on every surface) rather than
     leaving a decorative int that quietly disagrees with the prices beside it and
     misleads the next person to query the table.
 
@@ -325,7 +325,7 @@ def _resolve_annual_discount(*, monthly_minor: int | None, annual_minor: int | N
 def _emandate_warnings(plan: Plan) -> list[str]:
     """Every amount this plan can debit in one transaction.
 
-    The check itself is :func:`app.core.pricing.emandate_warning` — shared with
+    The check itself is :func:`app.core.pricing.emandate_warning`. Shared with
     ``scripts/seed_plans.py``, which is the path every real price change has
     actually taken and which used to run no check at all (that is how both
     annual tiers crossed the ceiling unnoticed). Both writers now warn off the
@@ -346,7 +346,7 @@ def _checkout_wiring_warning(plan: Plan) -> str | None:
 
     Deliberately a warning and not a block, for the same reason
     :func:`emandate_warning` is: a listed tier with no plan id is a legitimate,
-    supported state — it is how a contact-sales tier is published — and the
+    supported state (it is how a contact-sales tier is published) and the
     platform degrades cleanly into it (the quote answers
     ``inr_plan_unconfigured`` with a sales address, and the charge path refuses
     in the same shape rather than 500ing).
@@ -355,7 +355,7 @@ def _checkout_wiring_warning(plan: Plan) -> str | None:
     routes mentions gateway wiring: ``CreatePlanRequest.is_active`` defaults to
     ``True`` with every ``razorpay_plan_id_*`` defaulting to ``None``, so the
     single most likely way to create a plan is to publish one no visitor can
-    buy — and the super admin would have had no signal at all.
+    buy, and the super admin would have had no signal at all.
 
     Free tiers are exempt; there is nothing to charge.
     """
@@ -398,7 +398,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
         annual_minor=request.annual_price_cents,
         supplied=request.annual_discount_percent,
     )
-    # F7: dual-rail model — INR in *_cents, USD in *_usd_cents. A non-INR plan
+    # F7: dual-rail model. INR in *_cents, USD in *_usd_cents. A non-INR plan
     # currency has no supported meaning anywhere in the platform.
     if str(request.currency or "INR").upper() != "INR":
         raise HTTPException(
@@ -434,7 +434,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             trial_days=request.trial_days,
             # Explicit literals (N5): reaching into the SQLAlchemy Column.default
             # internals (``Plan.limits.default.arg``) breaks if the default is a
-            # callable or server_default — ``or {}`` is correct and safe.
+            # callable or server_default. ``or {}`` is correct and safe.
             limits=request.limits or {},
             features=request.features or {},
             marketing=request.marketing or {},
@@ -477,8 +477,8 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         # Recomputed on EVERY update, against the prices this edit leaves behind
         # (a partial update may move neither, one, or both). That makes any save
-        # self-heal a row whose stored int predates this rule — seeded
-        # Professional's 22 becomes the true 21 — and makes it impossible to edit
+        # self-heal a row whose stored int predates this rule (seeded
+        # Professional's 22 becomes the true 21) and makes it impossible to edit
         # a price without the advertised discount following it. Resolved BEFORE
         # the Razorpay mint below so a rejected value cannot orphan a gateway plan.
         update_data["annual_discount_percent"] = _resolve_annual_discount(
@@ -493,7 +493,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 p.is_default = False
 
         # F7 guard: the dual-rail model stores INR minor units in *_cents and
-        # USD minor units in *_usd_cents — a Plan row whose own ``currency`` is
+        # USD minor units in *_usd_cents, a Plan row whose own ``currency`` is
         # anything but INR would make the mint below mislabel foreign minor
         # units as paise (and nothing else in the platform supports it). Refuse
         # the edit rather than mint a mandate at the wrong magnitude.
@@ -509,7 +509,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         # Finding B: Razorpay plans are immutable, so a price edit that leaves
         # razorpay_plan_id_* pointing at the old plan makes "displayed != charged"
-        # — the catalog quotes the new price while every new mandate keeps
+        # , the catalog quotes the new price while every new mandate keeps
         # debiting the old one. When a price field changes and the caller didn't
         # also supply a matching new plan id, mint a fresh Razorpay plan and swap
         # the id in the SAME update so the two never diverge. (The discounted-plan
@@ -527,7 +527,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         # failure on the second cycle can't leave the row half-updated. Collect
         # the minted ids and only apply them once BOTH succeed. On any gateway
         # failure, map to a 502 (matching every other RazorpayBillingError site)
-        # and log the orphaned plan ids so they can be reconciled — never leak a
+        # and log the orphaned plan ids so they can be reconciled, never leak a
         # generic 500.
         from app.services import razorpay_service
 
@@ -539,14 +539,14 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 and int(new_price) != int(getattr(plan, price_field) or 0)
                 and id_field not in update_data
             ):
-                # A zero (free) price has no recurring Razorpay plan to mint —
-                # create_plan_for_price rejects a non-positive amount with a
+                # A zero (free) price has no recurring Razorpay plan to mint.
+                # Create_plan_for_price rejects a non-positive amount with a
                 # ValueError that would escape as a 500. Clear the gateway id
                 # instead so "make this tier free" is a clean, supported edit.
                 if int(new_price) <= 0:
                     minted_ids[id_field] = None
                     logger.info(
-                        "Plan %s %s (%s) price set to 0 (free) — clearing Razorpay plan id",
+                        "Plan %s %s (%s) price set to 0 (free). Clearing Razorpay plan id",
                         plan.id,
                         period,
                         rail_currency,
@@ -583,7 +583,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         # JSONB dict fields MERGE instead of replace. The admin editor sends
         # only the keys its typed UI knows about; assigning that payload
-        # wholesale silently deletes every backend-only key — which is exactly
+        # wholesale silently deletes every backend-only key, which is exactly
         # what wiped Starter's max_crawl_* limits and topup_allowed feature in
         # prod (entitlements fail closed, so missing keys read as 0/False and
         # paid customers degrade to Free-tier gates). Merging means the editor
@@ -751,8 +751,8 @@ def update_subscription(
             # manual plan override, and re-scoping the subscription as a side
             # effect would move the customer's credit ledger without anyone
             # asking, and could collide with the client's existing account row on
-            # the ``ix_subscriptions_client_bot_active`` partial unique index —
-            # failing at COMMIT, after the audit log says it succeeded. An admin
+            # the ``ix_subscriptions_client_bot_active`` partial unique index.
+            # Failing at COMMIT, after the audit log says it succeeded. An admin
             # who genuinely wants the move should make the scope change
             # deliberately.
             if sub.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(plan):
@@ -760,7 +760,7 @@ def update_subscription(
                     status_code=400,
                     detail=(
                         f"Subscription {sub.id} is scoped to agent {sub.bot_id}, and the {plan.name} plan "
-                        "includes unlimited AI agents — it sells one pooled credit balance and can only be "
+                        "includes unlimited AI agents, it sells one pooled credit balance and can only be "
                         "billed at account level (bot_id NULL). Move the subscription to account scope first."
                     ),
                 )
@@ -821,7 +821,7 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                 # SEPARATE flat seat add-on (extra_seats × per-seat price).
                 # operator_quantity holds the TOTAL seat count, so the old
                 # `plan_monthly × operator_quantity` double/triple-counted seat
-                # revenue — a 3-seat Standard reported ~$144 instead of ~$58
+                # revenue, a 3-seat Standard reported ~$144 instead of ~$58
                 # (finding K).
                 # UNLIMITED (-1) included seats: the plan price already covers
                 # every seat, so there is never a billable seat add-on.
@@ -833,7 +833,7 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                 if extra_seats:
                     # Finding H3: seats bill the global seat add-on at the canonical
                     # charged price (config.RAZORPAY_SEAT_PLAN_PRICE_CENTS, INR), NOT
-                    # a plan's own extra_seat_price_cents — using the column would
+                    # a plan's own extra_seat_price_cents. Using the column would
                     # overstate/understate MRR whenever the two drift. Report the
                     # amount actually invoiced.
                     mrr_cents += _to_usd_cents(extra_seats * int(RAZORPAY_SEAT_PLAN_PRICE_CENTS or 0), "INR")

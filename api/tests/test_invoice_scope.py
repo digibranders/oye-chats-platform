@@ -1,4 +1,4 @@
-"""Invoice list scoping — an agent with no subscription of its own must show
+"""Invoice list scoping, an agent with no subscription of its own must show
 the ACCOUNT's invoices, mirroring /subscription/current's fallback (F1).
 
 Without this, the Billing page renders an account subscription beside an

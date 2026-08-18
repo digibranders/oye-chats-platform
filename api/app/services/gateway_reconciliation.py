@@ -1,17 +1,17 @@
-"""Daily gateway reconciliation — the blueprint §7 safety net (Wave 3.5).
+"""Daily gateway reconciliation, the blueprint §7 safety net (Wave 3.5).
 
 Report-only diff of Razorpay's view of the money against ours. Every other
 billing safeguard protects a specific path; this job is the catch-all that
 proves, once a day, that nothing slipped between them:
 
 * every **captured gateway payment** in the window has a local invoice, and a
-  plan-charge invoice has its linked credit grant — a missing invoice is
+  plan-charge invoice has its linked credit grant, a missing invoice is
   undocumented revenue (GST exposure), a missing grant is a customer who paid
   and got nothing;
-* every **live gateway subscription** has a live local row — a live mandate
+* every **live gateway subscription** has a live local row, a live mandate
   over a terminal local row keeps DEBITING a customer who gets no service;
-* every **live local gateway-backed row** has a live gateway subscription —
-  service keeps running with no money behind it.
+* every **live local gateway-backed row** has a live gateway subscription.
+  Service keeps running with no money behind it.
 
 Deliberately report-only: reconciliation NEVER mutates money state. Deltas are
 ERROR-logged (Sentry) and persisted to ``reconciliation_runs`` for the
@@ -39,7 +39,7 @@ _LOCAL_LIVE = ("active", "trialing", "past_due")
 # ``authenticated`` is live-by-design: deferred starts (resume cutover, launch
 # promo) sit there until their first charge.
 _GATEWAY_LIVE = ("active", "authenticated", "pending", "halted")
-# Gateway terminal states — the mandate can never charge again.
+# Gateway terminal states, the mandate can never charge again.
 _GATEWAY_DEAD = ("cancelled", "completed", "expired")
 
 # Pagination bounds for the real SDK fetchers: 100 items/page (Razorpay max)
@@ -102,7 +102,7 @@ def run_gateway_reconciliation(
 ) -> dict[str, Any]:
     """Run the diff, persist a ``ReconciliationRun``, and return the report.
 
-    The 48h window overlaps yesterday's run on purpose — the job is idempotent
+    The 48h window overlaps yesterday's run on purpose, the job is idempotent
     (report-only), and an overlap means a cron outage of up to a day loses no
     coverage. A gateway fetch failure becomes its OWN delta rather than an
     exception: a reconciliation that silently didn't look is worse than one
@@ -138,8 +138,8 @@ def run_gateway_reconciliation(
             # Split by attribution: a payment whose notes carry no oyechats_*
             # linkage was not created by this platform (₹1 live smoke tests
             # from CHECKOUT_TEST_CLIENT_IDS driven off a dev DB, dashboard
-            # payment links, manual charges). Those are a SOFT bucket —
-            # reported, WARNING-logged, but not allowed to poison the ERROR
+            # payment links, manual charges). Those are a SOFT bucket.
+            # Reported, WARNING-logged, but not allowed to poison the ERROR
             # alert whose whole value is that it only fires for real deltas.
             def _is_ours(pid: str) -> bool:
                 notes = payments_by_id.get(pid, {}).get("notes") or {}
@@ -154,7 +154,7 @@ def run_gateway_reconciliation(
 
         # A plan charge funds a credit grant; the linked ledger row is the
         # proof the customer got what they paid for. Scoped to kind ==
-        # "plan_charge" — seat/topup/withheld invoices legitimately grant
+        # "plan_charge". Seat/topup/withheld invoices legitimately grant
         # nothing here (topups grant via their own reconcile path), and
         # NULL-kind legacy rows predate reliable linkage.
         plan_charge_ids = [inv.id for inv in invoices if inv.kind == "plan_charge"]
@@ -195,7 +195,7 @@ def run_gateway_reconciliation(
         # Seat add-ons are REAL gateway subscriptions stored in a different
         # column (one plan sub + one seat sub per seated customer). Without
         # this union every live seat mandate would flag as
-        # gateway_sub_without_local on every run — permanent false accusations
+        # gateway_sub_without_local on every run. Permanent false accusations
         # that train people to ignore the alert. The owning row's status
         # stands in for the add-on's local liveness (they live and die
         # together; the orphan sweep owns finer-grained seat auditing).
@@ -226,8 +226,8 @@ def run_gateway_reconciliation(
             deltas["gateway_active_local_terminal"] = zombie
 
         # Local service running on a mandate the gateway says is dead. Rows
-        # whose gateway id was never seen in the listing are NOT flagged —
-        # absence from a paged listing is weaker evidence than a terminal
+        # whose gateway id was never seen in the listing are NOT flagged.
+        # Absence from a paged listing is weaker evidence than a terminal
         # status, and false accusations here train people to ignore the alert.
         dead_backing = [
             rid for rid, status in local_status.items() if status in _LOCAL_LIVE and gw_status.get(rid) in _GATEWAY_DEAD
@@ -237,7 +237,7 @@ def run_gateway_reconciliation(
 
     def _capped(bucket: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # A pathological run must not embed tens of thousands of ids in one
-        # JSONB row / Sentry line — first 100 of each list plus a count marker.
+        # JSONB row / Sentry line. First 100 of each list plus a count marker.
         capped: dict[str, list[Any]] = {}
         for key, values in bucket.items():
             if len(values) > 100:

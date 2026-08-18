@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 
-# AR-43: this predates the Spider.cloud/Jina Reader crawl stack — it was
+# AR-43: this predates the Spider.cloud/Jina Reader crawl stack, it was
 # originally needed for Playwright's subprocess-based browser automation on
 # Windows (removed; the crawler is now pure HTTP against Spider/Jina, no
 # local browser process). Harmless to leave in place for local Windows dev
@@ -102,7 +102,7 @@ _litellm.drop_params = True
 # All three are absent in Langfuse v4 (pinned in pyproject.toml), causing
 # non-blocking errors on every LLM call. The callback is intentionally not
 # registered here (removed in 393a15d, 2026-06-29). RAG pipeline traces are
-# emitted via the Langfuse v4 SDK directly — see app/core/langfuse_client.py
+# emitted via the Langfuse v4 SDK directly. See app/core/langfuse_client.py
 # (start_as_current_observation) and its call sites in llm_service.py /
 # rag_service.py.
 
@@ -112,7 +112,7 @@ def _init_sentry_for_api() -> None:
     created, so that the ASGI integration wraps the finished app.
 
     A function rather than bare module-level statements so the wiring is
-    reachable from a test — ``tests/test_sentry_no_visitor_pii.py`` asserts that both
+    reachable from a test. ``tests/test_sentry_no_visitor_pii.py`` asserts that both
     ``before_send`` and ``before_send_transaction`` point at the scrubber, which
     is the only thing standing between a visitor's IP address and Sentry. Mirrors
     ``app.worker.settings._init_sentry_for_worker``, which is the same call for
@@ -140,10 +140,10 @@ def _init_sentry_for_api() -> None:
         # ran out and Sentry paused ingestion for the whole project, which takes
         # error reporting down with it. Do not re-enable without a paid plan.
         traces_sample_rate=0.1,
-        # PRIVACY — ``send_default_pii=False`` is not enough on its own. It
+        # PRIVACY. ``send_default_pii=False`` is not enough on its own. It
         # suppresses ``user.ip_address`` and ``REMOTE_ADDR``, but the SDK still
         # attaches every request header, and its scrub list does not include
-        # ``CF-Connecting-IP`` — the one header that carries the real visitor
+        # ``CF-Connecting-IP``, the one header that carries the real visitor
         # address behind Cloudflare, and the one ``chat_routes`` reads first.
         # Both hooks are required: Sentry routes transactions past
         # ``before_send`` entirely, and a transaction carries the same request
@@ -208,7 +208,7 @@ app.include_router(superadmin_promotion_router)
 app.include_router(superadmin_v2_router)
 app.include_router(superadmin_ops_router)
 app.include_router(webhook_billing_router)
-# Affiliate program v1 — money-free referral codes + attribution.
+# Affiliate program v1. Money-free referral codes + attribution.
 # Two routers: public/affiliate self-serve, and super-admin management.
 app.include_router(affiliate_router)
 app.include_router(affiliate_superadmin_router)
@@ -223,11 +223,11 @@ app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---
 # Required PostgreSQL extensions must exist BEFORE create_all reaches a table
-# that uses them — ``referral_codes.code`` is CITEXT and ``documents.embedding``
+# that uses them. ``referral_codes.code`` is CITEXT and ``documents.embedding``
 # is pgvector ``vector``. Production runs alembic which already installs these
 # (a1f9c3e6d4b2 for citext, the pgvector migration for vector). But CI + any
 # test environment that imports ``app.main`` bypasses alembic and goes
-# straight to ``create_all`` — that path previously crashed CI with
+# straight to ``create_all``. That path previously crashed CI with
 # ``type "citext" does not exist``. Idempotent on prod (IF NOT EXISTS).
 try:
     with engine.connect() as _conn:
@@ -237,7 +237,7 @@ try:
 except Exception as _ext_err:
     # Not Postgres / insufficient privileges. Skip silently; create_all will
     # surface a clearer error if a required type is missing downstream.
-    logger.warning("Could not ensure pg extensions (%s) — continuing", _ext_err)
+    logger.warning("Could not ensure pg extensions (%s). Continuing", _ext_err)
 
 Base.metadata.create_all(bind=engine)
 
@@ -258,7 +258,7 @@ except Exception as e:
 
 # --- CORS ---
 # Note: allow_credentials=True is incompatible with allow_origins=["*"] per the
-# CORS spec — browsers silently reject the response. When using wildcard origins
+# CORS spec. Browsers silently reject the response. When using wildcard origins
 # (e.g. for an embeddable widget), credentials must be disabled.
 _cors_origins = get_cors_origins()
 _cors_origin_regex = get_cors_origin_regex()
@@ -271,7 +271,7 @@ app.add_middleware(
     allow_headers=["*"],
     # The dashboard is served from a different origin than this API, so a
     # response header is invisible to its JavaScript unless it is explicitly
-    # exposed — Content-Disposition is not on the CORS-safelist. File exports
+    # exposed. Content-Disposition is not on the CORS-safelist. File exports
     # (the per-agent report CSV) name themselves server-side, including the
     # reporting window; without this the browser reads no filename at all and
     # the download lands as an opaque blob.
@@ -300,25 +300,25 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
 def _llm_ready() -> bool:
-    """Cheap LLM-path import check — catches a hollow-namespace litellm install.
+    """Cheap LLM-path import check. Catches a hollow-namespace litellm install.
 
     The 2026-07-01 outage was a partial ``uv sync`` that left litellm as a
     hollow namespace package (missing ``__init__.py``): ``import litellm``
-    succeeded, so the app booted, but ``litellm.completion`` was absent — every
+    succeeded, so the app booted, but ``litellm.completion`` was absent. Every
     chat 500'd while ``/health`` stayed green because it never touched the LLM
     path. This verifies the already-imported litellm module still exposes its
-    public completion API. It is a local attribute check — **not** a network or
-    paid LLM call — so it is safe to run on every health hit without caching.
+    public completion API. It is a local attribute check (**not** a network or
+    paid LLM call) so it is safe to run on every health hit without caching.
 
     This alone does **not** detect a live provider outage (revoked key, billing
-    block, provider downtime) — see :func:`_llm_probe` for that.
+    block, provider downtime). See :func:`_llm_probe` for that.
     """
     return hasattr(_litellm, "completion")
 
 
 # TTL-cached real LLM completion probe. A cheap import check (``_llm_ready``)
 # cannot detect a revoked API key, a provider billing block, or a provider
-# outage — the 2026-07-07 ~4h production incident (OpenAI `insufficient_quota`)
+# outage, the 2026-07-07 ~4h production incident (OpenAI `insufficient_quota`)
 # ran the whole time with `/health/full` reporting healthy, because the only
 # check was the import-attribute probe above. This makes one real, tiny,
 # same-model completion call and caches the result so polling health endpoints
@@ -328,7 +328,7 @@ _LLM_PROBE_TTL_SECONDS = float(os.getenv("HEALTH_LLM_PROBE_TTL_SECONDS", "30"))
 _LLM_PROBE_TIMEOUT_SECONDS = float(os.getenv("HEALTH_LLM_PROBE_TIMEOUT_SECONDS", "3"))
 # 1 is too low for some reasoning-capable models (e.g. gpt-5.4-mini), which
 # spend part of the completion-token budget on internal reasoning tokens and
-# raise BadRequestError before emitting visible output — a false-negative
+# raise BadRequestError before emitting visible output, a false-negative
 # "unhealthy" for a perfectly healthy model. 16 leaves headroom for that.
 _LLM_PROBE_MAX_TOKENS = int(os.getenv("HEALTH_LLM_PROBE_MAX_TOKENS", "16"))
 _llm_probe_lock = threading.Lock()
@@ -336,7 +336,7 @@ _llm_probe_cache: dict = {"ts": 0.0, "ok": True, "detail": None}
 
 
 def _llm_probe() -> tuple[bool, str | None]:
-    """Real, TTL-cached LLM readiness probe — a live completion call, not an import check.
+    """Real, TTL-cached LLM readiness probe, a live completion call, not an import check.
 
     Returns ``(ok, detail)``. ``detail`` is ``None`` on success, or a short
     error string (exception type + message, truncated) on failure. Skips the
@@ -344,7 +344,7 @@ def _llm_probe() -> tuple[bool, str | None]:
     hollow litellm install can't make a completion call anyway.
     """
     if not _llm_ready():
-        return False, "litellm.completion missing — partial/namespace install"
+        return False, "litellm.completion missing. Partial/namespace install"
 
     now = time.monotonic()
     with _llm_probe_lock:
@@ -377,7 +377,7 @@ def _llm_probe() -> tuple[bool, str | None]:
 
 def _fallback_count_1h() -> int | None:
     """Rolling count of primary->fallback LLM degradations in the last hour
-    (AR-16) — surfaced here so a flaky primary provider recovering silently
+    (AR-16). Surfaced here so a flaky primary provider recovering silently
     via fallback on every request is visible in `/health/full` instead of
     only discoverable by manually inspecting logs or the safety-net-metrics
     endpoint. Returns None (not 0) if the counter can't be read, so callers
@@ -393,7 +393,7 @@ def _fallback_count_1h() -> int | None:
 
 # Invoicing v2's flags default ON, so the SELLER PROFILE is the real activation
 # gate (``invoice_service.finalize_invoice``). An unset profile silently turns
-# every charge into an un-numbered legacy row with no tax document — invisible
+# every charge into an un-numbered legacy row with no tax document. Invisible
 # until a customer or a CA asks for an invoice. Surfaced here so it is
 # monitorable. Deliberately NOT folded into ``fully_ok``: it is a configuration
 # gap, not an outage, and must not page oncall as "API down".
@@ -443,10 +443,10 @@ def _gather_health() -> tuple[dict, bool, bool]:
     """Collect subsystem health.
 
     Returns ``(payload, ready_to_serve, fully_ok)``:
-      - ``ready_to_serve`` — DB + Redis reachable; the API can serve chats.
+      - ``ready_to_serve``. DB + Redis reachable; the API can serve chats.
         Deliberately excludes the LLM signal so ``/health`` (the LB / deploy
         readiness gate) keeps its DB+Redis-only response-code semantics.
-      - ``fully_ok`` — ``ready_to_serve`` **and** worker alive (or intentionally
+      - ``fully_ok``. ``ready_to_serve`` **and** worker alive (or intentionally
         disabled via ``WORKER_ENABLED=false``) **and** the litellm completion
         API is importable. A hollow-litellm install (see :func:`_llm_ready`)
         flips ``fully_ok`` to False so ``/health/full`` 503s and pages oncall,
@@ -508,7 +508,7 @@ def _gather_health() -> tuple[dict, bool, bool]:
                 pass
 
     # -- LLM readiness check --
-    # Real, TTL-cached completion call — see _llm_probe docstring. Falls back
+    # Real, TTL-cached completion call. See _llm_probe docstring. Falls back
     # to the cheap import check's failure mode/message when the probe itself
     # short-circuits on a hollow litellm install.
     llm_ok, llm_detail = _llm_probe()
@@ -542,11 +542,11 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "fallback_count_1h": _fallback_count_1h(),
         },
         "pool": pool_stats,
-        # Chat concurrency gate (backpressure) — in-flight vs the configured
+        # Chat concurrency gate (backpressure), in-flight vs the configured
         # ceiling, plus how many requests have queued/been shed. Observability
-        # signal, not an outage signal — excluded from fully_ok.
+        # signal, not an outage signal. Excluded from fully_ok.
         "chat_gate": chat_gate.stats(),
-        # Configuration signal, not an outage signal — excluded from fully_ok.
+        # Configuration signal, not an outage signal. Excluded from fully_ok.
         "billing": (_cached_billing_readiness() if db_ok else {"invoicing_active": False, "reason": "db unreachable"}),
         "version": "1.0.0",
     }
@@ -569,7 +569,7 @@ def health_check():
     reachable). Returns **503** only when one of those is down. Worker
     status is reported in the body for ops visibility but does **not**
     gate the response code: a degraded worker means BANT extraction and
-    async email pause, while chats themselves still work — failing the
+    async email pause, while chats themselves still work. Failing the
     deploy gate or load-balancer probe in that case would cause
     user-visible downtime that wasn't there.
 
@@ -596,7 +596,7 @@ def health_check_full():
     """Comprehensive health check including the worker.
 
     Returns **200** only when DB + Redis + worker are all green. Returns
-    **503** if any subsystem is degraded — including a missing worker
+    **503** if any subsystem is degraded, including a missing worker
     heartbeat. Use this for alerting that should page on partial
     degradation; use ``/health`` for deploy gates and load-balancer
     probes that must not flap on transient worker hiccups.
@@ -672,7 +672,7 @@ async def _bind_notification_broadcaster_loop():
     except Exception:
         logger.exception("Failed to bind notification broadcaster loop")
 
-    # Cross-process live-chat delivery. No-op unless WS_BACKPLANE_ENABLED — see
+    # Cross-process live-chat delivery. No-op unless WS_BACKPLANE_ENABLED. See
     # app/services/ws_backplane.py for why this exists and why it is off by
     # default. Started here rather than at import so it binds to the running loop.
     try:
@@ -759,7 +759,7 @@ _ALLOWED_FILE_PREFIXES = ("logos/", "chat-files/")
 # */javascript or */xml) must NEVER be listed here: served inline from the app
 # origin they enable stored XSS. Everything not listed is sent as an attachment
 # with nosniff below (defense in depth alongside r2_service content-type
-# neutralization — NB-1).
+# neutralization. NB-1).
 _INLINE_SAFE_TYPES = frozenset(
     {
         "image/png",

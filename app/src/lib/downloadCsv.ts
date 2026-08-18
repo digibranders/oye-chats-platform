@@ -3,7 +3,7 @@
  *
  * Shared rather than per-feature because getting a CSV to open correctly is
  * three non-obvious details, and every export needs all three. A copy that
- * misses one fails quietly — in a spreadsheet on someone else's machine, which
+ * misses one fails quietly, in a spreadsheet on someone else's machine, which
  * is the worst place to discover it. Pairs with `csvSafe` in `./csvSafe`:
  * that one decides what goes in the file, this one decides how it leaves.
  */
@@ -24,7 +24,7 @@ const UTF8_BOM = '\ufeff';
  * not:
  *
  * 1. The BOM. Without it Excel decodes the file in the system codepage, so
- *    every Devanagari, Tamil or accented character in it renders as garbage —
+ *    every Devanagari, Tamil or accented character in it renders as garbage,
  *    which on this product's market is most of a typical export.
  * 2. `charset=utf-8` on the MIME type, for the consumers that read it.
  * 3. Attaching the anchor to the document before clicking it. Firefox ignores

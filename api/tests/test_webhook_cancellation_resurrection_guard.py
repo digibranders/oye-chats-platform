@@ -1,5 +1,5 @@
 """A canceled/expired subscription must never be silently resurrected by a
-stray, out-of-order, or redelivered webhook — and the per-period grant
+stray, out-of-order, or redelivered webhook, and the per-period grant
 marker must be monotonic, not exact-equality, so a replayed OLDER event
 can't regress it and trigger a second grant.
 
@@ -8,7 +8,7 @@ Scenarios:
 1. ``subscription.charged`` arrives for a subscription the customer already
    cancelled (a charge in flight at the moment of cancel, or simple
    out-of-order delivery). Real money moved, so the invoice is still
-   recorded — but the subscription must stay cancelled and no fresh
+   recorded, but the subscription must stay cancelled and no fresh
    credits are granted.
 2. ``subscription.activated`` (also reached via the ``subscription.resumed``
    alias) arrives for an existing local row that is already
@@ -115,7 +115,7 @@ def test_charged_after_cancellation_records_invoice_but_does_not_reactivate(db):
     assert "not reactivated" in result or "not granting" in result
     db.refresh(sub)
     assert sub.status == "canceled"
-    assert sub.last_granted_period_end == JAN_END  # unchanged — no grant happened
+    assert sub.last_granted_period_end == JAN_END  # unchanged, no grant happened
 
     # The captured payment is still recorded for reconciliation/refund.
     inv = db.query(Invoice).filter_by(razorpay_payment_id="pay_guard_charged").one()
@@ -168,7 +168,7 @@ def test_expired_subscription_also_protected(db):
 
 
 def test_active_subscription_still_reactivates_and_grants_normally(db):
-    """Regression guard: the new check must not block the legitimate case —
+    """Regression guard: the new check must not block the legitimate case,
     an ACTIVE (or past_due) subscription's charged/activated events still
     work exactly as before."""
     client = _client(db, "guard-active-control@e.com")

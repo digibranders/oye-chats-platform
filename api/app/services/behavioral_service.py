@@ -1,4 +1,4 @@
-"""Behavioral scoring — scores visitor engagement signals from the widget."""
+"""Behavioral scoring. Scores visitor engagement signals from the widget."""
 
 from __future__ import annotations
 

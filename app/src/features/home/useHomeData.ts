@@ -96,7 +96,7 @@ async function loadHomeData(scopedBotId: number | null): Promise<HomeData> {
       }
     }
   } catch {
-    // Supplementary data only — keep the dashboard rendering without seat tallies.
+    // Supplementary data only. Keep the dashboard rendering without seat tallies.
   }
 
   // Per-agent fan-out. Each call is independently resilient so one bad agent

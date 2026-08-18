@@ -1,4 +1,4 @@
-"""Outbound webhooks are a paid feature — enforced at DELIVERY time, not just
+"""Outbound webhooks are a paid feature. Enforced at DELIVERY time, not just
 at registration.
 
 ``webhook_routes`` gates webhook CREATION on the ``webhooks`` plan feature, but
@@ -94,7 +94,7 @@ def test_downgraded_plan_skips_webhook_dispatch(db, fire_against):
 
 
 def test_paid_plan_still_dispatches_webhook(db, fire_against):
-    """A plan WITH the ``webhooks`` feature must still queue the delivery — the
+    """A plan WITH the ``webhooks`` feature must still queue the delivery, the
     gate must not break the happy path."""
     bot_id = _setup(db, "has-webhooks@example.com", webhooks_enabled=True)
 

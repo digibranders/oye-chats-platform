@@ -2,7 +2,7 @@
 
 Every case here is an input the server must REFUSE. They are grouped by the
 bypass class they exercise rather than by endpoint, because the same class of
-malformed input reaches many endpoints through the same shared types — a
+malformed input reaches many endpoints through the same shared types, a
 regression in ``app.schemas.validators`` shows up as a whole group failing,
 which points at the cause faster than one red test per route would.
 
@@ -14,7 +14,7 @@ Two properties these tests are deliberately checking for, beyond "it 4xx'd":
   endpoint "handled" it.
 * **The refusal happens at the boundary.** Where a handler also re-checks a
   value, the test asserts the request never reached the code that would have
-  used it — see ``TestFileUploadMetadata`` and the WebSocket frame tests.
+  used it. See ``TestFileUploadMetadata`` and the WebSocket frame tests.
 """
 
 import json
@@ -81,7 +81,7 @@ class TestIdentifierType:
             "../../etc/passwd",  # path traversal
             "sess/../other",  # separator
             "sess id",  # whitespace
-            "sess\nid",  # CRLF — log injection / header smuggling shape
+            "sess\nid",  # CRLF. Log injection / header smuggling shape
             "sess\x00id",  # NUL
             "señor",  # non-ASCII
             "",  # empty
@@ -132,7 +132,7 @@ class TestEmailType:
         assert _rejects(_Probe, email=value)
 
     def test_normalises_case_and_surrounding_space(self):
-        # Canonicalisation of the same address — not a rewrite into a
+        # Canonicalisation of the same address, not a rewrite into a
         # different one, which is the line this module draws.
         assert _Probe(email="  User@Example.COM  ").email == "user@example.com"
 
@@ -180,7 +180,7 @@ class TestHexColorType:
     @pytest.mark.parametrize(
         "value",
         [
-            "red",  # named colour — not the documented format
+            "red",  # named colour, not the documented format
             "rgb(255,0,0)",
             "#2563EB; background: url(//evil)",  # CSS declaration injection shape
             "#12345",  # wrong digit count
@@ -200,7 +200,7 @@ class TestNumericBounds:
     @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
     def test_rejects_non_finite_floats(self, value):
         # ``json.loads`` accepts NaN / Infinity literals, so these really do
-        # arrive over the wire — a NaN in a double column breaks every
+        # arrive over the wire, a NaN in a double column breaks every
         # consumer that later serialises the row back to JSON.
         assert _rejects(_Probe, seconds=value)
 
@@ -297,8 +297,8 @@ class TestBehavioralSignalsBody:
         assert _rejects(BehavioralSignalsRequest, session_id="s-1", pages_viewed=-5)
 
     def test_rejects_unbounded_journey_array(self):
-        # The sanitiser would have kept the first 200 and discarded the rest —
-        # after iterating all of them. Refusing up front is the difference
+        # The sanitiser would have kept the first 200 and discarded the rest.
+        # After iterating all of them. Refusing up front is the difference
         # between a 422 and a 100k-iteration loop per request.
         assert _rejects(
             BehavioralSignalsRequest,
@@ -569,7 +569,7 @@ class TestWebSocketFrameValidation:
 def _widget_client():
     """A TestClient whose bot auth is satisfied, so 422s come from the schema.
 
-    Registers the SAME ``RequestValidationError`` handler ``app.main`` does —
+    Registers the SAME ``RequestValidationError`` handler ``app.main`` does,
     without it these tests would exercise FastAPI's default handler and miss
     what the deployed one actually returns.
     """
@@ -603,7 +603,7 @@ class TestDirectApiCallsBypassingTheFrontend:
     @pytest.mark.parametrize("literal", [b"Infinity", b"-Infinity", b"NaN"])
     def test_behavioral_signals_rejects_a_raw_non_finite_literal(self, literal):
         # Sent as raw bytes: ``json.dumps`` refuses to emit these, but
-        # ``json.loads`` — which is what Starlette decodes the body with —
+        # ``json.loads`` (which is what Starlette decodes the body with)
         # accepts all three, so they are reachable from any non-Python client.
         #
         # This must be a clean 422. It used to be a 500: the value reached the
@@ -648,7 +648,7 @@ class TestDirectApiCallsBypassingTheFrontend:
         assert client.get("/chat/lead-info/..%2F..%2Fetc%2Fpasswd").status_code == 404
 
     def test_oversized_path_parameter_is_refused_by_the_schema(self):
-        # Stays within one path segment, so it DOES match the route — and is
+        # Stays within one path segment, so it DOES match the route, and is
         # then rejected by ``SessionId`` rather than becoming a DB lookup.
         client = _widget_client()
         assert client.get("/chat/lead-info/" + "a" * 500).status_code == 422
@@ -687,7 +687,7 @@ class TestDirectApiCallsBypassingTheFrontend:
         assert res.status_code == 422
 
     def test_alternate_content_type_does_not_skip_validation(self):
-        # A body sent as text/plain must not sidestep the model — it either
+        # A body sent as text/plain must not sidestep the model, it either
         # parses and validates, or it is refused. What it must never do is
         # reach the handler unvalidated.
         client = _widget_client()

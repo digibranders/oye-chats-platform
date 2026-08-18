@@ -1,7 +1,7 @@
 """Per-bot reporting rollups.
 
-Answers "what did each of my bots do in this window?" — credits spent,
-conversations held, leads captured — for one account, one row per bot that
+Answers "what did each of my bots do in this window?" (credits spent,
+conversations held, leads captured) for one account, one row per bot that
 showed any activity.
 
 The agency tier is the reason this exists: one account runs many client
@@ -9,13 +9,13 @@ sites off a **shared** credit pool, and the owner has to hand each of their
 own clients a number. A pooled deduction lands in the client-level ledger
 (``credit_ledger.bot_id IS NULL``), so grouping on the ledger *scope* would
 collapse every agency client's spend into one anonymous bucket. Spend is
-therefore grouped on ``attributed_bot_id`` — the reporting-only column that
+therefore grouped on ``attributed_bot_id``, the reporting-only column that
 records which bot actually spent the credits regardless of which ledger paid.
 See the column docstring in ``app.db.models.CreditLedger``: balance maths
 must keep keying off ``bot_id``, and reporting must keep keying off
 ``attributed_bot_id``. Never swap them.
 
-Strictly read-only — nothing here writes to the ledger.
+Strictly read-only, nothing here writes to the ledger.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from app.db.models import Bot, ChatSession, CreditLedger, LeadInfo
 # ``_CONSUMPTION_REASONS`` in ``app.api.subscription_routes`` (the Usage page's
 # trend + breakdown) so the two surfaces never quote different numbers for the
 # same window. Deliberately excludes plan_grant (grants + monthly resets),
-# topup, refund, expiry, and manual_adjust — none of which are consumption.
+# topup, refund, expiry, and manual_adjust. None of which are consumption.
 #
 # Copied rather than imported: this is the service layer and that is the API
 # layer, so importing upward would invert the dependency. ``test_reporting_rollup``
@@ -94,7 +94,7 @@ def _leads_by_bot(session: Session, *, client_id: int, since: datetime, until: d
     """Leads captured per bot in the window.
 
     ``LeadInfo`` carries its own ``created_at``, so the lead is dated by when
-    contact details were captured rather than by when the conversation opened —
+    contact details were captured rather than by when the conversation opened,
     a session that starts on the 31st and converts on the 1st belongs to the
     month it converted in.
     """
@@ -122,7 +122,7 @@ def get_per_bot_rollup(
 
     Each row is ``{"bot_id", "bot_name", "credits_spent", "conversations",
     "leads"}``. Bots with no credits, no conversations and no leads in the
-    window are omitted entirely — an agency report should list the clients
+    window are omitted entirely, an agency report should list the clients
     that did something, not every bot ever created. Sorted by credits spent,
     descending, with ``bot_id`` as a stable tie-breaker.
 

@@ -1,9 +1,9 @@
-"""ARQ task functions — executed by the background worker process.
+"""ARQ task functions. Executed by the background worker process.
 
 Each function receives an ARQ context dict as the first argument (``ctx``),
 followed by the task-specific arguments. Functions must be async.
 
-Naming convention: ``task_<action>`` — matches the string used in
+Naming convention: ``task_<action>``. Matches the string used in
 ``enqueue("task_<action>", ...)``.
 """
 
@@ -40,7 +40,7 @@ async def task_ingest_documents(ctx: dict, client_id: int, folder_path: str, bot
 
     logger.info("task_ingest_documents: client_id=%d, folder=%s, bot_id=%s", client_id, folder_path, bot_id)
 
-    # run_folder_ingestion is synchronous — run in executor to avoid blocking
+    # run_folder_ingestion is synchronous, run in executor to avoid blocking
     loop = asyncio.get_running_loop()
     count = await loop.run_in_executor(
         None,
@@ -77,11 +77,11 @@ async def task_crawl_and_ingest(
 
     The trailing ``max_depth`` / ``concurrency`` params are plan-aware crawl
     knobs added with the per-tier limits work. They're defaulted so jobs
-    enqueued by an older API node (mid-rolling-deploy) still execute — they'll
+    enqueued by an older API node (mid-rolling-deploy) still execute. They'll
     just use the subprocess env defaults instead of the caller's plan-tier
     values. ``**_unused_kwargs`` swallows legacy ``js_max_pages`` payloads
     enqueued by API nodes deployed before the route layer began clamping
-    ``max_pages`` to the JS tier directly — keeps a rolling deploy safe.
+    ``max_pages`` to the JS tier directly. Keeps a rolling deploy safe.
 
     Returns the same payload that the legacy synchronous ``POST /crawl``
     used to return (so it's also visible via ``GET /ingest/status/{job_id}``
@@ -143,7 +143,7 @@ async def task_ingest_web_batch(
 
     logger.info("task_ingest_web_batch: client_id=%d, pages=%d, bot_id=%s", client_id, len(pages), bot_id)
 
-    # ARQ stamps a stable job_id that survives retries — use it as the crawl
+    # ARQ stamps a stable job_id that survives retries. Use it as the crawl
     # idempotency scope so a retried batch never re-charges pages it billed on
     # the first attempt (finding H).
     crawl_job_id = ctx.get("job_id")
@@ -176,11 +176,11 @@ async def task_ingest_web_batch(
 # AR-44: how many batches run concurrently in task_reembed_all_documents.
 # Each embed_chunks() call is itself internally concurrent (a ThreadPoolExecutor
 # inside gemini_embedding.py), but consecutive BATCHES previously ran strictly
-# sequentially — batch N+1 waited for batch N's full embed+commit even though
+# sequentially. Batch N+1 waited for batch N's full embed+commit even though
 # the network-bound embed calls could overlap under the same project-wide
 # rate limiter (embed_rate_limiter paces requests regardless of how many
 # concurrent callers there are, so widening this is safe, not just faster).
-# Kept small — this is an offline backfill task, not latency-sensitive; the
+# Kept small. This is an offline backfill task, not latency-sensitive; the
 # win is fewer idle gaps waiting on one batch's DB round-trip while the next
 # batch's embed call could already be in flight.
 _REEMBED_CONCURRENT_BATCHES = 3
@@ -188,7 +188,7 @@ _REEMBED_CONCURRENT_BATCHES = 3
 
 async def _reembed_one_batch(batch_ids: list[int]) -> tuple[int, int]:
     """Embed + persist one batch of documents. Returns (succeeded, failed)
-    counts for this batch — never raises; a batch-level failure is caught
+    counts for this batch, never raises; a batch-level failure is caught
     and counted as fully failed so one bad batch doesn't abort the run.
     """
     import asyncio
@@ -210,7 +210,7 @@ async def _reembed_one_batch(batch_ids: list[int]) -> tuple[int, int]:
         embeddings = await asyncio.to_thread(embed_chunks, contents)
     except Exception as exc:
         logger.error(
-            "task_reembed_all_documents: batch starting id=%d failed — %s: %s",
+            "task_reembed_all_documents: batch starting id=%d failed - %s: %s",
             batch_ids[0],
             type(exc).__name__,
             exc,
@@ -236,7 +236,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     for every document that has a NULL embedding (i.e. all rows post-migration).
 
     Batches run in windows of ``_REEMBED_CONCURRENT_BATCHES`` concurrently
-    (AR-44) rather than strictly one at a time — safe because the shared
+    (AR-44) rather than strictly one at a time. Safe because the shared
     project-wide embed rate limiter paces actual request volume regardless
     of how many concurrent batches are in flight.
 
@@ -279,7 +279,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
         )
 
     logger.info(
-        "task_reembed_all_documents: complete — total=%d succeeded=%d failed=%d",
+        "task_reembed_all_documents: complete. Total=%d succeeded=%d failed=%d",
         total,
         succeeded,
         failed,
@@ -292,7 +292,7 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
 
     Documents are stored one chunk per row (``documents.content`` +
     ``documents.embedding``). Super-admin "reindex" recomputes the chunk's
-    vector with the current embedding provider — useful after a provider /
+    vector with the current embedding provider, useful after a provider /
     dimension change or when a row's embedding is stale or NULL.
 
     Returns a summary dict the ARQ result store keeps for status polling.
@@ -321,7 +321,7 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
         embeddings = await asyncio.to_thread(embed_chunks, [content])
     except Exception as exc:
         logger.error(
-            "task_reembed_document: embedding failed for document %d — %s: %s",
+            "task_reembed_document: embedding failed for document %d - %s: %s",
             document_id,
             type(exc).__name__,
             exc,
@@ -376,8 +376,8 @@ async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot
 
     ``/chat/lead-capture`` is authenticated by the widget's bot key, which is
     embedded in customer pages and therefore public, and is rate-limited at
-    10/min per key. The resolution charges only for an ANSWER — deliberately,
-    so nobody pays for the many visitors whose domain names no employer — so
+    10/min per key. The resolution charges only for an ANSWER (deliberately,
+    so nobody pays for the many visitors whose domain names no employer) so
     an unresolvable domain costs the caller nothing. Posting fresh session ids
     with random domains therefore bought unlimited crawls at roughly 70s of one
     worker each (two crawl legs, then an LLM), against a ``max_workers=3`` pool
@@ -390,7 +390,7 @@ async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot
     visitor-facing enrichment needs. It also gets retries and survives a
     restart.
 
-    It does NOT by itself stop an attacker burning our own crawl quota — that
+    It does NOT by itself stop an attacker burning our own crawl quota. That
     is a cost question rather than an availability one, bounded by the existing
     rate limit, and is tracked separately.
 
@@ -414,7 +414,7 @@ async def task_process_webhook_retries(ctx: dict) -> int:
 
     Replaces the old daemon thread retry worker. Runs every 30s via ARQ cron.
     ``process_pending_retries`` is synchronous (DB + HTTP), so it runs in an
-    executor (L-1) — inline it blocked the worker's event loop and delayed
+    executor (L-1). Inline it blocked the worker's event loop and delayed
     every other queued job for the duration of the sweep.
     """
     import asyncio
@@ -432,7 +432,7 @@ async def task_process_webhook_retries(ctx: dict) -> int:
 
 
 async def task_gateway_reconciliation(ctx: dict) -> int:
-    """Daily cron: the blueprint §7 safety net — diff Razorpay against local
+    """Daily cron: the blueprint §7 safety net. Diff Razorpay against local
     money state and ERROR on any delta. Report-only; see
     ``services.gateway_reconciliation`` for what each delta means. Returns the
     delta count (0 = clean)."""
@@ -486,7 +486,7 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.commit()
                 total += len(batch_ids)
 
-            # Reconciliation run reports: keep 180 days — enough to answer
+            # Reconciliation run reports: keep 180 days. Enough to answer
             # "when did this delta first appear", nothing depends on them.
             from app.db.models import ReconciliationRun
 
@@ -497,7 +497,7 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
             session.commit()
             total += int(recon_deleted or 0)
 
-            # Funnel telemetry ages out too (90d — the superadmin view caps
+            # Funnel telemetry ages out too (90d, the superadmin view caps
             # its window at 90). Same batched pattern; prunable by design.
             from app.db.models import BillingFunnelEvent
 
@@ -537,7 +537,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     Two important behaviours:
 
     1. **Catch-up**: the query matches every sub whose ``current_period_end``
-       is in the past, not just "today" — so a sub that fell behind because
+       is in the past, not just "today", so a sub that fell behind because
        the worker was down for days still gets exactly one renewal here
        (we advance one period and stop; the next run will catch the rest).
        The old "== today_utc" filter caused free subs to silently freeze
@@ -569,7 +569,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 session.execute(
                     select(Subscription).where(
                         # ``trialing`` is deliberately excluded: trials never
-                        # "renew" — the hourly expiry cron owns them. Including
+                        # "renew", the hourly expiry cron owns them. Including
                         # them handed a lapsed trial a free full-plan grant in
                         # the 00:05→00:15 window before expiry flipped it (and
                         # a free month every day if the expiry cron broke).
@@ -596,7 +596,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 try:
                     # Period length matches the subscription's billing cycle.
                     # The old code hard-coded ``1`` here, which silently renewed
-                    # annual subscriptions every month — twelve credit grants
+                    # annual subscriptions every month. Twelve credit grants
                     # per paid year and a customer-facing billing surprise.
                     # ``billing_cycle`` is normalised to ``"monthly"`` /
                     # ``"annual"`` at sub creation; anything else falls through
@@ -608,7 +608,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     # captured invoice near the boundary (Razorpay may debit up
                     # to ~2 days early for e-mandate execution windows). With no
                     # invoice we grant NOTHING and leave the period un-rolled so
-                    # the row re-matches tomorrow — granting on elapsed time
+                    # the row re-matches tomorrow. Granting on elapsed time
                     # alone handed out unbounded free service whenever webhooks
                     # were down AND the charge had actually failed (F2). If the
                     # charge truly failed, the pending/halted webhook flips the
@@ -623,7 +623,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                                 Invoice.status == "paid",
                                 Invoice.paid_at.is_not(None),
                                 Invoice.paid_at >= sub.current_period_end - timedelta(days=2),
-                                # PLAN charges only — seat add-on invoices stamp
+                                # PLAN charges only. Seat add-on invoices stamp
                                 # the main sub's id but pay for seats, and a
                                 # withheld charge explicitly funded nothing. A
                                 # ₹449 seat debit must not evidence a full plan
@@ -638,7 +638,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                         if paid is None:
                             logger.warning(
                                 "task_renew_due_subscriptions: no captured payment for gateway "
-                                "subscription %s (client %s) period ending %s — grant withheld, "
+                                "subscription %s (client %s) period ending %s. Grant withheld, "
                                 "will re-check next run",
                                 sub.id,
                                 sub.client_id,
@@ -649,13 +649,13 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     # Grant this period's credits at most once, keyed on the
                     # per-scope + per-period marker the webhook path uses
                     # (``last_granted_period_end``). CRITICAL: key on the NEW
-                    # period end — the same value ``subscription.charged`` uses
+                    # period end, the same value ``subscription.charged`` uses
                     # (Razorpay's ``current_end``). Keying on the OLD end left
                     # the marker behind the webhook's value, so a delayed
                     # redelivery re-ran reset+grant for a period this cron had
                     # already granted, wiping the customer's consumption (P1-3).
                     granted = credit_service.grant_subscription_period_once(session, sub, new_period_end)
-                    # Roll the period forward — without this the cron re-matches
+                    # Roll the period forward, without this the cron re-matches
                     # the same row every day.
                     sub.current_period_start = sub.current_period_end
                     sub.current_period_end = new_period_end
@@ -685,7 +685,7 @@ async def task_execute_pending_cancellations(ctx: dict) -> int:
     (``cancel_at_period_end``) and leaves the mandate live, because Razorpay has
     no un-cancel: cancelling at the gateway on click destroyed the mandate ~30
     days early and forced "Reactivate" to mint a fresh subscription that
-    Razorpay starts and charges immediately — a second payment for days the
+    Razorpay starts and charges immediately, a second payment for days the
     customer had already bought. This cron closes the loop, issuing the
     irreversible cancel only once the paid period is nearly over.
 
@@ -694,12 +694,12 @@ async def task_execute_pending_cancellations(ctx: dict) -> int:
     before anything considers renewing it.
 
     ``execute_gateway_cancellation`` is idempotent on
-    ``gateway_cancel_executed_at``, so a re-run — or a row ``/cancel`` already
-    handled inline — is a no-op rather than a double cancel.
+    ``gateway_cancel_executed_at``, so a re-run (or a row ``/cancel`` already
+    handled inline) is a no-op rather than a double cancel.
 
     Backstop: if this cron is down long enough for Razorpay to debit the next
     cycle anyway, ``_handle_subscription_charged`` catches the charge, cancels
-    immediately, withholds the credit grant and logs for refund — so the worst
+    immediately, withholds the credit grant and logs for refund, so the worst
     case is bounded at one cycle rather than an open-ended subscription.
 
     Returns the number of subscriptions cancelled at the gateway this run.
@@ -741,7 +741,7 @@ async def task_execute_pending_cancellations(ctx: dict) -> int:
                     # Without it this cron races ``/subscriptions/resume``: resume
                     # asks Razorpay "is the mandate live?", we cancel it and stamp
                     # the marker, and resume then clears ``cancel_at_period_end``
-                    # against a mandate that is now dead — the row promises a
+                    # against a mandate that is now dead, the row promises a
                     # renewal that will never happen, which is the exact lie the
                     # whole two-field design exists to prevent. Re-reading the row
                     # under the lock also drops it if resume won the race.
@@ -920,7 +920,7 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
     Razorpay's ``subscription.completed`` webhook is the canonical trigger;
     this cron is a safety net for webhook outages and for the manual
     legacy paths that don't emit ``completed`` cleanly. Both routes call into
-    ``transition_service.promote_scheduled_change``, which is idempotent — if
+    ``transition_service.promote_scheduled_change``, which is idempotent. If
     the webhook already promoted the row the cron's match-set is empty.
 
     Runs daily a few minutes after the renewal cron so we don't race a
@@ -947,7 +947,7 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
                     select(Subscription).where(
                         # Scope tightly to rows that still carry a queued change.
                         # This is what lets us safely re-include ``canceled``
-                        # rows below without resurrecting ordinary cancels — a
+                        # rows below without resurrecting ordinary cancels, a
                         # promoted row has already had its scheduled trio cleared.
                         Subscription.scheduled_plan_id.is_not(None),
                         Subscription.scheduled_change_at.is_not(None),
@@ -976,8 +976,8 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
                     # cleared schedule + seat retirement BEFORE its gateway
                     # create; without the rollback the end-of-loop commit
                     # persisted that half-promotion (downgrade silently
-                    # destroyed, no replacement checkout, no re-auth email) —
-                    # deterministic for USD-rail rows while
+                    # destroyed, no replacement checkout, no re-auth email).
+                    # Deterministic for USD-rail rows while
                     # INTL_PAYMENTS_ENABLED is off (IntlPaymentsDisabled).
                     session.rollback()
                     logger.exception(
@@ -1026,7 +1026,7 @@ async def task_prune_stale_events(ctx: dict) -> int:
     within the retention window, or whose start date is more than that same
     window in the past.
 
-    Runs daily. Idempotent — a subsequent run over the same DB state deletes
+    Runs daily. Idempotent, a subsequent run over the same DB state deletes
     zero rows. Retention is controlled by ``config.EVENT_RETENTION_DAYS``.
     """
     import asyncio
@@ -1051,14 +1051,14 @@ async def task_prune_stale_events(ctx: dict) -> int:
 # ── Worker Heartbeat ────────────────────────────────────────────────────────
 
 WORKER_HEARTBEAT_KEY = "oyechats:worker:heartbeat"
-WORKER_HEARTBEAT_TTL = 120  # seconds — 2× the cron interval, so a missed tick
+WORKER_HEARTBEAT_TTL = 120  # seconds. 2× the cron interval, so a missed tick
 #                              is still healthy but two missed ticks flag dead.
 
 
 async def task_worker_heartbeat(ctx: dict) -> bool:
     """Cron task: write a freshness marker to Redis every 30s.
 
-    The API ``/health`` endpoint reads this key — if it's missing or stale,
+    The API ``/health`` endpoint reads this key. If it's missing or stale,
     the worker is considered unhealthy and the deploy/monitor can alert.
     """
     from datetime import UTC, datetime
@@ -1090,7 +1090,7 @@ async def task_send_email(
 
     from app.services.email_service import _send_brevo_email, redact_email
 
-    # PRIVACY — the recipient can be a visitor (the chat follow-up in
+    # PRIVACY, the recipient can be a visitor (the chat follow-up in
     # lead_routes, the offline-message reply), and Sentry's LoggingIntegration
     # turns this INFO record into a breadcrumb on the next event the worker
     # reports. The domain survives, which is what makes a delivery problem
@@ -1106,7 +1106,7 @@ async def task_send_email(
     )
 
     if not result:
-        # Brevo failed (usually transient). ARQ only retries on Retry — a plain
+        # Brevo failed (usually transient). ARQ only retries on Retry, a plain
         # raise is marked permanently failed, silently dropping the email
         # (audit F13). Defer with backoff; max_tries (3) bounds the attempts.
         from arq.worker import Retry
@@ -1130,7 +1130,7 @@ async def task_send_template_email(
 
     from app.services.email_service import _send_brevo_template, redact_email
 
-    # PRIVACY — see ``task_send_email`` above.
+    # PRIVACY. See ``task_send_email`` above.
     logger.info("task_send_template_email: to=%s, template=%d", redact_email(to_email), template_id)
 
     loop = asyncio.get_running_loop()
@@ -1153,14 +1153,14 @@ async def task_send_template_email(
 #
 # Three crons keep the free-trial flow honest:
 #
-# * ``task_expire_trials``           — hourly. Flips trialing → trial_expired
+# * ``task_expire_trials``          . Hourly. Flips trialing → trial_expired
 #                                      the moment ``trial_end`` lapses, sets
 #                                      the 15-day data retention timestamp,
 #                                      fires the "trial ended" email.
-# * ``task_trial_reminder_emails``   — daily. Sends day-7 / day-11 / day-13
+# * ``task_trial_reminder_emails``  . Daily. Sends day-7 / day-11 / day-13
 #                                      reminders to every trialing customer,
 #                                      idempotent via ``trial_emails_sent``.
-# * ``task_delete_expired_trial_data`` — daily. Hard-deletes bots / docs /
+# * ``task_delete_expired_trial_data``. Daily. Hard-deletes bots / docs /
 #                                      sessions for trial_expired subs once
 #                                      ``data_retention_until`` is reached.
 #
@@ -1170,7 +1170,7 @@ async def task_send_template_email(
 
 
 def _mark_marker(sub, field: str, key: str, when) -> None:
-    """Idempotency marker — set ``<field>[key] = ts`` on a JSONB column.
+    """Idempotency marker. Set ``<field>[key] = ts`` on a JSONB column.
 
     The target column is explicit because ``Subscription`` now carries TWO
     independent marker maps (``trial_emails_sent`` and ``dunning_emails_sent``).
@@ -1200,7 +1200,7 @@ def _mark_dunning_sent(sub, key: str, when) -> None:
 async def task_expire_trials(ctx: dict) -> int:
     """Cron: flip trialing subscriptions whose ``trial_end`` has lapsed.
 
-    Idempotent — the ``status`` filter naturally excludes already-expired
+    Idempotent, the ``status`` filter naturally excludes already-expired
     rows on the next tick. The "trial ended" email fires once per
     subscription (gated by ``trial_emails_sent.trial_ended``); if the
     Brevo call fails the cron retries on the next tick.
@@ -1285,7 +1285,7 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
     Marker keys (``day_7``, ``day_11``, ``day_13``) are preserved from
     the previous 14-day cadence so historical subscriptions with those
     slots already set on ``trial_emails_sent`` aren't spammed a second
-    time after this rescale ships. The trigger — ``days_remaining`` —
+    time after this rescale ships. The trigger (``days_remaining``)
     is what changed.
 
     Returns the number of emails sent across all subscriptions.
@@ -1331,7 +1331,7 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
                 if trial_end.tzinfo is None:
                     trial_end = trial_end.replace(tzinfo=UTC)
                 # ceil so a trial that ends in 0.5 days still counts as
-                # "1 day left" rather than 0 — keeps the day-13 warning
+                # "1 day left" rather than 0. Keeps the day-13 warning
                 # accurate when fired in the customer's morning.
                 seconds_left = (trial_end - now).total_seconds()
                 if seconds_left <= 0:
@@ -1397,7 +1397,7 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
     ChatMessage, LeadInfo, BANTSignal, etc.) and mark the Client as
     deactivated so it never appears in any "active customers" report.
 
-    The Client row itself stays — we keep the email and the deletion
+    The Client row itself stays. We keep the email and the deletion
     marker for support / audit. A future GDPR-erasure endpoint can
     fully purge it on explicit request.
 
@@ -1441,10 +1441,10 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
                 # paid plan during the retention window, they should have had
                 # this trial_expired row canceled at activation
                 # (razorpay_service.py account-level activation branch). If
-                # for any reason the cancel didn't happen — a lost webhook, a
+                # for any reason the cancel didn't happen, a lost webhook, a
                 # manual DB fix that recreated the row, a future code path
                 # that inserts without going through the standard activation
-                # — we must NOT delete a paying customer's workspace. Bail
+                # . We must NOT delete a paying customer's workspace. Bail
                 # out and null the retention marker so this row stops
                 # triggering the cron; a human can investigate the orphan.
                 has_active_sibling = session.execute(
@@ -1457,7 +1457,7 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
                 ).first()
                 if has_active_sibling is not None:
                     logger.warning(
-                        "task_delete_expired_trial_data: skipping delete for client %s — "
+                        "task_delete_expired_trial_data: skipping delete for client %s. "
                         "trial_expired sub %s co-exists with an active subscription. "
                         "Nulling data_retention_until to stop re-firing; investigate the orphan.",
                         owner.id,
@@ -1504,7 +1504,7 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
     point ``status = 'past_due'`` keeps the customer's full access so a
     rescued card resumes service without interruption. After
     ``PAYMENT_FAILED_GRACE_DAYS`` we stop bleeding LLM / credit cost on a
-    customer who isn't paying — the same ``expired`` status the gates and
+    customer who isn't paying, the same ``expired`` status the gates and
     the widget already understand kicks them out of write paths and into
     polite-offline mode on visitor traffic.
 
@@ -1529,7 +1529,7 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
 
 
 def _expire_past_due_cycle(session) -> int:
-    """One expiry pass. Extracted from the cron so it is directly testable —
+    """One expiry pass. Extracted from the cron so it is directly testable,
     the state change is load-bearing and the suspension email is not, and that
     ordering needs a test rather than a promise."""
     from datetime import UTC, datetime, timedelta
@@ -1547,8 +1547,8 @@ def _expire_past_due_cycle(session) -> int:
         session.execute(
             select(Subscription).where(
                 Subscription.status == "past_due",
-                # Rows without a stamped anchor — webhook-only legacy
-                # data — are NOT touched here. They'll get the
+                # Rows without a stamped anchor (webhook-only legacy
+                # data) are NOT touched here. They'll get the
                 # anchor on the next payment-failed event and the
                 # cron picks them up from there.
                 Subscription.past_due_since.is_not(None),
@@ -1558,11 +1558,11 @@ def _expire_past_due_cycle(session) -> int:
         .scalars()
         .all()
     )
-    # Pass 1 — the load-bearing state change, committed BEFORE any network I/O.
+    # Pass 1, the load-bearing state change, committed BEFORE any network I/O.
     # Razorpay and Brevo calls take seconds each; if the job were killed (ARQ
     # job_timeout) or the final commit failed midway, a single trailing commit
     # would roll the whole expiry back while the suspension emails had already
-    # gone out — customers told their agents are offline while still fully
+    # gone out. Customers told their agents are offline while still fully
     # entitled, and re-told tomorrow.
     from app.services.knowledge_state_service import deactivate_bot_knowledge
 
@@ -1583,7 +1583,7 @@ def _expire_past_due_cycle(session) -> int:
         flipped += 1
     session.commit()
 
-    # Pass 2 — best-effort notification. Each success is committed on its own
+    # Pass 2. Best-effort notification. Each success is committed on its own
     # so one bad row cannot cost another its marker.
     from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
 
@@ -1591,7 +1591,7 @@ def _expire_past_due_cycle(session) -> int:
         if (sub.dunning_emails_sent or {}).get(SUSPENDED_MARKER):
             continue
         # A downgrade re-auth grace row that lapsed is NOT a failed-payment
-        # suspension — the customer chose to downgrade and simply never
+        # suspension, the customer chose to downgrade and simply never
         # re-authorized. The Pass-1 flip above already dropped them to Free;
         # sending a "your <plan> subscription was suspended" email here would be
         # wrong copy (and there is no mandate to build a recovery link from).
@@ -1612,7 +1612,7 @@ def _expire_past_due_cycle(session) -> int:
             ):
                 _mark_dunning_sent(sub, SUSPENDED_MARKER, now)
                 session.commit()
-        except Exception:  # noqa: BLE001 — the expiry is what must survive
+        except Exception:  # noqa: BLE001  the expiry is what must survive
             # rollback() before continuing: a failed flush would otherwise
             # poison the session and take out every remaining row.
             session.rollback()
@@ -1642,21 +1642,21 @@ def _suspension_recovery_url(sub) -> str | None:
 #
 # Two tasks drive the push pipeline:
 #
-# * ``task_dispatch_handoff_push`` — runs immediately when a visitor enters
+# * ``task_dispatch_handoff_push``. Runs immediately when a visitor enters
 #   the live-chat queue. Picks eligible operators (right department + under
 #   max_concurrent_chats) who are NOT currently watching the dashboard via
 #   WebSocket, and fans out a "new chat waiting" push to every subscription
 #   they own. Also schedules its own ``task_handoff_escalation`` so a
 #   black-holed chat doesn't leave the visitor staring at a spinner forever.
 #
-# * ``task_handoff_escalation`` — runs deferred (e.g. +20s). If the session
+# * ``task_handoff_escalation``. Runs deferred (e.g. +20s). If the session
 #   is still in ``waiting`` (no operator accepted), it cancels remaining
 #   notifications on the operators' devices (tag-replace with "Chat ended")
 #   so they don't tap a stale alert later. The visitor's queue-timeout
 #   handler (``LiveChatService._start_timeout``) drives the actual fallback
 #   UX; this task is purely cleanup.
 #
-# * ``task_send_visitor_message_email`` — fires when a visitor messages a
+# * ``task_send_visitor_message_email``. Fires when a visitor messages a
 #   session that has no operator assigned (status="waiting"). Debounced by a
 #   per-session marker in Redis so a chatty visitor doesn't flood the inbox.
 
@@ -1709,7 +1709,7 @@ async def task_dispatch_handoff_push(
             # ``manager.operator_connections``. The ARQ worker runs in a
             # different process than the API, so its ``manager`` singleton
             # is a fresh instance whose ``operator_connections`` map is
-            # always empty — which used to make this filter a no-op and
+            # always empty, which used to make this filter a no-op and
             # every online operator got both a WS toast AND a push.
             connected = get_online_operator_ids(bot.client_id)
 
@@ -1725,7 +1725,7 @@ async def task_dispatch_handoff_push(
             operators = db.execute(q).scalars().all()
 
             # Operators watching the dashboard already got the in-page toast, so
-            # web push would duplicate it — but a browser toast is invisible on a
+            # web push would duplicate it, but a browser toast is invisible on a
             # phone, so Expo push must still go out. Presence therefore mutes one
             # transport, not the operator. (A mobile client holds its WebSocket
             # open while backgrounded, so "connected" says nothing about whether
@@ -1748,7 +1748,7 @@ async def task_dispatch_handoff_push(
             total = 0
             for op in operator_targets:
                 total += send_push_to_operator(db, op.id, payload, tag=tag, web=op.id not in connected, expo=True)
-            # Also fan out to the workspace owner — small teams where the
+            # Also fan out to the workspace owner. Small teams where the
             # client login is the primary chat-taker rely on this to get
             # notified at all. The owner isn't tracked in ``operator_connections``
             # the same way operators are; we always push and let the SW's
@@ -1762,7 +1762,7 @@ async def task_dispatch_handoff_push(
             db.commit()
             if total == 0:
                 logger.info(
-                    "Handoff push delivered nothing for session=%s — no subscribers off-WS",
+                    "Handoff push delivered nothing for session=%s, no subscribers off-WS",
                     session_id,
                 )
             return total
@@ -1782,7 +1782,7 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
 
     Asymmetric-timeout design (visitor 30s / operator no-hard-limit):
 
-    The visitor's wait is capped at ~30s — they either get an operator or fall
+    The visitor's wait is capped at ~30s. They either get an operator or fall
     through to the offline form. The operator's on-device notification, by
     contrast, is allowed to **persist** (``requireInteraction=true`` in the SW)
     so a late-arriving operator can still tap it minutes later. This task
@@ -1800,7 +1800,7 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
       audit purposes; nothing to act on.
 
     Returns True when cleanup fired, False when the chat was already accepted
-    (operator beat the timeout — no notification update needed).
+    (operator beat the timeout, no notification update needed).
     """
     import asyncio
 
@@ -1822,7 +1822,7 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
             cs = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
             if cs is None or cs.status not in {"waiting", "closed"}:
                 # Operator accepted (status="live") or the session reverted to
-                # bot mode — nothing to clean up.
+                # bot mode, nothing to clean up.
                 return False
 
             # Did the visitor end up leaving an offline message? The widget
@@ -1845,7 +1845,7 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
                     "session_id": session_id,
                     "offline_message_id": offline_msg.id,
                     # SW reads ``click_url`` and navigates here on tap. Same
-                    # origin only — the SW's notificationclick handler validates
+                    # origin only, the SW's notificationclick handler validates
                     # this is a relative path before opening / focusing a tab.
                     "click_url": f"/support?tab=messages&message_id={offline_msg.id}",
                 }
@@ -1880,10 +1880,10 @@ async def task_send_visitor_message_email(
 ) -> bool:
     """Email the operator team when a waiting visitor sends a message.
 
-    Caller is expected to have already debounced this — we don't re-check.
+    Caller is expected to have already debounced this. We don't re-check.
     Recipients come from the bot's ``handoff_request`` notification list, the
     same routing used previously for handoff emails. If the session has been
-    accepted (status != "waiting") by the time this runs, we skip — the
+    accepted (status != "waiting") by the time this runs, we skip, the
     operator's already in the conversation.
     """
     import asyncio
@@ -1916,7 +1916,7 @@ async def task_send_visitor_message_email(
                 contact = {"name": lead.name, "email": lead.email, "phone": lead.phone}
             reply_to = getattr(bot, "reply_to_email", None)
             # Reuse the existing handoff-request template but with the visitor's
-            # *actual message* as the reason — that's the whole signal a real
+            # *actual message* as the reason. That's the whole signal a real
             # human is waiting to talk, not a stalled queue entry.
             for recipient in recipients:
                 send_handoff_request_email(
@@ -1942,7 +1942,7 @@ async def task_dispatch_transfer_push(
     """Push notify an operator who just had a chat transferred to them.
 
     Only fires when the target operator is NOT reachable via WebSocket per
-    Redis presence — otherwise the ``chat_accepted`` WS frame emitted inline by
+    Redis presence. Otherwise the ``chat_accepted`` WS frame emitted inline by
     ``live_chat_service.transfer_chat`` already handled the alert. Presence
     lookup is cross-process, so this works whether the transfer originated in
     the same gunicorn worker as the target's WS or a different one.
@@ -2003,7 +2003,7 @@ async def task_dispatch_offline_message_push(
     """Fan out a Web Push when a visitor submits the offline form.
 
     Complements the existing email fan-out in ``offline_message_routes.submit``
-    so operators get a real-time OS notification too — otherwise an out-of-hours
+    so operators get a real-time OS notification too. Otherwise an out-of-hours
     lead sits silently in the inbox until someone thinks to look. Push routes
     the operator to ``/support?tab=messages&message_id=<id>`` on tap.
 
@@ -2083,7 +2083,7 @@ async def task_dispatch_offline_message_push(
             db.commit()
             if total == 0:
                 logger.info(
-                    "Offline-message push delivered nothing for message=%d — no subscribers off-WS",
+                    "Offline-message push delivered nothing for message=%d, no subscribers off-WS",
                     offline_message_id,
                 )
             return total
@@ -2101,7 +2101,7 @@ async def task_dispatch_offline_message_push(
 # ── Invoicing v2: PDF rendering sweep (Phase 4) ──────────────────────────────
 #
 # Indirection points (module-level so tests can substitute them): the sweep is
-# a self-healing cron rather than a per-webhook enqueue — any invoice that
+# a self-healing cron rather than a per-webhook enqueue. Any invoice that
 # finalizes gets its PDF within one sweep interval, failures retry for free on
 # the next tick, and nothing threads through the payment transaction.
 
@@ -2125,7 +2125,7 @@ def _probe_pdf_renderer() -> None:
     clear error instead of 25 per-invoice stack traces every 5 minutes that
     read like data bugs.
     """
-    import weasyprint  # noqa: F401 — import raises OSError when pango is missing
+    import weasyprint  # noqa: F401  Import raises OSError when pango is missing
 
 
 def _render_invoice_pdf(invoice) -> bytes:
@@ -2150,7 +2150,7 @@ def _stored_invoice_pdf_bytes(invoice) -> bytes | None:
     """Fetch the PUBLISHED invoice PDF bytes from R2, or None if unreadable.
 
     The object key embeds a random capability token (see ``_invoice_pdf_key``),
-    so it cannot be re-derived from the invoice number — it must be parsed
+    so it cannot be re-derived from the invoice number, it must be parsed
     from the stored ``pdf_url``. The body stream is always closed.
     """
     from contextlib import closing
@@ -2172,7 +2172,7 @@ def _stored_invoice_pdf_bytes(invoice) -> bytes | None:
 def _invoice_pdf_key(invoice_number: str) -> str:
     """R2 object key for an invoice PDF.
 
-    Serials are sequential, and the bucket is served from a public CDN — a
+    Serials are sequential, and the bucket is served from a public CDN, a
     predictable key would make every customer's invoice enumerable. A random
     token turns the URL into an unguessable capability (the Stripe
     hosted-invoice pattern). Slashes in the legal serial are folded to dashes.
@@ -2214,7 +2214,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
         _probe_pdf_renderer()
     except Exception:  # noqa: BLE001
         logger.error(
-            "task_render_invoice_pdfs: PDF renderer unavailable (weasyprint/pango missing?) — "
+            "task_render_invoice_pdfs: PDF renderer unavailable (weasyprint/pango missing?). "
             "skipping sweep; install libpango on this host"
         )
         return 0
@@ -2223,7 +2223,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
         done = 0
         with _invoice_pdf_session() as session:
             # Self-heal pass (finding H-B): re-number any paid charge left
-            # un-numbered by a finalize that returned False — the pre-seller-
+            # un-numbered by a finalize that returned False, the pre-seller-
             # config window or a transient error. Runs BEFORE the PDF sweep so a
             # row numbered here gets its PDF in this same run. Safe/idempotent:
             # finalize's own gates no-op rows that still can't be numbered.
@@ -2232,7 +2232,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                 session.commit()
                 if healed:
                     logger.info("task_render_invoice_pdfs: re-numbered %d previously un-numbered invoice(s)", healed)
-            except Exception:  # noqa: BLE001 — self-heal must never block the PDF sweep
+            except Exception:  # noqa: BLE001  Self-heal must never block the PDF sweep
                 session.rollback()
                 logger.exception("task_render_invoice_pdfs: un-numbered invoice backfill failed; will retry")
 
@@ -2252,7 +2252,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     url = _upload_invoice_pdf(pdf, _invoice_pdf_key(invoice.invoice_number))
                     # Guarded UPDATE: a slow sweep can overlap the next cron
                     # tick (or a second worker) on the same pending set. Only
-                    # the run that wins the NULL→url transition emails — the
+                    # the run that wins the NULL→url transition emails, the
                     # loser rowcount-0s and skips, so the customer never gets
                     # the document twice.
                     claimed = session.execute(
@@ -2261,7 +2261,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                         .values(pdf_url=url, invoice_url=url)
                     ).rowcount
                     session.commit()
-                except Exception:  # noqa: BLE001 — one bad invoice must not block the sweep
+                except Exception:  # noqa: BLE001  one bad invoice must not block the sweep
                     session.rollback()
                     logger.exception("task_render_invoice_pdfs: failed for invoice %s; will retry", invoice.id)
                     continue
@@ -2277,8 +2277,8 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     try:
                         to_email = (invoice.buyer_snapshot or {}).get("email")
                         if to_email:
-                            # ``pdf`` was just rendered above in this iteration —
-                            # attach those exact bytes to the email.
+                            # ``pdf`` was just rendered above in this iteration.
+                            # Attach those exact bytes to the email.
                             _send_invoice_email(to_email, invoice, url, pdf_bytes=pdf)
                             invoice.emailed_at = _utcnow()
                             session.commit()
@@ -2286,7 +2286,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                         session.rollback()
                         logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
             # Recovery pass (audit F43): a failed send above leaves the invoice
-            # OUTSIDE the pdf_url-IS-NULL sweep forever — the customer would
+            # OUTSIDE the pdf_url-IS-NULL sweep forever, the customer would
             # silently never receive their tax invoice. Re-attempt delivery for
             # rendered-but-unmailed documents. Snapshots with no email address
             # are excluded in SQL so they can't starve the batch (they surface
@@ -2301,7 +2301,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                             InvoiceModel.pdf_url.isnot(None),
                             InvoiceModel.emailed_at.is_(None),
                             # A live claim belongs to a concurrent sweep; a
-                            # STALE claim (>1h) is a crashed worker — re-sweep
+                            # STALE claim (>1h) is a crashed worker. Re-sweep
                             # it, or the invoice is silently lost forever.
                             sa_or(
                                 InvoiceModel.email_claimed_at.is_(None),
@@ -2317,7 +2317,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                 )
                 for invoice in unmailed:
                     # M-5: CLAIM the send via guarded UPDATE on the dedicated
-                    # claim column — overlapping sweeps can't double-send, and
+                    # claim column. Overlapping sweeps can't double-send, and
                     # because ``emailed_at`` is stamped only AFTER the send
                     # returns, a crash between claim and send leaves the row
                     # visible to the emails_pending alert and re-sweepable once
@@ -2340,7 +2340,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     if not claimed:
                         continue
                     try:
-                        # L-8: attach the STORED R2 bytes — the customer must
+                        # L-8: attach the STORED R2 bytes, the customer must
                         # receive the exact document that was published (a
                         # re-render can differ if templates changed since).
                         # The object key is parsed from pdf_url (the key
@@ -2350,7 +2350,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                         pdf = _stored_invoice_pdf_bytes(invoice)
                         if pdf is None:
                             logger.warning(
-                                "task_render_invoice_pdfs: stored PDF unreadable for invoice %s — re-rendering",
+                                "task_render_invoice_pdfs: stored PDF unreadable for invoice %s. Re-rendering",
                                 invoice.id,
                             )
                             pdf = _render_invoice_pdf(invoice)
@@ -2359,7 +2359,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                         invoice.email_claimed_at = None
                         session.commit()
                         logger.info("task_render_invoice_pdfs: recovered email for invoice %s", invoice.id)
-                    except Exception:  # noqa: BLE001 — retried next sweep; alerted daily via emails_pending
+                    except Exception:  # noqa: BLE001  Retried next sweep; alerted daily via emails_pending
                         session.rollback()
                         # Release the claim so the NEXT sweep retries promptly
                         # (a crash before this line is covered by staleness).
@@ -2381,11 +2381,11 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
 #
 # Two tasks drive the pipeline:
 #
-# * ``task_auto_recrawl_sweep``    — hourly cron. Queries bots whose
+# * ``task_auto_recrawl_sweep``   . Hourly cron. Queries bots whose
 #   ``next_recrawl_at`` has elapsed and enqueues a per-bot task for each.
 #   The partial index ``ix_bots_next_recrawl_due`` keeps the read cheap.
 #
-# * ``task_auto_recrawl_bot``      — per-bot fan-out. Loads the bot, checks
+# * ``task_auto_recrawl_bot``     . Per-bot fan-out. Loads the bot, checks
 #   the plan gate one more time (a downgrade between sweep and execution
 #   auto-disables the toggle), then delegates to ``recrawl_service`` which
 #   returns the summary that gets persisted back onto the bot row.
@@ -2396,7 +2396,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
 
 # Max bots the hourly sweep may enqueue in a single tick. Cohort surprise
 # safety net (see ``task_auto_recrawl_sweep`` docstring). Kept as a module
-# constant, not an env var — ops never tunes this per deploy; the value
+# constant, not an env var. Ops never tunes this per deploy; the value
 # below is the deliberate default backed by the concurrency analysis in
 # the recrawl RFC / issue tracker.
 _SWEEP_HOURLY_CAP: int = 3
@@ -2405,7 +2405,7 @@ _SWEEP_HOURLY_CAP: int = 3
 async def task_auto_recrawl_sweep(ctx: dict) -> int:
     """Cron: enqueue an auto-recrawl for every bot whose weekly window has elapsed.
 
-    Bounded by ``_SWEEP_HOURLY_CAP`` — a sweep tick picks at most N bots
+    Bounded by ``_SWEEP_HOURLY_CAP``, a sweep tick picks at most N bots
     ordered by ``next_recrawl_at ASC`` (oldest-due first, fairness). Any
     bot left behind stays past-due, so the next hourly tick re-picks it
     naturally without any bookkeeping. This is the hard safety net against
@@ -2414,7 +2414,7 @@ async def task_auto_recrawl_sweep(ctx: dict) -> int:
     ``compute_next_recrawl_at`` is the primary scattering, this cap is
     the belt-and-braces limit for whatever slips past it.
 
-    Idempotent within an hour bucket via ``_job_id`` — two sweeps that fire
+    Idempotent within an hour bucket via ``_job_id``, two sweeps that fire
     in the same clock hour (e.g. a redeploy overlap) can't double-enqueue
     the same bot. Returns the number of bots enqueued this tick.
     """
@@ -2435,7 +2435,7 @@ async def task_auto_recrawl_sweep(ctx: dict) -> int:
     cap = _SWEEP_HOURLY_CAP
 
     def _due_bot_ids() -> tuple[list[int], int]:
-        """Return ``(picked, total_due)`` — the capped slice we'll enqueue
+        """Return ``(picked, total_due)``, the capped slice we'll enqueue
         this tick and how many were eligible in total, so the log line can
         surface when the cap is actively engaged."""
         with get_session() as session:
@@ -2550,7 +2550,7 @@ async def task_auto_recrawl_bot(ctx: dict, bot_id: int) -> dict:
 
     summary = await recrawl_bot(bot_id)
     logger.info(
-        "task_auto_recrawl_bot: bot %s finished — status=%s changed=%s failed=%s",
+        "task_auto_recrawl_bot: bot %s finished. Status=%s changed=%s failed=%s",
         bot_id,
         summary.get("status"),
         summary.get("changed_pages"),
@@ -2564,7 +2564,7 @@ async def task_invoice_reconciliation_alert(ctx: dict) -> int:
 
     The issuing pipeline deliberately tolerates some failures inline (a
     savepoint-swallowed credit note, a stuck PDF render) so the money path is
-    never blocked — this sweep is the guarantee those never stay silent.
+    never blocked. This sweep is the guarantee those never stay silent.
     Returns the total anomaly count.
     """
     import asyncio
@@ -2596,7 +2596,7 @@ async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
     The seat add-on (P0-3) is a separate Razorpay subscription. The cancel,
     plan-cutover, and scheduled-downgrade paths all cancel it best-effort and
     only log on failure, and the cutover re-create is an external call a
-    rolled-back activation can strand — any of which leaves an orphan billing
+    rolled-back activation can strand. Any of which leaves an orphan billing
     a churned/plan-changed customer ₹499/seat/month forever. This sweep
     reconciles the gateway against local state, auto-cancels each orphan, and
     surfaces the outcome loudly (error → Sentry). Returns the number cancelled.
@@ -2633,7 +2633,7 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
 
     Split out so the cron's control flow is testable without Brevo or Razorpay,
     and returns a bool so the caller writes the idempotency marker ONLY on
-    success — ``due_email`` catches up to the newest unsent bucket, so a marker
+    success. ``due_email`` catches up to the newest unsent bucket, so a marker
     written after a failed send would skip straight past that email.
 
     Returns False rather than raising: one bad address or one gateway blip must
@@ -2650,7 +2650,7 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
     try:
         # Inside the try on purpose: ``sub.plan`` is a lazy relationship, so a
         # DB blip here would otherwise escape the whole cycle and roll back
-        # every marker already earned in this batch — with those emails already
+        # every marker already earned in this batch, with those emails already
         # handed to Brevo.
         amount = ""
         if sub.plan:
@@ -2667,7 +2667,7 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
             amount = format_amount(minor, sub.plan.currency)
 
         if marker == "failed_0":
-            # Day 0 asks for nothing, so it needs no recovery link — which also
+            # Day 0 asks for nothing, so it needs no recovery link, which also
             # spares one gateway call per past-due customer per pass, for the
             # majority of cases that resolve on Razorpay's own retry.
             return send_payment_failed_email(owner.email, name=owner.name, plan_name=plan_name, amount=amount)
@@ -2678,7 +2678,7 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
             # a dead button is worse than staying silent. Marker stays unset so
             # the next tick retries.
             logger.info(
-                "dunning: sub %s not recoverable (gateway=%s) — skipping %s",
+                "dunning: sub %s not recoverable (gateway=%s). Skipping %s",
                 sub.id,
                 link.gateway_status,
                 marker,
@@ -2701,7 +2701,7 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
             recovery_url=link.url,
             days_left=days_left,
         )
-    except Exception:  # noqa: BLE001 — one customer must not break the batch
+    except Exception:  # noqa: BLE001  one customer must not break the batch
         logger.warning("dunning: %s send failed for sub %s", marker, sub.id, exc_info=True)
         return False
 
@@ -2731,13 +2731,13 @@ def _run_dunning_cycle(session) -> int:
                 # short-lived downgrade re-auth grace row (created by
                 # ``transition_service.promote_scheduled_change`` with no
                 # ``razorpay_subscription_id``) out of the "your payment failed"
-                # cadence — it is awaiting a first authorization, not a rescue.
+                # cadence, it is awaiting a first authorization, not a rescue.
                 Subscription.razorpay_subscription_id.is_not(None),
             )
             # Oldest first so the customers closest to suspension are served
             # even if the batch is truncated. The limit bounds the FIRST run
             # after deploy, when every existing past_due row has an empty
-            # marker map and therefore a due bucket — each of those costs a
+            # marker map and therefore a due bucket. Each of those costs a
             # serial Razorpay fetch plus a Brevo hand-off.
             .order_by(Subscription.past_due_since)
             .limit(DUNNING_BATCH_LIMIT)
@@ -2780,7 +2780,7 @@ def _run_dunning_cycle(session) -> int:
                     days_left=days_left,
                     recoverable=marker != "failed_0",
                 )
-            except Exception:  # noqa: BLE001 — a notification must never cost us the email
+            except Exception:  # noqa: BLE001  a notification must never cost us the email
                 # rollback() is REQUIRED, not tidiness: create_notification
                 # flushes internally, and a failed flush leaves the session in
                 # a rollback-required state. Swallowing that would make the
@@ -2797,7 +2797,7 @@ async def task_dunning_emails(ctx: dict) -> int:
 
     Runs daily. Razorpay retries the charge on its own for ~3 days and sends
     its own card-update email; this adds the product context Razorpay cannot
-    know — that the customer's AI agents stop responding when OUR grace window
+    know. That the customer's AI agents stop responding when OUR grace window
     elapses.
     """
     import asyncio

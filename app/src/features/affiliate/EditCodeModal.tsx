@@ -156,7 +156,7 @@ export function EditCodeModal({ open, onClose, code, poolPct, onSaved }: EditCod
             </p>
           ) : (
             <p className="text-[12px] text-[var(--ds-text-subtle)]">
-              {codeError ?? '3–20 letters, numbers, hyphens or underscores.'}
+              {codeError ?? '3 to 20 letters, numbers, hyphens or underscores.'}
             </p>
           )}
         </div>

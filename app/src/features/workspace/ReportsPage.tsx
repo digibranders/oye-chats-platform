@@ -155,7 +155,7 @@ export function ReportsPage(): ReactElement {
 
   const report = phase.status === 'ready' ? phase.report : null;
   const rowCount = report?.rows.length ?? 0;
-  const windowLabel = report ? `${formatDate(report.since)} – ${formatDate(report.until)}` : '';
+  const windowLabel = report ? `${formatDate(report.since)} - ${formatDate(report.until)}` : '';
   const emptyReason = report ? reportEmptyReason(bots.length, rowCount) : null;
 
   async function handleDownload(): Promise<void> {

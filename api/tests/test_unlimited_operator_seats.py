@@ -23,7 +23,7 @@ from app.services.transition_service import check_seat_overflow
 
 
 class _FakeSession:
-    """Minimal stand-in — check_seat_overflow only ever calls .scalar()."""
+    """Minimal stand-in. Check_seat_overflow only ever calls .scalar()."""
 
     def __init__(self, active_operators: int) -> None:
         self._active = active_operators

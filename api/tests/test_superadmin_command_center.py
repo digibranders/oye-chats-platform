@@ -1,4 +1,4 @@
-"""Super-admin Command Center summary endpoint — verifies the 9 headline metrics
+"""Super-admin Command Center summary endpoint. Verifies the 9 headline metrics
 are computed and calendar/currency-bucketed server-side."""
 
 import os

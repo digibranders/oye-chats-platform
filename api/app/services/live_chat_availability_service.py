@@ -1,33 +1,33 @@
-"""Live chat availability — the deterministic state resolver.
+"""Live chat availability, the deterministic state resolver.
 
 This is the **single source of truth** for "what should the widget do when a
 visitor clicks Talk to Human?". Every code path that needs to know the live
-chat state — the WebSocket handler, the queue service, the admin status pill —
+chat state (the WebSocket handler, the queue service, the admin status pill)
 reads from ``resolve_live_chat_state`` so behavior never diverges.
 
 ## States
 
 The seven possible outcomes, in priority order (first matching wins):
 
-1. ``FEATURE_DISABLED`` — workspace plan excludes live chat, or admin toggled
+1. ``FEATURE_DISABLED``. Workspace plan excludes live chat, or admin toggled
    ``bot.live_chat_enabled`` off. Widget shows offline form immediately.
-2. ``NO_OPERATORS`` — workspace has zero operators in the DB. Admin nudge:
+2. ``NO_OPERATORS``. Workspace has zero operators in the DB. Admin nudge:
    "add your first operator". Widget shows offline form immediately.
-3. ``OUT_OF_HOURS`` — current time is outside ``bot.business_hours``. Widget
+3. ``OUT_OF_HOURS``. Current time is outside ``bot.business_hours``. Widget
    shows offline form + "back at {next_open}" copy.
-4. ``ALL_OFFLINE`` — operators exist but none have an active presence. Widget
+4. ``ALL_OFFLINE``. Operators exist but none have an active presence. Widget
    shows offline form + "team is offline" copy.
-5. ``QUEUE_FULL`` — operators online but queue is at ``max_queue_size``.
+5. ``QUEUE_FULL``. Operators online but queue is at ``max_queue_size``.
    Widget shows offline form + "very busy" copy.
-6. ``ALL_BUSY`` — every online operator is at ``max_concurrent_chats``.
+6. ``ALL_BUSY``. Every online operator is at ``max_concurrent_chats``.
    Widget enters queue UI with progressive messaging + 20s timeout to form.
-7. ``AVAILABLE`` — at least one operator can take the chat now. Routes.
+7. ``AVAILABLE``, at least one operator can take the chat now. Routes.
 
 ## Why a state machine, not nested ifs
 
 Adding a new state later (e.g. ``MAINTENANCE``, ``RATE_LIMITED``) means adding
 one short block in ``resolve_live_chat_state`` and one frontend message variant
-— nothing else changes. The flat early-return structure means every branch is
+- nothing else changes. The flat early-return structure means every branch is
 independently testable; we don't have to reason about how ``out_of_hours``
 interacts with ``all_busy``.
 
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-# Resolver result is cached for this many seconds. Short window — state can
+# Resolver result is cached for this many seconds. Short window. State can
 # change quickly when an operator comes online or queue moves; long enough that
 # rapid-fire widget polls don't hammer Postgres on every request.
 RESOLVER_CACHE_TTL_SECONDS = 5
@@ -87,7 +87,7 @@ class LiveChatState(StrEnum):
 
 class SuggestedAction(StrEnum):
     """The frontend reads this single field to decide UI mode. Keeps the
-    widget dumb — it doesn't have to map every state to a screen.
+    widget dumb, it doesn't have to map every state to a screen.
     """
 
     ROUTE = "route"  # Immediately route to an operator
@@ -101,7 +101,7 @@ class LiveChatAvailability:
 
     state: LiveChatState
     suggested_action: SuggestedAction
-    # Visitor-facing copy keys — the widget translates these to localized strings.
+    # Visitor-facing copy keys, the widget translates these to localized strings.
     # We pass keys instead of full text so admin-customized messages can be
     # injected by the WebSocket handler before send (separation of concerns).
     message_key: str = ""
@@ -112,11 +112,11 @@ class LiveChatAvailability:
     online_operator_count: int = 0
     # ISO 8601 string for "back at..." messaging when out of hours.
     next_available_at: str | None = None
-    # Arbitrary metadata for debugging / analytics — never used by widget UX.
+    # Arbitrary metadata for debugging / analytics, never used by widget UX.
     debug: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
-        """Plain dict for JSON serialization — enums become their string values."""
+        """Plain dict for JSON serialization. Enums become their string values."""
         d = asdict(self)
         d["state"] = self.state.value
         d["suggested_action"] = self.suggested_action.value
@@ -128,7 +128,7 @@ class LiveChatAvailability:
 
 def _resolver_cache_key(bot_id: int, department_id: int | None = None) -> str:
     # Department gets its own cache slot because business hours are
-    # per-department now — Sales and Support can have different OUT_OF_HOURS
+    # per-department now. Sales and Support can have different OUT_OF_HOURS
     # answers at the same moment for the same bot.
     if department_id is None:
         return f"{PREFIX}live_chat:state:{bot_id}"
@@ -201,10 +201,10 @@ def resolve_live_chat_state(
 
 
 def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None) -> LiveChatAvailability:
-    """Run the state machine. Internal — most callers should use the public
+    """Run the state machine. Internal. Most callers should use the public
     cached entry point above.
     """
-    # 1. Feature gate — bot toggle + (future) plan entitlement check.
+    # 1. Feature gate. Bot toggle + (future) plan entitlement check.
     if not bot.live_chat_enabled:
         return LiveChatAvailability(
             state=LiveChatState.FEATURE_DISABLED,
@@ -228,7 +228,7 @@ def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None)
         )
 
     # 3. Business hours check. If the visitor's session has a department_id,
-    # use that department's hours (per-department scheduling — Sales 9-6
+    # use that department's hours (per-department scheduling. Sales 9-6
     # vs Support 24/7). Otherwise fall back to the bot-level hours for
     # workspaces with no department configured. Null/empty → 24/7.
     business_hours = bot.business_hours
@@ -256,7 +256,7 @@ def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None)
             message_key="all_offline",
         )
 
-    # 5. Is the queue at capacity? Check BEFORE capacity check — if queue is
+    # 5. Is the queue at capacity? Check BEFORE capacity check. If queue is
     # full and operators are busy, we want "queue_full" copy not "all_busy".
     current_queue_size = _current_queue_size(bot.id, db_session)
     if current_queue_size >= (bot.live_chat_max_queue_size or 10):
@@ -281,7 +281,7 @@ def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None)
             online_operator_count=len(online_ids),
         )
 
-    # 7. ✅ Available — route immediately.
+    # 7. ✅ Available. Route immediately.
     return LiveChatAvailability(
         state=LiveChatState.AVAILABLE,
         suggested_action=SuggestedAction.ROUTE,
@@ -346,8 +346,8 @@ _QUEUE_STALENESS_WINDOW = timedelta(hours=1)
 def _current_queue_size(bot_id: int, db_session: Session) -> int:
     """Number of visitors currently waiting in this bot's queue.
 
-    Derived from ``ChatSession.status == 'waiting'`` — the state every
-    handoff/accept/timeout/leave-queue path actually maintains — NOT from
+    Derived from ``ChatSession.status == 'waiting'`` (the state every
+    handoff/accept/timeout/leave-queue path actually maintains) NOT from
     ``LiveChatQueueEntry``, which no write path populates (audit F33: reading
     the always-empty table made QUEUE_FULL protection permanently dead and
     queue positions always 1).
@@ -378,7 +378,7 @@ def _estimate_wait_seconds(
     _ = db_session  # Reserved for future rolling-average lookup
     operator_count = max(1, len(online_operator_ids))
     avg_chat_duration_seconds = 5 * 60
-    # Position 1 means "next in line" — multiply by (position - 1) for prior queue
+    # Position 1 means "next in line". Multiply by (position - 1) for prior queue
     waiting_chats_ahead = max(0, position - 1)
     return int((waiting_chats_ahead * avg_chat_duration_seconds) / operator_count)
 
@@ -410,7 +410,7 @@ def _within_business_hours(business_hours: dict | None) -> bool:
     try:
         now = _now_in_timezone(business_hours.get("timezone"))
     except Exception:
-        # Bad timezone string — fail open rather than locking the bot out
+        # Bad timezone string. Fail open rather than locking the bot out
         logger.warning("Invalid business_hours timezone, falling back to 'always open'")
         return True
 
@@ -425,7 +425,7 @@ def _within_business_hours(business_hours: dict | None) -> bool:
         start_h, start_m = map(int, start_str.split(":"))
         end_h, end_m = map(int, end_str.split(":"))
     except (ValueError, AttributeError):
-        return True  # Malformed entry — fail open
+        return True  # Malformed entry. Fail open
 
     current_minutes = now.hour * 60 + now.minute
     start_minutes = start_h * 60 + start_m
@@ -442,7 +442,7 @@ def _next_business_hour_iso(business_hours: dict | None) -> str | None:
     "back at 9am tomorrow" copy in the offline form.
 
     Walks forward up to 7 days looking for the first open slot. Returns None
-    if no day in the config has open hours (degenerate config — admin error).
+    if no day in the config has open hours (degenerate config. Admin error).
     """
     if not business_hours:
         return None
@@ -486,5 +486,5 @@ def _now_in_timezone(tz_name: str | None) -> datetime:
 
         return datetime.now(ZoneInfo(tz_name))
     except Exception:
-        # zoneinfo raises on unknown names — caller treats this as "fail open"
+        # zoneinfo raises on unknown names. Caller treats this as "fail open"
         return datetime.now(UTC)

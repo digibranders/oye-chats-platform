@@ -5,9 +5,8 @@ WHY
 ``ConnectionManager`` keeps visitor and operator sockets in per-process
 dictionaries, so a frame produced by one process can only reach a socket that
 same process happens to hold. With ``WEB_CONCURRENCY=1`` that is always true and
-the problem is invisible. The moment the API runs more than one process — or the
-WebSocket endpoints move to their own process, which is the plan this belongs to
-— a frame produced anywhere else is dropped silently: no exception, no log, no
+the problem is invisible. The moment the API runs more than one process (or the
+WebSocket endpoints move to their own process, which is the plan this belongs to) a frame produced anywhere else is dropped silently: no exception, no log, no
 delivery.
 
 This module is the delivery path for that case. A producer that cannot find the
@@ -75,7 +74,7 @@ async def _publisher():
 async def _publish(channel: str, payload: dict) -> bool:
     """Publish one frame. Returns True if at least one subscriber received it.
 
-    A False return is informational only — it means no process currently holds
+    A False return is informational only, it means no process currently holds
     that socket, which is a normal state (the operator may simply be offline).
     """
     if not _enabled():

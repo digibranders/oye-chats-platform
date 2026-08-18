@@ -4,20 +4,20 @@ import React, { useMemo } from 'react';
  * WhatsApp-style message receipt indicator.
  *
  * Renders a small status glyph for a visitor's outgoing live-chat message:
- *   - "sending"   — single hollow check, dimmed; subtle pulse while in flight
- *   - "sent"      — single check, muted gray (server persisted the message)
- *   - "delivered" — double check, muted gray (operator's WS got it)
- *   - "read"      — double check, vivid green (operator viewed the chat)
- *   - "failed"    — caller renders its own retry UI; this component renders nothing
+ *   - "sending"  . Single hollow check, dimmed; subtle pulse while in flight
+ *   - "sent"     . Single check, muted gray (server persisted the message)
+ *   - "delivered" (double check, muted gray (operator's WS got it)
+ *   - "read") double check, vivid green (operator viewed the chat)
+ *   - "failed"   . Caller renders its own retry UI; this component renders nothing
  *
  * The glyph carries a localized timestamp tooltip + an aria-label so screen
  * readers and hover users both get the same information shown in the UI.
  */
 
-const READ_COLOR = '#22C55E';      // Tailwind green-500 — vivid, accessible
+const READ_COLOR = '#22C55E';      // Tailwind green-500. Vivid, accessible
 const READ_GLOW = 'rgba(34,197,94,0.35)';
-const NEUTRAL_COLOR = '#9CA3AF';   // gray-400 — calm, low-contrast
-const SENDING_COLOR = '#CBD5E1';   // slate-300 — even softer for in-flight
+const NEUTRAL_COLOR = '#9CA3AF';   // gray-400. Calm, low-contrast
+const SENDING_COLOR = '#CBD5E1';   // slate-300, even softer for in-flight
 
 const formatTimestamp = (iso) => {
     if (!iso) return null;

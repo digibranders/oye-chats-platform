@@ -2,10 +2,10 @@
 
 The switch has two asymmetric layers:
 
-* ``IMPERSONATION_ENABLED`` (env) is the floor — false means off, full stop,
+* ``IMPERSONATION_ENABLED`` (env) is the floor. False means off, full stop,
   without consulting the DB, so it survives a DB outage or a rogue
   ``pricing_config`` edit.
-* ``impersonation.enabled`` (pricing_config row) is the fast lever — flip it
+* ``impersonation.enabled`` (pricing_config row) is the fast lever. Flip it
   from the super-admin UI and it applies on the next request.
 
 The property that matters most: because validity is re-checked per request,
@@ -82,7 +82,7 @@ def _disable_via_runtime(monkeypatch) -> None:
 
 
 def _disable_via_env(monkeypatch) -> None:
-    """Simulate IMPERSONATION_ENABLED=false — the floor, DB not consulted."""
+    """Simulate IMPERSONATION_ENABLED=false, the floor, DB not consulted."""
     monkeypatch.setattr(runtime_config, "IMPERSONATION_ENABLED", False)
 
 
@@ -174,7 +174,7 @@ class TestEnforcement:
                 legacy_agent_key=None,
                 impersonation_token=raw,
             )
-        # 401, not 403 — the customer app treats 401 as "session ended" and
+        # 401, not 403, the customer app treats 401 as "session ended" and
         # renders its terminal notice, cleanly ejecting the tab.
         assert exc.value.status_code == 401
 
@@ -219,7 +219,7 @@ class TestEnforcement:
         """403 + a real message, NOT the 401 "expired or revoked".
 
         The customer app renders the server's message for a 403 but shows
-        "this link has expired" for a 401 — an operator debugging a flipped
+        "this link has expired" for a 401, an operator debugging a flipped
         kill switch must not be told the link expired.
         """
         from app.api import auth_routes
@@ -264,7 +264,7 @@ class TestEnforcement:
         row = db.get(PricingConfig, "impersonation.enabled")
         assert row is not None and row.value is False
 
-        # And the getter honours it — the lever is read uncached, straight
+        # And the getter honours it, the lever is read uncached, straight
         # from the row the PUT just wrote.
         monkeypatch.setattr(
             runtime_config,

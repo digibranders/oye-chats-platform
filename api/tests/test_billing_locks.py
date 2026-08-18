@@ -1,4 +1,4 @@
-"""Per-client billing advisory lock — remediation H1 (real Postgres).
+"""Per-client billing advisory lock. Remediation H1 (real Postgres).
 
 Subscription/trial mutations (start-trial, change-plan, seats, cancel) read the
 client's subscription then write, with no row lock. Concurrent requests can both

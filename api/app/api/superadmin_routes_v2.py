@@ -184,7 +184,7 @@ def client_detail(client_id: int, _admin: Client = Depends(get_superadmin)):
             or 0
         )
 
-        # Approximate MRR — use plan price if active.
+        # Approximate MRR. Use plan price if active.
         mrr_cents = 0
         if sub and sub.status in {"active", "trialing"} and sub.plan_id:
             from app.db.models import Plan
@@ -234,7 +234,7 @@ def patch_client(
         # Privilege writes (is_superadmin / superadmin_role) are a separate,
         # stricter gate than ordinary field edits: only an owner-tier actor
         # may grant or change another account's super-admin status, and no
-        # actor — not even an owner — may change their OWN privilege fields
+        # actor (not even an owner) may change their OWN privilege fields
         # through this endpoint (blocks self-escalation and accidental
         # self-lockout). Checked before any mutation is applied.
         if body.is_superadmin is not None or body.superadmin_role is not None:
@@ -275,7 +275,7 @@ def patch_client(
 class CreditsGrant(BaseModel):
     # A manual ledger adjustment. Bounded in both directions: the ledger is
     # append-only and event-sourced, so an unbounded grant cannot be undone by
-    # editing a row — it takes a compensating entry.
+    # editing a row, it takes a compensating entry.
     delta: int = Field(..., ge=-_MAX_MANUAL_CREDIT_DELTA, le=_MAX_MANUAL_CREDIT_DELTA)
     reason: str = Field(min_length=3, max_length=500)
 
@@ -292,10 +292,10 @@ def override_billing_country(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    """Relocate an account's billing country — the ONLY path while a mandate is live.
+    """Relocate an account's billing country, the ONLY path while a mandate is live.
 
     ``PUT /billing-details`` freezes ``billing_country`` under a live Razorpay
-    mandate (it is the tax-classification fact for every invoice — P0-2), so a
+    mandate (it is the tax-classification fact for every invoice. P0-2), so a
     genuine relocation is an ops action: verify the customer, re-point the
     mandate to the new rail, then record the new country here with a reason.
     Audit-logged; the same GSTIN⇒IN consistency rule as the customer route
@@ -310,7 +310,7 @@ def override_billing_country(
         if client.gstin and country != "IN":
             raise HTTPException(
                 status_code=422,
-                detail="Account has a GSTIN on record — clear it before moving billing_country off IN.",
+                detail="Account has a GSTIN on record. Clear it before moving billing_country off IN.",
             )
         before = {"billing_country": client.billing_country}
         client.billing_country = country
@@ -336,7 +336,7 @@ def gateway_reconciliation_runs(
 ):
     """Latest gateway-reconciliation runs (blueprint §7). Read-only; the
     newest run's ``report.deltas`` names exactly what disagrees between
-    Razorpay and local money state — an empty list means the daily safety net
+    Razorpay and local money state, an empty list means the daily safety net
     ran and found nothing."""
     from app.db.models import ReconciliationRun
 
@@ -366,8 +366,8 @@ def billing_funnel(
     _admin: Client = Depends(get_superadmin),
 ):
     """Payment-funnel drop-offs: who opened a Razorpay sheet and bailed (or
-    got declined), aggregated per surface for the window. Read-only —
-    readonly-role superadmins can see it."""
+    got declined), aggregated per surface for the window. Read-only.
+    Readonly-role superadmins can see it."""
     from app.db.models import BillingFunnelEvent
 
     since = datetime.now(UTC) - timedelta(days=days)
@@ -464,11 +464,11 @@ def impersonate(
     would let its holder act with the target's privileges, which is a lateral
     privilege escalation between super-admins (and, for a self-target, a way to
     launder one's own actions). The super-admin UI already hides these rows,
-    but a UI filter is not a control — reject here, before any row is written.
+    but a UI filter is not a control. Reject here, before any row is written.
 
     Honours the impersonation kill switch (design §14). Minting is blocked
     while it is off so an admin gets a clear error instead of a working-looking
-    link that dies at redemption. Revocation deliberately stays available —
+    link that dies at redemption. Revocation deliberately stays available,
     it only ever reduces privilege, and an operator may need to revoke
     outstanding tokens *because* they flipped the switch.
     """
@@ -514,7 +514,7 @@ def impersonate(
             "token": raw,
             "token_id": record.id,
             "expires_at": expires_at.isoformat(),
-            # ``raw`` comes from ``secrets.token_urlsafe`` — already restricted
+            # ``raw`` comes from ``secrets.token_urlsafe``. Already restricted
             # to URL-safe characters, so it needs no percent-encoding.
             "redirect_url": f"{_app_base_url()}/?impersonation={raw}",
         }
@@ -529,13 +529,13 @@ def revoke_impersonation(
     """Revoke an impersonation token server-side (audit F16).
 
     Marks ``revoked_at`` on the ``impersonation_tokens`` row so the token can
-    no longer be redeemed — any redemption path MUST require
+    no longer be redeemed. Any redemption path MUST require
     ``revoked_at IS NULL AND expires_at > now()``. The raw token itself never
     reaches this endpoint; revocation is by row id, so the dashboard can exit
     without holding the sensitive credential.
 
     Authorization: the super-admin who issued the token may always revoke it
-    (including read-only admins — revocation strictly reduces privilege);
+    (including read-only admins. Revocation strictly reduces privilege);
     revoking another admin's token requires a write-capable super-admin role.
     Idempotent: revoking an already-revoked token is a no-op success.
     """
@@ -578,7 +578,7 @@ def reset_password(
         # Issue a real password-reset: generate a 6-digit OTP (15-min TTL) and
         # email it to the customer, reusing the same mechanism as the customer
         # self-service /auth/request-password-reset + /auth/reset-password flow.
-        # The customer sets their own new password — the super-admin never sees
+        # The customer sets their own new password, the super-admin never sees
         # or sets it. (Previously this endpoint only audit-logged and no-op'd.)
         otp = str(secrets.randbelow(900000) + 100000)
         target.reset_otp = otp
@@ -597,7 +597,7 @@ def reset_password(
 
     try:
         send_password_reset_email(target_email, otp)
-    except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the caller
+    except Exception as exc:  # noqa: BLE001  Surface a clean 502 to the caller
         logger.error("Failed to send password-reset email for client %s: %s", client_id, exc)
         raise HTTPException(
             status_code=502,
@@ -818,7 +818,7 @@ def credits_ledger(
             stmt = stmt.where(CreditLedger.client_id == client_id)
         entries = session.execute(stmt).scalars().all()
 
-        # Compute balance after each row by walking forward — keeps API simple
+        # Compute balance after each row by walking forward. Keeps API simple
         # without a window function. For 500 rows this is fine.
         running: dict[int, int] = {}
         out = []
@@ -897,7 +897,7 @@ def update_pricing_config(
         session.commit()
     # Finding O2: the pricing/kill-switch config is read through a 60s in-memory
     # cache. Without invalidating it here, a super-admin toggle (e.g. the credit
-    # kill switch) would take up to 60s to take effect — a fail-open window where
+    # kill switch) would take up to 60s to take effect, a fail-open window where
     # deductions keep running after the switch is flipped on. Invalidate now so
     # the change is immediate.
     from app.services.credit_service import invalidate_pricing_cache
@@ -1040,7 +1040,7 @@ def update_coupon(
 
         # A coupon must always carry exactly one discount kind. Validate the
         # resulting state (post-merge) so a PATCH can't leave it with both or
-        # neither — mirrors the create-time guard.
+        # neither. Mirrors the create-time guard.
         percent_off = update_data.get("percent_off", coupon.percent_off)
         amount_off_cents = update_data.get("amount_off_cents", coupon.amount_off_cents)
         if percent_off is None and amount_off_cents is None:
@@ -1075,7 +1075,7 @@ def delete_coupon(
 
     A coupon that was never redeemed is hard-deleted. Once it has redemptions
     it is instead soft-deactivated (``is_active=False``) so historical
-    attribution stays intact — same reasoning as the plan soft-delete.
+    attribution stays intact, same reasoning as the plan soft-delete.
     """
     _require_write(admin)
     with get_session() as session:
@@ -1250,7 +1250,7 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             # is actually in force rather than just the DB row.
             "enabled": runtime_config.is_impersonation_enabled(),
             # When the env floor is off, the runtime toggle cannot turn it back
-            # on — the UI should render the control disabled and say why.
+            # on, the UI should render the control disabled and say why.
             "locked_by_env": not IMPERSONATION_ENABLED,
         },
         "known_models": _KNOWN_MODELS,
@@ -1260,7 +1260,7 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
 
 class ModelConfigPatch(BaseModel):
     # LiteLLM model identifiers ("openai/gpt-5.4-mini"). Free-form because the
-    # catalog is a vendor's, not ours — but bounded and charset-pinned, since
+    # catalog is a vendor's, not ours, but bounded and charset-pinned, since
     # the value is persisted to runtime config and passed to the router on
     # every completion.
     primary_model: ModelId | None = None
@@ -1275,7 +1275,7 @@ class ModelConfigPatch(BaseModel):
     jina_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
     spider_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
     # Impersonation kill switch (design §14). Lives here because this is the
-    # runtime-config write path — the one that persists to pricing_config AND
+    # runtime-config write path, the one that persists to pricing_config AND
     # invalidates the cache. Without an entry here the switch would have no way
     # to be flipped short of a deploy, which defeats the point.
     # NOTE: this is the fast lever only. The ``IMPERSONATION_ENABLED`` env var
@@ -1303,7 +1303,7 @@ def patch_model_config(
     # can't catch two separately-valid PUTs leaving overlap >= size (e.g. one
     # admin PUTs chunk_overlap=500 while chunk_size is still the 300 default
     # from an earlier PUT). An invalid combo crashes RecursiveCharacterTextSplitter
-    # with an uncaught ValueError on the next ingestion (upload or crawl) —
+    # with an uncaught ValueError on the next ingestion (upload or crawl),
     # a platform-wide outage, not a per-request error. Validate the EFFECTIVE
     # post-patch values (new value if patched, else the current stored one)
     # before writing anything.
@@ -1318,7 +1318,7 @@ def patch_model_config(
             status_code=400,
             detail=(
                 f"chunk_overlap ({effective_chunk_overlap}) must be less than "
-                f"chunk_size ({effective_chunk_size}) — this combination would crash "
+                f"chunk_size ({effective_chunk_size}). This combination would crash "
                 "ingestion (RecursiveCharacterTextSplitter) on the next upload or crawl."
             ),
         )
@@ -1405,7 +1405,7 @@ _SAFETY_NET_METRIC_NAMES = [
     "llm_unknown_error",
     "llm_fallback_triggered",
     # AR-26: real per-bot token volume for FinOps visibility into the flat
-    # 1-credit `ai_chat` charge — see `_meter_token_usage` (llm_service.py).
+    # 1-credit `ai_chat` charge. See `_meter_token_usage` (llm_service.py).
     "llm_tokens_prompt",
     "llm_tokens_completion",
     # AR-40: how often the zero-result multi-query fallback actually
@@ -1420,7 +1420,7 @@ def safety_net_metrics(
     bot_id: RowId | None = Query(default=None),
     _admin: Client = Depends(get_superadmin),
 ):
-    """Rolling hourly counts for every safety-net metric (AR-13) — the
+    """Rolling hourly counts for every safety-net metric (AR-13), the
     previously-missing "consumer" for `_safety_net_metric`'s log lines.
     Optionally scoped to a single bot via ``bot_id``."""
     from app.core.metrics import get_metric_counts
@@ -1583,7 +1583,7 @@ def langfuse_summary(
 
     Read-only proxy to the Langfuse public API so the dashboard can show
     LLM activity without re-enabling the SDK on the server (which causes
-    APIConnectionError under memory pressure — see CLAUDE.md).
+    APIConnectionError under memory pressure. See CLAUDE.md).
     """
     return fetch_langfuse_summary(days=days)
 
@@ -1601,7 +1601,7 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
     from app.worker.enqueue import WORKER_ENABLED
     from app.worker.tasks import WORKER_HEARTBEAT_KEY
 
-    # ``app.config`` is a module of constants, not a settings object — a
+    # ``app.config`` is a module of constants, not a settings object, a
     # previous ``from app.config import settings`` would have thrown an
     # ImportError the first time this endpoint fired. Read the version
     # from the installed package metadata instead (matches pyproject.toml
@@ -1651,7 +1651,7 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
             health["status"] = "degraded"
 
     # ``app.config`` is a module of top-level constants, not a settings
-    # object — the previous ``getattr(settings, …)`` lookups would have
+    # object, the previous ``getattr(settings, …)`` lookups would have
     # thrown ImportError inside the function. Read the constants directly.
     from app.config import R2_BUCKET_NAME, RAZORPAY_ENABLED
 
@@ -1722,7 +1722,7 @@ def _coupon_dict(c: Coupon) -> dict[str, Any]:
 
 
 class SellerProfileBody(BaseModel):
-    # All optional for PATCH semantics — omitted fields keep their stored value
+    # All optional for PATCH semantics. Omitted fields keep their stored value
     # (legal_name's required-on-first-save rule is enforced by the service).
     # ``exclude_unset`` in the handler preserves the omitted-vs-explicit-null
     # distinction so a field can be intentionally cleared with ``null``.
@@ -1850,7 +1850,7 @@ def list_all_invoices(
 ):
     """All issued documents (tax invoices / credit notes / receipts), newest first.
 
-    Legacy payment-history rows are excluded by default — they are not legal
+    Legacy payment-history rows are excluded by default. They are not legal
     documents; flip ``include_legacy`` for the raw payment mirror.
     """
     with get_session() as session:
@@ -1910,7 +1910,7 @@ def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depe
     _require_write(admin)
     from app import config as app_config
 
-    # The kill switch governs ALL customer-facing delivery — a resend while
+    # The kill switch governs ALL customer-facing delivery, a resend while
     # it's off would email a document whose serial the customer API is
     # deliberately hiding.
     if not app_config.INVOICE_EMAILS_ENABLED:
@@ -1922,7 +1922,7 @@ def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depe
         if not inv.invoice_number or not inv.pdf_url:
             raise HTTPException(
                 status_code=409,
-                detail="No rendered PDF yet — the sweep renders within ~5 minutes; retry shortly.",
+                detail="No rendered PDF yet, the sweep renders within ~5 minutes; retry shortly.",
             )
         to_email = (inv.buyer_snapshot or {}).get("email")
         if not to_email:
@@ -1948,7 +1948,7 @@ def regenerate_invoice_pdf(invoice_id: int, request: Request, admin: Client = De
 
     Clears ``pdf_url`` so the 5-minute worker sweep re-renders and re-uploads
     under a NEW capability URL; the old R2 object simply becomes unreferenced.
-    The document data itself is immutable — only the rendering is redone.
+    The document data itself is immutable. Only the rendering is redone.
     """
     _require_write(admin)
     with get_session() as session:
@@ -1983,7 +1983,7 @@ def gstr_export_csv(
 ):
     """Document-level GSTR-1-style CSV for the CA (B2B / B2CS / B2CL / EXP /
     CDNR / CDNUR sections + per-section summary). Amounts in RUPEES (two
-    decimals) — the filing is rupee-denominated, unlike the API's minor units."""
+    decimals), the filing is rupee-denominated, unlike the API's minor units."""
     import csv
     import io
 
@@ -1999,7 +1999,7 @@ def gstr_export_csv(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def _r(minor: int | None) -> str:
-        # Blank, not "0.00", for a genuinely absent figure — a rupee column
+        # Blank, not "0.00", for a genuinely absent figure, a rupee column
         # that could not be derived (a tampered export with no FX mirror) must
         # look absent to the CA, not like a zero-value supply.
         if minor is None:
@@ -2008,7 +2008,7 @@ def gstr_export_csv(
 
     # ``csv_safe`` is applied cell by cell, deliberately NOT through
     # ``csv_safe_row``. The row funnel would also reach the money columns, and
-    # every one of them is a string produced by ``_r`` — a negative figure
+    # every one of them is a string produced by ``_r``, a negative figure
     # renders as ``-5.00``, whose leading ``-`` is a formula trigger, so the
     # funnel would quote a tax amount and hand the CA a text cell where the
     # return needs a number. Only the six identity columns below carry
@@ -2157,7 +2157,7 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
 
 @router.get("/billing/reconciliation")
 def billing_reconciliation(_admin: Client = Depends(get_superadmin)):
-    """Anomaly report — every list should be empty in a healthy system."""
+    """Anomaly report. Every list should be empty in a healthy system."""
     from app.services import invoice_reports
 
     with get_session() as session:

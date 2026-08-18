@@ -125,7 +125,7 @@ export interface PromotionView {
   name: string | null;
   /** Billing cycles granted free before the first real charge (e.g. 3). */
   freeCycles: number;
-  /** Campaign end (ISO) — after this, new signups stop qualifying. */
+  /** Campaign end (ISO). After this, new signups stop qualifying. */
   endsAt: string | null;
   /** Plan ids the offer covers; `null` = every paid plan. */
   eligiblePlanIds: number[] | null;
@@ -205,7 +205,7 @@ export interface BillingDetailsView {
  * Numeric STRINGS count. `Plan.limits` is JSONB with no schema behind it, and a
  * super-admin editing the Plans page (or seeding a bespoke tier by hand) can
  * store `{"bots": "-1"}` just as easily as `{"bots": -1}`. The backend reads
- * that quota through `int(...)`, which accepts both — so dropping the string
+ * that quota through `int(...)`, which accepts both, so dropping the string
  * here made the client and the server disagree about the same plan row: the
  * picker kept offering an unlimited-agents tier that `POST /bots/checkout`
  * then refused, and the customer's only feedback was a dead-end error after
@@ -265,8 +265,8 @@ export function buildPlan(raw: unknown): PlanView | null {
 
 /**
  * Coerce the `/subscriptions/promo` payload into a PromotionView, or `null` when
- * no promotion is active for the client (`{ active: false }`). Display-only —
- * checkout re-validates eligibility server-side, so this never grants the offer.
+ * no promotion is active for the client (`{ active: false }`). Display-only.
+ * Checkout re-validates eligibility server-side, so this never grants the offer.
  */
 export function buildPromotion(raw: unknown): PromotionView | null {
   const record = asRecord(raw);
@@ -302,7 +302,7 @@ export function promotionAppliesToPlan(promo: PromotionView | null, plan: PlanVi
   return promo.eligiblePlanIds === null || promo.eligiblePlanIds.includes(plan.id);
 }
 
-/** "3 months" / "1 month" — the free-period length as a bare noun phrase. */
+/** "3 months" / "1 month", the free-period length as a bare noun phrase. */
 export function formatFreeMonths(freeCycles: number): string {
   const months = Math.max(0, Math.floor(freeCycles));
   return `${months} month${months === 1 ? '' : 's'}`;
@@ -445,7 +445,7 @@ export function formatCredits(count: number): string {
  * Operator-seat allowance as a display phrase.
  *
  * `included_operator_seats` is serialized raw to the frontend, and `-1` is the
- * UNLIMITED sentinel (`plan_entitlements_service.py::UNLIMITED`) — never a real
+ * UNLIMITED sentinel (`plan_entitlements_service.py::UNLIMITED`), never a real
  * count. Every seat-rendering surface goes through here so an unlimited tier
  * can't print "-1 operator seats", nor be described as having none by a bare
  * `> 0` test.
@@ -473,7 +473,7 @@ export function formatSeatAllowance(includedSeats: number): string {
  * Mirrors `plan_entitlements_service.plan_grants_unlimited_bots`.
  *
  * Conservative on bad data, exactly like the server: a plan row with no `bots`
- * quota — or one that cannot be read as a number at all — is NOT unlimited and
+ * quota (or one that cannot be read as a number at all) is NOT unlimited and
  * stays selectable. A quota stored as the STRING `"-1"` does count, because
  * `int("-1")` is what the server reads it as; `toNumberMap` normalises it.
  */

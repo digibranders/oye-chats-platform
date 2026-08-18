@@ -1,4 +1,4 @@
-"""Auto-recrawl service — weekly refresh of a bot's previously-crawled URLs.
+"""Auto-recrawl service. Weekly refresh of a bot's previously-crawled URLs.
 
 The customer-facing feature is simple: toggle it on, and every 7 days the
 platform re-fetches every URL that was previously ingested for the bot,
@@ -9,7 +9,7 @@ plans see the toggle locked; Standard / Professional plans have the
 Under the hood the whole "only changed pages" contract is inherited for
 free from :func:`app.ingestion.pipeline.batch_web_ingestion`:
 
-1. The URL list is loaded from ``documents`` — ``SELECT DISTINCT
+1. The URL list is loaded from ``documents``. ``SELECT DISTINCT
    document_name WHERE bot_id = X AND source = 'crawl'``.  Uploaded files
    are excluded by the ``source`` discriminator, so PDFs / DOCX / TXT
    never spuriously appear in the recrawl set.
@@ -18,14 +18,14 @@ free from :func:`app.ingestion.pipeline.batch_web_ingestion`:
    crawl uses. A per-URL fetch failure surfaces as a missing entry in
    the returned ``results`` list; we tally those and keep going.
 3. Fetched pages are handed to ``batch_web_ingestion`` with
-   ``cost_per_page=0`` so the customer's credit ledger is untouched — a
+   ``cost_per_page=0`` so the customer's credit ledger is untouched, a
    recrawl is funded by the subscription, not billed per page. The
    pipeline hashes each page (boilerplate-normalised, so "© 2025 → 2026"
    doesn't count as a change), skips ones that match a prior hash, and
    replaces stale chunks in-place for the ones that did change.
 
 The service returns a summary the admin card renders back to the
-customer verbatim — ``changed_pages`` counts URLs that produced new
+customer verbatim. ``changed_pages`` counts URLs that produced new
 chunks, ``unchanged_pages`` counts URLs the hash dedup skipped, and
 ``failed_urls`` retains up to ``_MAX_ERRORS_IN_SUMMARY`` samples so a
 support ticket has evidence without blowing up the JSONB column.
@@ -55,7 +55,7 @@ from app.services.crawler_service import (
 logger = logging.getLogger(__name__)
 
 
-# Weekly cadence is a hard product decision for the launch cut — no per-bot
+# Weekly cadence is a hard product decision for the launch cut, no per-bot
 # override yet. Kept as a module constant so a future ``recrawl_cadence_days``
 # column can drop in without a service rewrite.
 RECRAWL_CADENCE_DAYS: int = 7
@@ -63,7 +63,7 @@ RECRAWL_CADENCE_DAYS: int = 7
 # Random 0..N-hour jitter added on top of the 7-day cadence when computing the
 # next scheduled recrawl. Prevents a cohort of bots toggled on in the same
 # sitting from stampeding the crawl provider (and each other) on the same UTC
-# hour a week later — see the pathological "10 bots enabled in a 30-minute
+# hour a week later. See the pathological "10 bots enabled in a 30-minute
 # window all recrawl in the same sweep tick" analysis. 24 h spreads a
 # full-day cohort evenly across a day; tests monkeypatch this to 0 for
 # deterministic ``compute_next_recrawl_at`` behaviour.
@@ -76,7 +76,7 @@ RECRAWL_JITTER_HOURS: float = 24.0
 _MAX_ERRORS_IN_SUMMARY: int = 10
 
 # How many past runs the ``bot.recrawl_history`` rolling window retains.
-# Twenty is roughly five months of weekly runs — enough for the admin
+# Twenty is roughly five months of weekly runs. Enough for the admin
 # expander to show meaningful trends while keeping the JSONB row well
 # under a page.
 _MAX_HISTORY_ENTRIES: int = 20
@@ -85,7 +85,7 @@ _MAX_HISTORY_ENTRIES: int = 20
 def _load_crawl_urls_for_bot(session: Session, bot_id: int) -> list[str]:
     """Return the deduped list of URLs previously crawled for the bot.
 
-    Uploaded files (``source='upload'``) are excluded — auto-recrawl only
+    Uploaded files (``source='upload'``) are excluded. Auto-recrawl only
     refreshes URLs, not customer-uploaded PDFs / DOCX. Empty strings and
     NULLs are filtered out so a corrupt legacy row can't crash the fetch.
     """
@@ -126,13 +126,13 @@ def compute_next_recrawl_at(now: datetime) -> datetime:
 async def _fetch_pages(urls: list[str], client_id: int) -> tuple[list[dict], list[str]]:
     """Fetch the URL list via the primary crawl provider.
 
-    Returns ``(pages, failed_urls)`` — ``pages`` are the ``batch_web_ingestion``
+    Returns ``(pages, failed_urls)``. ``pages`` are the ``batch_web_ingestion``
     input shape ``{"url", "content"}``, ``failed_urls`` is every input URL
     that didn't come back with usable content.
     """
     try:
         result = await fetch_urls(urls, client_id=client_id, use_js=False)
-    except Exception:  # noqa: BLE001 — one bad provider must not abort the whole recrawl
+    except Exception:  # noqa: BLE001  one bad provider must not abort the whole recrawl
         logger.exception("recrawl fetch failed for client=%s", client_id)
         return [], list(urls)
 
@@ -140,7 +140,7 @@ async def _fetch_pages(urls: list[str], client_id: int) -> tuple[list[dict], lis
     for page in result.get("results", []):
         url = page.get("url")
         # Every current provider (Spider, Jina) writes the cleaned page body
-        # under ``content`` — the payload shape docstring on
+        # under ``content``, the payload shape docstring on
         # ``jina_service.fetch_urls`` is the canonical contract. The
         # ``text`` / ``html`` fallbacks are here for a legacy provider that
         # never actually reached prod; without ``content`` as the primary
@@ -159,10 +159,10 @@ async def _fetch_pages(urls: list[str], client_id: int) -> tuple[list[dict], lis
 def _classify_status(changed: int, failed: int, total: int) -> str:
     """Map the recrawl outcome to a single-word status the UI renders.
 
-    * ``empty``   — bot has no crawled URLs to refresh
-    * ``failed``  — every URL failed to fetch or ingest
-    * ``partial`` — at least one URL failed, but some succeeded
-    * ``success`` — every URL fetched cleanly (some may have been unchanged)
+    * ``empty``   (bot has no crawled URLs to refresh
+    * ``failed``) every URL failed to fetch or ingest
+    * ``partial`` (at least one URL failed, but some succeeded
+    * ``success``) every URL fetched cleanly (some may have been unchanged)
     """
     if total == 0:
         return "empty"
@@ -177,7 +177,7 @@ async def recrawl_bot(bot_id: int) -> dict:
     """Refresh every previously-crawled URL for the given bot.
 
     Returns a summary dict which is also persisted onto
-    ``Bot.last_recrawl_summary``. Never raises — every internal failure is
+    ``Bot.last_recrawl_summary``. Never raises. Every internal failure is
     tallied into the summary so the sweep task can commit a clean row and
     reschedule the next run without unwinding.
     """
@@ -212,7 +212,7 @@ async def recrawl_bot(bot_id: int) -> dict:
     lock_token = acquire_crawl_lock(client_id, kind="recrawl")
     if lock_token is None:
         logger.info(
-            "recrawl_bot: a crawl is already in progress for client %s (bot %s) — skipping this cycle",
+            "recrawl_bot: a crawl is already in progress for client %s (bot %s). Skipping this cycle",
             client_id,
             bot_id,
         )
@@ -224,7 +224,7 @@ async def recrawl_bot(bot_id: int) -> dict:
     # Clear any cancel flag left by a PREVIOUSLY-timed-out interactive preemption
     # (the flag self-expires after ~27min, so a stale one could still be set).
     # Clearing here means only a cancellation requested AFTER this recrawl began
-    # — i.e. a fresh interactive crawl preempting us — is honoured below.
+    # . I.e. a fresh interactive crawl preempting us. Is honoured below.
     clear_cancellation(client_id)
 
     try:
@@ -240,13 +240,13 @@ async def recrawl_bot(bot_id: int) -> dict:
         # The ``finally`` releases the lock so the waiting crawl can acquire it.
         if is_cancellation_requested(client_id):
             logger.info(
-                "recrawl_bot: preempted by an interactive crawl for client %s (bot %s) — yielding",
+                "recrawl_bot: preempted by an interactive crawl for client %s (bot %s). Yielding",
                 client_id,
                 bot_id,
             )
             return {"status": "preempted", "reason": "interactive_crawl"}
 
-        # ``batch_web_ingestion`` is synchronous / DB-bound — hop to a thread so
+        # ``batch_web_ingestion`` is synchronous / DB-bound. Hop to a thread so
         # we don't block the ARQ event loop while the embedding provider works.
         def _do_ingest() -> dict:
             return batch_web_ingestion(
@@ -310,7 +310,7 @@ def _persist_summary(bot_id: int, summary: dict, status: str, now: datetime) -> 
     """Write the completion state back to the Bot row.
 
     Bumps ``last_recrawl_at`` to ``now`` and schedules the next sweep for
-    ``now + 7 days`` — the sweep query relies on ``next_recrawl_at``, so a
+    ``now + 7 days``, the sweep query relies on ``next_recrawl_at``, so a
     completed run must always advance it or the row would re-match on
     every hourly tick.
     """

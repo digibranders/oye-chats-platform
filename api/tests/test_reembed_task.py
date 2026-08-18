@@ -1,6 +1,6 @@
 """Tests for the embedding-backfill worker task (AR-44).
 
-Before this, batches ran strictly sequentially — batch N+1 waited for batch
+Before this, batches ran strictly sequentially. Batch N+1 waited for batch
 N's full embed+commit even though each embed_chunks() call is itself
 internally concurrent and the shared project-wide rate limiter already
 paces actual request volume regardless of how many concurrent batches are

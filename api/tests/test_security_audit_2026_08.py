@@ -5,7 +5,7 @@ review. They are deliberately grouped by finding rather than by module so the
 reason a test exists survives longer than the diff that introduced it.
 
 Everything here runs against MagicMock sessions or the in-memory rate-limit
-storage, so no Postgres is required — these must run in CI on every push, which
+storage, so no Postgres is required. These must run in CI on every push, which
 the ``DB_URL``-gated suites do not.
 """
 
@@ -68,8 +68,8 @@ def _client_auth():
 #
 # ``POST/PATCH/DELETE /webhooks`` accepted any operator of the workspace. An
 # outbound webhook is a standing export of every ``lead.captured`` payload to a
-# URL the caller picks, so the lowest-privileged role — the one the invite flow
-# hands to support staff — could redirect the workspace's entire lead stream to
+# URL the caller picks, so the lowest-privileged role (the one the invite flow
+# hands to support staff) could redirect the workspace's entire lead stream to
 # their own server. Bots and knowledge sources were already owner/admin-only;
 # webhooks were the odd one out.
 
@@ -100,7 +100,7 @@ class TestWebhookRoleGuard:
 
     @pytest.mark.parametrize("role", ["owner", "admin"])
     def test_managers_pass_the_role_gate(self, role, monkeypatch):
-        """The guard must not be a blanket deny — owners/admins get past it.
+        """The guard must not be a blanket deny. Owners/admins get past it.
 
         Asserted by the guard function directly: the routes themselves go on to
         hit the plan-entitlement layer and the DB, which is a different test's
@@ -116,7 +116,7 @@ class TestWebhookRoleGuard:
         _require_webhook_management_access(_client_auth())  # must not raise
 
     def test_operator_reads_are_still_allowed(self, monkeypatch):
-        """Listing is intentionally NOT gated — the secret is masked in the
+        """Listing is intentionally NOT gated, the secret is masked in the
         response, and operators legitimately need to see whether a workspace has
         delivery configured. Narrowing reads too would be a behaviour change the
         finding did not call for."""
@@ -199,7 +199,7 @@ class TestCredentialRotationOnPasswordChange:
         )
         assert resp.status_code == 200
         assert client_row.api_key != "old-key-bbbb"
-        # The reset endpoint is unauthenticated — it must never hand a live
+        # The reset endpoint is unauthenticated, it must never hand a live
         # credential back to whoever posted the OTP.
         assert client_row.api_key not in resp.text
 
@@ -231,7 +231,7 @@ class TestCredentialRotationOnPasswordChange:
 # ── Finding M1: the e-mail-verification OTP had no per-account attempt cap ───
 #
 # A wrong guess left the 6-digit code live, and the only ceiling was a per-IP
-# rate limit — which buys nothing against a prober with a proxy pool. The other
+# rate limit, which buys nothing against a prober with a proxy pool. The other
 # OTP flows in the codebase already burn the code; this one now burns it after
 # a bounded number of failures.
 
@@ -301,7 +301,7 @@ class TestOtpAttemptCeiling:
         resp = client.post("/auth/verify-email", json={"email": "a@example.com", "otp": "000000"})
         assert resp.status_code == 400
         assert "Too many incorrect codes" in resp.text
-        assert row.email_otp is None  # the code is gone — no further guessing
+        assert row.email_otp is None  # the code is gone, no further guessing
         assert row.is_verified is False
 
     def test_verify_email_keeps_the_code_while_budget_remains(self, monkeypatch):
@@ -356,7 +356,7 @@ class TestPerAccountLoginThrottle:
 
     def test_counter_outage_fails_open(self, monkeypatch):
         """Unlike the OTP guard, a broken counter here must NOT lock customers
-        out of their own accounts — the per-IP limit still applies underneath."""
+        out of their own accounts, the per-IP limit still applies underneath."""
         from app.core import rate_limit
 
         broken = MagicMock()
@@ -379,7 +379,7 @@ class TestPerAccountLoginThrottle:
 
     def test_throttle_precedes_the_password_check(self, monkeypatch):
         """A throttled account must cost the attacker a 429, not a bcrypt
-        verification — otherwise the ceiling is also a CPU amplifier."""
+        verification. Otherwise the ceiling is also a CPU amplifier."""
         from app.api import auth_routes
 
         monkeypatch.setattr(auth_routes, "login_attempts_exhausted", lambda _: True)
@@ -405,7 +405,7 @@ class TestPerAccountLoginThrottle:
 
 class TestStandingAuthGuarantees:
     def test_bot_key_never_resolves_to_a_client_identity(self):
-        """``X-Bot-Key`` is public — it is in every customer's page source. It
+        """``X-Bot-Key`` is public, it is in every customer's page source. It
         must not be accepted by the client resolver under any header name."""
         from app.api.auth import get_current_client
 
@@ -427,7 +427,7 @@ class TestStandingAuthGuarantees:
         assert exc.value.status_code == 403
 
     def test_superadmin_gate_rejects_a_truthy_non_true_flag(self):
-        """The check is ``is not True`` on purpose — a string or 1 from a
+        """The check is ``is not True`` on purpose, a string or 1 from a
         loosely-typed source must not pass."""
         from app.api.auth import get_superadmin
 

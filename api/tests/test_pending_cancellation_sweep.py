@@ -1,4 +1,4 @@
-"""Deferred gateway cancellation — the sweep, and the guards around it.
+"""Deferred gateway cancellation, the sweep, and the guards around it.
 
 ``POST /subscriptions/cancel`` no longer cancels at Razorpay. It records the
 customer's intent (``cancel_at_period_end``) and leaves the mandate live so
@@ -12,7 +12,7 @@ That trade only holds if three things are true, and each is asserted here:
   credits while it waits (its status stays ``active`` the whole time, so
   without an explicit filter it matched);
 * if the sweep is late enough that Razorpay renews anyway, the charge webhook
-  catches it, cancels immediately and withholds the grant — bounding the worst
+  catches it, cancels immediately and withholds the grant. Bounding the worst
   case at one cycle instead of an open-ended subscription.
 """
 
@@ -125,7 +125,7 @@ def test_sweep_cancels_at_cycle_end_not_immediately(db, monkeypatch):
 
 
 def test_sweep_is_idempotent(db, monkeypatch):
-    """Re-running the cron must not issue a second cancel — the marker is the
+    """Re-running the cron must not issue a second cancel, the marker is the
     guard, and Razorpay would reject (or worse, act on) a repeat."""
     _make_sub(db, "sweep-idem", period_end=datetime.now(UTC) + timedelta(days=1))
     _route_session(monkeypatch, db)
@@ -143,7 +143,7 @@ def test_sweep_is_idempotent(db, monkeypatch):
 
 
 def test_sweep_ignores_subscriptions_that_were_never_cancelled(db, monkeypatch):
-    """Period end alone is not a reason to cancel — that's a renewal."""
+    """Period end alone is not a reason to cancel. That's a renewal."""
     _make_sub(
         db,
         "sweep-active",
@@ -167,7 +167,7 @@ def test_sweep_skips_a_row_resume_un_cancelled_under_the_lock(db, monkeypatch):
     Both mutate the same row, so the sweep takes the same advisory lock every
     billing mutation takes and re-reads under it. If ``/resume`` cleared the
     cancellation between the sweep's SELECT and its turn at the lock, cancelling
-    anyway would kill a mandate the customer just chose to keep — and the row
+    anyway would kill a mandate the customer just chose to keep, and the row
     would sit there promising a renewal that never comes.
     """
     sub = _make_sub(db, "sweep-raced", period_end=datetime.now(UTC) + timedelta(days=1))
@@ -266,6 +266,6 @@ def test_renewal_cron_skips_cancel_pending_subscriptions(db, monkeypatch):
     assert renewed == 1
     assert granted == [renewing.id]
     db.refresh(cancelling)
-    # Its period must NOT roll forward either — that would relabel the plan as
+    # Its period must NOT roll forward either. That would relabel the plan as
     # ending a month later than the customer was told.
     assert cancelling.current_period_end < datetime.now(UTC)

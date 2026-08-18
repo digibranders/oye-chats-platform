@@ -5,16 +5,16 @@ from the dashboard instead of SSH-ing into the droplet.
 
 Design notes
 ------------
-* **Service allowlist** — the only accepted service names are
+* **Service allowlist**, the only accepted service names are
   ``oyechats-api`` and ``oyechats-worker``. Any other value is rejected
   with ``ValueError`` before we hand a string to ``journalctl``. This is
   the only user-controlled input that flows into a subprocess argument
   list, but allowlisting keeps shell-injection unreachable regardless.
-* **Hard timeout** — ``journalctl`` is invoked with a 10-second cap so a
+* **Hard timeout**. ``journalctl`` is invoked with a 10-second cap so a
   missing binary or stuck I/O can't hang the API worker.
-* **Local fallback** — when journalctl isn't available (laptop dev),
+* **Local fallback**. When journalctl isn't available (laptop dev),
   returns a small synthetic snippet so the UI still renders.
-* **Pure function output** — returns a list of dicts with parsed
+* **Pure function output**. Returns a list of dicts with parsed
   timestamp / level / message; the UI does the colouring.
 
 The endpoint that calls into here is gated by ``get_superadmin``, so the
@@ -92,7 +92,7 @@ def _local_dev_fallback(service: str) -> list[dict[str, Any]]:
             "timestamp": now,
             "level": "info",
             "message": (
-                f"journalctl unavailable on this host — showing a placeholder. "
+                f"journalctl unavailable on this host. Showing a placeholder. "
                 f"On the droplet this would tail `journalctl -u {service}.service`."
             ),
             "unit": f"{service}.service",

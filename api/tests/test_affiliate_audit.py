@@ -2,7 +2,7 @@
 
 Commission and discount splits move real money (affiliate payouts, customer
 discounts on live Razorpay subscriptions). Every code create/edit and every
-super-admin override or deletion must be traceable — who, when, old -> new —
+super-admin override or deletion must be traceable (who, when, old -> new)
 same bar as the other audited super-admin mutations (see
 test_seller_profile_routes.py for the established pattern).
 """

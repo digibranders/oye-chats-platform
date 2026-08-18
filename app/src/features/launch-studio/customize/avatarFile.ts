@@ -1,12 +1,12 @@
 /**
- * Avatar upload rules — the single source of truth for what the picker
+ * Avatar upload rules, the single source of truth for what the picker
  * advertises, what the file input filters, what we refuse, and how big the
  * cropped result is allowed to get.
  *
  * These live apart from the components for two reasons. They are the rules the
  * UI copy has to quote verbatim (a promise the code does not keep is the bug
  * this module exists to close), and they are pure, so they can be tested
- * without a canvas — jsdom has no canvas implementation.
+ * without a canvas. Jsdom has no canvas implementation.
  */
 
 /** The advertised ceiling for a picked file. */
@@ -27,7 +27,7 @@ export const MAX_AVATAR_DIMENSION = 512;
  * The formats we accept.
  *
  * SVG is deliberately absent even though the old copy promised it:
- *   • the cropper rasterises to a canvas, so an SVG never stays vector — the
+ *   • the cropper rasterises to a canvas, so an SVG never stays vector, the
  *     one thing a user picks SVG for is lost either way;
  *   • the backend re-encodes with Pillow, which cannot open SVG at all, so an
  *     SVG upload has always ended in a 500;
@@ -42,7 +42,7 @@ export const ACCEPTED_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'] a
 
 export type AcceptedAvatarType = (typeof ACCEPTED_AVATAR_TYPES)[number];
 
-/** `accept` for the file input — derived from the list we enforce, so the
+/** `accept` for the file input. Derived from the list we enforce, so the
  *  browser's filter and our validation can never drift apart. */
 export const AVATAR_ACCEPT_ATTRIBUTE = ACCEPTED_AVATAR_TYPES.join(',');
 
@@ -67,7 +67,7 @@ function joinWithOr(items: readonly string[]): string {
   return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
 }
 
-/** e.g. "PNG, JPG or WebP" — for prose, built from the enforced list. */
+/** e.g. "PNG, JPG or WebP", for prose, built from the enforced list. */
 export const AVATAR_FORMATS_LABEL = joinWithOr(ACCEPTED_AVATAR_TYPES.map((t) => TYPE_LABELS[t]));
 
 /** Render a byte count the way a person would say it. */
@@ -80,7 +80,7 @@ export function formatFileSize(bytes: number): string {
 /** The helper line under the upload button. Quotes the enforced rules. */
 export const AVATAR_UPLOAD_HINT = `${AVATAR_FORMATS_LABEL} up to ${formatFileSize(MAX_AVATAR_BYTES)}`;
 
-/** The subset of `File` these rules need — keeps them testable without a DOM. */
+/** The subset of `File` these rules need. Keeps them testable without a DOM. */
 export interface AvatarFileLike {
   readonly name: string;
   readonly type: string;
@@ -116,7 +116,7 @@ export function resolveAvatarType(file: AvatarFileLike): AcceptedAvatarType | nu
 export function validateAvatarFile(file: AvatarFileLike): string | null {
   if (resolveAvatarType(file) === null) {
     return isSvg(file)
-      ? `SVG isn’t supported for avatars. Export it as a PNG — transparency is preserved — and upload that.`
+      ? `SVG isn’t supported for avatars. Export it as a PNG (transparency is preserved) and upload that.`
       : `“${file.name}” isn’t an image we can use. Choose a ${AVATAR_FORMATS_LABEL} file.`;
   }
   if (file.size <= 0) {
@@ -125,7 +125,7 @@ export function validateAvatarFile(file: AvatarFileLike): string | null {
   if (file.size > MAX_AVATAR_BYTES) {
     return `That image is ${formatFileSize(file.size)}. The limit is ${formatFileSize(
       MAX_AVATAR_BYTES,
-    )} — try a smaller file.`;
+    )}. Try a smaller file.`;
   }
   return null;
 }
@@ -140,7 +140,7 @@ export interface PixelSize {
 
 /**
  * Fit `width` x `height` inside `bound` on its longest edge, never upscaling.
- * Throws on dimensions an image cannot really have — a zero or NaN natural size
+ * Throws on dimensions an image cannot really have, a zero or NaN natural size
  * used to be clamped to 1px and uploaded as a 1x1 avatar.
  */
 export function boundedSize(width: number, height: number, bound = MAX_AVATAR_DIMENSION): PixelSize {
@@ -154,7 +154,7 @@ export function boundedSize(width: number, height: number, bound = MAX_AVATAR_DI
   };
 }
 
-/** Quality for a photographic re-encode — visually lossless at avatar sizes. */
+/** Quality for a photographic re-encode. Visually lossless at avatar sizes. */
 const JPEG_QUALITY = 0.92;
 /** Quality for the rescue re-encode when a PNG crop overshoots the limit. */
 const JPEG_FALLBACK_QUALITY = 0.82;
@@ -171,7 +171,7 @@ export interface AvatarEncoding {
  * 10-25 MB upload. JPEG is only safe when nothing in the result can be
  * transparent: not when a circular or lasso mask was applied, and not when the
  * source format could itself carry an alpha channel (PNG, WebP, or an unknown
- * source — the re-crop path passes a stored URL rather than a File).
+ * source, the re-crop path passes a stored URL rather than a File).
  */
 export function pickAvatarEncoding(sourceType: string | null, preserveAlpha: boolean): AvatarEncoding {
   if (preserveAlpha) return { type: 'image/png' };
@@ -219,7 +219,7 @@ export interface EncodeAvatarOptions {
 
 /**
  * Encode a cropped canvas into an upload-ready `File`, keeping it inside the
- * advertised limit and reporting — never swallowing — the case where it can't.
+ * advertised limit and reporting (never swallowing) the case where it can't.
  */
 export async function encodeAvatarCanvas(
   canvas: CanvasEncoder,

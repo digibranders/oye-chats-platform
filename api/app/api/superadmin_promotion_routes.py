@@ -1,6 +1,6 @@
 """Super admin launch-promotion management.
 
-CRUD for :class:`~app.db.models.Promotion` — the time-boxed acquisition offers
+CRUD for :class:`~app.db.models.Promotion`, the time-boxed acquisition offers
 (e.g. "sign up this month, 3 months free"). Config lives in a row so a super
 admin can launch, pause (``is_active``), and expire a campaign without a deploy,
 and read redemption/conversion stats per campaign.
@@ -8,7 +8,7 @@ and read redemption/conversion stats per campaign.
 Auth mirrors the other superadmin routers: ``get_superadmin`` (X-API-Key,
 ``is_superadmin``) gates every route; ``_require_write`` blocks read-only
 super-admins from mutating. Eligibility resolution and the checkout money-path
-live elsewhere (``promotion_service`` / ``subscription_routes``) — this module
+live elsewhere (``promotion_service`` / ``subscription_routes``). This module
 is purely the admin control surface.
 """
 
@@ -56,7 +56,7 @@ def _validate_window_and_bounds(
 def _refuse_past_end(ends_at: datetime) -> None:
     """Refuse SETTING a window end that is already over.
 
-    A past end saves an offer nobody can ever redeem — the campaign shows
+    A past end saves an offer nobody can ever redeem, the campaign shows
     "active" in the list while every eligibility check correctly refuses it
     (this exact state burned two live test runs). Applied only when ends_at is
     being SET (create, or an update that includes it): pausing or renaming an
@@ -66,14 +66,14 @@ def _refuse_past_end(ends_at: datetime) -> None:
     if ends_at <= datetime.now(UTC):
         raise HTTPException(
             status_code=400,
-            detail="ends_at is in the past — the offer would be expired on save. Pause the campaign instead.",
+            detail="ends_at is in the past, the offer would be expired on save. Pause the campaign instead.",
         )
 
 
 def _validate_eligible_plan_ids(session, plan_ids: list[int] | None) -> None:
     """Reject an eligible_plan_ids list that references non-existent plans.
 
-    A dangling id would silently narrow the offer to nothing for that plan —
+    A dangling id would silently narrow the offer to nothing for that plan,
     a misconfiguration worth catching at write time, not at checkout.
     """
     if not plan_ids:
@@ -89,7 +89,7 @@ def _promotion_stats(session, promo_id: int) -> dict:
 
     ``slots_claimed`` (the atomic checkout counter) can lead
     ``subscriptions_created`` (rows minted by the activation webhook) because a
-    slot is claimed at checkout before the mandate authorises — the gap is
+    slot is claimed at checkout before the mandate authorises, the gap is
     in-flight or abandoned checkouts.
     """
     now = datetime.now(UTC)
@@ -134,7 +134,7 @@ def _promotion_stats(session, promo_id: int) -> dict:
 
 
 def _serialize(promo: Promotion, stats: dict | None = None) -> dict:
-    """Full admin projection — unlike the client-facing ``serialize_public``,
+    """Full admin projection, unlike the client-facing ``serialize_public``,
     this exposes the internal counters a super admin needs."""
     data = {
         "id": promo.id,
@@ -170,7 +170,7 @@ class CreatePromotionRequest(BaseModel):
 
 
 class UpdatePromotionRequest(BaseModel):
-    """All fields optional — only provided fields are modified (PATCH-style PUT).
+    """All fields optional. Only provided fields are modified (PATCH-style PUT).
 
     ``is_active`` is the pause switch: ``{"is_active": false}`` freezes new
     redemptions instantly without deleting the campaign or touching the
@@ -338,8 +338,8 @@ def update_promotion(
 
 @router.delete("/promotions/{promotion_id}")
 def delete_promotion(promotion_id: int, superadmin: Client = Depends(get_superadmin)):
-    """Delete a campaign. Subscriptions created under it keep their history —
-    ``Subscription.promotion_id`` is ``ON DELETE SET NULL`` — so deleting is safe
+    """Delete a campaign. Subscriptions created under it keep their history.
+    ``Subscription.promotion_id`` is ``ON DELETE SET NULL``, so deleting is safe
     for cleanup, but PAUSING (``is_active=false``) is preferred to preserve the
     per-campaign stats link."""
     _require_write(superadmin)

@@ -1,13 +1,13 @@
 """DB-backed tests for the events repository functions.
 
 Requires a reachable Postgres at ``DB_URL`` (throwaway ``*_pytest`` DB is
-created by the ``pg_engine`` fixture). Skipped cleanly when none is set —
-matches the pattern used by the credit-notes / affiliate tests so CI can
+created by the ``pg_engine`` fixture). Skipped cleanly when none is set.
+Matches the pattern used by the credit-notes / affiliate tests so CI can
 run selectively.
 
 Locks in the two Tier 2 invariants that are hardest to catch by inspection:
 
-  * ``upsert_events`` is idempotent — re-writing the same page never
+  * ``upsert_events`` is idempotent. Re-writing the same page never
     duplicates rows on ``(bot_id, source_url, title)``.
   * ``prune_stale_events`` drops rows whose source page stopped listing
     them or whose start date has aged past the retention window.
@@ -89,7 +89,7 @@ class TestUpsertEvents:
         db.commit()
         first_seen = db.query(Event).filter(Event.bot_id == bot.id).first().last_seen_at
 
-        # Second crawl of the same page — same rows, new timestamps.
+        # Second crawl of the same page, same rows, new timestamps.
         repository.upsert_events(db, bot_id=bot.id, source_url="https://acme.com/events", events=_sample_events(now))
         db.commit()
 
@@ -224,7 +224,7 @@ class TestPruneStaleEvents:
         now = datetime.utcnow()
 
         # Seed with a very-past event by inserting directly (upsert would
-        # accept it too — the horizon is enforced in the extractor, not
+        # accept it too, the horizon is enforced in the extractor, not
         # here).
         db.add(
             Event(

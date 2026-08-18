@@ -14,7 +14,7 @@ money moved. Two changes, both pinned here:
   lock before it reads anything, so the second activation waits for the first to
   commit and then retires it through the sibling sweep instead of racing it;
 * the endpoint translates a collision on either active-subscription index into
-  ``SubscriptionActivationConflict`` — a structured, customer-safe 409 that says
+  ``SubscriptionActivationConflict``, a structured, customer-safe 409 that says
   the payment DID arrive, following the ``PlanNotCheckoutable`` pattern (the
   operator instruction lives in ``ops_detail`` and is logged, never returned).
 
@@ -96,7 +96,7 @@ def test_active_scope_collision_is_a_structured_409_not_a_500(db, monkeypatch, c
     assert res.status_code == 409, res.text
     detail = res.json()["detail"]
     assert detail["reason"] == "subscription_activation_conflict"
-    # The payer's first question is "did my money vanish?" — answer it.
+    # The payer's first question is "did my money vanish?". Answer it.
     assert detail["payment_captured"] is True
     assert "payment went through" in detail["message"].lower()
     # The operator instruction is logged, never returned.
@@ -164,14 +164,14 @@ def test_a_deferred_upsert_is_flagged_without_breaking_subscription_known(db, mo
     refers to the SIGNATURE, and that distinction is one a reader has to notice.
 
     ``activation_pending`` states it in the affirmative and ``retry_after_seconds``
-    says how to wait. Both are ADDITIVE — ``subscription_known`` keeps its exact
+    says how to wait. Both are ADDITIVE. ``subscription_known`` keeps its exact
     meaning and value, because a caller is being built against it right now.
     """
     api, _client = _api(db, monkeypatch)
     with (
         patch.object(rzp, "verify_subscription_payment_signature"),
         # Razorpay still reports the mandate as non-billable, so the reconcile
-        # defers and no local row exists — the exact prod state.
+        # defers and no local row exists, the exact prod state.
         patch.object(rzp, "reconcile_subscription_from_razorpay", return_value=None),
     ):
         res = api.post("/subscriptions/verify-razorpay-subscription", json=_BODY)
@@ -182,7 +182,7 @@ def test_a_deferred_upsert_is_flagged_without_breaking_subscription_known(db, mo
     assert body["subscription_known"] is False  # unchanged contract
     assert body["activation_pending"] is True
     assert body["retry_after_seconds"] == subscription_routes.ACTIVATION_POLL_SECONDS
-    # A cadence, not a deadline — 3s was demonstrably too eager in prod.
+    # A cadence, not a deadline. 3s was demonstrably too eager in prod.
     assert body["retry_after_seconds"] > 3
 
 
@@ -250,7 +250,7 @@ def test_activation_takes_the_billing_lock_before_reading_state(db):
 
 def test_a_second_mandate_supersedes_the_first_instead_of_colliding(db):
     """With the lock held, the sweep is what resolves the scope: the older active
-    row is cancelled and the new one inserted — no constraint violation."""
+    row is cancelled and the new one inserted, no constraint violation."""
     client = Client(name="S", email="verifysweep@test.example", api_key="key-verifysweep")
     db.add(client)
     plan = Plan(name="P", slug="std-verifysweep", monthly_price_cents=94900, credits_per_month=10, is_active=True)

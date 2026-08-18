@@ -105,7 +105,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
 
     return (
         <div className="relative flex flex-col items-end">
-            {/* Pre-chat greeting bubble — desktop only, replaces tooltip.
+            {/* Pre-chat greeting bubble. Desktop only, replaces tooltip.
                 Stays pinned above the launcher at all times (including while the
                 visitor scrolls); it only disappears once opened or dismissed. */}
             {showGreeting && !isOpen && (
@@ -155,7 +155,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 </div>
             )}
 
-            {/* Tooltip — visible only when greeting bubble is not showing */}
+            {/* Tooltip. Visible only when greeting bubble is not showing */}
             {!showGreeting && (
                 <div className={`hidden md:block absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${!isOpen && !isScrolling ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                     <div className="text-sm font-medium text-gray-700">
@@ -165,13 +165,13 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 </div>
             )}
 
-            {/* Pulse ring — visible when chat is open */}
+            {/* Pulse ring. Visible when chat is open */}
             <span
                 className={`absolute inset-0 rounded-full pointer-events-none transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0'}`}
                 style={isOpen ? { animation: 'launcherPulse 2s ease-in-out infinite', border: `2px solid ${primaryColor}` } : undefined}
             />
 
-            {/* Main Button — bot icon always visible */}
+            {/* Main Button. Bot icon always visible */}
             <button
                 onClick={() => { setShowGreeting(false); toggleChat(); }}
                 aria-label={isOpen ? 'Close chat' : launcherName}
@@ -181,7 +181,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
             >
                 {renderBotIcon()}
 
-                {/* Minimize badge — appears at bottom-right when chat is open */}
+                {/* Minimize badge. Appears at bottom-right when chat is open */}
                 <span
                     className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-md transition-all duration-300 ${isOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none'}`}
                     style={{ backgroundColor: primaryColor }}

@@ -180,12 +180,12 @@ interface CreditCostRow {
    */
   readonly linkTab?: 'knowledge' | 'advanced';
   /**
-   * Built but not launched yet — the card shows a muted "Coming soon" badge
+   * Built but not launched yet, the card shows a muted "Coming soon" badge
    * instead of a credit price, and never charges (the super-admin
    * `feature.company_name_enabled` switch stays off until launch).
    */
   readonly comingSoon?: boolean;
-  // No row sets this today — company lookup, the last one that did, has
+  // No row sets this today. Company lookup, the last one that did, has
   // launched. Kept because it is live machinery for the next metered feature
   // that ships dark, not dead code.
 }
@@ -238,7 +238,7 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     label: 'Company lookup',
     // States the charge condition, because it is unusual and in the customer's
     // favour: an IP only names a company when that company owns its range, so
-    // most visitors — anyone on a home or mobile connection — resolve to no
+    // most visitors (anyone on a home or mobile connection) resolve to no
     // employer at all. Those cost nothing. Saying only "5 credits" would read
     // as 5 per visitor, which is what it would have been had the charge stayed
     // ahead of the lookup.
@@ -261,7 +261,7 @@ function CreditCostItem({
 }: {
   row: CreditCostRow;
   /** `/agents/:id` for the switcher-selected agent, or null when the account
-   *  has no agent yet — the deep-link arrow is hidden in that case. */
+   *  has no agent yet, the deep-link arrow is hidden in that case. */
   agentBasePath: string | null;
   /** Name of the agent the arrow resolves to; null when no single agent is in
    *  scope, in which case no arrow is shown. */
@@ -322,7 +322,7 @@ function CreditCostItem({
  */
 function CreditCostReference(): ReactElement {
   // Deep links resolve ONLY against the switcher-selected agent. These rows
-  // link to per-agent spend controls, and billing attaches to the Bot — so
+  // link to per-agent spend controls, and billing attaches to the Bot, so
   // falling back to `bots[0]` when the scope is "All agents" pointed a customer
   // at an agent they had not chosen, with nothing on screen saying which. They
   // would switch enrichment on there, start metered spend on that agent's
@@ -452,7 +452,7 @@ function RecentTopups({
   if (purchases.length === 0) return null;
 
   // This said "Top-up credits never expire" unconditionally, on the same
-  // screen as a hero that shows the real expiry date when there is one — the
+  // screen as a hero that shows the real expiry date when there is one, the
   // exact self-contradiction. (It previously said "roll over for 12 months",
   // and an earlier fix here swapped one unconditional claim for another.)
   // `describeTopupExpiry` states only what this customer's own ledger proves,
@@ -660,7 +660,7 @@ export function UsagePage(): ReactElement {
         botId={topupTarget?.botId ?? null}
         botName={topupTarget?.botName ?? null}
         onClose={() => setTopupTarget(null)}
-        // Usage has no billing-details form of its own — the Billing page owns
+        // Usage has no billing-details form of its own, the Billing page owns
         // it, so send the customer there to complete the hand-off.
         onBillingDetailsRequired={() => navigate('../billing')}
         onSuccess={() => {

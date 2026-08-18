@@ -6,7 +6,7 @@ another visitor's conversation to an arbitrary inbox. The guard: when the
 session has a captured lead email, the transcript may only be sent to THAT
 address; sessions with no lead keep the anonymous self-send flow.
 
-MagicMock session — no Postgres. ``send_transcript_email`` is patched so no mail
+MagicMock session, no Postgres. ``send_transcript_email`` is patched so no mail
 is actually sent.
 """
 

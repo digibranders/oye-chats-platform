@@ -1,4 +1,4 @@
-"""Plan transition orchestration — upgrades, downgrades, scheduled cutovers.
+"""Plan transition orchestration. Upgrades, downgrades, scheduled cutovers.
 
 This module is the single source of truth for everything paid→paid
 subscription transitions need:
@@ -7,7 +7,7 @@ subscription transitions need:
   * Razorpay-specific paid→paid upgrade flow (``execute_paid_upgrade``):
     open a new sub and stash the customer's unused plan credits so the
     activation webhook can re-grant them as a top-up once payment clears.
-    The OLD mandate is NOT cancelled here — under the UPI re-auth model it
+    The OLD mandate is NOT cancelled here. Under the UPI re-auth model it
     stays live until the new subscription authorizes and is retired at the
     new sub's activation webhook (so an abandoned checkout can't strand the
     customer).
@@ -52,7 +52,7 @@ logger = logging.getLogger("oyechats.transitions")
 
 # ``cancel_reason`` stamped on the short-lived GRACE subscription created at a
 # paid→paid downgrade cutover (see ``promote_scheduled_change``). The grace row
-# holds the customer at the TARGET plan's entitlements — never Free — during the
+# holds the customer at the TARGET plan's entitlements (never Free) during the
 # window where they still owe the one-time UPI re-authorization of the new
 # mandate. The marker distinguishes it from a genuine failed-payment ``past_due``
 # so the dunning email / recovery paths skip it, while the existing
@@ -68,8 +68,8 @@ def remaining_plan_credits(session: Session, client_id: int, bot_id: int | None 
     """Unused ``plan_grant`` credits remaining in one ledger scope this cycle.
 
     Reads the live FIFO breakdown so the number reflects every chat that
-    has already burned credits this month. Top-up credits are excluded —
-    they're never cleared at renewal and carry over to the new
+    has already burned credits this month. Top-up credits are excluded.
+    They're never cleared at renewal and carry over to the new
     subscription on their own.
 
     ``bot_id`` selects the ledger scope and must match the subscription
@@ -103,7 +103,7 @@ def check_seat_overflow(session: Session, client_id: int, target_plan: Plan) -> 
 
     Returns ``None`` when the target plan grants UNLIMITED (``-1``) seats or
     the customer is already within the new plan's seat allowance. The caller
-    decides whether to refuse the transition or merely warn — this helper is
+    decides whether to refuse the transition or merely warn. This helper is
     intentionally pure.
     """
     allowed = int(target_plan.included_operator_seats or 0)
@@ -131,8 +131,8 @@ def enforce_operator_ceiling(session: Session, client_id: int) -> int:
 
     Companion to the pure :func:`check_seat_overflow` guard (which refuses
     paid→paid downgrades). This one *actively repairs* the operator roster
-    after a paid→Free transition — cancellation, natural expiry, dunning
-    expiry — where the subscription simply goes terminal and there is no
+    after a paid→Free transition (cancellation, natural expiry, dunning
+    expiry) where the subscription simply goes terminal and there is no
     "target plan" to guard against. Without this, a customer who invited 2
     operators on Standard and then cancelled keeps 2 active operator rows
     even though Free grants 0, leaving the Usage meter reading "2 / 0" and
@@ -142,20 +142,20 @@ def enforce_operator_ceiling(session: Session, client_id: int) -> int:
       * Resolves the client's live ceiling via
         :func:`plan_entitlements_service.get_entitlements` (bypassing cache
         so the just-flipped subscription status is respected). Uses the
-        already-normalised ``limits.operators`` value — which the resolver
+        already-normalised ``limits.operators`` value (which the resolver
         adjusts to ``max(included_seats, paid_seats)`` capped at the plan
-        ceiling — so this helper never re-implements the ordering rule.
+        ceiling) so this helper never re-implements the ordering rule.
       * Selects the excess operators oldest-first (by ``created_at`` ASC,
         stable by ``id``) so the workspace keeps its longest-tenured team
         members; matches how any human would triage a downgrade.
       * Soft-deactivates via ``is_active = False`` and does NOT delete rows
-        — audit trail (``ChatAuditLog``, historical ``ChatSession``
+       . Audit trail (``ChatAuditLog``, historical ``ChatSession``
         assignments) must remain intact.
       * Invalidates the entitlements cache so the Usage meter reflects the
         new count within one hop.
 
     Returns the number of operators just deactivated (0 if the client was
-    already within the ceiling — the common case, since :func:`check_seat_overflow`
+    already within the ceiling, the common case, since :func:`check_seat_overflow`
     fires on paid→paid downgrades). Callers do not need to react to the
     return value; it exists for logging.
     """
@@ -171,7 +171,7 @@ def enforce_operator_ceiling(session: Session, client_id: int) -> int:
 
     entitlements = plan_entitlements_service.get_entitlements(client_id, session, include_usage=False, use_cache=False)
     ceiling = entitlements.limit_for("operators")
-    # UNLIMITED (-1) means "no cap" — nothing to enforce.
+    # UNLIMITED (-1) means "no cap", nothing to enforce.
     if ceiling < 0:
         return 0
 
@@ -234,14 +234,14 @@ def check_document_overflow(session: Session, client_id: int, target_plan: Plan)
     so this guard is what turns "downgrade" into an explicit "get under the limit
     first" decision instead of a silent over-quota state.
 
-    Counting matches ``plan_entitlements_service._build_usage`` exactly — distinct
-    ``document_name`` WHERE ``source == 'upload'`` — so the number the block quotes
+    Counting matches ``plan_entitlements_service._build_usage`` exactly (distinct
+    ``document_name`` WHERE ``source == 'upload'``) so the number the block quotes
     is the same one the customer sees in their usage panel. Crawled pages are
     governed by the per-period ``page_scraping`` credit budget, not this stored
     cap, so they are intentionally excluded.
 
     Returns ``None`` when the plan's ``documents`` limit is ``UNLIMITED`` (``-1``),
-    missing, or already satisfied — the helper is pure; the caller decides whether
+    missing, or already satisfied, the helper is pure; the caller decides whether
     to refuse or merely warn.
     """
     from sqlalchemy import distinct
@@ -281,12 +281,12 @@ def execute_paid_upgrade(
 ) -> dict[str, Any]:
     """Open a checkout sheet for the new plan (UPI re-auth model, BL-2).
 
-    Does NOT cancel the current mandate — the old subscription stays live
+    Does NOT cancel the current mandate, the old subscription stays live
     until the new one authorizes, then is retired at the new sub's
     activation webhook (see ``_handle_subscription_activated``'s sibling
     sweep). Snapshots the customer's unused plan credits on the OLD sub's
     row so the activation webhook can re-grant them as a top-up after
-    payment clears — keeping the route handler free of cross-step state.
+    payment clears. Keeping the route handler free of cross-step state.
     Returns the Razorpay checkout payload the frontend hands to
     ``new Razorpay({...})``.
 
@@ -302,12 +302,12 @@ def execute_paid_upgrade(
     from app.services import pending_checkout_service, razorpay_service
 
     # Finding D: idempotent upgrade. A sequential double-submit (click → modal →
-    # close → click again) must not mint a SECOND Razorpay subscription — both
+    # close → click again) must not mint a SECOND Razorpay subscription, both
     # first cycles would charge. lock_client_for_billing only serialises
     # CONCURRENT requests, not a sequential re-submit. If an upgrade to the SAME
     # target plan is already in flight on this sub, return its existing checkout.
     # A different target plan supersedes the stale pending, which is CANCELLED at
-    # Razorpay before the replacement is minted — an abandoned mandate stays
+    # Razorpay before the replacement is minted, an abandoned mandate stays
     # authorizable indefinitely, so a stale checkout reopened weeks later would
     # otherwise charge for a plan the customer never took.
     #
@@ -322,7 +322,7 @@ def execute_paid_upgrade(
     if reused is not None:
         return reused
 
-    # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
+    # Snapshot unused plan credits BEFORE the new plan's allowance is granted,
     # the activation webhook will call ``reset_monthly_plan_credits`` before
     # granting the new allowance, so reading the breakdown later would return 0.
     # Scoped to the subscription being replaced: an account sub reads the
@@ -333,7 +333,7 @@ def execute_paid_upgrade(
     # swapped in place, so a plan change is cancel+recreate+re-authorize. Under
     # the re-auth model the OLD mandate must stay live until the NEW subscription
     # authorizes; if we hard-cancelled it now and the customer abandoned the
-    # Razorpay checkout modal, they'd be stranded — old service gone, new never
+    # Razorpay checkout modal, they'd be stranded. Old service gone, new never
     # authorized, and the rollover credits stuck in ``upgrade_credit_pending_cents``.
     # The old sub is retired instead at the NEW sub's activation webhook, where
     # ``_handle_subscription_activated`` gateway-cancels the superseded sibling
@@ -348,7 +348,7 @@ def execute_paid_upgrade(
         # A per-bot upgrade replaces THAT bot's mandate. Without these notes
         # the activation handler scopes its supersede-sweep to the ACCOUNT row
         # (bot_id IS NULL): the old per-bot mandate stays live next to the new
-        # one — double billing — and the account row gets wrongly retired.
+        # one (double billing) and the account row gets wrongly retired.
         # Same convention as /resume; the handler folds oyechats_bot_id into
         # its bot-scoped sweep + bot re-link and does NOT mint a new bot.
         extra_notes["purpose"] = "per_bot_subscription"
@@ -405,7 +405,7 @@ def schedule_paid_downgrade(
     from app.services import razorpay_service
 
     if not sub.current_period_end:
-        raise ValueError("Subscription has no current_period_end — cannot schedule cutover")
+        raise ValueError("Subscription has no current_period_end. Cannot schedule cutover")
 
     razorpay_service.cancel_subscription(sub, at_period_end=True)
     # The mandate is now dead at Razorpay. Record that so ``/subscriptions/resume``
@@ -438,7 +438,7 @@ def gateway_cancel_is_due(sub: Subscription, *, now: datetime | None = None) -> 
 
     True once ``current_period_end`` falls inside ``GATEWAY_CANCEL_LEAD_DAYS``
     (and for any row already past its period end, which is how a subscription
-    that fell behind — worker outage, missed webhook — still gets swept).
+    that fell behind (worker outage, missed webhook) still gets swept).
     A row with no period anchor can't be scheduled against, so it is due
     immediately: better an early cancel the customer explicitly asked for than
     a mandate nothing will ever stop.
@@ -458,7 +458,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
     to mint a whole new mandate and charge a second time for days the customer
     had already bought.
 
-    Idempotent on ``gateway_cancel_executed_at`` — safe for the cron to re-run
+    Idempotent on ``gateway_cancel_executed_at``. Safe for the cron to re-run
     and for ``/cancel`` to call inline on a row the sweep already handled.
     ``razorpay_service.cancel_subscription`` additionally swallows Razorpay's
     "not cancellable" terminal-state error, so a mandate cancelled out of band
@@ -468,7 +468,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
     along here for the same reason: cancelling it the moment the customer
     clicked Cancel took away seats they had paid for through period end. A
     failure to cancel it must not block the plan cancel that already
-    succeeded — log loudly for reconciliation instead.
+    succeeded. Log loudly for reconciliation instead.
 
     Returns True when this call performed the cancel, False when it was
     already done.
@@ -491,7 +491,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
         # later reactivation silently dropped seats the customer had bought.
         # Park the count as PENDING (wanted, not billed) so the replacement
         # subscription's activation can re-mint the add-on with a fresh mandate
-        # — entitlement still follows an authorized charge, it just isn't lost.
+        # . Entitlement still follows an authorized charge, it just isn't lost.
         wanted_seats = int(sub.seat_addon_quantity or 0)
         try:
             razorpay_service.cancel_seat_addon(session, sub)
@@ -499,7 +499,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
             seat_cancel_failed = True
             logger.error(
                 "Seat add-on cancel FAILED for subscription %s (client %s) during the "
-                "deferred plan cancellation — the seat add-on mandate is STILL LIVE at "
+                "deferred plan cancellation, the seat add-on mandate is STILL LIVE at "
                 "Razorpay and will keep debiting the customer. Leaving the row unstamped "
                 "so the next sweep retries.",
                 sub.id,
@@ -514,7 +514,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
         # Do NOT stamp the marker: it is what makes the sweep skip this row, and
         # skipping it would abandon a live seat mandate that keeps debiting with
         # no retry anywhere. Re-issuing the plan cancel on the next sweep is
-        # harmless — ``cancel_subscription`` treats an already-terminal
+        # harmless. ``cancel_subscription`` treats an already-terminal
         # subscription as a no-op.
         session.flush()
         return False
@@ -539,7 +539,7 @@ def cancel_scheduled_change(session: Session, sub: Subscription) -> bool:
 
     Idempotent: returns False (no error) when called on a subscription
     that has no scheduled change. The caller decides whether to resurrect
-    the gateway mandate (most providers require a new auth) — this helper
+    the gateway mandate (most providers require a new auth). This helper
     only owns local state because the resurrection path is provider-
     specific.
     """
@@ -549,7 +549,7 @@ def cancel_scheduled_change(session: Session, sub: Subscription) -> bool:
     sub.scheduled_plan_id = None
     sub.scheduled_billing_cycle = None
     sub.scheduled_change_at = None
-    # We intentionally leave ``cancel_at_period_end`` alone — if the
+    # We intentionally leave ``cancel_at_period_end`` alone. If the
     # caller wants to keep the existing mandate live they must call the
     # gateway resume helper separately; otherwise the row honestly
     # reflects that the customer is still on the cancellation track.
@@ -572,7 +572,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     Idempotent: returns ``None`` if there's nothing to promote (already
     promoted or never scheduled). Returns the new Razorpay checkout
     payload otherwise. The customer still needs to authorise the new
-    mandate — this function emails them that re-auth link itself (via
+    mandate. This function emails them that re-auth link itself (via
     ``short_url``) so the cutover never silently strands them (NB-3).
     """
     from app.services import plan_entitlements_service, plan_service, razorpay_service
@@ -590,7 +590,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
 
     # Flush before refresh so ``refresh(..., with_for_update=True)`` sees our own
     # pending writes (autoflush is off), then reloads the latest committed row
-    # under ``SELECT ... FOR UPDATE`` — the T5 pattern from
+    # under ``SELECT ... FOR UPDATE``, the T5 pattern from
     # ``credit_service.grant_subscription_period_once``. A racing caller that
     # already cleared the scheduled trio and committed will now be visible here,
     # so the re-check below no-ops instead of double-provisioning.
@@ -605,7 +605,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     new_plan = session.get(Plan, sub.scheduled_plan_id)
     if new_plan is None:
         logger.warning(
-            "Scheduled change for sub=%s points at missing plan_id=%s — clearing",
+            "Scheduled change for sub=%s points at missing plan_id=%s. Clearing",
             sub.id,
             sub.scheduled_plan_id,
         )
@@ -618,7 +618,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # A POOLED plan (``limits.bots == UNLIMITED``) sells ONE credit balance
     # shared across every agent, so it is only coherent on an account-scoped
     # subscription. This cutover copies ``sub.bot_id`` straight onto the grace
-    # row it INSERTs below, with no plan check — and that grace row is a real
+    # row it INSERTs below, with no plan check, and that grace row is a real
     # active-set row: it drives entitlements and scopes the credit ledger for the
     # whole re-authorisation window. Nothing upstream can currently queue this
     # shape (``/change-plan`` guards both in-place branches), so this is
@@ -627,7 +627,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # Refused rather than demoted: minting the grace row at ``bot_id IS NULL``
     # instead would collide with the client's existing account row on the
     # ``ix_subscriptions_client_bot_active`` partial unique index. The scheduled
-    # trio is deliberately LEFT SET — clearing it would destroy the customer's
+    # trio is deliberately LEFT SET. Clearing it would destroy the customer's
     # requested change and hide the defect; leaving it keeps the row visible and
     # re-promotable the moment a human corrects the scope.
     if sub.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(new_plan):
@@ -635,7 +635,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
             "REFUSING to promote scheduled change on sub=%s (client=%s, bot=%s) onto pooled plan %s "
             "(id=%s): that plan grants unlimited agents and sells one POOLED credit balance, so it "
             "cannot be billed at agent scope. Nothing was cancelled or minted and the scheduled "
-            "change is still queued — move the subscription to account scope, or clear the "
+            "change is still queued. Move the subscription to account scope, or clear the "
             "scheduled change, to unblock it.",
             sub.id,
             sub.client_id,
@@ -647,15 +647,15 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
 
     billing_cycle = sub.scheduled_billing_cycle or "monthly"
     client = sub.client
-    # Snapshot the old plan name before we clear the row — used in the
+    # Snapshot the old plan name before we clear the row. Used in the
     # customer notification below.
     old_plan_name = sub.plan.name if sub.plan else "your previous plan"
 
     # The operator-seat add-on is a SEPARATE Razorpay subscription (P0-3).
     # Nothing else in the scheduled-downgrade path (``schedule_paid_downgrade``,
     # the cancelled-webhook path, or the cron backstop that calls this function)
-    # ever cancels it, so left alone it survives the cutover as an orphan —
-    # still billing the now-defunct old mandate forever. Cancel it here and
+    # ever cancels it, so left alone it survives the cutover as an orphan.
+    # Still billing the now-defunct old mandate forever. Cancel it here and
     # carry the seat count forward via the new subscription's Razorpay notes;
     # ``_handle_subscription_activated`` re-creates it on the new subscription
     # once that activation webhook lands, so the customer's paid seats aren't
@@ -667,7 +667,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
         except Exception:
             logger.error(
                 "Seat add-on cancel FAILED for subscription %s (seat add-on %s, client %s) "
-                "during scheduled-downgrade promotion — the old seat add-on mandate is "
+                "during scheduled-downgrade promotion, the old seat add-on mandate is "
                 "STILL LIVE at Razorpay and will keep debiting the customer on top of the "
                 "new subscription. Needs manual reconciliation.",
                 sub.id,
@@ -676,7 +676,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
                 exc_info=True,
             )
             carried_seats = (
-                0  # unknown gateway state — don't compound it by re-creating a seat count we can't confirm was cleared
+                0  # unknown gateway state. Don't compound it by re-creating a seat count we can't confirm was cleared
             )
 
     # Mark the old sub finalized first so the partial-unique index on
@@ -693,7 +693,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     sub.scheduled_change_at = None
     session.flush()
 
-    # Hold the customer at the TARGET plan's entitlements — never Free — for the
+    # Hold the customer at the TARGET plan's entitlements (never Free) for the
     # re-authorization window. The old row just went terminal and the freshly
     # created Razorpay mandate below is UNAUTHORIZED, so without a local row
     # ``get_client_subscription`` would find nothing active and entitlements
@@ -717,7 +717,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     #     CONTRACT for the per-bot activation branch: before inserting the new
     #     bot-scoped active row it MUST cancel any ``status='past_due'`` row for
     #     the same (client_id, bot_id) whose ``cancel_reason`` equals
-    #     ``DOWNGRADE_REAUTH_GRACE_REASON`` — otherwise the insert collides on
+    #     ``DOWNGRADE_REAUTH_GRACE_REASON``. Otherwise the insert collides on
     #     that unique index and activation fails. Until that lands (today's
     #     activation still creates a ``bot_id IS NULL`` row), a bot-scoped grace
     #     row merely self-heals via the expire cron below (≤ 7 days): stale data
@@ -725,7 +725,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     #
     # If the customer never re-authorizes, ``task_expire_past_due_subscriptions``
     # flips this row to ``expired`` after ``PAYMENT_FAILED_GRACE_DAYS`` (7 days)
-    # via ``past_due_since`` — at which point they correctly drop to Free. No
+    # via ``past_due_since``, at which point they correctly drop to Free. No
     # credits are granted here: the balance simply carries until real activation.
     grace_start = datetime.now(UTC)
     grace = Subscription(
@@ -770,8 +770,8 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # Notify the customer with the hosted re-auth link so they can authorise
     # the new (lower) plan's UPI mandate. Without this the cutover leaves them
     # with no active subscription and no path back (NB-3). A failed email must
-    # NOT roll back the promotion — the checkout already exists and is
-    # reconcilable via ``prev_razorpay_subscription_id`` on the new sub — so we
+    # NOT roll back the promotion (the checkout already exists and is
+    # reconcilable via ``prev_razorpay_subscription_id`` on the new sub) so we
     # swallow send errors here (the send helper also captures them).
     reauth_url = payload.get("short_url")
     if reauth_url and client and client.email:
@@ -790,7 +790,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
             )
     else:
         logger.warning(
-            "promote_scheduled_change: no re-auth link/email for client=%s (short_url=%r) — "
+            "promote_scheduled_change: no re-auth link/email for client=%s (short_url=%r). "
             "customer must be reconciled manually",
             client.id if client else None,
             reauth_url,
@@ -823,7 +823,7 @@ def cancel_bot_scoped_reauth_grace(session: Session, client_id: int, bot_id: int
 
     Scope is deliberately narrow: it only touches rows in the active set whose
     ``cancel_reason`` is ``DOWNGRADE_REAUTH_GRACE_REASON``, so it can never cancel
-    a real paid subscription. Idempotent — returns 0 when there is nothing to
+    a real paid subscription. Idempotent. Returns 0 when there is nothing to
     cancel. ``bot_id IS NULL`` is a no-op: account-level grace is the existing
     sweep's responsibility, and matching NULL here could cancel a legacy
     account-level grace row that the caller did not mean to touch.
@@ -882,7 +882,7 @@ def apply_pending_proration(
 
     Looks up the old local row by ``prev_razorpay_subscription_id``,
     reads the rollover credit count stashed in
-    ``upgrade_credit_pending_cents`` (column name is legacy — it stores a
+    ``upgrade_credit_pending_cents`` (column name is legacy, it stores a
     credit count, not cents), writes a credit-ledger ``topup`` for that
     amount, then zeros the column so re-runs of the activation webhook
     don't double-credit.
@@ -906,8 +906,8 @@ def apply_pending_proration(
     if old_sub is None:
         return 0
 
-    # Finding D: the upgrade has activated, so the in-flight checkout is spent —
-    # clear the pending marker unconditionally (even when there were no rollover
+    # Finding D: the upgrade has activated, so the in-flight checkout is spent.
+    # Clear the pending marker unconditionally (even when there were no rollover
     # credits) so it never strands a future upgrade to the same plan.
     old_sub.upgrade_pending_subscription_id = None
     old_sub.upgrade_pending_plan_id = None

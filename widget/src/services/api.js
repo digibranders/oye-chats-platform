@@ -1,4 +1,4 @@
-// Streaming sentinel stripper — extracted to its own module so the
+// Streaming sentinel stripper. Extracted to its own module so the
 // split-chunk correctness logic is unit-tested independently.
 // See sentinelStripper.test.js for regression coverage.
 import { createSentinelStripper } from './sentinelStripper.js';
@@ -106,7 +106,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         let metadataReceived = false;
 
         // All visible text funnels through this stripper so inline-card
-        // sentinels (e.g. [LEAVE_MESSAGE_CARD]) never reach the UI — even
+        // sentinels (e.g. [LEAVE_MESSAGE_CARD]) never reach the UI, even
         // when they straddle chunk boundaries.
         const stripper = createSentinelStripper();
         const emitClean = (text) => {
@@ -119,7 +119,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             try {
                 ({ done, value } = await _readWithTimeout(reader));
             } catch (readErr) {
-                // Timed out or aborted — cancel the stream and surface the error
+                // Timed out or aborted. Cancel the stream and surface the error
                 reader.cancel().catch(() => { });
                 throw readErr;
             }
@@ -160,7 +160,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                 }
             }
 
-            // Flush partial content immediately — don't wait for a newline.
+            // Flush partial content immediately. Don't wait for a newline.
             // LLM tokens arrive without \n delimiters, so without this flush the
             // entire response would accumulate in buffer and appear all at once
             // at stream end. Guard against flushing a partial METADATA line.
@@ -187,7 +187,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             }
         }
 
-        // Final safety flush — releases any stripper-held tail in the
+        // Final safety flush. Releases any stripper-held tail in the
         // (rare) case the stream ended without FINAL_METADATA.
         const tail = stripper.flush();
         if (tail) onChunk?.(tail);
@@ -237,7 +237,7 @@ export const submitFeedback = async (messageId, feedbackValue) => {
 /**
  * Real-time check called on email-field blur, before the visitor can
  * submit the handoff or offline-message form. Fails open ({valid: true})
- * on any network/HTTP error — an outage on our side must never block a
+ * on any network/HTTP error, an outage on our side must never block a
  * real visitor from talking to a human. See
  * api/app/api/chat_routes.py validate_email_endpoint for the server-side
  * (lenient) blocking rule.
@@ -310,7 +310,7 @@ export const requestHandoff = async (sessionId, formData) => {
         });
         if (!response.ok) throw new Error('Handoff request failed');
 
-        // Save lead info fire-and-forget — handoff success should not
+        // Save lead info fire-and-forget. Handoff success should not
         // depend on lead capture success, and email validation (Reoon)
         // runs entirely server-side in the background, never blocking
         // this request. See api/app/api/chat_routes.py lead_capture_endpoint.
@@ -426,7 +426,7 @@ export const submitOfflineMessage = async (formData) => {
                 message: formData.message,
                 session_id: formData.session_id || null,
                 department_id: formData.department_id || null,
-                // Why visitor fell back to the form — the resolver state at the
+                // Why visitor fell back to the form, the resolver state at the
                 // time of fallback (no_operators, out_of_hours, queue_timeout,
                 // etc.). Lets admin filter offline messages by cause and powers
                 // the "why am I getting so many of these?" analytics.
@@ -468,18 +468,18 @@ export const sendTranscriptEmail = async (sessionId, recipientEmail) => {
 };
 
 /**
- * Journey capture — records the ordered list of page paths the visitor
+ * Journey capture. Records the ordered list of page paths the visitor
  * touches on the host site before, during, and after chatting. Powers
  * the "before chat" attribution on the Leads page AND the Journeys view
  * under Analytics (top pages / paths that convert / post-chat activity).
  *
  * Stored in sessionStorage (namespaced per bot) so it clears when the tab
- * closes — matches GDPR expectations and mirrors how UTM capture works.
+ * closes. Matches GDPR expectations and mirrors how UTM capture works.
  * Uses a small in-memory dedupe against the last entry so a SPA that
  * fires history.pushState multiple times for the same route doesn't
  * balloon the array.
  *
- * Every entry carries a ``phase`` tag — ``pre`` before chat opens, ``chat``
+ * Every entry carries a ``phase`` tag. ``pre`` before chat opens, ``chat``
  * for event markers, ``post`` for pages the visitor sees after chat has
  * been opened at least once. The transition is a one-way flip stored in
  * sessionStorage under ``oyechats_chat_phase_<botKey>``; once flipped,
@@ -518,7 +518,7 @@ const _writeJourney = (entries) => {
     try {
         sessionStorage.setItem(_journeyKey(), JSON.stringify(entries));
     } catch {
-        /* quota / private mode — safe to swallow */
+        /* quota / private mode. Safe to swallow */
     }
 };
 
@@ -534,7 +534,7 @@ const _flipToPostPhase = () => {
     try {
         sessionStorage.setItem(_journeyPhaseKey(), 'post');
     } catch {
-        /* private mode — accept the loss of phase distinction */
+        /* private mode. Accept the loss of phase distinction */
     }
 };
 
@@ -607,7 +607,7 @@ const _flushJourneyNow = (sessionId, { beacon = false } = {}) => {
         body: payload,
         keepalive: true,
     }).catch(() => {
-        /* non-critical — dropped update just means the next tick catches up */
+        /* non-critical. Dropped update just means the next tick catches up */
     });
 };
 
@@ -624,7 +624,7 @@ const _installPagehideHook = (sessionIdRef) => {
             if (document.visibilityState === 'hidden') flush();
         });
     } catch {
-        /* very old browser — accept the loss of a final beacon */
+        /* very old browser. Accept the loss of a final beacon */
     }
 };
 
@@ -659,7 +659,7 @@ const _appendAndMaybeFlush = (path) => {
     const entry = _appendJourneyEntry(path);
     if (!entry) return;
     // Once chat has been opened, SPA route changes are the interesting
-    // "post-chat behavior" signal — flush them (throttled) to the
+    // "post-chat behavior" signal. Flush them (throttled) to the
     // backend. Pre-chat navigations rely on the init POST + subsequent
     // markChatEvent flushes.
     if (before === 'post' && _activeJourneySessionId) {
@@ -687,7 +687,7 @@ let _journeyHooksInstalled = false;
 
 /**
  * Install history listeners so SPA route changes append to the journey
- * without a full page reload. Idempotent — safe to call from every
+ * without a full page reload. Idempotent. Safe to call from every
  * collectPageContext invocation.
  */
 const _installJourneyHooks = () => {
@@ -708,13 +708,13 @@ const _installJourneyHooks = () => {
         };
         window.addEventListener('popstate', () => _appendAndMaybeFlush(window.location.pathname));
     } catch {
-        /* host page may freeze history — accept the loss of SPA journey entries */
+        /* host page may freeze history. Accept the loss of SPA journey entries */
     }
 };
 
 /**
  * Record the visitor's current page in the journey and wire up SPA route hooks
- * — independent of whether the chat panel is mounted.
+ *. Independent of whether the chat panel is mounted.
  *
  * Called on widget LOAD (the launcher renders on every page, chat open or not)
  * so "journey before chat" captures the pages a visitor browses BEFORE opening
@@ -738,14 +738,14 @@ export const recordPageVisit = () => {
                 _installPagehideHook(() => _activeJourneySessionId);
             }
         } catch {
-            /* storage-keys unavailable — skip rehydration */
+            /* storage-keys unavailable. Skip rehydration */
         }
     }
 };
 
 /**
  * Collect page context from the host page (URL, referrer, UTM params, journey).
- * Called on widget load and again when a session is created — reads from
+ * Called on widget load and again when a session is created, reads from
  * window.location and document.referrer, and appends the current path to
  * the journey.
  */
@@ -814,7 +814,7 @@ export const sendBehavioralSignals = async (sessionId, signals) => {
             console.warn('[OyeChats] Behavioral signals request failed:', response.status);
         }
     } catch (error) {
-        // Non-critical — never block the chat experience
+        // Non-critical, never block the chat experience
         console.warn('[OyeChats] Behavioral signals error:', error);
     }
 };
@@ -857,7 +857,7 @@ export const sendTimeOnPage = (sessionId, loadTime) => {
 export const getChatbotSettings = async () => {
     try {
         // Use the new bot-scoped public settings endpoint
-        // Falls back gracefully — backend resolves bot from X-Bot-Key or X-API-Key
+        // Falls back gracefully. Backend resolves bot from X-Bot-Key or X-API-Key
         const response = await fetch(`${API_URL}/bots/settings/public`, {
             headers: getHeaders()
         });

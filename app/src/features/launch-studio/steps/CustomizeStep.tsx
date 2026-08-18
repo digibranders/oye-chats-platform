@@ -43,7 +43,7 @@ export function CustomizeStep(props: StepProps) {
   const [error, setError] = useState<string | null>(null);
   // Did the user touch the avatar image on THIS visit? `preview.botLogo` is a
   // snapshot taken on mount, and the crawl can set the agent's avatar from the
-  // site's favicon after that — asynchronously, once training finishes. Sending
+  // site's favicon after that. Asynchronously, once training finishes. Sending
   // the snapshot back unconditionally writes that avatar away again, and since
   // Train runs before Customize in the Launch Studio order, the window is the
   // ordinary path rather than an edge case. Untouched means "not mine to
@@ -115,7 +115,7 @@ export function CustomizeStep(props: StepProps) {
           avatar_type: preview.avatarType,
           orb_color: preview.orbColor || null,
           launcher_name: launcherName,
-          // Omitted entirely unless the user changed the image here — see
+          // Omitted entirely unless the user changed the image here. See
           // `avatarImageTouched`. Both move together everywhere in this
           // codebase, so they are included or omitted together.
           ...(avatarImageTouched ? { bot_logo: preview.botLogo, launcher_logo: preview.botLogo } : {}),

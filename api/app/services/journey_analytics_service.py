@@ -4,9 +4,9 @@ Reads ``chat_sessions.visitor_journey`` (JSONB) and produces three shapes
 consumed by the admin dashboard:
 
 1. Top pages, optionally scoped to a phase (pre|chat|post).
-2. Paths that convert — for a given conversion event, the top pre-chat
+2. Paths that convert, for a given conversion event, the top pre-chat
    page sequences that preceded it, grouped and counted.
-3. Post-chat destinations — for sessions where the visitor chatted, the
+3. Post-chat destinations, for sessions where the visitor chatted, the
    top first-hop pages after chat close plus top full post-chat sequences.
 
 All three are scoped by ``bot_id`` + a ``(since, until)`` date range and
@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import ChatSession, LeadInfo
 
-# Whitelisted conversion event names — matches _JOURNEY_EVENTS in
+# Whitelisted conversion event names. Matches _JOURNEY_EVENTS in
 # chat_routes.py minus the sentinel opens/closes. lead_captured is
 # excluded from path attribution on purpose (it double-counts against
 # handoff/demo forms that also collect email); it surfaces as a header
@@ -106,7 +106,7 @@ def paths_to_conversion(
     """Top pre-chat page sequences that preceded a given conversion event.
 
     Returns a dict with ``conversion_type``, ``total_conversions`` (sessions
-    where the event fired), and ``paths`` — a list of
+    where the event fired), and ``paths``, a list of
     ``{"sequence": [...], "sessions": N, "conversion_rate": F}`` rows.
 
     ``max_seq_len`` truncates long sequences from the head so noisy tails
@@ -173,14 +173,14 @@ def post_chat_destinations(
     """Where visitors go after the chat closes.
 
     Returns three aggregates:
-    * ``first_hops`` — the first post-phase page per session, ranked.
-    * ``all_hops`` — every post-phase page visit, counted regardless of
+    * ``first_hops``, the first post-phase page per session, ranked.
+    * ``all_hops``. Every post-phase page visit, counted regardless of
       whether it was the first hop or a later one. Powers the
       destination column so pages visitors reached mid-post-chat-
       journey (e.g. ``chat → /about → /contact``) aren't invisible.
       Sessions is the number of DISTINCT sessions in which the page
       appeared as a post-chat stop.
-    * ``full_sequences`` — top ordered post-phase paths, same shape
+    * ``full_sequences``. Top ordered post-phase paths, same shape
       as paths_to_conversion.
     """
     journeys = _fetch_journeys(db, bot_id, since, until)
@@ -202,7 +202,7 @@ def post_chat_destinations(
             continue
         sessions_with_post += 1
         first_hop_counter[post_paths[0]] += 1
-        # ``all_hops`` counts DISTINCT sessions per path — a visitor who
+        # ``all_hops`` counts DISTINCT sessions per path, a visitor who
         # touched /about twice in their post-chat sequence counts once,
         # not twice, matching how ``first_hops`` and ``top_pages``
         # denominate session-share.
@@ -239,7 +239,7 @@ def top_pre_chat_sequences(
     Consecutive same-path entries collapse to one (SPA hash changes or
     quick refires shouldn't fragment a sequence). ``max_seq_len`` clips
     long sequences from the head so noisy exploratory tails don't
-    fragment counts — visitors A: ``/a/b/c/d`` and B: ``/x/b/c/d`` both
+    fragment counts. Visitors A: ``/a/b/c/d`` and B: ``/x/b/c/d`` both
     collapse to ``/b/c/d`` when ``max_seq_len=3``. Set to 0 to keep the
     full sequence.
     """
@@ -251,7 +251,7 @@ def top_pre_chat_sequences(
     # Group by pre-chat pattern; also collect the post-chat sequence
     # each session took, so the flow diagram can render a matching
     # post-chain to the right of the chatbot per row. The "most
-    # common" post_sequence per pattern wins — one representative
+    # common" post_sequence per pattern wins, one representative
     # continuation per row keeps the diagram legible.
     grouped: dict[tuple[str, ...], dict] = {}
     sessions_with_pre = 0
@@ -283,7 +283,7 @@ def top_pre_chat_sequences(
         """Winning post-sequence for a pre-pattern, WITH its own session count.
 
         Returning the count is what lets the diagram label post-cards with
-        the number of sessions that actually took that continuation — not
+        the number of sessions that actually took that continuation, not
         the total session count of the pre-pattern, which vastly overstates
         how many visitors reached each post page.
         """

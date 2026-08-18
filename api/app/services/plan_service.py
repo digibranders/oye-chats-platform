@@ -1,4 +1,4 @@
-"""Plan management service — resolves client plans, enforces limits, and manages plan CRUD."""
+"""Plan management service. Resolves client plans, enforces limits, and manages plan CRUD."""
 
 import logging
 from datetime import UTC, datetime
@@ -19,8 +19,8 @@ def lock_client_for_billing(session: Session, client_id: int) -> None:
     """Serialize a client's subscription / credit mutations (remediation H1).
 
     Takes a transaction-scoped PostgreSQL advisory lock keyed on the client, so
-    concurrent billing mutations — a double-clicked "start trial", racing
-    change-plan / seats / cancel — run one at a time. Without it, two requests
+    concurrent billing mutations (a double-clicked "start trial", racing
+    change-plan / seats / cancel) run one at a time. Without it, two requests
     can both pass the read-side checks (TOCTOU) and double-grant credits or
     clobber each other's writes. Released automatically at COMMIT / ROLLBACK.
 
@@ -52,7 +52,7 @@ def plan_checkout_is_wired(
 ) -> bool:
     """Whether this environment can complete a SELF-SERVE checkout for a tier.
 
-    A free tier is trivially wired — there is nothing to charge. A paid tier is
+    A free tier is trivially wired. There is nothing to charge. A paid tier is
     wired only when it carries BOTH INR gateway plan ids for the mode this
     environment's keys point at, because ``razorpay_service.create_subscription``
     cannot mint a mandate for a cycle whose id is missing. The USD rail is
@@ -64,8 +64,8 @@ def plan_checkout_is_wired(
     ``plans.is_active``.** "Cannot be self-serve checked out" and "must not be
     shown" are different statements, and conflating them deletes the
     contact-sales tier: an agency tier needs no gateway plan id to be *listed*,
-    and ``GET /public/pricing-catalog`` — the feed oyechats.com/pricing renders —
-    is built from :func:`get_active_plans`. Deactivating also makes the graceful
+    and ``GET /public/pricing-catalog``, the feed oyechats.com/pricing renders.
+    Is built from :func:`get_active_plans`. Deactivating also makes the graceful
     path unreachable, because ``/subscriptions/checkout/quote`` and
     ``/subscriptions/checkout`` both reject an inactive plan before they get to
     it.
@@ -75,7 +75,7 @@ def plan_checkout_is_wired(
     * ``GET /subscriptions/checkout/quote`` answers ``checkout_supported:
       false`` with ``reason: "inr_plan_unconfigured"`` and a contact-sales
       address.
-    * ``POST /subscriptions/checkout`` refuses in the same shape — the charge
+    * ``POST /subscriptions/checkout`` refuses in the same shape, the charge
       path raises ``razorpay_service.PlanNotCheckoutable``, which the app-level
       handler maps to the matching 409.
 
@@ -141,7 +141,7 @@ def get_default_plan(session: Session) -> Plan | None:
     """Return the ACTIVE plan marked as default (auto-assigned to new signups).
 
     Filters on ``is_active`` so a deactivated/soft-deleted default is never
-    handed to a new signup — ``delete_plan`` soft-deletes (``is_active=False``)
+    handed to a new signup. ``delete_plan`` soft-deletes (``is_active=False``)
     and could leave ``is_default`` set, which would silently drive new-signup
     entitlements and credit grants off a "deleted" plan (finding). Orders by id
     for a deterministic pick if more than one active default somehow exists.
@@ -159,7 +159,7 @@ def get_client_subscription(session: Session, client_id: int) -> Subscription | 
     Under per-bot billing a client may hold several active subscriptions at once
     (one account-level + one per paid bot). Account-level entitlements must
     follow the highest-tier active subscription (by plan price), NOT whichever
-    row was created most recently — otherwise adding a Free second bot would
+    row was created most recently. Otherwise adding a Free second bot would
     silently downgrade the account's features to Free (remediation H2). Ties
     break on most-recent. ``plan_id`` is non-null (FK RESTRICT), so the inner
     join never drops a valid subscription.
@@ -185,7 +185,7 @@ def get_account_subscription(session: Session, client_id: int) -> Subscription |
     ENTITLEMENTS never silently downgrade (remediation H2). That set is correct
     for entitlements and WRONG as a mutation target: with an unpaid agent
     selected it can return a DIFFERENT agent's subscription, so a "cancel"
-    would kill that agent's gateway mandate instead — and Razorpay has no
+    would kill that agent's gateway mandate instead, and Razorpay has no
     un-cancel.
 
     ``ix_subscriptions_client_legacy_active`` (partial unique on ``client_id``
@@ -235,7 +235,7 @@ def get_client_plan(session: Session, client_id: int) -> Plan:
         if plan:
             return plan
 
-    # No active subscription — fall back to the default plan
+    # No active subscription. Fall back to the default plan
     default = get_default_plan(session)
     if default:
         return default
@@ -245,7 +245,7 @@ def get_client_plan(session: Session, client_id: int) -> Plan:
     if free_plan:
         return free_plan
 
-    # Should never happen — seed data ensures at least one plan exists
+    # Should never happen. Seed data ensures at least one plan exists
     raise RuntimeError("No plans found in the database. Run the seed migration.")
 
 
@@ -253,7 +253,7 @@ def get_plan_limit(plan: Plan, metric: str) -> int:
     """Extract a specific limit value from the plan's JSONB limits field.
 
     Deny-by-default (NV3): an unknown metric returns 0, not UNLIMITED. A typo'd
-    or renamed metric name must never silently grant unlimited quota — this now
+    or renamed metric name must never silently grant unlimited quota. This now
     matches ``PlanEntitlements.limit_for``, which also fails closed. A plan that
     genuinely wants a metric unlimited stores ``-1`` (UNLIMITED) explicitly.
     """
@@ -261,7 +261,7 @@ def get_plan_limit(plan: Plan, metric: str) -> int:
     return limits.get(metric, 0)
 
 
-# Free-tier crawl floor — used when a plan row is missing the crawl-limit
+# Free-tier crawl floor. Used when a plan row is missing the crawl-limit
 # keys entirely (e.g. seed data older than the a7c1e9f3b210 migration, or a
 # test fixture). Lets the rest of the stack treat ``get_crawl_limits`` as
 # total without leaking ``None`` into the crawler subprocess env.
@@ -281,7 +281,7 @@ def get_crawl_limits(plan: Plan) -> dict[str, int]:
 
     Keys: ``max_crawl_pages``, ``max_crawl_depth``, ``max_crawl_js_pages``,
     ``max_crawl_concurrency``. Missing keys fall back to the free-tier
-    floor — never to UNLIMITED — because the crawler subprocess always
+    floor (never to UNLIMITED) because the crawler subprocess always
     needs a concrete integer ceiling.
 
     ``max_crawl_pages`` may legitimately be ``UNLIMITED`` (``-1``) for paid
@@ -309,7 +309,7 @@ def is_feature_enabled(plan: Plan, feature: str) -> bool:
 def enforce_feature(session: Session, client_id: int, feature: str) -> None:
     """Raise HTTP 403 if a feature is not enabled on the client's current plan.
 
-    Feature gating is independent of credits — it controls which capabilities
+    Feature gating is independent of credits, it controls which capabilities
     a tier exposes (e.g. ``live_chat``, ``bant``, ``sso``). The ``features``
     JSONB column on ``Plan`` is the source of truth.
     """
@@ -331,7 +331,7 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
 
 
 # Plans that unlock the "updated pages only" (delta) recrawl mode. Free/Starter
-# get the option in the UI but see an upgrade CTA — the backend enforces the
+# get the option in the UI but see an upgrade CTA, the backend enforces the
 # same gate so a forged request from an older tier is still rejected.
 #
 # Enterprise is on this list for a cost reason, not just a parity one: it is
@@ -465,7 +465,7 @@ def get_or_create_usage_record(session: Session, client_id: int) -> UsageRecord:
         bots_count=len(bots_count),
         operators_count=len(operators_count),
     )
-    # M4 — the (client_id, period_start) unique index blocks a concurrent
+    # M4, the (client_id, period_start) unique index blocks a concurrent
     # double-create at the DB layer; catch the loser's IntegrityError in a
     # savepoint and return the winner's row instead of bubbling a 500.
     sp = session.begin_nested()
@@ -488,17 +488,17 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
 
     Two flavours of "default" coexist:
 
-    * **Trial plan** (``trial_days > 0``) — the modern default. The
+    * **Trial plan** (``trial_days > 0``), the modern default. The
       subscription starts in ``trialing``; ``trial_start`` / ``trial_end``
       are populated and ``current_period_end`` is pinned to ``trial_end``
       so the billing UI's "renews on" label matches the trial deadline.
       The expiry cron (PR4) flips status to ``trial_expired`` when
       ``trial_end < now()``.
-    * **Free plan** (``trial_days == 0``) — historical fallback for any
+    * **Free plan** (``trial_days == 0``). Historical fallback for any
       install whose default is still pointed at a zero-trial plan. Starts
       in ``active`` with an anniversary-monthly billing cycle.
 
-    The credit grant is part of the contract here — without it, a brand-new
+    The credit grant is part of the contract here, without it, a brand-new
     signup has a valid subscription but a zero balance, which blocks every
     credit-gated action (crawl, chat, document upload) until the next
     monthly cron tick. Paid plans get their grant from the payment webhook;
@@ -520,7 +520,7 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     trial_days = int(default_plan.trial_days or 0)
 
     if trial_days > 0:
-        # Trial-plan path — period and trial dates intentionally coincide so
+        # Trial-plan path. Period and trial dates intentionally coincide so
         # the dashboard's "renews on" badge points at the trial deadline.
         trial_start = now
         trial_end = now + timedelta(days=trial_days)
@@ -533,7 +533,7 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
         trial_end = None
         sub_status = "active"
         # Anniversary billing: a customer signing up on May 30 17:18 IST
-        # gets their period_end on June 30 17:18 IST — exactly one month
+        # gets their period_end on June 30 17:18 IST, exactly one month
         # from signup. Matches Razorpay defaults.
         period_start = now
         period_end = add_months(now, 1)
@@ -579,12 +579,12 @@ class TrialUnavailable(Exception):
     Carries the reason code so the API layer can map it to a stable HTTP
     response without parsing English. Reasons:
 
-    * ``plan_not_found``        — slug doesn't match an active plan.
-    * ``plan_not_trialable``    — ``trial_days <= 0`` (e.g. the free plan).
-    * ``already_trialed``       — client previously held a sub (active or
+    * ``plan_not_found``       . Slug doesn't match an active plan.
+    * ``plan_not_trialable``   . ``trial_days <= 0`` (e.g. the free plan).
+    * ``already_trialed``      . Client previously held a sub (active or
       expired) on this exact plan. One trial per plan, lifetime.
-    * ``active_paid_subscription`` — client is on a paid plan already
-      (or trialing a different paid plan) — they should change plans
+    * ``active_paid_subscription``. Client is on a paid plan already
+      (or trialing a different paid plan). They should change plans
       through the normal upgrade flow, not start a fresh trial.
     """
 
@@ -641,7 +641,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
       raises :class:`TrialUnavailable` with reason ``already_trialed``.
       One free trial per lifetime, across every trial-eligible plan.
     * Pre-existing rows on a different *paid* plan raise
-      ``active_paid_subscription`` — the upgrade/downgrade UI handles
+      ``active_paid_subscription``, the upgrade/downgrade UI handles
       that case, not the start-trial path.
     """
     from datetime import timedelta
@@ -664,7 +664,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
             message=f"The '{plan.name}' plan does not offer a free trial.",
         )
 
-    # Lifetime ban on re-trialing — one free trial per client, across every
+    # Lifetime ban on re-trialing, one free trial per client, across every
     # trial-eligible plan. ``has_used_trial`` matches any historical row that
     # either started a trial or currently sits in a trial state, so a customer
     # who already burned their Standard trial can't reset by canceling and
@@ -679,7 +679,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
             ),
         )
 
-    # Current subscription — anything in the active-set is the row that
+    # Current subscription. Anything in the active-set is the row that
     # gates the unique index. We allow upgrading from a free-tier
     # subscription (paid==0) but refuse to trample anything else.
     current = (
@@ -700,7 +700,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
     if current is not None:
         current_plan = session.execute(select(Plan).where(Plan.id == current.plan_id)).scalars().first()
         is_paid_plan = current_plan is not None and int(current_plan.monthly_price_cents or 0) > 0
-        # Active paid subscriptions go through the change-plan flow — we
+        # Active paid subscriptions go through the change-plan flow. We
         # don't silently kill a paying customer's sub to drop them onto a
         # different trial. Trialing customers, on the other hand, may want
         # to evaluate a second tier; we let them swap (the lifetime
@@ -717,7 +717,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
         # Free-tier upgrade OR trialing→trialing swap. Either way, vacate
         # the partial-unique index by canceling the existing row before we
         # insert the new trialing one. Capture the cancel reason BEFORE
-        # we overwrite ``status`` — it's how the audit trail distinguishes
+        # we overwrite ``status``, it's how the audit trail distinguishes
         # the two flows.
         cancel_reason = "auto_swap_trial" if current.status == "trialing" else "auto_upgrade_to_trial"
         current.status = "canceled"
@@ -727,7 +727,7 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
 
     # Expire any unused monthly grant from the prior subscription BEFORE
     # we hand out the new plan's credits. Otherwise the new balance ends
-    # up as ``old_remaining + new_grant`` — e.g. a free-tier user with 500
+    # up as ``old_remaining + new_grant``. E.g. a free-tier user with 500
     # untouched credits who starts a Standard trial would see 10,500 / 10,000.
     # ``reset_monthly_plan_credits`` only zeroes ``plan_grant`` rows; paid
     # top-up credits (``topup_grant``) survive because the customer

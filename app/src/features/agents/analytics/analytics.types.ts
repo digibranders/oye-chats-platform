@@ -12,7 +12,7 @@
 export type RatingStar = 1 | 2 | 3 | 4 | 5;
 
 export interface RatingsSummary {
-  /** Weighted average 1–5, or null when there are no ratings yet. */
+  /** Weighted average 1 to 5, or null when there are no ratings yet. */
   avg: number | null;
   /** Total number of ratings. */
   total: number;
@@ -24,7 +24,7 @@ export interface ResolutionSummary {
   resolved: number;
   unresolved: number;
   total: number;
-  /** Percentage 0–100, or null when nothing has been rated. */
+  /** Percentage 0 to 100, or null when nothing has been rated. */
   rate: number | null;
 }
 

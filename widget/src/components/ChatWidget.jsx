@@ -4,7 +4,7 @@ import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/
 import { readSessionId, writeSessionId, resolveShareDomain } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
 
-// Lazy-loaded — chat window ships in its own chunk, only fetched on first widget open.
+// Lazy-loaded. Chat window ships in its own chunk, only fetched on first widget open.
 // This is the largest component (~1900 LOC plus react-markdown), so deferring it
 // keeps the initial FAB chunk small (Core Web Vitals win for the host site).
 const ChatWindow = lazy(() => import('./ChatWindow'));
@@ -15,11 +15,11 @@ const usePendingMessage = () => {
     return ref;
 };
 
-const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
-const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
+const OPEN_DURATION = 300;  // ms. Matches widgetOpen animation (280ms + buffer)
+const CLOSE_DURATION = 220; // ms. Matches widgetClose animation (200ms + buffer)
 
 const ChatWidget = () => {
-  // The panel always starts closed on every page load — it opens only when the
+  // The panel always starts closed on every page load, it opens only when the
   // visitor taps the launcher. The open/closed state is deliberately not
   // persisted (the conversation itself still is, via the session id), so a
   // returning visitor never has the chat pop open on its own.
@@ -57,7 +57,7 @@ const ChatWidget = () => {
 
   // ── Journey capture (runs on every page load, independent of the panel) ────
   // The launcher renders on every host page whether or not the chat is open, so
-  // recording the visit here — not inside the (open-only) ChatWindow — is what
+  // recording the visit here (not inside the (open-only) ChatWindow) is what
   // makes "journey before chat" capture pages browsed BEFORE the chat opens.
   // On MPA sites each page load remounts this; on SPA sites the installed
   // history hooks capture subsequent route changes.
@@ -69,7 +69,7 @@ const ChatWidget = () => {
   // When the widget is embedded in the admin "Preview on my website" panel,
   // the demo page sets `window.__OYECHATS_PREVIEW_MODE__ = true`. In that
   // mode we accept `oyechats:preview-config` messages from the parent frame
-  // and merge them into local settings — no network round-trip, no save.
+  // and merge them into local settings, no network round-trip, no save.
   // Only the immediate parent window is trusted (dashboard → iframe),
   // which prevents third-party sites from driving the widget via postMessage.
   useEffect(() => {
@@ -165,7 +165,7 @@ const ChatWidget = () => {
   // when it's blank we auto-detect the apex so continuity works with zero
   // config. Resolves to null only when neither is available (cookies disabled),
   // keeping the widget localStorage-only in that case. The open/closed PANEL
-  // state is deliberately not persisted — the widget always starts closed.
+  // state is deliberately not persisted, the widget always starts closed.
   const shareDomain = resolveShareDomain(settings?.session_share_domain);
 
   const openChat = useCallback(() => {
@@ -175,7 +175,7 @@ const ChatWidget = () => {
     }
     setIsVisible(true);
     lockBodyScroll();
-    // Journey marker — chat_opened. If no session id has been minted
+    // Journey marker. Chat_opened. If no session id has been minted
     // yet (visitor is opening the panel for the first time and hasn't
     // typed a message), MINT ONE HERE so the pre-chat journey we've
     // already captured in sessionStorage gets flushed to the backend
@@ -203,7 +203,7 @@ const ChatWidget = () => {
 
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
-    // Journey marker — chat_closed. Anchored to the current page so
+    // Journey marker. Chat_closed. Anchored to the current page so
     // "after-chat destinations" analytics know where the visitor was
     // when they dismissed the panel.
     try {
@@ -218,7 +218,7 @@ const ChatWidget = () => {
   }, [unlockBodyScroll]);
 
   // Same race for the session id. `openChat` mints and persists the session id
-  // the instant the visitor opens the panel — which can happen before bot
+  // the instant the visitor opens the panel, which can happen before bot
   // settings (and thus `shareDomain`) resolve. In that window `writeSessionId`
   // ran with `shareDomain` undefined, so it wrote localStorage ONLY and never
   // set the parent-domain cookie that bridges subdomains. localStorage is
@@ -313,7 +313,7 @@ const ChatWidget = () => {
           />
         </Suspense>
       )}
-      {/* Launcher fades out while chat is open — LiveChat/Intercom pattern.
+      {/* Launcher fades out while chat is open. LiveChat/Intercom pattern.
           Kept in DOM (not unmounted) so it can fade back in after the close animation. */}
       <div
         className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4 transition-opacity duration-200"

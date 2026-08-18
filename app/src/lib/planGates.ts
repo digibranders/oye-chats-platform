@@ -17,7 +17,7 @@
  * outright. The feature worked; the only thing they could not do was find it.
  *
  * Keep this file in step with `plan_entitlements_service.py`. If a slug is
- * added to `seed_plans.py`, add it to {@link SEEDED_PLAN_SLUGS} here too —
+ * added to `seed_plans.py`, add it to {@link SEEDED_PLAN_SLUGS} here too,
  * a new seeded tier that is missing from this set would be read as bespoke and
  * handed every paid feature.
  *
@@ -27,7 +27,7 @@
  * on its own is what silently revoked Visitor Intelligence server-side.
  */
 
-/** Slugs `seed_plans.py` creates. Anything else is bespoke — see rule 2. */
+/** Slugs `seed_plans.py` creates. Anything else is bespoke. See rule 2. */
 export const SEEDED_PLAN_SLUGS: ReadonlySet<string> = new Set([
   'free',
   'starter',
@@ -49,7 +49,7 @@ export const EMAIL_VERIFICATION_SLUGS: ReadonlySet<string> = new Set([
  * Ladder tiers that include Visitor Intelligence (the company lookup).
  *
  * Enterprise is listed because it is Professional plus unlimited agents, seats
- * and knowledge — every Professional feature carries over, so moving it onto
+ * and knowledge. Every Professional feature carries over, so moving it onto
  * the seeded ladder must not cost it one.
  */
 export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set([

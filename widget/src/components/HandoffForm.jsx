@@ -11,7 +11,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
         email: existingLeadInfo?.email || '',
     });
     const [emailError, setEmailError] = useState('');
-    // 'idle' | 'checking' | 'valid' | 'invalid' — drives the submit gate.
+    // 'idle' | 'checking' | 'valid' | 'invalid'. Drives the submit gate.
     // Starts 'valid' when the email is already on file (existingLeadInfo),
     // since it was already accepted once and doesn't need rechecking.
     const [emailCheckState, setEmailCheckState] = useState(hasEmail ? 'valid' : 'idle');
@@ -40,7 +40,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur — while the visitor moves on to the name field, the
+    // Fires on blur. While the visitor moves on to the name field, the
     // server-side Reoon check runs in the background so it's usually
     // already resolved by the time they click "Connect Now".
     const handleEmailBlur = () => {
@@ -56,7 +56,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
         setEmailCheckState('checking');
         const promise = checkEmailWithServer(email).then((result) => {
             // A newer check (from further edits) may have superseded this
-            // one — only apply the result if it's still the latest email.
+            // one. Only apply the result if it's still the latest email.
             if (lastCheckedEmailRef.current !== email) return result;
             if (result.valid) {
                 setEmailCheckState('valid');
@@ -83,15 +83,15 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
             }
 
             // The visitor may click "Connect Now" before the blur check
-            // resolves (e.g. they filled the name field very fast) —
-            // wait for it rather than letting an unchecked email through.
+            // resolves (e.g. they filled the name field very fast).
+            // Wait for it rather than letting an unchecked email through.
             if (emailCheckState === 'checking' && emailCheckPromiseRef.current) {
                 const result = await emailCheckPromiseRef.current;
                 if (!result.valid) return; // state/error already set inside the check
             } else if (emailCheckState === 'invalid') {
                 return;
             } else if (emailCheckState === 'idle') {
-                // Blur never fired (e.g. autofill + direct submit) — check now.
+                // Blur never fired (e.g. autofill + direct submit). Check now.
                 setEmailCheckState('checking');
                 const result = await checkEmailWithServer(email);
                 if (!result.valid) {
@@ -135,7 +135,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-2">
-                    {/* Email field first — hidden if already known. Checked
+                    {/* Email field first. Hidden if already known. Checked
                         on blur so validation runs in the background while
                         the visitor fills in their name. */}
                     {!hasEmail && (
@@ -166,7 +166,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                         </div>
                     )}
 
-                    {/* Name field — hidden if already known */}
+                    {/* Name field. Hidden if already known */}
                     <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 focus-within:bg-white transition-colors border-gray-200 focus-within:border-blue-300 ${isSubmitting ? 'opacity-60' : ''}`}>
                         <User className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                         <input

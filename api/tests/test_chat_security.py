@@ -1,4 +1,4 @@
-"""Tests for chat route security — URL sanitization, auth, and input validation."""
+"""Tests for chat route security. URL sanitization, auth, and input validation."""
 
 from types import SimpleNamespace
 from unittest.mock import patch

@@ -158,7 +158,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Journey analytics is a Standard feature',
     title: 'See the path visitors take to convert',
     description:
-      'Upgrade to trace every visitor’s page journey — before the chat, during, and after — and rank the routes that produce demos, handoffs, and offline messages.',
+      'Upgrade to trace every visitor’s page journey (before the chat, during, and after) and rank the routes that produce demos, handoffs, and offline messages.',
     highlights: [
       'Top pages, split by pre-chat, in-chat, and post-chat',
       'Which content journeys lead to each conversion type',
@@ -173,7 +173,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
       'Upgrade to Professional to see each visitor’s company signal, a validated deliverability score for every captured email, and to send a manual follow-up the moment a lead goes quiet.',
     highlights: [
       'Company & threat signal resolved from the visitor’s IP',
-      'Reoon-validated email score — know a real inbox from a typo before you reach out',
+      'Reoon-validated email score. Know a real inbox from a typo before you reach out',
       'One-click manual follow-up email, with built-in unsubscribe & cooldown safeguards',
     ],
     recommendedPlan: 'Professional',

@@ -1,4 +1,4 @@
-"""Review batch A — findings K (MRR seat double-count) and N (first-period marker
+"""Review batch A. Findings K (MRR seat double-count) and N (first-period marker
 not advanced when `activated` lacks current_end). Finding I (deferred gateway
 cancels) is covered by the existing cutover suites (test_billing_bl2_bl4,
 test_seat_addon_cutover).

@@ -7,7 +7,7 @@ Workflow per template:
 3. GET again and assert the update took.
 
 Reads ``BREVO_API_KEY`` from ``app.config`` (which loads ``.env``). The script
-exits non-zero on any failure — successful uploads are NOT rolled back, but
+exits non-zero on any failure. Successful uploads are NOT rolled back, but
 the unchanged remaining templates simply aren't touched.
 
 Usage:
@@ -117,8 +117,8 @@ def main() -> int:
         try:
             current = get_template(template_id)
         except BrevoError as exc:
-            failures.append(f"#{template_id} {label}: GET failed — {exc}")
-            print(f"  ✗ #{template_id} {label}: GET failed — {exc}")
+            failures.append(f"#{template_id} {label}: GET failed - {exc}")
+            print(f"  ✗ #{template_id} {label}: GET failed - {exc}")
             continue
 
         existing_html = current.get("htmlContent", "")
@@ -129,22 +129,22 @@ def main() -> int:
         try:
             update_template(template_id, html_content=new_html)
         except BrevoError as exc:
-            failures.append(f"#{template_id} {label}: PUT failed — {exc}")
-            print(f"  ✗ #{template_id} {label}: PUT failed — {exc}")
+            failures.append(f"#{template_id} {label}: PUT failed - {exc}")
+            print(f"  ✗ #{template_id} {label}: PUT failed - {exc}")
             continue
 
         # 3) Verify via re-fetch (Brevo persists the htmlContent verbatim)
         try:
             verify = get_template(template_id)
         except BrevoError as exc:
-            failures.append(f"#{template_id} {label}: verify-GET failed — {exc}")
-            print(f"  ✗ #{template_id} {label}: verify-GET failed — {exc}")
+            failures.append(f"#{template_id} {label}: verify-GET failed - {exc}")
+            print(f"  ✗ #{template_id} {label}: verify-GET failed - {exc}")
             continue
 
         verified_html = verify.get("htmlContent", "")
         if verified_html.strip() != new_html.strip():
             failures.append(f"#{template_id} {label}: verification mismatch (server HTML differs)")
-            print(f"  ⚠ #{template_id} {label}: verification mismatch — review on Brevo dashboard")
+            print(f"  ⚠ #{template_id} {label}: verification mismatch. Review on Brevo dashboard")
             continue
 
         size_kb = len(new_html) / 1024

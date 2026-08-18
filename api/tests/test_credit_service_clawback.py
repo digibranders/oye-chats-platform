@@ -1,10 +1,10 @@
-"""Refund clawback scoping — remediation C2 (real Postgres).
+"""Refund clawback scoping. Remediation C2 (real Postgres).
 
 The refund handler must reverse credits from the **same ledger scope** the
 payment credited (per-bot ledger vs client pool) and from the **right grant
 type** (a subscription refund claws a plan_grant; a top-up refund claws a
 topup). The previous implementation always wrote to the client pool and picked
-the most-recent grant regardless of type — which left per-bot credits
+the most-recent grant regardless of type, which left per-bot credits
 un-reversed and could drive the client pool negative.
 
 Runs against a throwaway Postgres DB (mirrors test_affiliate_service.py). The
@@ -82,7 +82,7 @@ def db(pg_engine):
     session = Session(pg_engine)
     yield session
     session.rollback()
-    # Clean slate between tests — TRUNCATE … CASCADE sidesteps FK-cycle ordering.
+    # Clean slate between tests. TRUNCATE … CASCADE sidesteps FK-cycle ordering.
     names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     session.execute(sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     session.commit()
@@ -388,7 +388,7 @@ def test_refund_claws_once_across_created_and_processed_events(db):
     db.commit()
 
     # refund.processed (same refund id, different webhook event) must be a
-    # no-op — the new grant is untouched.
+    # no-op, the new grant is untouched.
     rzp._handle_refund_created(db, _refund_payload("pay_n2", 4000, refund_id="rfnd_n2"))
     db.commit()
     assert _balances(db, client.id, bot.id) == 500
@@ -513,7 +513,7 @@ def test_topup_captured_stamps_bot_id_on_invoice(db):
 
 
 def test_topup_amount_mismatch_refuses_grant(db):
-    """NV2 — the grant trusts notes['credits'], but the money actually captured
+    """NV2, the grant trusts notes['credits'], but the money actually captured
     must match the notes' declared price. A captured amount that disagrees with
     notes.amount_inr must refuse to grant (no invoice, no credits)."""
     client = _client(db)
@@ -562,7 +562,7 @@ def _fake_rzp_for_topup(order, payment):
 
 
 def test_reconcile_topup_grants_when_webhook_dropped(db, monkeypatch):
-    """L3 — if the capture webhook is dropped, the browser's topup/verify call
+    """L3. If the capture webhook is dropped, the browser's topup/verify call
     reconciles the grant. A second reconcile (or the late webhook) is a no-op."""
     client = _client(db)
     bot = _bot(db, client, key="bot-l3")
@@ -594,7 +594,7 @@ def test_reconcile_topup_grants_when_webhook_dropped(db, monkeypatch):
 
 
 def test_reconcile_topup_rejects_foreign_client(db, monkeypatch):
-    """L2/L3 — a caller must not reconcile a top-up whose notes name another client."""
+    """L2/L3, a caller must not reconcile a top-up whose notes name another client."""
     owner = _client(db, n=1)
     attacker = _client(db, n=2)
     db.commit()
@@ -615,7 +615,7 @@ def test_reconcile_topup_rejects_foreign_client(db, monkeypatch):
 
 
 def test_refund_claws_invoice_linked_topup_not_most_recent(db):
-    """C2 precision — with two same-bot top-ups, refunding the OLDER invoice must
+    """C2 precision, with two same-bot top-ups, refunding the OLDER invoice must
     claw the grant LINKED to it (via reference_id), not the most-recent grant."""
     client = _client(db)
     bot = _bot(db, client, key="bot-c2p")
@@ -653,7 +653,7 @@ def test_refund_claws_invoice_linked_topup_not_most_recent(db):
 
 
 def test_refund_failed_restores_clawed_credits(db):
-    """N1 — refund.created claws on initiation; if the refund then FAILS at the
+    """N1. Refund.created claws on initiation; if the refund then FAILS at the
     gateway, the clawed credits must be restored (idempotently)."""
     client = _client(db)
     bot = _bot(db, client, key="bot-n1")
@@ -701,7 +701,7 @@ def _raw_pool_sum(db, client_id):
 
 
 def test_expire_old_topups_scopes_expiry_debit_to_the_bot_ledger(db):
-    """P2-expiry — a per-bot top-up expiry must debit the bot's ledger, not the pool.
+    """P2-expiry, a per-bot top-up expiry must debit the bot's ledger, not the pool.
 
     The offsetting ``expiry`` row was previously written without ``bot_id``, so an
     expired per-bot top-up landed in the account pool (``bot_id IS NULL``): the
@@ -741,7 +741,7 @@ def test_expire_old_topups_scopes_expiry_debit_to_the_bot_ledger(db):
 # ── P0-1: clawback misattribution by invoice kind ────────────────────────────
 # A refund/dispute must claw back only what the refunded invoice actually
 # funded. Seat add-on invoices and withheld-credit charges carry a
-# subscription_id but granted NOTHING — deriving intent from subscription_id
+# subscription_id but granted NOTHING. Deriving intent from subscription_id
 # presence made a ₹449 seat refund wipe the customer's entire plan allowance
 # via the most-recent-grant fallback. ``Invoice.kind`` now records what the
 # charge was for; the fallback is reserved for legacy (kind IS NULL) rows.
@@ -764,7 +764,7 @@ def test_seat_invoice_refund_claws_nothing(db):
     client = _client(db)
     bot = _bot(db, client, key="bot-seat1")
     sub = _sub_with_plan(db, client, bot, slug="pro-seat1")
-    # Activation-style plan grant with NO invoice link — exactly the shape the
+    # Activation-style plan grant with NO invoice link, exactly the shape the
     # legacy fallback would have (wrongly) clawed.
     credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
     db.commit()
@@ -848,7 +848,7 @@ def test_dispute_lost_on_seat_invoice_claws_nothing(db):
 
 
 def test_kind_stamped_invoice_without_link_never_falls_back(db):
-    """A kind-stamped plan charge with no linked grant claws NOTHING — the
+    """A kind-stamped plan charge with no linked grant claws NOTHING, the
     most-recent-grant guess is reserved for pre-kind legacy rows. A missed
     clawback is recoverable by ops; a wrong one is not."""
     client = _client(db)
@@ -879,7 +879,7 @@ def test_kind_stamped_invoice_without_link_never_falls_back(db):
 
 def test_legacy_null_kind_keeps_fallback_behavior(db):
     """Pre-kind rows (kind IS NULL) keep the historical most-recent-grant
-    fallback — for them the heuristic is usually right and C2 linking never
+    fallback, for them the heuristic is usually right and C2 linking never
     existed."""
     client = _client(db)
     bot = _bot(db, client, key="bot-legacy1")
@@ -908,7 +908,7 @@ def test_legacy_null_kind_keeps_fallback_behavior(db):
 
 def test_backfill_reference_skips_negative_reset_rows(db):
     """_backfill_plan_grant_reference must link the invoice to a POSITIVE grant
-    row, never a reset row — even when the reset row is newer and shares the
+    row, never a reset row, even when the reset row is newer and shares the
     same server-side created_at (same transaction)."""
     client = _client(db)
     bot = _bot(db, client, key="bot-backfill1")
@@ -946,11 +946,11 @@ def test_backfill_reference_skips_negative_reset_rows(db):
 
 
 def test_reconcile_topup_before_capture_does_not_burn_idempotency_key(db, monkeypatch):
-    """P1-5 — Checkout's success handler can fire while the payment is still
+    """P1-5. Checkout's success handler can fire while the payment is still
     ``authorized`` (payment_capture=1 captures asynchronously). That early
     verify must NOT burn ``reconcile:topup:<order_id>``: burning it made every
     later verify short-circuit as \"already handled\" while no credits were ever
-    granted — paid-but-no-credits with the webhook as the only (possibly
+    granted. Paid-but-no-credits with the webhook as the only (possibly
     dropped) remaining path."""
     client = _client(db)
     db.commit()
@@ -984,7 +984,7 @@ def test_reconcile_topup_before_capture_does_not_burn_idempotency_key(db, monkey
 
 
 def test_refund_failed_reverses_refunded_minor_and_recomputes_status(db):
-    """P1-6b — refund.failed must subtract the failed amount from
+    """P1-6b. Refund.failed must subtract the failed amount from
     ``refunded_minor`` and recompute status from what still stands, or a later
     genuine partial refund flips the invoice to \"refunded\" though less money
     was returned."""
@@ -1027,7 +1027,7 @@ def test_refund_failed_reverses_refunded_minor_and_recomputes_status(db):
 
 
 def test_captured_replay_after_refund_is_acked_not_errored(db, monkeypatch):
-    """P1-6d — an order.paid alias redelivered AFTER a refund (invoice status
+    """P1-6d, an order.paid alias redelivered AFTER a refund (invoice status
     no longer \"paid\") must early-return, not attempt a duplicate insert that
     5xx-loops on the unique payment-id index until Razorpay gives up."""
     client = _client(db)
@@ -1065,7 +1065,7 @@ def test_captured_replay_after_refund_is_acked_not_errored(db, monkeypatch):
 
 
 def test_charged_without_payment_entity_on_canceled_row_does_not_error(db):
-    """Review fix — a charged payload WITHOUT payment.entity is legal; the
+    """Review fix, a charged payload WITHOUT payment.entity is legal; the
     withheld-charge stamp branches must not NameError on the unbound invoice
     (in the backstop branch that raise landed AFTER the irreversible gateway
     cancel, wedging the row in a dead-letter loop)."""
@@ -1084,7 +1084,7 @@ def test_charged_without_payment_entity_on_canceled_row_does_not_error(db):
 
 
 def test_withheld_stamp_never_overwrites_a_funded_invoice(db):
-    """Review fix — a delayed charged webhook must not re-label an invoice
+    """Review fix, a delayed charged webhook must not re-label an invoice
     whose charge DID fund a linked grant: that would disable its clawback."""
     client = _client(db)
     bot = _bot(db, client, key="bot-funded")

@@ -11,7 +11,7 @@ import { useBotContext } from '../context/BotContext';
  *
  * This used to derive the name from the credit-balance payload, which lists
  * only agents holding their own ledger. A Free agent has none, so it fell back
- * to the ACCOUNT plan name — and a Free agent in a workspace that also owns a
+ * to the ACCOUNT plan name, and a Free agent in a workspace that also owns a
  * Professional one sat under a "Professional" chip while every paid control
  * around it was (correctly) locked.
  *

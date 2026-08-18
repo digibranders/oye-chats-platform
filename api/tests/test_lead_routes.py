@@ -1,4 +1,4 @@
-"""Tests for lead routes — unread tracking, mark-viewed, mark-all-viewed.
+"""Tests for lead routes. Unread tracking, mark-viewed, mark-all-viewed.
 
 Covers the "unread leads" contract that backs the sidebar badge:
   - GET  /leads/stats     exposes `unread`
@@ -26,7 +26,7 @@ from app.api.lead_routes import router
 @pytest.fixture(autouse=True)
 def _allow_leads_dashboard(monkeypatch):
     """Every route in this file assumes the caller has paid-tier leads
-    access — the plan gates are exercised in ``test_plan_entitlements_service``
+    access, the plan gates are exercised in ``test_plan_entitlements_service``
     and in ``TestFreePlanIntelligenceStripping`` / ``TestVisitorIntelligenceGating``
     below. Stub them here so we don't have to mock a full entitlements
     resolver in every test's session fixture. ``patch`` at import site so
@@ -478,7 +478,7 @@ class TestFreePlanIntelligenceStripping:
         for locked in self.LOCKED_FIELDS:
             assert locked not in lead, f"free plan detail leaked '{locked}'"
         assert "signals" not in lead, "free plan detail leaked the BANT signal evidence trail"
-        # The transcript itself is the free surface — it must survive.
+        # The transcript itself is the free surface, it must survive.
         assert [m["content"] for m in lead["messages"]] == ["hello"]
 
     def test_paid_detail_keeps_signals(self, monkeypatch):
@@ -535,10 +535,10 @@ class TestBuildLeadResponseUnread:
         assert payload["lead_viewed_at"] == viewed_at.isoformat()
 
 
-# ── GET /leads/export — CSV injection ────────────────────────────────────────
+# ── GET /leads/export. CSV injection ────────────────────────────────────────
 #
 # The escape itself is unit-tested in ``test_csv_safety.py``. These tests prove
-# it is wired into the file a customer actually downloads, column by column —
+# it is wired into the file a customer actually downloads, column by column,
 # the half a refactor can quietly break. Every string column here is filled by
 # someone outside the server: the session id is minted by the widget, the
 # contact fields are typed into the lead form by a visitor, the BANT values are
@@ -560,7 +560,7 @@ _INJECTED_AUTHORITY = "-1+1"
 _INJECTED_TIMELINE = "@1+1"
 # Pipe-free, unlike its siblings: the Location column is redacted by
 # ``visitor_privacy.redact_visitor_ip`` before it is escaped, and that redaction
-# cuts at the first "|" — a payload containing one would arrive here truncated
+# cuts at the first "|", a payload containing one would arrive here truncated
 # and this sweep would be asserting against the redactor instead of the escape.
 # The redaction is covered on its own in ``TestExportVisitorIpRedaction`` below.
 _INJECTED_LOCATION = "=cmd$' /C calc'!A0"
@@ -590,7 +590,7 @@ def _call_export(
 ):
     """Drive ``GET /leads/export`` over a mocked session and return the response.
 
-    ``bant_config`` selects the bot's qualification framework — ``None`` gives
+    ``bant_config`` selects the bot's qualification framework. ``None`` gives
     the BANT preset, ``{"framework": "meddic"}`` a bot whose dimensions are not
     need/budget/authority/timeline at all.
     """
@@ -619,7 +619,7 @@ class TestExportCsvInjection:
         """The load-bearing one: a payload in each column, all of them defused.
 
         Scope note, because it is easy to over-read: this pins the columns that
-        exist today. It cannot fail for a column added tomorrow — a new column
+        exist today. It cannot fail for a column added tomorrow, a new column
         carries no payload in this fixture, so the sweep never sees it. What
         makes a future column safe is the ``csv_safe_row`` funnel in the route,
         and that property is tested where it lives, in ``test_csv_safety.py``.
@@ -648,7 +648,7 @@ class TestExportCsvInjection:
         assert len(rows) == 2, rows
         header, row = rows
 
-        # No cell in the file can open as a formula — headers included, since a
+        # No cell in the file can open as a formula. Headers included, since a
         # header is a cell too.
         for cell in header + row:
             assert not cell.startswith(FORMULA_TRIGGERS), cell
@@ -699,7 +699,7 @@ class TestExportCsvInjection:
             assert cell.startswith("'"), column
             assert not cell.startswith(FORMULA_TRIGGERS), column
 
-        # The journey keeps both hops — the escape guards the leading character
+        # The journey keeps both hops, the escape guards the leading character
         # of the joined summary, it does not truncate it.
         assert row[header.index("Journey")] == "'=cmd|' /C calc'!A0 → /pricing"
 
@@ -709,7 +709,7 @@ class TestExportCsvInjection:
         The email case matters most: the trigger is a *leading* ``@``, so
         ``priya@infosys.com`` must survive intact or every export in the
         product grows a cosmetic wart. Commas and quotes stay the csv writer's
-        job — the escape must not reach for them.
+        job, the escape must not reach for them.
         """
         chat_session = _make_session_row("s1", location="Mumbai, India", device="iPhone")
         lead_info = _export_lead_info(phone="98000 00000", company='Acme, Inc. "Main"')
@@ -729,7 +729,7 @@ class TestExportCsvInjection:
         """The known cost of the defence, pinned so nobody "fixes" it later.
 
         ``+91 98000 00000`` starts with ``+``, so it picks up a leading quote
-        like any other triggering cell — visible in the sheet, and on India's
+        like any other triggering cell. Visible in the sheet, and on India's
         market that is most rows. It is still the right call: the alternative
         is exempting values that "look like" a phone number, and ``+1+1`` looks
         exactly as numeric as ``+91``. A heuristic here is a hole, so the
@@ -750,8 +750,8 @@ class TestExportCsvInjection:
         """Score and message count must not gain a quote.
 
         They are integers this service computed, never attacker input, and a
-        leading ``'`` would turn them into text in the recipient's sheet —
-        breaking every SUM and sort built on the export.
+        leading ``'`` would turn them into text in the recipient's sheet.
+        Breaking every SUM and sort built on the export.
         """
         chat_session = _make_session_row("s1")
 
@@ -760,7 +760,7 @@ class TestExportCsvInjection:
 
         header, row = _export_rows(response)
         # Exact values plus an explicit "no escape quote", rather than a shape
-        # check like `.isdigit()` — a shape check passes for any digit string
+        # check like `.isdigit()`, a shape check passes for any digit string
         # and so cannot distinguish the value that is here from the value the
         # test is meant to defend.
         assert row[header.index("Messages")] == "7"
@@ -789,11 +789,11 @@ class TestExportCsvInjection:
         assert "\n\r=1+1" not in response.text
 
 
-# ── GET /leads/export — visitor IP redaction ─────────────────────────────────
+# ── GET /leads/export. Visitor IP redaction ─────────────────────────────────
 #
 # ``ChatSession.location`` is stored as "<City>, <Country> | <IP>". This route
 # used to write that column verbatim, so the one export that emits EVERY lead in
-# a workspace also emitted every visitor's IP address — into a file that gets
+# a workspace also emitted every visitor's IP address. Into a file that gets
 # mailed around and imported into a CRM. A visitor IP is personal data under
 # GDPR and under India's DPDP Act, where this product's basis is consent-only.
 #
@@ -812,7 +812,7 @@ class TestExportVisitorIpRedaction:
         [
             (f"Mumbai, India | {_EXPORT_IPV4}", _EXPORT_IPV4, "Mumbai, India"),
             (f"Mumbai, India | {_EXPORT_IPV6}", _EXPORT_IPV6, "Mumbai, India"),
-            # No city from the vendor — the country still has to survive.
+            # No city from the vendor, the country still has to survive.
             (f"India | {_EXPORT_IPV4}", _EXPORT_IPV4, "India"),
         ],
     )
@@ -827,7 +827,7 @@ class TestExportVisitorIpRedaction:
 
         header, row = _export_rows(response)
         assert row[header.index("Location")] == expected_cell
-        # Not just absent from its own column — absent from the whole file, so a
+        # Not just absent from its own column. Absent from the whole file, so a
         # future column that reaches for the raw value fails here too.
         assert address not in response.text
 
@@ -835,7 +835,7 @@ class TestExportVisitorIpRedaction:
         """``"IP: 1.2.3.4"`` is all address and no geography.
 
         Every session wears this shape until the background geo lookup lands,
-        and keeps it forever if both vendors fail — so this is not a rare path.
+        and keeps it forever if both vendors fail, so this is not a rare path.
         There is nothing to report, and a file reports nothing with a blank.
         """
         chat_session = _make_session_row("s1", location=f"IP: {_EXPORT_IPV4}", device="iPhone")
@@ -868,7 +868,7 @@ class TestExportVisitorIpRedaction:
         Both downloads had to agree on how they spell a missing value: a CRM
         importing the literal "Unknown" creates a country by that name. Routing
         this column through a formatter whose display answer IS "Unknown" is
-        exactly how that regression would come back, so it is pinned here —
+        exactly how that regression would come back, so it is pinned here,
         including for the whitespace-only value the old ``or ""`` would have
         passed through as a stray blank.
         """
@@ -882,7 +882,7 @@ class TestExportVisitorIpRedaction:
         assert "Unknown" not in response.text
 
 
-# ── GET /leads/export — non-BANT qualification frameworks ────────────────────
+# ── GET /leads/export. Non-BANT qualification frameworks ────────────────────
 
 
 class TestExportAcrossFrameworks:
@@ -898,7 +898,7 @@ class TestExportAcrossFrameworks:
         """Regression: this raised ``KeyError: 'need'`` → unhandled 500.
 
         Every customer on one of these frameworks was locked out of exporting
-        their leads entirely — not a degraded file, no file at all.
+        their leads entirely, not a degraded file, no file at all.
         """
         response = _call_export(
             monkeypatch,
@@ -917,7 +917,7 @@ class TestExportAcrossFrameworks:
         import mapping keeps working when they switch a bot's framework, and an
         agency can concatenate exports across bots. Emitting each framework's
         own dimensions would be more informative but changes what the columns
-        mean per row — a product decision, tracked separately from this fix.
+        mean per row, a product decision, tracked separately from this fix.
         """
         response = _call_export(
             monkeypatch,
@@ -953,7 +953,7 @@ class TestExportAcrossFrameworks:
 
 # ── Manual follow-up (the four gates) ────────────────────────────────────────
 #
-# There is no automatic or timed send anywhere in this system — an operator
+# There is no automatic or timed send anywhere in this system, an operator
 # triggers this from the Admin Panel, and every gate below runs at click
 # time. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md §02.
 
@@ -1016,7 +1016,7 @@ class TestSendManualFollowUp:
         """``None`` means "never validated", NOT "known bad".
 
         It must not send unprompted (409, not 200), but it must stay
-        recoverable via confirm_override — treating it as a hard 400 the way
+        recoverable via confirm_override. Treating it as a hard 400 the way
         this gate originally did permanently locked follow-up for every lead
         captured before validation existed, with no way out.
         """
@@ -1034,7 +1034,7 @@ class TestSendManualFollowUp:
         mock_send.assert_not_called()
 
     def test_gate1_unvalidated_email_sends_with_override(self, monkeypatch):
-        """The operator can see the address on screen — an explicit confirm
+        """The operator can see the address on screen, an explicit confirm
         is enough to take responsibility for an unvalidated one."""
         from app.api import lead_routes
 
@@ -1060,7 +1060,7 @@ class TestSendManualFollowUp:
 
     def test_gate1_hard_blocks_known_bad_email_even_with_override(self, monkeypatch):
         """is_valid_email=False is Reoon positively flagging junk. No
-        override — this is the case that gets a sending domain blacklisted."""
+        override. This is the case that gets a sending domain blacklisted."""
         from app.api import lead_routes
 
         session = MagicMock()
@@ -1193,7 +1193,7 @@ class TestSendManualFollowUp:
 class TestVisitorIntelligenceGating:
     def test_follow_up_denied_when_not_professional(self, monkeypatch):
         """send_manual_follow_up now gates on Visitor Intelligence
-        (Professional-only), NOT the general lead-intelligence check —
+        (Professional-only), NOT the general lead-intelligence check,
         a Starter/Standard client must be denied even though they pass
         is_lead_intelligence_enabled."""
         from app.api import lead_routes

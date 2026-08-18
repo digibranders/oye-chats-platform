@@ -1,7 +1,7 @@
 """Exercise the invoicing migrations against a throwaway database.
 
 The shared ``db`` fixture builds the schema with ``Base.metadata.create_all``,
-which validates the ORM model but NOT the Alembic DDL — so a column present in
+which validates the ORM model but NOT the Alembic DDL, so a column present in
 the model but forgotten in a migration (or a type/length mismatch) would pass
 every other test and only surface on a real ``alembic upgrade head`` in prod.
 This test closes that gap for the Phase 1 invoicing migrations by running the
@@ -43,11 +43,11 @@ def test_invoicing_migrations_roundtrip(monkeypatch):
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     tmp_admin.dispose()
     try:
-        # env.py reads app.config.DB_URL at run time — point the whole chain at
+        # env.py reads app.config.DB_URL at run time. Point the whole chain at
         # the throwaway DB.
         monkeypatch.setattr(app_config, "DB_URL", tmp_url)
         # Build the Config WITHOUT the ini file so env.py's
-        # ``fileConfig(config.config_file_name)`` is skipped — otherwise it
+        # ``fileConfig(config.config_file_name)`` is skipped. Otherwise it
         # reconfigures global logging (disable_existing_loggers) and pollutes
         # other tests' log capture.
         cfg = Config()

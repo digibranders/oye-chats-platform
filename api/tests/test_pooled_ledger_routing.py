@@ -1,14 +1,14 @@
-"""``resolve_bot_ledger_bot_id`` — which ledger bucket a bot's usage drains.
+"""``resolve_bot_ledger_bot_id``, which ledger bucket a bot's usage drains.
 
 The credit ledger has exactly two scopes (``credit_service`` module docstring):
 ``bot_id IS NULL`` is the SHARED CLIENT POOL, ``bot_id = <int>`` is an ISOLATED
 per-bot ledger. ``resolve_bot_ledger_bot_id`` is the single helper that maps a
 ``Bot`` row to one of them, and every credit call site threads its result
-through — chat, ingestion, crawl, document upload, billing.
+through. Chat, ingestion, crawl, document upload, billing.
 
 What these tests defend: an ACCOUNT-LEVEL subscription (``subscription.bot_id IS
 NULL``) must pool EVERY bot under it. That is the whole mechanism behind a tier
-that sells one credit balance across unlimited agents — the purchase funds the
+that sells one credit balance across unlimited agents, the purchase funds the
 client pool, and each agent has to be routed back to that same pool. A refactor
 that made the helper return ``bot.id`` for those bots would silently split the
 pool: the first agent would spend from an isolated ledger nobody funded, the
@@ -17,13 +17,13 @@ rest would drain a pool the reporting no longer matches. Nothing would raise.
 Both dispatch paths inside the helper are pinned separately, because the two
 are reached by different callers and only one of them is on the hot chat route:
 
-* **Fast path** — ``get_current_bot()`` pre-resolves ``subscription.bot_id``
+* **Fast path**. ``get_current_bot()`` pre-resolves ``subscription.bot_id``
   into ``bot._subscription_bot_id`` and then expunges the ORM object, so the
   widget/chat request routes a DETACHED bot without a lazy-load. Modelled by
   ``_DetachedBot``, whose ``subscription`` property raises: reaching for the
   relationship there is a ``DetachedInstanceError`` in production, so a test
   that quietly fell through to the slow path must fail loudly instead.
-* **Slow path** — ``subscription_routes`` / billing endpoints hand over a live
+* **Slow path**. ``subscription_routes`` / billing endpoints hand over a live
   ORM object and the helper lazy-loads ``bot.subscription``. Modelled by real
   transient ``Bot`` / ``Subscription`` instances, which carry no
   ``_subscription_bot_id`` at all (asserted in the factory) so the sentinel
@@ -67,7 +67,7 @@ class _DetachedBot:
     @property
     def subscription(self) -> Subscription:
         raise AssertionError(
-            "fast path must not touch the lazy `subscription` relationship — "
+            "fast path must not touch the lazy `subscription` relationship. "
             "that is a DetachedInstanceError on the real expunged bot"
         )
 
@@ -160,7 +160,7 @@ def test_bot_scoped_subscription_isolates_that_bot_fast_path():
 
 
 def test_subscription_scoped_to_a_different_bot_falls_back_to_the_pool():
-    """``subscription.bot_id`` must MATCH — a foreign scope is not this bot's.
+    """``subscription.bot_id`` must MATCH, a foreign scope is not this bot's.
 
     Reading the subscription as "bot-scoped, therefore isolate" without
     comparing ids would drain agent 22's usage out of agent 21's funded ledger.
@@ -231,7 +231,7 @@ def test_bot_without_a_subscription_resolves_to_the_pool_fast_path():
 
 
 def test_no_bot_at_all_resolves_to_the_pool():
-    """``bot=None`` is a real call shape — e.g. ``db.get(Bot, bot_id)`` misses."""
+    """``bot=None`` is a real call shape. E.g. ``db.get(Bot, bot_id)`` misses."""
     assert resolve_bot_ledger_bot_id(None) is None
 
 
@@ -240,7 +240,7 @@ def test_no_bot_at_all_resolves_to_the_pool():
 # Straight off the helper's docstring: bots whose ``subscription_id`` is a
 # convenience pointer set by the per-bot-billing migration, but whose
 # subscription still has ``bot_id = NULL``. A non-NULL ``subscription_id`` is
-# therefore NOT on its own evidence of an isolated ledger — only
+# therefore NOT on its own evidence of an isolated ledger. Only
 # ``subscription.bot_id == bot.id`` is. Their credits live in the client pool.
 
 
@@ -248,7 +248,7 @@ def test_convenience_pointer_subscription_id_still_routes_to_the_pool_slow_path(
     sub = _account_subscription(sub_id=903)
     bot = _session_bot(bot_id=51, subscription=sub)
 
-    # The pointer is set — the tempting-but-wrong signal to isolate on.
+    # The pointer is set, the tempting-but-wrong signal to isolate on.
     assert bot.subscription_id == 903
     # The subscription it points at is still account-scoped.
     assert bot.subscription.bot_id is None

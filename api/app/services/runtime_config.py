@@ -8,8 +8,8 @@ Reads are cached in memory for ``_TTL_SECONDS`` so the hot path doesn't take
 a DB hit on every chat request. Writes (super-admin PUTs) call
 ``invalidate_runtime_config_cache`` so the next read sees fresh values.
 
-Falls back to ``app.config`` constants when a key isn't set in the DB —
-i.e. the env-var defaults remain authoritative until an admin opts in.
+Falls back to ``app.config`` constants when a key isn't set in the DB.
+I.e. the env-var defaults remain authoritative until an admin opts in.
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def get_chunk_overlap() -> int:
 
 
 # Embed-batch parallelism bounds: 1 keeps embedding functional, 64 is a safe
-# ceiling — even one text per batchEmbedContents request stays well under the
+# ceiling, even one text per batchEmbedContents request stays well under the
 # Gemini per-project embedding RPM quota at this fan-out.
 _EMBED_CONCURRENCY_MIN = 1
 _EMBED_CONCURRENCY_MAX = 64
@@ -221,7 +221,7 @@ def _get_uncached(key: str, default: Any = None) -> Any:
     Exists for security levers where the cache's propagation window is the
     bug: ``invalidate_runtime_config_cache`` resets a module global, so a
     super-admin ``PUT`` only invalidates the cache of the one Gunicorn worker
-    that served it — every other worker keeps its stale value for up to
+    that served it. Every other worker keeps its stale value for up to
     ``_TTL_SECONDS``. A kill switch read through the cache is therefore not a
     kill switch under ``WEB_CONCURRENCY > 1``. This is a single indexed-row
     SELECT; callers must be off the hot chat path.
@@ -245,18 +245,18 @@ def is_impersonation_enabled() -> bool:
     Two layers, deliberately asymmetric:
 
     * ``IMPERSONATION_ENABLED`` (env) is the **floor**. False here means off,
-      full stop — the DB is not consulted. It survives a DB outage and a rogue
+      full stop, the DB is not consulted. It survives a DB outage and a rogue
       ``pricing_config`` edit.
     * ``impersonation.enabled`` (pricing_config row) is the **fast lever**:
       flip it from the super-admin UI and it is effective fleet-wide on the
-      next request — it is read uncached (see ``_get_uncached``) precisely so
+      next request, it is read uncached (see ``_get_uncached``) precisely so
       the TTL cache's per-worker propagation window cannot keep admitting
       impersonation after an operator pulls the switch. The cost (one indexed
       single-row SELECT) lands only on impersonation paths, which already do
       a token lookup.
 
     Because validity is re-checked on every request, turning this off also
-    ends every session already in flight — a request that has already passed
+    ends every session already in flight, a request that has already passed
     the auth check still completes, but the next one 401s. Revocation of
     individual tokens keeps working while it is off.
 

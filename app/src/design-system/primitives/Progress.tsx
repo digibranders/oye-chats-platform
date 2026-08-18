@@ -1,7 +1,7 @@
 import { cn } from '../lib/cn';
 
 export interface ProgressProps {
-  /** Completion 0–100. */
+  /** Completion 0 to 100. */
   value: number;
   /** Accessible name for the bar (announced by screen readers). */
   label?: string;

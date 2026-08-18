@@ -275,7 +275,7 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
  *
  * Extracted from `AdvancedPage`'s save handler so it can be asserted directly.
  * It was an inline object literal, and a review deleted
- * `company_lookup_enabled` from it with every test still passing — the
+ * `company_lookup_enabled` from it with every test still passing, the
  * dangerous direction, because the Advanced tab would then PATCH a paid
  * enrichment to `false` the next time the customer saved anything at all.
  */

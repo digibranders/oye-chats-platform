@@ -3,7 +3,7 @@
 When a superadmin suspends a client, ``Client.suspended_at`` is set to a
 timestamp. The auth dependencies in ``app.api.auth`` must refuse to resolve a
 suspended client (its API key, its operators, and its bots) with HTTP 403
-``account_suspended`` — while non-suspended clients and superadmins keep
+``account_suspended``. While non-suspended clients and superadmins keep
 working.
 
 These tests exercise the resolution logic directly by monkeypatching
@@ -194,7 +194,7 @@ class TestGetCurrentClient:
 
     def test_invalid_api_key_rejected_with_401(self, monkeypatch):
         """An X-API-Key that matches no Client row must raise 401 ``Invalid API
-        Key.`` — it must never resolve to ``None`` (which would drop an
+        Key.``, it must never resolve to ``None`` (which would drop an
         unauthenticated caller into the endpoint) nor silently fall through to
         the operator path. Pins the auth contract the whole suite otherwise
         only asserted for the ``/auth/login`` route, not this dependency
@@ -297,7 +297,7 @@ class TestGetCurrentClientOrOperator:
 
     def test_operator_of_suspended_workspace_rejected(self, monkeypatch):
         # ``bot_id`` mirrors the DB column added when operators became
-        # bot-scoped — auth.get_current_client_or_operator dereferences it
+        # bot-scoped. Auth.get_current_client_or_operator dereferences it
         # to populate the returned dict's ``bot_id`` field. The mock has
         # to carry it or the getattr chain in auth.py raises.
         operator = SimpleNamespace(
@@ -398,8 +398,8 @@ class TestGetCurrentBot:
 #
 # ``Client.deactivated_at`` is set by ``task_delete_expired_trial_data`` after
 # the 15-day retention window. Every auth path that accepts a Client identity
-# must refuse to resolve a deactivated row with HTTP 403 ``account_deleted`` —
-# otherwise a customer whose workspace was hard-deleted would authenticate
+# must refuse to resolve a deactivated row with HTTP 403 ``account_deleted``.
+# Otherwise a customer whose workspace was hard-deleted would authenticate
 # into a ghost dashboard. Superadmins remain exempt.
 
 
@@ -452,7 +452,7 @@ class TestGetCurrentClientDeactivated:
 class TestGetCurrentBotDeactivatedOwner:
     def test_deactivated_owner_bot_key_rejected(self, monkeypatch):
         """Widget requests must stop working when the owning client is
-        deactivated — otherwise a hard-deleted workspace's embed keeps
+        deactivated. Otherwise a hard-deleted workspace's embed keeps
         serving 200s against a dashboard the customer can't reach."""
         bot = _bot(client_id=1)
         session = MagicMock()

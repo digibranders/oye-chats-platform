@@ -36,7 +36,7 @@ def pricing_catalog():
                     "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
                     "extra_seat_price_cents": p.extra_seat_price_cents,
                     # Derived from the prices in the same payload, NOT the stored
-                    # column — see core.pricing.annual_saving_percent. Same key,
+                    # column. See core.pricing.annual_saving_percent. Same key,
                     # same type, so the website needs no deploy to stop showing
                     # Professional's stale 22% for a 21% saving.
                     "annual_discount_percent": annual_saving_percent(p.monthly_price_cents, p.annual_price_cents),

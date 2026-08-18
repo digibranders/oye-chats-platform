@@ -85,7 +85,7 @@ async function loadBillingData(botId?: number | null): Promise<BillingData> {
       .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: false }))
       .catch(() => ({ rows: [] as Array<Record<string, unknown>>, error: true })),
     getBillingDetails().catch((): Record<string, unknown> => ({})),
-    // Promo is a decorative overlay — a failure must never blank the page, so it
+    // Promo is a decorative overlay, a failure must never blank the page, so it
     // degrades to "no promotion" independently like plans/invoices/details.
     getActivePromotion().catch((): Record<string, unknown> => ({ active: false })),
   ]);

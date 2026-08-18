@@ -10,16 +10,16 @@ Falls back silently to the original document order on any error so the
 RAG pipeline is never blocked by a reranker failure.
 
 AR-39: investigating whether to A/B-enable ``RERANK_ENABLED`` found a more
-fundamental bug first — the model name previously requested here,
+fundamental bug first, the model name previously requested here,
 ``ms-marco-MiniLM-L-2-v2``, is not a real FlashRank model (it doesn't exist
 in flashrank's own ``model_file_map``; confirmed the HuggingFace zip 404s).
 The reranker had been silently non-functional in EVERY environment since it
 was added: `_get_ranker()`'s own well-designed transient-failure handling
 made this invisible (fails open to unchanged RRF order every call, with
 only a warning log), and since ``RERANK_ENABLED`` defaults false, no request
-path was affected — but any admin who turned the flag on to test reranking
+path was affected, but any admin who turned the flag on to test reranking
 would have gotten zero actual reranking, silently, forever. Fixed to
-``ms-marco-TinyBERT-L-2-v2`` — the smallest real model in flashrank's map,
+``ms-marco-TinyBERT-L-2-v2``, the smallest real model in flashrank's map,
 matching the original ~8MB-model intent, and confirmed to load successfully
 (see the AR-39 A/B result below on whether to also flip the default).
 """
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # AR-39 decision: kept the DEFAULT at false. A manual A/B check after fixing
 # the model-name bug above showed real, correct-direction reordering (e.g. a
 # "business hours" query moved the actual hours document from rank 5 to
-# rank 1 ahead of unrelated pricing/team docs) — reranking works and helps
+# rank 1 ahead of unrelated pricing/team docs). Reranking works and helps
 # once the model loads. But flipping the global default adds cross-encoder
 # inference latency + an ~8MB resident model to every query for every
 # existing customer; that's a product/latency tradeoff needing sign-off, not
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 RERANK_ENABLED: bool = os.getenv("RERANK_ENABLED", "false").lower() in ("1", "true", "yes")
 RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "5"))
 
-# Lazy singleton — loaded once on first rerank() call
+# Lazy singleton. Loaded once on first rerank() call
 _ranker = None
 _ranker_unavailable: bool = False
 
@@ -52,7 +52,7 @@ def _get_ranker():
 
     Failure handling distinguishes two cases:
 
-    * ``ImportError`` — the ``flashrank`` package isn't installed. This will
+    * ``ImportError``, the ``flashrank`` package isn't installed. This will
       not recover without a redeploy, so we sticky-disable to avoid spamming
       logs every request.
     * Any other exception (model file missing, OOM, transient ``/tmp`` wipe)
@@ -76,14 +76,14 @@ def _get_ranker():
         return _ranker
     except ImportError as exc:
         logger.warning(
-            "FlashRank package not installed — reranking permanently disabled this process: %s",
+            "FlashRank package not installed. Reranking permanently disabled this process: %s",
             exc,
         )
         _ranker_unavailable = True
         return None
     except Exception as exc:
         logger.warning(
-            "FlashRank load failed (transient — will retry on next call): %s",
+            "FlashRank load failed (transient. Will retry on next call): %s",
             exc,
         )
         return None

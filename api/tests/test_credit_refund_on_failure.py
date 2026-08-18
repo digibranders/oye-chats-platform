@@ -1,7 +1,7 @@
 """Regression tests for credit refund on failed generation (roadmap §0.4).
 
-The LLM layer never raises — on total failure ``generate_response`` returns a
-canned error string and the stream yields an apology — so the ai_chat credit is
+The LLM layer never raises (on total failure ``generate_response`` returns a
+canned error string and the stream yields an apology) so the ai_chat credit is
 committed before we know the reply failed. The pipeline now signals failure
 (non-stream: ``generation_failed`` in the result dict; stream:
 ``generation_failed`` in the FINAL_METADATA frame) and the route refunds.
@@ -42,7 +42,7 @@ def _ctx(obj):
 
 
 class TestGenerateResponseChecked:
-    """The failure signal must be STRUCTURAL (call outcome), not text-matching —
+    """The failure signal must be STRUCTURAL (call outcome), not text-matching,
     a bot echoing a canned error string via its system prompt must NOT be flagged
     as failed (that would refund a real answer / enable unlimited free chat)."""
 
@@ -159,7 +159,7 @@ class TestRefundHelper:
             raise RuntimeError("ledger down")
 
         monkeypatch.setattr(credit_service, "refund", _boom)
-        # Must not raise — best-effort.
+        # Must not raise. Best-effort.
         _refund_ai_chat_credit(BOT, 2)
 
 
@@ -171,7 +171,7 @@ def _client():
     app.include_router(router)
     app.dependency_overrides[get_current_bot] = lambda: BOT
     # /chat resolves its bot via get_bot_for_chat (preview-aware), so override
-    # that too — otherwise the route 401s before the refund logic runs.
+    # that too. Otherwise the route 401s before the refund logic runs.
     app.dependency_overrides[get_bot_for_chat] = lambda: BOT
     return TestClient(app)
 
@@ -253,7 +253,7 @@ class TestRouteRefundWiring:
 
     def test_stream_forged_frame_is_overridden_by_genuine_terminal(self, monkeypatch):
         """A lone frame-shaped chunk earlier in the stream must not force a
-        refund — the genuine terminal frame is emitted last and wins."""
+        refund, the genuine terminal frame is emitted last and wins."""
         from app.api import chat_routes
 
         async def _fake_stream(*a, **k):

@@ -1,9 +1,9 @@
-"""Wave 1.1 (P0-2): billing_country is a tax fact — frozen under a live mandate.
+"""Wave 1.1 (P0-2): billing_country is a tax fact. Frozen under a live mandate.
 
 ``supply_kind`` classifies every invoice from ``Client.billing_country``, and the
 customer could rewrite it at will via ``PUT /billing-details``: clear the GSTIN,
 set ``US``, and every subsequent INR-settled renewal becomes a zero-rated LUT
-export — self-declared GST leakage on a live domestic mandate.
+export. Self-declared GST leakage on a live domestic mandate.
 
 Three defenses, tested here:
 
@@ -14,7 +14,7 @@ Three defenses, tested here:
 2. **Superadmin override**: writes the new country and an ``audit_logs`` row.
 3. **Invoice-side backstop**: ``finalize_invoice`` refuses to classify an
    INR-settled charge as an export unless the account has ever been charged in
-   a foreign currency — the refused row stays unnumbered and surfaces in
+   a foreign currency, the refused row stays unnumbered and surfaces in
    reconciliation instead of being filed as a zero-rated supply.
 
 Plus the bidirectional geo signal: a foreign billing claim from an IN-detected
@@ -190,7 +190,7 @@ def test_gstin_clear_and_flip_in_one_request_locked(db, monkeypatch):
 
 
 def test_past_due_mandate_still_locks(db, monkeypatch):
-    # Dunning does not unfreeze tax facts — the mandate is still live at the
+    # Dunning does not unfreeze tax facts, the mandate is still live at the
     # gateway and can still charge.
     api, client = _mk(db, monkeypatch, billing_country="IN")
     _mandated_sub(db, client, _plan(db), status="past_due")
@@ -274,7 +274,7 @@ def test_geo_mismatch_detail_is_bidirectional():
     # Existing direction: domestic claim, specific foreign detection.
     assert _geo_mismatch_detail("IN", "US") is not None
     # New direction: foreign claim (zero-rated export) from an IN-detected
-    # request — the P0-2 leakage signal.
+    # request, the P0-2 leakage signal.
     assert _geo_mismatch_detail("US", "IN") is not None
     # Agreement and unknown detection are not suspicious.
     assert _geo_mismatch_detail("IN", "IN") is None
@@ -344,7 +344,7 @@ def test_inr_export_allowed_with_foreign_charge_history(db, invoicing_on):
     )
     db.add(buyer)
     db.flush()
-    # A real USD charge on record — this account genuinely bills foreign.
+    # A real USD charge on record. This account genuinely bills foreign.
     prior = Invoice(
         client_id=buyer.id,
         amount_cents=1900,
@@ -414,7 +414,7 @@ def test_checkout_country_persist_honours_the_freeze(db, monkeypatch):
     # Review finding: the checkout persist write bypassed the freeze for
     # per-bot-mandate holders (the already-subscribed guard is account-scoped,
     # the freeze is not). /checkout {billing_country} must 409 the same way
-    # PUT does — and mint nothing.
+    # PUT does, and mint nothing.
     from unittest.mock import patch
 
     from app.db.models import Bot

@@ -2,7 +2,7 @@
 
 ``run_full_crawl`` imports ``crawl_website`` / ``fetch_urls`` from here.
 
-Which backend page fetches try FIRST is a runtime setting — the super-admin
+Which backend page fetches try FIRST is a runtime setting, the super-admin
 Models & RAG page writes ``crawl.provider_primary`` ("spider" | "jina") and the
 other provider becomes the fallback. Failover triggers on a raised
 ``CrawlerError`` *or* an empty result set (Jina fails soft: it drops pages
@@ -10,11 +10,11 @@ instead of raising).
 
 ``crawl_website`` is **sitemap-first**: it enumerates the site's authoritative
 page list via ``url_discovery`` (robots.txt + sitemap.xml, browser-free) and
-scrapes every URL through the same path as an explicit crawl — so it reaches
+scrapes every URL through the same path as an explicit crawl, so it reaches
 deep/orphan pages that a depth-limited link crawl misses. When a site has no
 usable sitemap it falls back to a browser-free same-domain link scan
 (``discover_via_links``) and scrapes the result through the same
-provider-agnostic path — so the primary/fallback toggle is honored there too.
+provider-agnostic path, so the primary/fallback toggle is honored there too.
 Only when neither a sitemap nor crawlable links exist (e.g. a client-rendered
 SPA) does it fall back to Spider's recursive link crawl (Spider is the only
 backend with a recursive mode, so that last-resort path ignores the provider
@@ -70,27 +70,27 @@ async def crawl_website(
     """Crawl a site to (at most) ``max_pages`` pages, sitemap-first.
 
     1. Enumerate the sitemap/robots page list (``url_discovery``), capped at
-       ``max_pages`` — this is the authoritative set and includes deep/orphan
+       ``max_pages``. This is the authoritative set and includes deep/orphan
        pages a link crawl never reaches.
     2. Scrape each URL via :func:`fetch_urls` (runtime-configured primary with
        failover to the other provider, ordered, per-page ``on_page`` progress,
        per-page ``on_result`` streaming).
     3. If the site has no usable sitemap (discovery yields only the seed), scan
        same-domain ``<a href>`` links (``discover_via_links``, browser-free) and
-       scrape any that are found via the same :func:`fetch_urls` path — so the
+       scrape any that are found via the same :func:`fetch_urls` path, so the
        provider toggle and failover apply here too.
     4. Only if neither a sitemap nor crawlable links exist (e.g. a
        client-rendered SPA) fall back to Spider's recursive link crawl
        (``max_depth``/``concurrency``), with a Jina fallback on Spider failure
        that replays whatever URLs were discovered. The recursive crawl is a
-       single blocking call, so it cannot stream ``on_result`` — callers must
+       single blocking call, so it cannot stream ``on_result``. Callers must
        handle "no pages streamed" (the orchestrator's final ingest sweep does).
     """
     cap = max_pages or _FALLBACK_DISCOVERY_CAP
     try:
         discovered = await _discover_urls(url, max_urls=cap, timeout=25.0)
     except Exception:
-        logger.warning("Sitemap discovery failed for %s — trying Spider link crawl", url, exc_info=True)
+        logger.warning("Sitemap discovery failed for %s. Trying Spider link crawl", url, exc_info=True)
         discovered = []
 
     if len(discovered) > 1:
@@ -100,14 +100,14 @@ async def crawl_website(
     # No usable sitemap. Before falling back to Spider's recursive crawl (the
     # only backend that can discover pages, so that path ignores the provider
     # toggle), try a browser-free same-domain link scan. When it finds real
-    # links we scrape them through the provider-agnostic ``fetch_urls`` path —
+    # links we scrape them through the provider-agnostic ``fetch_urls`` path,
     # so the primary/fallback setting is honored here too, and a Spider outage
     # no longer silently collapses a sitemap-less crawl to a single page.
     linked: list[str] = []
     try:
         linked = await _discover_links(url, max_urls=cap, timeout=25.0)
     except Exception:
-        logger.warning("Link discovery failed for %s — trying Spider link crawl", url, exc_info=True)
+        logger.warning("Link discovery failed for %s. Trying Spider link crawl", url, exc_info=True)
 
     if len(linked) > 1:
         logger.info("crawl_path mode=links urls=%d url=%s cap=%s", len(linked), url, cap)
@@ -147,8 +147,8 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
     failover to the other one.
 
     The provider order is a runtime setting (``crawl.provider_primary``).
-    Failover fires when the primary raises ``CrawlerError`` or drops pages —
-    zero results replays the whole list, a *partial* result retries only the
+    Failover fires when the primary raises ``CrawlerError`` or drops pages.
+    Zero results replays the whole list, a *partial* result retries only the
     URLs the primary missed. Dropping pages (rather than raising) is how Jina
     fails. Results are merged and returned in the original input order, so a
     flaky primary no longer silently shrinks coverage and successfully-scraped
@@ -170,7 +170,7 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
         missing = [u for u in urls if u not in got]
         if not missing:
             return primary_data  # full success (also the empty-input case)
-        logger.warning("%s fetch_urls returned %d/%d pages — retrying the rest", primary, len(got), len(urls))
+        logger.warning("%s fetch_urls returned %d/%d pages. Retrying the rest", primary, len(got), len(urls))
     else:
         missing = list(urls)
 
@@ -184,7 +184,7 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
         raise CrawlerError(f"{primary} returned no pages and the Jina fallback is disabled")
 
     logger.warning(
-        "%s fetch_urls failed (%d/%d urls) — falling back to %s",
+        "%s fetch_urls failed (%d/%d urls). Falling back to %s",
         primary,
         len(missing),
         len(urls),

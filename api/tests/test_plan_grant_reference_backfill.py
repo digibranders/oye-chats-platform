@@ -3,13 +3,13 @@
 ``subscription.activated`` grants a subscription's first-period credits
 before any Invoice exists (there's nothing to link yet), and sets the
 per-period marker. The Invoice for that same charge only shows up moments
-later via ``subscription.charged`` — by which point ``grant_subscription_
+later via ``subscription.charged``, by which point ``grant_subscription_
 period_once`` sees the marker already matches and no-ops, discarding the
 invoice id it was just handed. That grant is left permanently unlinked.
 
 Without a fix, a chargeback arriving on that (long-since-expired) first
 invoice can't find its exact grant via ``reference_id`` and falls back to
-"most recent matching grant in scope" — which by then is a LATER, still
+"most recent matching grant in scope", which by then is a LATER, still
 in-use period's grant. The clawback lands on the wrong month and wipes out
 credits the customer already paid for and is actively using.
 
@@ -204,7 +204,7 @@ def test_first_period_grant_gets_backfilled_and_protects_later_months(db):
             .first()
         )
         assert jan_grant is not None
-        assert jan_grant.reference_id is None  # not linked yet — no invoice existed at grant time
+        assert jan_grant.reference_id is None  # not linked yet, no invoice existed at grant time
 
         # Jan: subscription.charged arrives moments later WITH a payment entity.
         # This must be a marker no-op (same period) but must backfill the
@@ -248,7 +248,7 @@ def test_first_period_grant_gets_backfilled_and_protects_later_months(db):
 
         # March: the January payment is disputed and lost. Correct outcome:
         # January's grant is long since reset to 0 (remaining <= 0), so NOTHING
-        # should be clawed back — and February's active balance must be untouched.
+        # should be clawed back, and February's active balance must be untouched.
         rzp._handle_dispute_lost(db, _dispute_payload("pay_jan", amount=459900))
         db.commit()
 
@@ -260,7 +260,7 @@ def test_first_period_grant_gets_backfilled_and_protects_later_months(db):
     jan_invoice_after = db.query(Invoice).filter_by(razorpay_payment_id="pay_jan").one()
     assert jan_invoice_after.status == "dispute_lost"
 
-    # No refund ledger row was written — the clawback correctly found nothing
+    # No refund ledger row was written, the clawback correctly found nothing
     # left to reverse on January's grant, so it never touched February's.
     refund_rows = db.query(CreditLedger).filter_by(client_id=client.id, reason="refund").all()
     assert refund_rows == []

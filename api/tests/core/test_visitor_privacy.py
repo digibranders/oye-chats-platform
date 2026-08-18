@@ -30,10 +30,10 @@ class TestRedactVisitorIp:
     @pytest.mark.parametrize(
         ("stored", "expected"),
         [
-            # "<City>, <Country> | <IP>" — what the resolver writes on success.
+            # "<City>, <Country> | <IP>". What the resolver writes on success.
             (f"Mumbai, India | {_IPV4}", "Mumbai, India"),
             (f"Mumbai, India | {_IPV6}", "Mumbai, India"),
-            # "<Country> | <IP>" — same resolver, vendor had no city.
+            # "<Country> | <IP>", same resolver, vendor had no city.
             (f"India | {_IPV4}", "India"),
             # A city containing the separator's neighbours must survive whole.
             (f"Washington, D.C., United States | {_IPV4}", "Washington, D.C., United States"),
@@ -43,7 +43,7 @@ class TestRedactVisitorIp:
         assert redact_visitor_ip(stored) == expected
 
     def test_the_pre_resolution_stamp_yields_nothing_rather_than_a_bare_address(self):
-        """``"IP: 1.2.3.4"`` holds no geography at all — it must not print.
+        """``"IP: 1.2.3.4"`` holds no geography at all, it must not print.
 
         This is the shape a session carries for the first few hundred
         milliseconds of its life, and for the whole of it if both geo vendors
@@ -147,8 +147,8 @@ class TestRedactVisitorMetadata:
         """The input is a live SQLAlchemy JSON value.
 
         Popping the key in place would delete the marker from the row on the
-        next flush, and every later message in that conversation would re-run —
-        and re-bill — the ipapi.is lookup the marker exists to prevent.
+        next flush, and every later message in that conversation would re-run
+        (and re-bill) the ipapi.is lookup the marker exists to prevent.
         """
         stored = {"ip_intel": {"company_name": "Infosys", "resolved_for_ip": _IPV4}}
 

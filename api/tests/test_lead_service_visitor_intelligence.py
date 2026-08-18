@@ -1,4 +1,4 @@
-"""build_lead_response — Visitor Intelligence fields (is_valid_email,
+"""build_lead_response. Visitor Intelligence fields (is_valid_email,
 email_score, visitor_metadata), gated by include_visitor_intelligence.
 
 Mirrors the existing include_attribution / include_intelligence tests in
@@ -69,7 +69,7 @@ class TestVisitorIntelligenceFieldsDefaultOff:
 
         A review hoisted these three assignments out of the
         `include_visitor_intelligence` block and the entire 3715-test suite
-        stayed green — a one-line indentation slip would have handed
+        stayed green, a one-line indentation slip would have handed
         Free/Starter/Standard callers the paid enrichment, in the file whose
         whole purpose is proving the paywall.
         """
@@ -97,7 +97,7 @@ class TestVisitorIntelligenceFieldsDefaultOff:
         payload = build_lead_response(
             _session(visitor_metadata={"company": "Acme"}), None, include_visitor_intelligence=True
         )
-        # No lead_info at all — contact stays None, but the session-level
+        # No lead_info at all. Contact stays None, but the session-level
         # visitor_metadata signal is still surfaced (it exists independent
         # of whether the visitor ever submitted a form).
         assert payload["contact"] is None

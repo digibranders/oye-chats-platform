@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class _ExplodingGateway:
-    """Any attribute access means a gateway call was attempted — fail loudly."""
+    """Any attribute access means a gateway call was attempted. Fail loudly."""
 
     def __getattr__(self, name):  # noqa: ANN001
         raise AssertionError(f"gateway must not be reached (accessed .{name})")
@@ -75,7 +75,7 @@ def test_create_subscription_refuses_usd_with_flag_off(db, monkeypatch):
 
 
 def test_create_subscription_allows_usd_with_flag_on(db, monkeypatch):
-    """With the flag ON the same call must proceed to the gateway — asserted by
+    """With the flag ON the same call must proceed to the gateway. Asserted by
     reaching the (faked) subscription.create with the USD plan id."""
     client = _usd_client(db)
     plan = _usd_plan(db)

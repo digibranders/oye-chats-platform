@@ -1,4 +1,4 @@
-"""GET /credits/daily — the Usage-page consumption trend series.
+"""GET /credits/daily, the Usage-page consumption trend series.
 
 Sums metered consumption debits (ai_chat / url_scan / email_send /
 document_upload) per UTC day into a zero-filled ascending series. Grants,
@@ -98,7 +98,7 @@ def test_daily_series_is_zero_filled_and_sums_consumption(db) -> None:
     assert dates[-2] == yesterday.date().isoformat()
 
     used_by_date = {row["date"]: row["credits_used"] for row in series}
-    # Consumption only — grant/reset/topup/refund excluded.
+    # Consumption only. Grant/reset/topup/refund excluded.
     assert used_by_date[today.date().isoformat()] == 7
     assert used_by_date[yesterday.date().isoformat()] == 3
     # Every other day is a real zero, not a gap.
@@ -109,7 +109,7 @@ def test_daily_series_is_zero_filled_and_sums_consumption(db) -> None:
 def test_daily_excludes_activity_outside_the_window(db) -> None:
     client = _make_client(db, email="daily-window@e.com")
     now = datetime.now(UTC)
-    # 10 days ago — outside a 7-day window.
+    # 10 days ago. Outside a 7-day window.
     _ledger(db, client, delta=-9, reason="ai_chat", created_at=now - timedelta(days=10))
     db.commit()
 

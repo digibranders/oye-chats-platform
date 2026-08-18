@@ -1,19 +1,19 @@
 """Tests for BR-01: framework-aware composite score/tier.
 
 Before this fix, ``_background_bant_extraction`` recomputed the persisted
-``bant_score``/``bant_tier`` (the fields every downstream reader — the leads
+``bant_score``/``bant_tier`` (the fields every downstream reader (the leads
 dashboard, operator console sort order, the analytics MQL/SAL/SQL funnel, and
-the tier-transition email/webhook trigger — actually consumes) by summing
+the tier-transition email/webhook trigger) actually consumes) by summing
 exactly four hardcoded columns named after BANT's own dimensions
 (need/timeline/authority/budget). For any bot configured on a non-BANT
-framework (MEDDIC/CHAMP/GPCTBA+C&I), those columns are never written — only
-the framework-agnostic ``dimension_scores`` JSONB is — so the composite stayed
+framework (MEDDIC/CHAMP/GPCTBA+C&I), those columns are never written (only
+the framework-agnostic ``dimension_scores`` JSONB is) so the composite stayed
 permanently 0 and the tier permanently "unqualified", even though extraction
 was correctly scoring the bot's actual MEDDIC/CHAMP/GPCTBA+C&I dimensions.
 
 These tests pin: a MEDDIC-framework session with real extracted signals ends
-up with a non-zero, correctly-weighted composite score and matching tier —
-computed via ``qualification_service.calculate_composite_score`` instead of
+up with a non-zero, correctly-weighted composite score and matching tier.
+Computed via ``qualification_service.calculate_composite_score`` instead of
 the old hardcoded four-column sum.
 """
 
@@ -114,7 +114,7 @@ class TestBackgroundBantExtractionFrameworkAware:
                 bid=5,
                 history_context="",
                 question="I'm the VP of Eng, we're losing hours a week to manual triage.",
-                answer="Got it — tell me more.",
+                answer="Got it. Tell me more.",
                 current_bant={},
                 bot_id=5,
                 bant_config=None,
@@ -127,7 +127,7 @@ class TestBackgroundBantExtractionFrameworkAware:
         assert chat_session.bant_score == expected_score
         assert chat_session.bant_tier == expected_tier
 
-        # MEDDIC dimensions never map to the legacy BANT columns — confirms
+        # MEDDIC dimensions never map to the legacy BANT columns. Confirms
         # those columns are correctly bypassed, not silently reused.
         assert chat_session.bant_need_score == 0
         assert chat_session.bant_budget_score == 0
@@ -135,7 +135,7 @@ class TestBackgroundBantExtractionFrameworkAware:
         assert chat_session.bant_timeline_score == 0
 
     def test_bant_framework_composite_still_correct(self):
-        """Same wiring, default BANT framework — composite must still work
+        """Same wiring, default BANT framework. Composite must still work
         for the framework this all originally shipped for."""
         bot = _FakeBot()
         bot.bant_config = {"framework": "bant"}
@@ -177,7 +177,7 @@ class TestBackgroundBantExtractionFrameworkAware:
                 bid=5,
                 history_context="",
                 question="We need SSO for SOC 2, and have about 5k a month allocated.",
-                answer="Got it — tell me more.",
+                answer="Got it. Tell me more.",
                 current_bant={},
                 bot_id=5,
                 bant_config=None,
@@ -186,7 +186,7 @@ class TestBackgroundBantExtractionFrameworkAware:
 
         assert chat_session.bant_score == expected_score
         assert chat_session.bant_tier == expected_tier
-        # BANT dimensions DO map to the legacy columns — back-compat preserved.
+        # BANT dimensions DO map to the legacy columns. Back-compat preserved.
         assert chat_session.bant_need_score == 20
         assert chat_session.bant_budget_score == 15
 

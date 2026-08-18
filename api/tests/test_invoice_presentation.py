@@ -106,7 +106,7 @@ def _issued(db, email, **buyer_fields):
     db.flush()
     if (buyer_fields.get("billing_country") or "IN") != "IN":
         # Wave 1.1 export backstop: an INR-settled export only finalizes for
-        # accounts with a genuine foreign-currency charge history — corroborate.
+        # accounts with a genuine foreign-currency charge history. Corroborate.
         db.add(Invoice(client_id=buyer.id, amount_cents=1900, currency="usd", status="paid", inr_amount_minor=160000))
         db.flush()
     inv = Invoice(
@@ -114,7 +114,7 @@ def _issued(db, email, **buyer_fields):
         amount_cents=399900,
         currency="inr",
         status="paid",
-        description="Credits top-up — 5,500 credits",
+        description="Credits top-up - 5,500 credits",
         paid_at=datetime.now(UTC),
     )
     db.add(inv)
@@ -129,7 +129,7 @@ def test_tax_invoice_carries_the_rule_48_copy_marking(db, enabled):
 
 
 def test_footer_declares_no_signature_is_required_and_shows_no_empty_signatory(db, enabled):
-    """Rule 46(p)'s proviso waives the signature for an electronic invoice — but
+    """Rule 46(p)'s proviso waives the signature for an electronic invoice, but
     only if the document says so. The old layout printed a vague
     'computer-generated' line AND an empty 'Authorised signatory' block, which
     reads as an UNSIGNED invoice rather than one needing no signature."""
@@ -162,7 +162,7 @@ def test_export_invoice_shows_place_of_supply_and_destination(db, enabled):
     inv = _issued(db, "exp@test.dev", billing_country="US")
     assert inv.is_export is True
     html = render_invoice_html(inv)
-    assert "Place of supply: 96 – Outside India" in html
+    assert "Place of supply: 96 - Outside India" in html
     assert "Country of destination: United States" in html
 
 
@@ -176,7 +176,7 @@ def test_every_seller_profile_field_is_exposed_by_the_api(db):
     """The serializer must not silently drop fields.
 
     ``_profile_dict`` omitted cin/phone/website/support_email, so the console
-    rendered them blank no matter what was stored — an operator who saved a CIN
+    rendered them blank no matter what was stored, an operator who saved a CIN
     watched it disappear on the next load. A field-by-field comparison against
     the dataclass catches the next omission instead of a customer doing it.
     """

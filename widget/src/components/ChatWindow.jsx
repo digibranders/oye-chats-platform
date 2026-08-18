@@ -20,7 +20,7 @@ import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
 
-// Lazy-loaded — only fetched when the user actually triggers handoff, lead capture, or booking.
+// Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean. lazyWithRetry + the ErrorBoundary wrapping each
 // <Suspense> below mean a transient (or missing) chunk degrades locally instead of
 // unmounting the whole widget.
@@ -33,14 +33,14 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
-// Chat mode state machine — valid transitions.
+// Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
 // the inline [LEAVE_MESSAGE_CARD] card) that drops the visitor straight from
 // the AI chat into the offline-message form without a live-chat handoff first.
 // `connecting` is the brief (~10s) "checking with our team" state shown after
 // a handoff submission while the resolver re-checks for operator availability.
 // From there it either rolls forward to `waiting` (operator found) or
-// `unavailable` (timeout — show the compact message-only form).
+// `unavailable` (timeout. Show the compact message-only form).
 const _VALID_TRANSITIONS = {
     // ``bot → live`` covers the operator-initiated connect-request consent
     // flow: operator clicks Connect in the dashboard, the visitor accepts the
@@ -87,7 +87,7 @@ const SystemMessage = ({ text }) => {
     );
 };
 
-// Initials helper — handles unicode names and empty values defensively.
+// Initials helper. Handles unicode names and empty values defensively.
 const getInitials = (name) => {
     if (!name) return '?';
     const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
@@ -95,7 +95,7 @@ const getInitials = (name) => {
     return parts.map(part => Array.from(part)[0] || '').join('').toUpperCase();
 };
 
-// Operator joined notice — replaces the plain "X joined" text divider with a
+// Operator joined notice. Replaces the plain "X joined" text divider with a
 // prominent pill showing the operator's initials, name, department, and time.
 // Mirrors the bot-identity badge style so the live-chat handoff feels like a
 // natural identity swap rather than a silent system event.
@@ -137,7 +137,7 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
     );
 };
 
-// Date separator — shown between messages from different days (Intercom/Crisp pattern)
+// Date separator. Shown between messages from different days (Intercom/Crisp pattern)
 const DateSeparator = ({ date }) => {
     const label = (() => {
         const d = new Date(date);
@@ -195,7 +195,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [isAtBottom, setIsAtBottom] = useState(true);
     // Brief enlarge pulse the moment the user taps the scroll-to-latest pill.
     // Gives the tap confirmation feedback even though the button itself
-    // disappears as soon as the smooth scroll catches up — without the pulse
+    // disappears as soon as the smooth scroll catches up, without the pulse
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => readSessionId());
@@ -212,7 +212,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         setSmartLinkSession(sessionId);
     }, [sessionId]);
-    // The AI assistant is available 24/7 — business hours only gate the HUMAN
+    // The AI assistant is available 24/7. Business hours only gate the HUMAN
     // handoff (enforced server-side when the visitor actually requests a
     // person). So we always boot into the bot chat + welcome screen; we never
     // drop a returning or first-time visitor straight into the offline
@@ -266,11 +266,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [calendlyUrl, setCalendlyUrl] = useState(null);
     const [meetingProvider, setMeetingProvider] = useState(null);
     const [meetingBooked, setMeetingBooked] = useState(false);
-    // Qualified-lead popup — surfaced when the backend flags a warm lead
+    // Qualified-lead popup. Surfaced when the backend flags a warm lead
     // (2+ BANT dimensions) AND meeting booking is configured. Holds
     // { calendly_url, meeting_provider, live_chat_enabled }; null when hidden.
     const [qualifiedPopup, setQualifiedPopup] = useState(null);
-    // Inline "Leave a message" CTA — triggered by the [LEAVE_MESSAGE_CARD]
+    // Inline "Leave a message" CTA. Triggered by the [LEAVE_MESSAGE_CARD]
     // sentinel from the RAG pipeline when the visitor asks to email or write
     // to the team. Clicking the button drops them into the offline-message
     // form (chatMode='unavailable') which persists + emails the team.
@@ -311,7 +311,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [offlineSubmitting, setOfflineSubmitting] = useState(false);
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineError, setOfflineError] = useState(false);
-    // Real-time email check on blur — 'idle' | 'checking' | 'valid' | 'invalid'.
+    // Real-time email check on blur. 'idle' | 'checking' | 'valid' | 'invalid'.
     const [offlineEmailCheckState, setOfflineEmailCheckState] = useState('idle');
     const [offlineEmailError, setOfflineEmailError] = useState('');
     const offlineEmailCheckPromiseRef = useRef(null);
@@ -390,7 +390,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         const syncViewport = () => {
             if (!isMobile() || !containerRef.current) {
-                // Crossed the desktop breakpoint — hand layout back to CSS.
+                // Crossed the desktop breakpoint. Hand layout back to CSS.
                 clearMobileInlineStyles();
                 return;
             }
@@ -405,7 +405,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 rafId = null;
                 resyncViewport();
 
-                // Final settle pass — re-read once iOS keyboard animation completes
+                // Final settle pass. Re-read once iOS keyboard animation completes
                 settleTimer = setTimeout(() => {
                     settleTimer = null;
                     resyncViewport();
@@ -418,14 +418,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             containerRef.current.style.top = `${vv.offsetTop}px`;
         };
 
-        // Set initial size immediately — covers iOS where dvh may not be supported
+        // Set initial size immediately. Covers iOS where dvh may not be supported
         // or where body scroll lock (position: fixed) breaks CSS height resolution
         resyncViewport();
 
         vv.addEventListener('resize', syncViewport);
         vv.addEventListener('scroll', handleScroll);
         // `visualViewport.resize` doesn't always fire when devtools' responsive
-        // mode toggles back to desktop — the visual viewport's INNER pixel
+        // mode toggles back to desktop, the visual viewport's INNER pixel
         // dimensions can stay constant while window.innerWidth changes. A
         // window-level resize listener catches that case.
         window.addEventListener('resize', syncViewport);
@@ -458,7 +458,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const container = containerRef.current;
         if (!container) return;
 
-        // Cache the messages area element once — it never changes after mount
+        // Cache the messages area element once, it never changes after mount
         const messagesArea = container.querySelector('[data-messages-area]');
 
         const preventHostScroll = (e) => {
@@ -482,7 +482,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             }
 
             // Allow native touch behavior on the input area (text selection,
-            // cursor positioning) — blocking it interferes with iOS keyboard.
+            // cursor positioning). Blocking it interferes with iOS keyboard.
             if (e.target.closest?.('form, textarea')) return;
 
             // Block all other touch scrolling (header, etc.)
@@ -506,19 +506,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // hand-rolled scrolljacking) attach a global ``wheel`` listener on ``window``
     // and call ``preventDefault()`` to drive the page programmatically. Because
     // ``wheel`` is a *composed* event it crosses our Shadow DOM boundary and
-    // bubbles up to ``window`` — so the host library consumes it and the widget's
+    // bubbles up to ``window``, so the host library consumes it and the widget's
     // own scroll container never moves (the visitor scrolls the page instead of
     // the chat). Stopping propagation at the widget root keeps wheel events from
     // ever reaching those window-level listeners, while the browser's native
     // scroll (the default action, left untouched) still scrolls the messages
     // area. ``overscroll-contain`` on the messages area stops native chaining at
     // the top/bottom edges, so the host never scrolls while the cursor is over
-    // the widget — matching Intercom/Crisp behaviour.
+    // the widget. Matching Intercom/Crisp behaviour.
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return undefined;
         const stopWheelBubble = (e) => e.stopPropagation();
-        // passive: we never call preventDefault here — native scrolling of the
+        // passive: we never call preventDefault here. Native scrolling of the
         // messages area is preserved; we only sever propagation to the host.
         container.addEventListener('wheel', stopWheelBubble, { passive: true });
         return () => container.removeEventListener('wheel', stopWheelBubble);
@@ -535,7 +535,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Callback ref for the inline handoff card. The card is lazy-imported and
     // sits inside <Suspense fallback={null}>, so it mounts empty and *grows*
-    // after its chunk resolves — a single scroll-to-bottom fired on injection
+    // after its chunk resolves, a single scroll-to-bottom fired on injection
     // lands before the card exists and leaves it clipped below the fold (the
     // "Continue with AI instead" row cut off). Observing the card's own size
     // and re-pinning the messages area to the bottom on every growth guarantees
@@ -566,7 +566,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Track whether the user has scrolled away from the latest message.
     // 48px tolerance covers anti-aliasing jitter and the gap-5 (20px) gap
-    // between the messagesEndRef sentinel and the last real message — without
+    // between the messagesEndRef sentinel and the last real message, without
     // it, anchoring to the bottom flicks the affordance on briefly during
     // streaming as new tokens push scrollHeight forward each frame.
     useEffect(() => {
@@ -630,7 +630,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setMessages(mapped);
                         setIsReturningUser(true);
                         // "Welcome back" should only greet a genuine return after a
-                        // break — NOT a mid-conversation hop across subdomains, where
+                        // break. NOT a mid-conversation hop across subdomains, where
                         // the shared-session cookie loads history seconds later and a
                         // "welcome back" reads as nonsense. Gate the banner on how long
                         // ago the last message was; unknown/unparseable timestamps fall
@@ -731,7 +731,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the messages content grows AND the visitor was already at the bottom.
     // Without this, lazy-imported cards (HandoffForm, operator widgets, the
     // post-chat survey) appear after the auto-scroll above has already fired
-    // — leaving them clipped below the fold. The user just sees "the form"
+    //. Leaving them clipped below the fold. The user just sees "the form"
     // but can't tap the submit button. The "was at bottom" gate means we
     // don't yank the view away from someone scrolled up reading history.
     useEffect(() => {
@@ -747,7 +747,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             lastHeight = scrollHeight;
             if (wasAtBottom) {
                 // Use the smooth scroll path so it matches the deliberate
-                // auto-scrolls elsewhere — late content slides into view
+                // auto-scrolls elsewhere. Late content slides into view
                 // rather than snapping.
                 scrollToBottom();
             }
@@ -780,7 +780,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Strip the "Connecting…" system divider once the offline-message form
     // takes over (handoff timed out or the user chose "Leave a message").
-    // The form itself is the new affordance — the divider above it just
+    // The form itself is the new affordance, the divider above it just
     // duplicates intent that no longer matches the state.
     useEffect(() => {
         if (chatMode !== 'unavailable') return;
@@ -811,7 +811,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 if (cancelled) return;
                 const retryAction = retry?.suggested_action;
                 if (retryAction === 'route' || retryAction === 'wait') {
-                    // Lucky — operator came online in the gap. Roll forward
+                    // Lucky. Operator came online in the gap. Roll forward
                     // to the waiting screen instead of the offline form.
                     setLiveChatState({
                         suggestedAction: retryAction,
@@ -824,7 +824,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     setChatMode('waiting');
                 }
             } catch {
-                // Network error during the silent re-check is fine — we'll
+                // Network error during the silent re-check is fine. We'll
                 // fall through to the offline form at the 10s mark anyway.
             }
         }, 5000);
@@ -858,7 +858,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Product policy: never make a visitor stare at the spinner for more
     // than 35 seconds. After that we flip into ``unavailable`` so the
     // offline-message form takes over. This is INTENTIONALLY hard-coded
-    // — earlier versions read ``settings.operator_timeout_seconds`` and
+    //. Earlier versions read ``settings.operator_timeout_seconds`` and
     // legacy bots that had it set to 300 silently broke the policy.
     //
     // We also use a wall-clock check instead of a tick counter so the
@@ -896,7 +896,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         };
     }, [chatMode, setChatMode]);
 
-    // Visibility safety net — when the tab regains focus, re-evaluate the
+    // Visibility safety net. When the tab regains focus, re-evaluate the
     // deadline immediately so a throttled interval doesn't stretch the
     // wait past 35 s. Without this, a backgrounded tab can sit at the
     // spinner for minutes before the next throttled tick fires.
@@ -923,15 +923,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, [chatMode, setChatMode]);
 
     // Escalating waiting-state copy. Tiered against the 35 s ceiling:
-    //   0–11 s  → bot's configured waiting_message
-    //   12–22 s → "still connecting"
-    //   23–35 s → "taking a bit longer" (form auto-opens at 35 s via
+    //   0 to 11 s  → bot's configured waiting_message
+    //   12 to 22 s → "still connecting"
+    //   23 to 35 s → "taking a bit longer" (form auto-opens at 35 s via
     //             ``chatMode → 'unavailable'``, no need to advertise it in
-    //             the copy — clients found "you can leave a message
+    //             the copy. Clients found "you can leave a message
     //             instead" too pushy in the waiting state)
     const getWaitingMessage = () => {
-        if (waitingSeconds >= 23) return 'Taking a bit longer than usual — hang tight';
-        if (waitingSeconds >= 12) return 'Still connecting — our team will be right with you';
+        if (waitingSeconds >= 23) return 'Taking a bit longer than usual. Hang tight';
+        if (waitingSeconds >= 12) return 'Still connecting. Our team will be right with you';
         return settings.waiting_message || 'Please wait a moment';
     };
 
@@ -950,7 +950,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!showHeaderMenu) return;
         const handler = (e) => {
             // Use composedPath() instead of e.target because the widget renders inside
-            // a Shadow DOM — e.target at the document level is retargeted to the shadow
+            // a Shadow DOM. E.target at the document level is retargeted to the shadow
             // host, making contains() always return false for elements inside the shadow.
             if (headerMenuRef.current && !e.composedPath().includes(headerMenuRef.current)) {
                 setShowHeaderMenu(false);
@@ -1018,7 +1018,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── Clear view (slash /clear) ───────────────────────────────────────────────
-    // Cosmetic wipe of the on-screen transcript — the server-side ChatSession
+    // Cosmetic wipe of the on-screen transcript, the server-side ChatSession
     // and its ChatMessage rows are untouched, and the session_id stays the
     // same so BANT context and any pending handoff continue seamlessly.
     // Use case: the visitor scrolled a long, off-topic thread and wants a
@@ -1188,7 +1188,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setMeetingProvider(finalMeta.meeting_provider || 'calendly');
                         setShowBooking(true);
                     }
-                    // Qualified-lead popup — offers live-chat + book-a-meeting
+                    // Qualified-lead popup. Offers live-chat + book-a-meeting
                     // CTAs. Skipped once a meeting is already booked this session.
                     if (finalMeta.team_connect_popup && !meetingBooked) {
                         setQualifiedPopup(finalMeta.team_connect_popup);
@@ -1201,7 +1201,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         leaveMessageCardShownRef.current = true;
                         setShowLeaveMessageCard(true);
                     }
-                    // Media card (YouTube video / downloadable file) — the
+                    // Media card (YouTube video / downloadable file), the
                     // backend guarantees at most one per response and only
                     // when a matching URL sits in the retrieved context.
                     // Attach it to the specific bot message so MessageBubble
@@ -1228,7 +1228,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     setIsTyping(false);
                     // Distinguish "bot operator out of credits" / "billing paused"
                     // from a generic stream failure. Visitors must NEVER see internal
-                    // billing terms — these messages are deliberately neutral.
+                    // billing terms. These messages are deliberately neutral.
                     const friendly =
                         err?.status === 402
                             ? "We're temporarily over capacity for this chatbot. Please try again later or reach us by email."
@@ -1242,7 +1242,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             if (!cleaned) {
                                 return { ...msg, text: friendly };
                             }
-                            // Partial content streamed before error — preserve it, mark as interrupted
+                            // Partial content streamed before error. Preserve it, mark as interrupted
                             return { ...msg, text: cleaned + '\n\n*Response was interrupted. Please try again.*' };
                         }));
                     } else {
@@ -1341,12 +1341,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             }];
         });
         // Targeted late-mount re-scroll: HandoffForm is lazy-imported via
-        // ``React.lazy`` and sits inside ``<Suspense fallback={null}>`` — so
+        // ``React.lazy`` and sits inside ``<Suspense fallback={null}>``, so
         // the auto-scroll triggered by the ``messages.length`` change above
         // lands on the bottom that doesn't yet include the form (Suspense
         // shows nothing while the chunk loads). Once the lazy chunk resolves
         // and the form (~250px) mounts, scrollHeight jumps but no further
-        // state change re-runs the scroll effect — leaving the form clipped
+        // state change re-runs the scroll effect. Leaving the form clipped
         // and the submit button cut off below the fold (the bug you saw).
         //
         // The ResizeObserver above catches the late mount in normal browser
@@ -1401,7 +1401,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [liveChatState, setLiveChatState] = useState(null);
     // `incomingOperator` is set when the resolver flips from "no operator
     // available" to AVAILABLE while the visitor is on the offline form. It
-    // drives the OperatorJoinedToast — null = no toast, string = operator
+    // drives the OperatorJoinedToast. Null = no toast, string = operator
     // display name (or generic "Someone from our team") to render. Cleared on dismiss
     // or when the visitor switches to chat.
     const [incomingOperator, setIncomingOperator] = useState(null);
@@ -1426,7 +1426,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             // The backend state machine returns suggested_action that tells
             // the widget exactly what to render. The visitor never sees a
             // fake "connecting..." spinner when there's literally no one to
-            // connect them to — backend tells us instantly.
+            // connect them to. Backend tells us instantly.
             const response = await requestHandoff(sessionId, formData);
             const suggestedAction = response?.suggested_action || 'route';
             const fallbackReason = response?.fallback_reason || response?.state || null;
@@ -1472,7 +1472,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 return;
             }
 
-            // suggested_action is "route" or "wait" — both proceed to the
+            // suggested_action is "route" or "wait", both proceed to the
             // waiting screen but with different progress UI. Store the queue
             // metadata so LiveChatMode / the waiting overlay can render it.
             //
@@ -1536,7 +1536,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     //
     // While the visitor is in bot mode we poll for a pending operator
     // invitation every 5 seconds. The endpoint is cheap (single dict lookup
-    // on the API) and the visitor experience is "near real-time" — the popup
+    // on the API) and the visitor experience is "near real-time", the popup
     // appears within a few seconds of the operator clicking Connect.
     //
     // We deliberately do NOT poll outside ``chatMode === 'bot'`` so we never
@@ -1634,7 +1634,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const requestId = connectRequest.request_id;
         if (requestId) dismissedConnectRequestsRef.current.add(requestId);
         setConnectRequest(null);
-        // Fire-and-forget — keeps the AI conversation responsive.
+        // Fire-and-forget. Keeps the AI conversation responsive.
         respondToConnectRequest(sessionId, false, requestId).catch(() => {});
     }, [connectRequest, connectRequestSubmitting, sessionId]);
 
@@ -1647,7 +1647,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, [connectRequest]);
 
     // ── Bot message feedback (thumbs up/down) ───────────────────────────────
-    // Optimistic update — flip the local state first so the UI feels instant,
+    // Optimistic update. Flip the local state first so the UI feels instant,
     // then sync to the server. If the server call fails we revert so the
     // visitor doesn't think their reaction was recorded when it wasn't.
     const handleBotMessageFeedback = useCallback(async (messageId, nextValue) => {
@@ -1661,7 +1661,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         try {
             await submitFeedback(messageId, nextValue);
         } catch {
-            // Network/server failure — revert the optimistic update.
+            // Network/server failure. Revert the optimistic update.
             setMessages(prev => prev.map(m =>
                 m.id === messageId ? { ...m, feedback: previousValue } : m
             ));
@@ -1675,10 +1675,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the suggested_action flips to "route" or "wait" we surface the
     // OperatorJoinedToast giving the visitor the choice to switch into a
     // live conversation without losing what they typed. We don't auto-switch
-    // — silently swapping the form would be hostile UX.
+    //. Silently swapping the form would be hostile UX.
     //
     // Only runs when the visitor arrived here from the handoff-fallback path
-    // (liveChatState.fallbackReason is set) — visitors who explicitly chose
+    // (liveChatState.fallbackReason is set). Visitors who explicitly chose
     // "Leave a message" never see the toast.
     useEffect(() => {
         if (chatMode !== 'unavailable') {
@@ -1711,7 +1711,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }));
                 }
             } catch {
-                // Silent — next tick will retry. The visitor is still happily
+                // Silent. Next tick will retry. The visitor is still happily
                 // typing their offline message either way.
             }
         };
@@ -1764,7 +1764,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const msgId = `live-${Date.now()}`;
         const clientMsgId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const timestamp = new Date().toISOString();
-        // Optimistic render: start in "sending" — the server's message_ack
+        // Optimistic render: start in "sending", the server's message_ack
         // will flip this to "sent" (no operator online) or "delivered"
         // (operator socket received it), and a later read_receipt flips it
         // to "read" (green double-check).
@@ -1787,7 +1787,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setLiveMessages(prev => [...prev, newMsg]);
     }, []);
 
-    // ── Header close — ask for confirmation during live/waiting chat ───────────
+    // ── Header close. Ask for confirmation during live/waiting chat ───────────
     const handleHeaderClose = useCallback(() => {
         if (chatMode === 'live' || chatMode === 'waiting') {
             setShowEndConfirm(true);
@@ -1799,7 +1799,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── Return to bot after live chat ends ───────────────────────────────────────
     const handleReturnToBot = useCallback(() => {
         // Snapshot whether we're returning from a successful offline submission
-        // before we reset the flag below — used to surface a confirmation line
+        // before we reset the flag below. Used to surface a confirmation line
         // in the bot stream so the visitor sees their request landed.
         const wasOfflineSubmitted = offlineSubmitted;
         setShowRating(false);
@@ -1825,7 +1825,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 next.push({
                     id: `sys-offline-recorded-${now}`,
                     type: 'system',
-                    text: "Your message has been recorded — we'll get back to you shortly.",
+                    text: "Your message has been recorded. We'll get back to you shortly.",
                     timestamp: new Date().toISOString(),
                 });
             }
@@ -1885,7 +1885,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── Offline message submit ───────────────────────────────────────────────────
     const offlineLooksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur — validation runs in the background while the visitor
+    // Fires on blur. Validation runs in the background while the visitor
     // fills in the remaining fields, same pattern as HandoffForm.
     const handleOfflineEmailBlur = () => {
         const email = offlineForm.email.trim();
@@ -1916,8 +1916,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         e.preventDefault();
 
         // Skip the check entirely when the email is already known/trusted
-        // from an earlier step (compact form never even shows this input) —
-        // only a freshly-typed email in the full form needs validating.
+        // from an earlier step (compact form never even shows this input).
+        // Only a freshly-typed email in the full form needs validating.
         const hasKnownEmail = Boolean(
             liveChatState?.capturedEmail?.trim() || existingLeadInfo?.email?.trim()
         );
@@ -2024,8 +2024,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Waiting + live modes both keep the bot-mode date/time chrome so the
     // widget's header doesn't reshuffle as the session transitions. The
     // "Connecting…" state is communicated in-band: a system line in the
-    // transcript, the input placeholder, and the body waiting indicator —
-    // duplicating it in the header was redundant. A subtle "Reconnecting..."
+    // transcript, the input placeholder, and the body waiting indicator.
+    // Duplicating it in the header was redundant. A subtle "Reconnecting..."
     // overlay still appears when the WS is dropping mid-live-chat: that's a
     // connection-health signal, not an identity swap.
     const renderHeader = () => {
@@ -2046,7 +2046,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── Floating agent badge ─────────────────────────────────────────────────────
     // Always shows the bot identity (avatar + name + subtitle) regardless
     // of chatMode. Switching to the operator's name and initials when a
-    // human joined created a jarring chrome swap mid-conversation — the
+    // human joined created a jarring chrome swap mid-conversation, the
     // bot brand should anchor the widget consistently. Operator presence
     // is communicated in-band via the "<Name> joined" system line and the
     // per-message author labels.
@@ -2093,12 +2093,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Tick gate: show WhatsApp-style status (sent/delivered/read) on a
     // visitor's outgoing live message ONLY after the operator has actually
-    // engaged — that is, after at least one operator message exists in
+    // engaged. That is, after at least one operator message exists in
     // ``liveMessages``. Until that happens, the visitor's mental model is
     // "I'm still talking to the bot" (or "I'm waiting for someone to join"),
     // and a green double-tick reads as a false read-receipt from a human
     // who hasn't shown up yet. Once the operator sends their first
-    // message, ticks light up on the visitor's prior live messages too —
+    // message, ticks light up on the visitor's prior live messages too,
     // the existing read_receipt handler upgrades their status as usual.
     const operatorHasEngaged = liveMessages.some((m) => m.sender === 'operator');
 
@@ -2144,7 +2144,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {msg.failed || msg.status === 'failed' ? (
                             <button
                                 type="button"
-                                aria-label="Message not sent — tap to retry"
+                                aria-label="Message not sent. Tap to retry"
                                 onClick={() => {
                                     if (!wsSendRef.current) return;
                                     const retryId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2276,7 +2276,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             </div>
 
             {/* ── Floating agent badge (always on top of messages area) ──
-                Shown in both bot and live modes — badge shows bot identity
+                Shown in both bot and live modes. Badge shows bot identity
                 regardless of mode. Hidden during waiting/unavailable where
                 dedicated state screens own the header, and during
                 initialization/lead form where chrome is suppressed.
@@ -2293,7 +2293,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             )}
 
-            {/* ── Unified messages area — one scroll, always visible ── */}
+            {/* ── Unified messages area, one scroll, always visible ── */}
             <div
                 className={`${currentTheme.messagesArea} relative`}
                 data-messages-area
@@ -2305,7 +2305,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 aria-label="Chat messages"
                 role="log"
             >
-                {/* Welcome overlay — absolute, covers the messages area until first send */}
+                {/* Welcome overlay. Absolute, covers the messages area until first send */}
                 {showWelcome && !isInitializing && (
                     <div
                         className="absolute inset-0 z-10 flex flex-col items-start justify-end px-5 pb-4 pointer-events-auto"
@@ -2325,10 +2325,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Pre-chat lead form — sits inside the messages area so the
+                {/* Pre-chat lead form. Sits inside the messages area so the
                     parent ChatWindow's header (bot avatar, name, close button)
                     stays visible above it. Do NOT pass currentTheme/onClose
-                    here — the form renders content only, not its own chrome. */}
+                    here, the form renders content only, not its own chrome. */}
                 {showLeadForm && (
                     <div className="absolute inset-0 z-20 pointer-events-auto">
                         <ErrorBoundary label="LeadCaptureForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} />}>
@@ -2344,7 +2344,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
 
 
-                {/* Bottom-anchor spacer — MUST be the first flex child so a
+                {/* Bottom-anchor spacer. MUST be the first flex child so a
                     short conversation is pushed down flush against the input
                     (matches WhatsApp/Intercom/Crisp). flex-1 collapses to 0
                     once real content overflows, so long conversations still
@@ -2363,7 +2363,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Load earlier messages — cursor-based pagination */}
+                {/* Load earlier messages. Cursor-based pagination */}
                 {!isInitializing && isReturningUser && hasMoreHistory && (
                     <div className="flex justify-center py-3">
                         <button
@@ -2380,7 +2380,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Bot conversation messages — with date separators for returning users */}
+                {/* Bot conversation messages, with date separators for returning users */}
                 {!isInitializing && (() => {
                     const items = [];
                     let lastDateStr = null;
@@ -2422,7 +2422,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 </div>
                             );
                         } else if (msg.type === 'handoff_form') {
-                            // Already submitted — skip
+                            // Already submitted. Skip
                         } else {
                             items.push(
                                 <MessageBubble
@@ -2442,7 +2442,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
 
-                {/* Leave-a-message CTA — inline prompt to open the offline form.
+                {/* Leave-a-message CTA. Inline prompt to open the offline form.
                     Triggered by the [LEAVE_MESSAGE_CARD] sentinel from the RAG
                     pipeline when the visitor asks to email/write to the team.
                     Only shown while in bot mode; transitioning to 'unavailable'
@@ -2476,7 +2476,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 onClick={() => {
                                     setShowLeaveMessageCard(false);
                                     // Allow the card to re-trigger if the visitor
-                                    // asks again — without this, the per-session
+                                    // asks again, without this, the per-session
                                     // ref locks the card out for the rest of the chat.
                                     leaveMessageCardShownRef.current = false;
                                 }}
@@ -2488,7 +2488,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Qualified-lead card — warm lead (2+ BANT dimensions) on a bot
+                {/* Qualified-lead card. Warm lead (2+ BANT dimensions) on a bot
                     with meeting booking configured. Rendered inline right after
                     the bot's answer; the composer is hidden while it's shown so
                     the visitor's next action is one of the CTAs (or continue with
@@ -2548,7 +2548,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         // Tag this send with the CTA's dimension (BR-02) so the
                         // backend scores the tapped option deterministically
                         // from the rubric instead of re-interpreting it as
-                        // free text — the button IS the rubric answer.
+                        // free text, the button IS the rubric answer.
                         const ctaDimension = activeCTA?.dimension;
                         setActiveCTA(null);
                         handleSend(null, option, ctaDimension);
@@ -2568,7 +2568,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     <SystemMessage text={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
                 )}
 
-                {/* Live chat messages — seamless continuation in the same stream */}
+                {/* Live chat messages. Seamless continuation in the same stream */}
                 {!isInitializing && liveMessages.map(renderLiveMessage)}
 
                 {/* Operator typing indicator */}
@@ -2582,7 +2582,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Waiting state — inline spinner below the handoff system message */}
+                {/* Waiting state. Inline spinner below the handoff system message */}
                 {chatMode === 'waiting' && !isInitializing && (
                     <div className="flex flex-col items-center py-4 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                         <div
@@ -2623,8 +2623,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Offline message form — inline in stream */}
-                {/* Connecting state — 10-second "checking with our team"
+                {/* Offline message form (inline in stream */}
+                {/* Connecting state) 10-second "checking with our team"
                     window. Either rolls forward to waiting/live (operator
                     came online during the 5s re-check) or transitions to
                     the compact offline form below. */}
@@ -2711,8 +2711,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             // (handoff form or an existing lead row), skip
                             // the redundant contact fields and show only
                             // the message textarea. The compact gate is
-                            // derived from EXTERNAL sources only — never
-                            // from offlineForm state — so typing into the
+                            // derived from EXTERNAL sources only (never
+                            // from offlineForm state) so typing into the
                             // message field can't flip the gate and
                             // unmount inputs mid-keystroke.
                             const externalName = (
@@ -2798,7 +2798,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 );
                             }
 
-                            // Full form — name, email, phone, message.
+                            // Full form. Name, email, phone, message.
                             // Prefill any partially-known fields from
                             // external sources without echoing the
                             // visitor's own keystrokes back into state.
@@ -2885,7 +2885,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* 2-step post-chat survey — inline in stream after live chat ends */}
+                {/* 2-step post-chat survey. Inline in stream after live chat ends */}
                 {showRating && settings?.feature_flags?.post_chat_rating !== false && (
                     <div
                         className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
@@ -2974,7 +2974,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     entire widget (header + scroll area + input) instead of
                     just the messages-area viewport. */}
 
-                {/* Welcome-back banner — dismissable, shown just above input after history loads */}
+                {/* Welcome-back banner. Dismissable, shown just above input after history loads */}
                 {!isInitializing && isReturningUser && showWelcomeBackBanner && (
                     <div
                         className="mx-4 mb-2 mt-1 rounded-xl border border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between gap-3"
@@ -3005,7 +3005,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 <div ref={messagesEndRef} />
 
                 {/* Scroll-to-latest affordance. Always mounted so the
-                    show/hide transition can animate cleanly — toggling the
+                    show/hide transition can animate cleanly. Toggling the
                     JSX would skip the CSS transition and snap. Opacity + a
                     downward translate make the affordance "rise up" into
                     its resting position when the user scrolls away from
@@ -3025,7 +3025,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {/* Meeting booking overlay for qualified leads. Rendered as a
                 SIBLING of the messages area, not inside it: the messages area
                 is a scroll container, and an absolute inset-0 overlay inside
-                one scrolls away with the content — in a long conversation
+                one scrolls away with the content, in a long conversation
                 scrolled to the bottom it lands entirely off-screen. Anchored
                 here it pins to the widget shell (the fixed theme container)
                 and stays visible regardless of scroll position. */}
@@ -3073,7 +3073,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </ErrorBoundary>
             )}
 
-            {/* ── Unified ChatInput — hidden when any form is active ──
+            {/* ── Unified ChatInput. Hidden when any form is active ──
                 Also hidden while the qualified-lead card is up so the visitor's
                 only next action is one of its CTAs (or "Continue with AI"). */}
             {!showLeadForm &&
@@ -3123,7 +3123,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 />
             )}
 
-            {/* ── Headless LiveChatMode — WebSocket + file upload logic only ── */}
+            {/* ── Headless LiveChatMode. WebSocket + file upload logic only ── */}
             {isLiveMode && sessionId && (
                 <ErrorBoundary label="LiveChatMode" fallback={null}>
                 <Suspense fallback={null}>
@@ -3225,7 +3225,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     className="absolute inset-0 z-[60] flex items-center justify-center"
                     style={{ animation: 'fadeIn 0.2s ease-out' }}
                 >
-                    {/* Backdrop — covers the whole widget */}
+                    {/* Backdrop. Covers the whole widget */}
                     <div
                         className="absolute inset-0 bg-black/40"
                         onClick={() => setShowEndConfirm(false)}

@@ -6,7 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
 
 // True when the page embedding the widget is a developer machine rather than a
-// deployed site — including a production widget bundle (`vite preview`) dropped
+// deployed site, including a production widget bundle (`vite preview`) dropped
 // onto a localhost test page.
 const isLocalHostname = (hostname) => {
   const host = String(hostname || '').toLowerCase()
@@ -33,7 +33,7 @@ const loadSentry = async () => {
     Sentry.init({
       dsn,
       environment: import.meta.env.MODE,
-      // Errors + light tracing only — no Replay, Profiling or Logs. We are on
+      // Errors + light tracing only, no Replay, Profiling or Logs. We are on
       // the Sentry free plan, where blowing any one of those quotas pauses
       // ingestion project-wide and we lose error reporting too. Replay is
       // doubly unwanted here: this bundle runs on the CUSTOMER's page, so a
@@ -70,7 +70,7 @@ const ensureContainer = () => {
   // Opt this subtree out of Lenis smooth-scroll hijacking. When a wheel event
   // crosses the Shadow DOM boundary it is retargeted to this host element, so
   // Lenis's ancestor check sees the attribute here and lets native scrolling
-  // through — covering the case (capture-phase listeners) that plain
+  // through. Covering the case (capture-phase listeners) that plain
   // stopPropagation inside the widget can't. Complements the wheel-propagation
   // guard in ChatWindow, which defeats bubble-phase hijackers generically.
   container.setAttribute('data-lenis-prevent', '')
@@ -144,7 +144,7 @@ let _registered = false
 const mount = () => {
   if (_root) return
   if (!_bootContext) {
-    console.error('[OyeChats] init() called before loader bootstrap — no boot context.')
+    console.error('[OyeChats] init() called before loader bootstrap, no boot context.')
     return
   }
   const container = ensureContainer()
@@ -196,7 +196,7 @@ export const init = (ctx) => {
     _registered = true
   }
   // If async-init is on, the loader called init() because the customer ran
-  // OyeChats.init() — mount immediately. Otherwise also mount (auto path).
+  // OyeChats.init(). Mount immediately. Otherwise also mount (auto path).
   mount()
 }
 

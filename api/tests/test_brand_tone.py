@@ -97,11 +97,9 @@ def test_classify_brand_tone_empty_input_short_circuits():
 
 
 def test_generate_tone_sample_returns_text(monkeypatch):
-    monkeypatch.setattr(
-        llm_service.litellm, "completion", lambda **kw: _mock_completion('"Sure — we help teams ship."')
-    )
+    monkeypatch.setattr(llm_service.litellm, "completion", lambda **kw: _mock_completion('"Sure. We help teams ship."'))
     out = llm_service.generate_tone_sample("Friendly and clear.", "What do you do?")
-    assert out == "Sure — we help teams ship."  # surrounding quotes stripped
+    assert out == "Sure. We help teams ship."  # surrounding quotes stripped
 
 
 def test_generate_tone_sample_none_on_error(monkeypatch):

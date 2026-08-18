@@ -6,7 +6,7 @@ import { TopupModal } from './TopupModal';
 // verifyTopupPayment. All are mocked; these tests drive the CANCELLATION
 // branch: the customer closing the Razorpay sheet must (a) show the neutral
 // "you were not charged" notice and (b) fire the checkout_abandoned funnel
-// event — a dropped call site or typo'd surface string regressed nothing
+// event, a dropped call site or typo'd surface string regressed nothing
 // before this file existed.
 const getTopupPacks = vi.fn();
 const initiateTopup = vi.fn();

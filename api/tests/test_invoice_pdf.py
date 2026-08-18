@@ -1,4 +1,4 @@
-"""Invoice PDF/HTML rendering — amount-in-words, Rule 46 fields, legends.
+"""Invoice PDF/HTML rendering. Amount-in-words, Rule 46 fields, legends.
 
 HTML-level tests assert every legally-required figure lands in the document
 (cheap, runs everywhere). The PDF smoke test needs WeasyPrint's system pango
@@ -55,8 +55,8 @@ def _tax_invoice(**overrides) -> Invoice:
         place_of_supply="27",
         supply_kind="intra",
         is_export=False,
-        description="Starter — monthly",
-        line_items=[{"description": "Starter — monthly", "amount_minor": 179900}],
+        description="Starter. Monthly",
+        line_items=[{"description": "Starter. Monthly", "amount_minor": 179900}],
         seller_snapshot={
             "legal_name": "Digibranders Pvt Ltd",
             "trade_name": "OyeChats",
@@ -95,7 +95,7 @@ def test_tax_invoice_html_carries_rule46_fields():
     assert "₹137.21" in html  # CGST and SGST
     assert "₹274.42" in html  # total tax
     assert "₹1,799.00" in html  # grand total
-    # Rates render without a trailing ".0" — "CGST @ 9.0%" reads as an
+    # Rates render without a trailing ".0". "CGST @ 9.0%" reads as an
     # unfinished template on a statutory document (see _fmt_rate).
     assert "CGST @ 9%" in html and "SGST @ 9%" in html
     assert "Rupees One Thousand Seven Hundred Ninety Nine Only" in html
@@ -164,7 +164,7 @@ def test_receipt_has_no_tax_table():
 
 
 def test_issue_date_renders_in_ist_across_midnight():
-    # 20:00 UTC on 31 Mar is 01:30 IST on 1 Apr — the printed date must be the
+    # 20:00 UTC on 31 Mar is 01:30 IST on 1 Apr, the printed date must be the
     # IST calendar day, matching the FY series the number was allocated in.
     html = render_invoice_html(_tax_invoice(issued_at=datetime(2026, 3, 31, 20, 0, tzinfo=UTC)))
     assert "01 Apr 2026" in html
@@ -213,7 +213,7 @@ def test_pdf_renders_and_contains_number():
 def test_place_of_supply_renders_state_name():
     """Rule 46: place of supply carries the State NAME, not a bare code."""
     html = render_invoice_html(_tax_invoice(place_of_supply="27"))
-    assert "Place of supply: 27 – Maharashtra" in html
+    assert "Place of supply: 27 - Maharashtra" in html
 
 
 def test_export_with_lut_endorsement():
@@ -260,8 +260,8 @@ def _usd_export(**overrides) -> Invoice:
         inr_total_tax_minor=0,
         fx_rate_micros=89_452_222,
         fx_rate_source="razorpay_base_amount",
-        description="Starter — monthly",
-        line_items=[{"description": "Starter — monthly", "amount_minor": 900}],
+        description="Starter. Monthly",
+        line_items=[{"description": "Starter. Monthly", "amount_minor": 900}],
         seller_snapshot={**_tax_invoice().seller_snapshot, "lut_active": True, "lut_number": "LUT-2026-1"},
         buyer_snapshot={**_tax_invoice().buyer_snapshot, "gstin": None, "billing_country": "US"},
     )
@@ -272,7 +272,7 @@ def _usd_export(**overrides) -> Invoice:
 def test_export_document_is_denominated_in_the_supply_currency():
     html = render_invoice_html(_usd_export())
     assert "$9.00" in html
-    # The rupee sign must not appear as the document total — that is the whole
+    # The rupee sign must not appear as the document total. That is the whole
     # bug class this replaces (a dollar charge printed as rupees).
     assert "₹9.00" not in html
 
@@ -315,7 +315,7 @@ def test_inr_document_still_states_its_total_in_words():
     html = render_invoice_html(_tax_invoice())
     assert "Amount in words:" in html
     assert "Rupees One Thousand Seven Hundred Ninety Nine Only" in html
-    # No FX block on a rupee document — there is nothing to convert.
+    # No FX block on a rupee document. There is nothing to convert.
     assert "Rule 34(2)" not in html
 
 

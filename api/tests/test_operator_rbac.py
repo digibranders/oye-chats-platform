@@ -2,7 +2,7 @@
 
 Tests the permission helper functions used by bot and canned-response routes
 to ensure regular operators are blocked from mutations while owners/admins
-and clients retain full access. Uses SimpleNamespace mocks — no DB required.
+and clients retain full access. Uses SimpleNamespace mocks, no DB required.
 """
 
 from types import SimpleNamespace

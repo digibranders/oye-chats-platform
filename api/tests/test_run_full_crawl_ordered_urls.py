@@ -60,7 +60,7 @@ async def test_ordered_urls_uses_fetch_urls_not_recursive_crawl(monkeypatch):
 @pytest.mark.asyncio
 async def test_partial_crawl_skips_orphan_sweep(monkeypatch):
     """A partial (ordered_urls) re-crawl with replace_source must NOT run the
-    orphan sweep — otherwise it deletes pages outside the fetched slice."""
+    orphan sweep. Otherwise it deletes pages outside the fetched slice."""
     from contextlib import contextmanager
     from unittest.mock import MagicMock
 

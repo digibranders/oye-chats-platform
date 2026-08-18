@@ -5,9 +5,9 @@ Before this, three surfaces resolved the billing country three different ways:
 * ``checkout_quote``: param → stored → **IP geo**, and treated *unknown* as
   foreign (a brand-new Indian customer behind a failed geo lookup got a
   Contact-sales dead end);
-* the charge path: param → stored → **silent IN default** — so a session whose
+* the charge path: param → stored → **silent IN default**, so a session whose
   quote said USD could be silently charged INR;
-* ``/credits/balance``: **IP only** — a failed lookup rendered $ for a rupee
+* ``/credits/balance``: **IP only**, a failed lookup rendered $ for a rupee
   account.
 
 ``core.pricing.resolve_billing_context`` is now the single resolution order
@@ -17,7 +17,7 @@ and the charge path adds two explicit refusals instead of silent coercion:
 * detected-foreign with nothing confirmed/stored → 409 ``billing_country_required``
   (never charge INR when our only signal says the buyer is foreign);
 * GSTIN on record with a confirmed non-IN country → 422 (a domestic GST
-  registration cannot bill on the export rail — clear it first).
+  registration cannot bill on the export rail. Clear it first).
 """
 
 import os
@@ -159,7 +159,7 @@ def test_quote_stored_country_beats_ip(db, monkeypatch):
 
 def test_checkout_409s_when_only_signal_is_foreign_ip(db, monkeypatch):
     # Quote said USD (detected US); nothing stored, nothing confirmed. The old
-    # charge path silently defaulted to IN and minted an INR mandate — the
+    # charge path silently defaulted to IN and minted an INR mandate, the
     # quoted-USD/charged-INR divergence. Now: ask the customer to confirm.
     api, _ = _mk(db, monkeypatch, detected="US")
     plan = _plan(db)
@@ -184,10 +184,10 @@ def test_checkout_proceeds_domestic_when_nothing_says_foreign(db, monkeypatch):
 
 def test_checkout_422s_for_gstin_with_confirmed_foreign_country(db, monkeypatch):
     # A domestic GST registration cannot bill on the export rail. Refuse
-    # loudly instead of any silent rail coercion — and check it BEFORE the
+    # loudly instead of any silent rail coercion, and check it BEFORE the
     # intl kill switch so the flag being off can't mask the contradiction.
     # Patch BOTH the config module and the by-value import the route module
-    # holds — patching config alone is a no-op for subscription_routes and
+    # holds. Patching config alone is a no-op for subscription_routes and
     # would let this test silently split-brain between flag states.
     monkeypatch.setattr(config, "INTL_PAYMENTS_ENABLED", True)
     monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)

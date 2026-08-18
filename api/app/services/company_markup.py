@@ -2,9 +2,9 @@
 
 Two sources only, most-authoritative first:
 
-1. schema.org ``Organization`` (and its subtypes) — the entity the publisher
+1. schema.org ``Organization`` (and its subtypes), the entity the publisher
    declares, preferring one whose ``url`` matches the domain we fetched.
-2. ``og:site_name`` — the brand the publisher declares.
+2. ``og:site_name``, the brand the publisher declares.
 
 Both are *declarations*, which is why they outrank the LLM fallback: a model
 can only infer a name from page copy, and inference is where wrong answers
@@ -29,13 +29,13 @@ expensive direction:
 Each fix produced another variant of the same bug, which is the signal that
 the heuristic itself is unsound rather than under-tuned. A title is written
 for search engines and humans, not for machines, so nothing in it is a
-declaration. Dropping it costs coverage on sites that declare nothing — those
+declaration. Dropping it costs coverage on sites that declare nothing. Those
 now fall through to the LLM, which is exactly the cheap direction.
 
 ## Failing closed
 
 A false negative is cheap: the caller falls back to the LLM, and a domain that
-resolves to nothing is cached as a failure. A false POSITIVE is expensive —
+resolves to nothing is cached as a failure. A false POSITIVE is expensive,
 the name is written to a cross-tenant cache and shown to a salesperson as
 fact. Every guard below is therefore biased toward returning None.
 """
@@ -74,7 +74,7 @@ _GENERIC_TITLES = {
 # Interstitial detection is split in two so matching can be anchored.
 #
 # WORDS are matched on token boundaries. A raw substring test rejected real
-# companies — "Sparked" contains "parked", "Sedona" contains "sedo".
+# companies. "Sparked" contains "parked", "Sedona" contains "sedo".
 _INTERSTITIAL_WORDS = frozenset(
     {
         "cloudflare", "captcha", "recaptcha",
@@ -83,7 +83,7 @@ _INTERSTITIAL_WORDS = frozenset(
     }
 )  # fmt: skip
 # NOTE "forbidden" and "unauthorized" are NOT here. As standalone words they
-# belong to real companies — Forbidden Planet is a UK retail chain — so they
+# belong to real companies (Forbidden Planet is a UK retail chain) so they
 # are matched exactly via _GENERIC_TITLES instead, alongside the "403
 # forbidden" phrase below. A bare status word is a status page; the same word
 # inside a longer name is a name.
@@ -175,7 +175,7 @@ def _looks_like_interstitial(value: str) -> bool:
     """Does this read as a parked / error / bot-wall page rather than a company?
 
     Matched on WORD boundaries, not raw substrings. Unanchored matching
-    rejected real companies whose names merely contain a marker — "Sparked"
+    rejected real companies whose names merely contain a marker. "Sparked"
     and "Sedona Systems" tripped "parked"/"sedo", "Trial and Error Films"
     tripped "error", and "Apache Corporation" (a Fortune 500 oil company) was
     dropped by the web-server blocklist.
@@ -326,7 +326,7 @@ def extract_logo(html: str | None, domain: str) -> str | None:
 
     A page can carry an ``og:image`` while declaring no identity, so the logo
     should not be lost merely because the name needed an LLM. Shares the
-    parsing and absolutising rules with :func:`extract_from_markup` — a
+    parsing and absolutising rules with :func:`extract_from_markup`, a
     separate regex here previously mishandled attribute order, ``name=``
     instead of ``property=``, and HTML entities, the last of which wrote a
     broken URL into a cache every tenant renders.
@@ -344,7 +344,7 @@ def extract_logo(html: str | None, domain: str) -> str | None:
 def extract_from_markup(html: str | None, domain: str) -> dict | None:
     """Return ``{"name", "description", "logo_url"}`` or None.
 
-    None means "this page did not declare a usable identity" — the caller
+    None means "this page did not declare a usable identity", the caller
     should fall back to the LLM. Never raises: malformed markup is the norm,
     not an exceptional case, so the whole body is guarded.
     """

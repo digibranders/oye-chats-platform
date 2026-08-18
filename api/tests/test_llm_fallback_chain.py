@@ -1,7 +1,7 @@
 """Tests for the LLM fallback chain itself (AR-31).
 
 Before this file, the only LLM-path test (test_llm_timeout.py) verified a
-positive ``timeout`` kwarg is passed — nothing asserted that a primary-model
+positive ``timeout`` kwarg is passed, nothing asserted that a primary-model
 failure actually invokes the fallback, or that the mid-stream-failure
 suppression (the fix for the historical "two stitched-together responses"
 bug) actually fires. A future refactor of generate_response_stream could
@@ -27,7 +27,7 @@ async def _drain(agen):
 class TestNonStreamingFallbackChain:
     def test_fallbacks_kwarg_is_set_when_both_keys_configured(self, monkeypatch):
         """litellm's own fallback mechanism only engages when we actually pass
-        the `fallbacks` kwarg — pin that it's set whenever both primary and
+        the `fallbacks` kwarg. Pin that it's set whenever both primary and
         fallback API keys are configured (and model= isn't overridden)."""
         captured: dict = {}
 
@@ -62,7 +62,7 @@ class TestNonStreamingFallbackChain:
 
     def test_fallbacks_kwarg_absent_when_model_override_set(self, monkeypatch):
         """AR-10 override callers (gate-tier tasks) get no cross-provider
-        fallback — matching the gate's own single-model contract."""
+        fallback. Matching the gate's own single-model contract."""
         captured: dict = {}
 
         def fake_completion(**kwargs):

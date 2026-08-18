@@ -1,6 +1,6 @@
 """Unit tests for the superadmin promotion route helpers.
 
-Offline — the validation guards and the admin serializer are pure, so they're
+Offline, the validation guards and the admin serializer are pure, so they're
 tested directly without the DB-backed route layer. ``_promotion_stats`` and the
 endpoints themselves need Postgres and are covered by the integration suite.
 """
@@ -135,7 +135,7 @@ def _admin_api(db, monkeypatch):
 
 def test_create_refuses_a_window_that_is_already_over(db, monkeypatch):
     # A past end saves an offer nobody can redeem while the list shows it
-    # "active" — this exact state burned two live test campaigns.
+    # "active". This exact state burned two live test campaigns.
     from datetime import UTC, datetime, timedelta
 
     api = _admin_api(db, monkeypatch)
@@ -154,7 +154,7 @@ def test_create_refuses_a_window_that_is_already_over(db, monkeypatch):
 
 
 def test_pausing_an_expired_campaign_still_works(db, monkeypatch):
-    # The past-end guard applies only when ends_at is being SET — a pause
+    # The past-end guard applies only when ends_at is being SET, a pause
     # toggle (or rename) on an already-expired campaign must not 400.
     from datetime import UTC, datetime, timedelta
 

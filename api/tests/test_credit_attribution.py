@@ -1,4 +1,4 @@
-"""`attributed_bot_id` — which bot spent the credits, independent of scope.
+"""`attributed_bot_id`, which bot spent the credits, independent of scope.
 
 `bot_id` is the SCOPE key (NULL = shared client pool) and balance maths keys
 off it. This column is for reporting only and must never affect a balance.
@@ -123,7 +123,7 @@ def test_explicit_none_attribution_still_falls_back_to_scope(db):
 
 @needs_db
 def test_multi_grant_deduction_attributes_every_chunk(db):
-    """A deduction that spans two grants writes two rows — both attributed."""
+    """A deduction that spans two grants writes two rows, both attributed."""
     client = _make_client(db, email="attr-multigrant@e.com")
     bot = _make_bot(db, client, bot_key="bot-attr-multigrant")
 
@@ -172,7 +172,7 @@ def test_attribution_never_moves_a_balance(db):
 
     A pooled deduction attributed to a bot must (a) still come out of the pool
     and (b) leave that bot's own isolated ledger untouched. This fails the day
-    someone adds ``attributed_bot_id`` to ``_scope_clause`` — the regression
+    someone adds ``attributed_bot_id`` to ``_scope_clause``, the regression
     this column invites.
     """
     client = _make_client(db, email="attr-invariant@e.com")
@@ -195,9 +195,9 @@ def test_attribution_never_moves_a_balance(db):
     )
     db.flush()
 
-    # The pool paid for it — attribution did not move the row out of the pool.
+    # The pool paid for it. Attribution did not move the row out of the pool.
     assert credit_service.get_balance(db, client.id, bot_id=None) == pool_before - 40
-    # The bot's own ledger is untouched — attribution did not pull the pooled
+    # The bot's own ledger is untouched. Attribution did not pull the pooled
     # row into it.
     assert credit_service.get_balance(db, client.id, bot_id=bot.id) == bot_before
 
@@ -252,5 +252,5 @@ def test_chat_reply_lands_attribution_end_to_end(db):
 
     (row,) = _debits(db, client.id)
     assert row.reason == "ai_chat"
-    assert row.bot_id is None  # pooled scope — routing unchanged
+    assert row.bot_id is None  # pooled scope. Routing unchanged
     assert row.attributed_bot_id == bot.id  # attribution landed

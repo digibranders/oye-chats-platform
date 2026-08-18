@@ -1,6 +1,6 @@
 """The Enterprise plan row, and the catalogue-wide invariants around it.
 
-Asserts the seed definition itself, not the DB — this is a pure data check
+Asserts the seed definition itself, not the DB. This is a pure data check
 so it runs without Postgres. It is also the only place in ``api/tests`` that
 imports ``_PLANS``, so the ladder and annual-discount guards below deliberately
 cover every tier rather than just the Enterprise rung.
@@ -68,13 +68,13 @@ def test_enterprise_sorts_after_professional():
 
 @pytest.mark.parametrize("slug", _LADDER)
 def test_limits_credits_mirrors_credits_per_month(slug: str):
-    """One quantity, two fields — they must never disagree.
+    """One quantity, two fields. They must never disagree.
 
     ``credits_per_month`` is what actually grants credits (``credit_service``
     and ``plan_service``); ``limits["credits"]`` is a copy that no runtime path
     reads today but that ``GET /subscriptions/plans`` and
     ``GET /public/pricing-catalog`` both serialize verbatim. Enterprise shipped
-    with 10,000 granted and 13,000 advertised — invisible in the product,
+    with 10,000 granted and 13,000 advertised. Invisible in the product,
     visible to anyone rendering the catalog, and a trap for the next surface
     wired to the limits map.
     """
@@ -86,7 +86,7 @@ def test_limits_credits_mirrors_credits_per_month(slug: str):
 
 
 def test_the_ladder_covers_every_seeded_plan():
-    """``_LADDER`` is the subject of every guard below — keep it total and ordered."""
+    """``_LADDER`` is the subject of every guard below. Keep it total and ordered."""
     assert {p["slug"] for p in _PLANS} == set(_LADDER)
     sort_orders = [_plan(slug)["sort_order"] for slug in _LADDER]
     assert sort_orders == sorted(sort_orders), f"_LADDER disagrees with sort_order: {sort_orders}"
@@ -97,7 +97,7 @@ def test_the_ladder_covers_every_seeded_plan():
 def test_the_price_ladder_never_inverts(axis: str, cheaper: str, dearer: str):
     """Every rung must cost strictly more than the one below it, on every axis.
 
-    The ladder has inverted in production once already — Enterprise shipped at
+    The ladder has inverted in production once already. Enterprise shipped at
     ₹2,799 against Professional's ₹2,999, a strictly better tier for less money.
     The guard written for it covered only that one rung, leaving free → starter
     → standard → professional untested on every axis, so this walks the whole
@@ -109,7 +109,7 @@ def test_the_price_ladder_never_inverts(axis: str, cheaper: str, dearer: str):
 
 
 # The USD rail has no discount field of its own, so it can only be bounded, not
-# pinned. The band is wide enough for the shipped spread (17.40%–20.00%) and
+# pinned. The band is wide enough for the shipped spread (17.40%-20.00%) and
 # narrow enough that a transposed or dropped digit fails.
 _USD_SAVING_BAND_PCT = (15.0, 25.0)
 
@@ -118,14 +118,14 @@ _USD_SAVING_BAND_PCT = (15.0, 25.0)
 def test_annual_is_cheaper_than_paying_monthly(slug: str):
     """An annual plan must never cost more than 12 monthly charges, on either rail.
 
-    Commit ba22a0c shipped Professional annual at ₹36,000 against ₹2,399/mo —
-    ₹7,212 MORE than paying monthly — carried by an ``annual_discount_percent``
+    Commit ba22a0c shipped Professional annual at ₹36,000 against ₹2,399/mo
+    (₹7,212 MORE than paying monthly) carried by an ``annual_discount_percent``
     of ``-25``. A tolerance guard alone cannot catch that: the stored int
     faithfully described the negative saving. Sign is a separate invariant.
 
     The percent is no longer authored in the matrix, so this asserts the DERIVED
-    one is positive. That is a strictly weaker statement than it was — the helper
-    floors an inverted pair to 0 rather than going negative — which is why the
+    one is positive. That is a strictly weaker statement than it was (the helper
+    floors an inverted pair to 0 rather than going negative) which is why the
     two raw price comparisons below carry the guard now.
     """
     plan = _plan(slug)
@@ -142,10 +142,10 @@ def test_annual_is_cheaper_than_paying_monthly(slug: str):
 # Written out rather than recomputed so a price move has to restate the headline
 # it changes: these are the numbers the pricing page and the marketing site show.
 _EXPECTED_SAVING_PCT: dict[str, int] = {
-    "free": 0,  # no monthly price — nothing to save against
+    "free": 0,  # no monthly price, nothing to save against
     "starter": 20,  # 20.033%
     "standard": 20,  # 20.017%
-    "professional": 21,  # 21.674% — stored as 22 until the percent became derived
+    "professional": 21,  # 21.674%. Stored as 22 until the percent became derived
     "enterprise": 20,  # 20.003%
 }
 
@@ -157,17 +157,17 @@ def test_the_advertised_annual_saving_is_the_derived_one(slug: str):
     ``annual_discount_percent`` is no longer a column anyone authors: the seed,
     the super-admin editor and all three read routes run the prices through
     ``core.pricing.annual_saving_percent``. What used to be a consistency guard
-    between two independent values is therefore now a guard on the OUTPUT — move
+    between two independent values is therefore now a guard on the OUTPUT. Move
     an annual price and this test names the new headline you just published.
 
     **Floor, not round, and that is the whole point.** The value this replaces
     was ``round(saving)``, which is why Professional's 21.674% shipped as "save
-    22%" — a discount the plan does not give, printed next to a Subscribe button.
+    22%", a discount the plan does not give, printed next to a Subscribe button.
     Understating a saving costs nothing; overstating one misstates the price.
 
     **This bounds the INR rail only, and that is not an oversight.** One percent
     cannot describe two rails: on the same plans the USD savings are Starter
-    18.77%, Standard 18.76%, Professional 17.40%, Enterprise 20.00% —
+    18.77%, Standard 18.76%, Professional 17.40%, Enterprise 20.00%.
     Professional is 4.3pp adrift. The helper is currency-agnostic, so a surface
     that starts pricing in USD passes it that rail's two amounts; until one does,
     the INR figure is what ships and the USD rail keeps its own band guard below.
@@ -192,7 +192,7 @@ def test_the_advertised_annual_saving_never_overstates_the_real_one(slug: str):
     plan = _plan(slug)
     true_saving = _saving_percent(plan["monthly_price_cents"] * 12, plan["annual_price_cents"])
     derived = annual_saving_percent(plan["monthly_price_cents"], plan["annual_price_cents"])
-    assert derived <= true_saving, f"{slug}: advertises {derived}% for a real saving of {true_saving:.3f}% — overstated"
+    assert derived <= true_saving, f"{slug}: advertises {derived}% for a real saving of {true_saving:.3f}%. Overstated"
     assert true_saving - derived < 1, f"{slug}: {derived}% understates a {true_saving:.3f}% saving by over a point"
 
 
@@ -224,5 +224,5 @@ def test_usd_annual_is_a_real_discount_within_band(slug: str):
     saving = _saving_percent(plan["monthly_price_usd_cents"] * 12, plan["annual_price_usd_cents"])
     assert low <= saving <= high, (
         f"{slug}: USD annual ${plan['annual_price_usd_cents'] / 100:,.2f} is a {saving:.2f}% "
-        f"saving, outside the {low}–{high}% band"
+        f"saving, outside the {low}-{high}% band"
     )

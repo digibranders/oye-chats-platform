@@ -106,9 +106,9 @@ def test_full_company_info_lifecycle(db, monkeypatch):
     _crawl(db, bot_id, name="Acme Inc", description="Acme builds gadgets now.", tone="Bold and punchy.")
     db.expire_all()
     bot = db.get(Bot, bot_id)
-    assert bot.company_name == "Acme Corporation"  # LOCKED — untouched
-    assert bot.company_description == "Acme builds gadgets now."  # unlocked — refreshed
-    assert bot.brand_tone == "Bold and punchy."  # unlocked — refreshed
+    assert bot.company_name == "Acme Corporation"  # LOCKED. Untouched
+    assert bot.company_description == "Acme builds gadgets now."  # unlocked. Refreshed
+    assert bot.brand_tone == "Bold and punchy."  # unlocked. Refreshed
 
     # 4) User clears company_name and saves -> unlock ------------------------
     resp = tc.patch(f"/bots/{bot_id}", json={"company_name": None})

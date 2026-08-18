@@ -2,7 +2,7 @@
 
 Before this file, rag_service.py's 4,618 lines of retrieval/prompt/generation
 logic were tested only via small pure-function unit tests (RRF math,
-sanitization, marker stripping, heuristics — see test_rag_service.py). No test
+sanitization, marker stripping, heuristics. See test_rag_service.py). No test
 exercised the full chain and asserted the ANSWER's claims are actually
 supported by the retrieved chunks. A change to fusion weights, `k`, or the
 context-fencing format could cause confidently ungrounded answers with zero
@@ -13,13 +13,13 @@ This tier:
      fixture pattern) with distinguishable, checkable facts.
   2. Calls the REAL `_build_reference_context` + `build_hybrid_prompt` to
      assemble the exact context/prompt a live chat turn would send.
-  3. Mocks the LLM completion (two scenarios: grounded and hallucinated) —
+  3. Mocks the LLM completion (two scenarios: grounded and hallucinated),
      no real API key/network call needed.
   4. Asserts groundedness via a simple, test-only fact-membership check: every
      distinctive factual token in the answer must appear in the source chunks
      it's supposed to be grounded in.
 
-Scope note: this is NOT a production groundedness classifier (that's AR-12 —
+Scope note: this is NOT a production groundedness classifier (that's AR-12,
 a real post-generation check, potentially LLM-judge-based, running in prod).
 This tier's job is narrower: prove the input side (retrieval -> context ->
 prompt) is correct and wire up test infrastructure that a future AR-12
@@ -48,7 +48,7 @@ GOLDEN_CHUNKS = [
 
 def _facts_in_chunks(chunks) -> set[str]:
     """Extract distinctive fact-tokens (numbers, dollar amounts, proper nouns)
-    from the source chunks — the vocabulary an answer is allowed to cite."""
+    from the source chunks, the vocabulary an answer is allowed to cite."""
     text = " ".join(c.content for c in chunks)
     return set(re.findall(r"\$?\d+(?:am|pm)?|[A-Z][a-z]+(?:\s[A-Z][a-z]+)?", text))
 
@@ -56,7 +56,7 @@ def _facts_in_chunks(chunks) -> set[str]:
 def _answer_is_grounded(answer: str, chunks) -> bool:
     """Test-only groundedness heuristic: every distinctive fact-token in the
     answer must trace back to the source chunks. This is a stand-in for a
-    real groundedness check (AR-12) — good enough to prove the test tier
+    real groundedness check (AR-12). Good enough to prove the test tier
     catches an obviously fabricated fact, not a substitute for LLM-judge
     entailment checking in production."""
     allowed_facts = _facts_in_chunks(chunks)
@@ -82,7 +82,7 @@ class TestEndToEndGroundedness:
 
     def test_hallucinated_answer_fails(self):
         """A mocked LLM answer that invents a fact NOT in any retrieved chunk
-        must fail the groundedness check — this is the regression class
+        must fail the groundedness check. This is the regression class
         AR-11/AR-12 exist to catch (e.g. the April 2026 'Fynix Digital made
         me' fabrication)."""
         context_text = _build_reference_context(GOLDEN_CHUNKS, company_name="Acme Corp")
@@ -99,7 +99,7 @@ class TestEndToEndGroundedness:
 
     def test_context_assembly_includes_only_retrieved_chunks_not_the_whole_kb(self):
         """Retrieval-precision guard: if only chunk 1 (pricing) is retrieved,
-        the assembled context must not leak facts from chunks 2/3 — a
+        the assembled context must not leak facts from chunks 2/3, a
         regression here would silently make every answer "grounded" against
         the WHOLE knowledge base instead of just what was actually retrieved,
         defeating the point of retrieval-scoped groundedness checking."""
@@ -112,7 +112,7 @@ class TestEndToEndGroundedness:
 
     def test_citation_index_maps_to_correct_document(self):
         """Each <<<DOCUMENT i>>> fence index must correspond to the i-th
-        retrieved chunk, in retrieval order — a fusion/reordering regression
+        retrieved chunk, in retrieval order, a fusion/reordering regression
         that silently shuffled chunks before context assembly would
         misattribute an answer's citation to the wrong source document."""
         context_text = _build_reference_context(GOLDEN_CHUNKS, company_name=None)

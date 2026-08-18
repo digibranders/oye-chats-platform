@@ -1,8 +1,8 @@
 /**
  * `requiresSubscription` is the single gate that routes a paywalled API refusal
  * to the upgrade modal instead of a raw error toast. The backend's signal is
- * exactly HTTP 402 + `detail.must_subscribe === true`; anything else — a plain
- * 402, a 403, a network error with no `data`, a truthy-but-not-`true` flag —
+ * exactly HTTP 402 + `detail.must_subscribe === true`; anything else (a plain
+ * 402, a 403, a network error with no `data`, a truthy-but-not-`true` flag)
  * must NOT be treated as the paywall, or unrelated failures would silently
  * bounce the user into a purchase flow.
  */

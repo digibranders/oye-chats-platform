@@ -28,7 +28,7 @@ export interface WorkspaceTotals {
   totalMessages: number;
   activeVisitors: number;
   /**
-   * Percentage 0–100. Share of rated AI answers that got a thumbs-up - the
+   * Percentage 0 to 100. Share of rated AI answers that got a thumbs-up - the
    * backend `success_rate` is `positive_feedback / total_feedback`, i.e. a
    * message-level positivity ratio, NOT a share of conversations resolved.
    */
@@ -46,11 +46,11 @@ export function parseWorkspaceTotals(record: Record<string, unknown>): Workspace
 
 /** Star-rating breakdown, from `getRatingsSummary`. */
 export interface RatingsSummary {
-  /** Mean rating 0–5. */
+  /** Mean rating 0 to 5. */
   average: number;
   /** Total number of ratings received. */
   total: number;
-  /** Count per star, keyed 1–5. */
+  /** Count per star, keyed 1 to 5. */
   distribution: Record<1 | 2 | 3 | 4 | 5, number>;
 }
 

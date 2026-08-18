@@ -5,15 +5,15 @@ WHY THIS EXISTS
 The dunning recovery CTA (Plan B) rests on one unverified inference.
 
 Razorpay documents that a ``halted`` subscription is recovered through a hosted
-page where the customer can retry the card, swap it, or move to UPI — and that
+page where the customer can retry the card, swap it, or move to UPI, and that
 on success the subscription returns to ``active`` WITHOUT a new subscription
 being created. That is why ``dunning_service.get_recovery_link`` resolves the
 EXISTING subscription's ``short_url`` and never mints a mandate: minting one
 would leave two live mandates and double-charge.
 
 What the docs do NOT state is that ``short_url`` is the handle to that page.
-Everything downstream — the day-3 and day-5 emails, the past-due banner's
-"Update payment method" button — assumes it is. If the assumption is wrong,
+Everything downstream (the day-3 and day-5 emails, the past-due banner's
+"Update payment method" button) assumes it is. If the assumption is wrong,
 those buttons lead somewhere useless and ``get_recovery_link`` needs a
 different source.
 
@@ -25,7 +25,7 @@ check.
 SAFETY
 ------
 Refuses to run against live keys. Read-only unless ``--create`` is passed, and
-even then it only mints a test-mode subscription in ``created`` state — nothing
+even then it only mints a test-mode subscription in ``created`` state, nothing
 is charged until a human authorises it.
 
 USAGE
@@ -52,7 +52,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # States Razorpay's hosted page can bring back to `active`. Mirrors
-# dunning_service.RECOVERABLE_GATEWAY_STATES — imported below so the two can
+# dunning_service.RECOVERABLE_GATEWAY_STATES. Imported below so the two can
 # never silently drift.
 INTERESTING = ("pending", "halted")
 
@@ -92,7 +92,7 @@ def cmd_list(client) -> None:
 
     if not any(st in by_status for st in INTERESTING):
         print(
-            "\nNothing in pending/halted yet — those are the states that matter.\n"
+            "\nNothing in pending/halted yet. Those are the states that matter.\n"
             "To get there: authorise a test subscription, then let its recurring\n"
             "charge fail (Razorpay retries ~daily for 3 days, then halts)."
         )
@@ -122,7 +122,7 @@ def cmd_inspect(client, sub_id: str) -> None:
         print(
             f"This subscription is '{status}', not one of {sorted(RECOVERABLE_GATEWAY_STATES)}.\n"
             "The question this script exists to answer only applies to a FAILING\n"
-            "subscription — drive one into pending/halted and inspect that."
+            "subscription. Drive one into pending/halted and inspect that."
         )
         return
 
@@ -136,7 +136,7 @@ def cmd_inspect(client, sub_id: str) -> None:
         return
 
     print("=" * 68)
-    print("NOW THE PART ONLY YOU CAN DO — open the URL above and check:")
+    print("NOW THE PART ONLY YOU CAN DO. Open the URL above and check:")
     print()
     print("  1. Does the page offer to UPDATE or RETRY the payment method?")
     print("     (a card form, or a choice of card / UPI / netbanking)")

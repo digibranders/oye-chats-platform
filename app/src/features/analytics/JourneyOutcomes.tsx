@@ -16,7 +16,7 @@ import { useAnimatedProgress } from '../../hooks/useAnimatedProgress';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
 
 /**
- * JourneyOutcomes — donut + legend that answers "what did visitors
+ * JourneyOutcomes. Donut + legend that answers "what did visitors
  * do after opening the chatbot?" Feeds off the same
  * ``useJourneyAnalytics`` hook as UserJourneyFlow / PageInfluence,
  * so the polling + focus refetch + manual reload story is shared:
@@ -24,8 +24,8 @@ import { useJourneyAnalytics } from './useJourneyAnalytics';
  *
  * Numbers come from ``data.summary`` (conversions, sessions with
  * journey) and ``data.postChat`` (sessions with post-chat activity).
- * Drop-off is the honest remainder — sessions_with_journey minus
- * everything else — clamped to zero so overlap-based double-counts
+ * Drop-off is the honest remainder (sessions_with_journey minus
+ * everything else) clamped to zero so overlap-based double-counts
  * never make it negative.
  */
 
@@ -96,7 +96,7 @@ const DONUT_ORDER: readonly OutcomeKey[] = [
   'exit',
 ] as const;
 
-// Donut geometry — SVG viewBox is 160x160; segments are drawn as
+// Donut geometry. SVG viewBox is 160x160; segments are drawn as
 // stroke arcs on a single circle so total stroke length equals the
 // circumference and each segment's stroke-dasharray carves out its
 // proportional share. Shrunk from 200 → 160 for a slicker footprint
@@ -120,7 +120,7 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
     const conversions =
       data.summary.meeting_booked + data.summary.handoff_requested + data.summary.offline_message_sent;
     const keptBrowsing = data.postChat.sessions_with_post_chat_activity;
-    // Prefer the backend's `sessions_no_activity` (true drop-off — no
+    // Prefer the backend's `sessions_no_activity` (true drop-off, no
     // conversion AND no post-chat page). Subtracting kept-browsing +
     // conversions from the total double-counts any session that both
     // converted AND kept browsing, which reads low here.
@@ -227,7 +227,7 @@ function Header({
   onReload: () => void;
 }): ReactElement {
   // Rerender the label once a second so "Updated Xs ago" keeps ticking
-  // between polls — matches the UserJourneyFlow panel; without the tick
+  // between polls. Matches the UserJourneyFlow panel; without the tick
   // this label froze at whatever second the last poll landed on and
   // silently disagreed with the flow panel on the same page.
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -314,7 +314,7 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
       style={{ width: DONUT_PX, height: DONUT_PX }}
     >
       <svg viewBox={`0 0 ${DONUT_VB} ${DONUT_VB}`} width={DONUT_PX} height={DONUT_PX} aria-hidden="true">
-        {/* Track — the empty ring under the segments; renders a subtle
+        {/* Track, the empty ring under the segments; renders a subtle
             outline even when data is sparse so the donut reads as a
             complete shape rather than floating arcs. */}
         <circle
@@ -348,7 +348,7 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
           })}
         </g>
       </svg>
-      {/* Centre label — total chat opens. Absolutely positioned so it
+      {/* Centre label. Total chat opens. Absolutely positioned so it
           sits pixel-perfect in the middle of the ring. */}
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
         <p className="tabular-nums text-[18px] font-semibold leading-none text-[var(--ds-text)]">
@@ -370,8 +370,8 @@ function Legend({ outcomes }: { outcomes: readonly Outcome[] }): ReactElement {
         return (
           <li key={o.key} className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
-              {/* Small colored dot matches the donut segment tone —
-                  enough to link legend ↔ chart without repainting the
+              {/* Small colored dot matches the donut segment tone.
+                  Enough to link legend ↔ chart without repainting the
                   whole icon tile in a translucent hue. */}
               <span
                 aria-hidden

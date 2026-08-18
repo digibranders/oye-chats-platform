@@ -209,7 +209,7 @@ export function LeadsPage(): ReactElement {
   const botId = selectedBot?.id;
   const { isFree, hasFeature } = useEntitlements();
   const bantUnlocked = hasFeature('bant');
-  // Per-agent, matching the backend gate. `null` while resolving — hold the
+  // Per-agent, matching the backend gate. `null` while resolving. Hold the
   // gate closed rather than flashing paid UI we'd then have to take away.
   const selectedBotPlanSlug = useSelectedBotPlanSlug();
   const visitorIntelligenceUnlocked =
@@ -306,8 +306,8 @@ export function LeadsPage(): ReactElement {
   );
 
   // Row click → full lead profile (no transcript). "View chat" → transcript only.
-  // On plans without BANT (Free / Starter) the detail drawer's core value —
-  // dimension breakdown, signal evidence, tier verdict — is empty, so we
+  // On plans without BANT (Free / Starter) the detail drawer's core value
+  // (dimension breakdown, signal evidence, tier verdict) is empty, so we
   // route the click to the qualification upgrade modal instead of opening
   // a hollow drawer. The "View chat" button (`openChat`) stays wired so
   // Starter can still reach the transcript, which is not gated.
@@ -448,7 +448,7 @@ export function LeadsPage(): ReactElement {
         key: 'company',
         header: 'Company',
         // The domain is derived free of charge from the lead's email
-        // (`email_domain_service.extract_company_domain`) — personal-provider
+        // (`email_domain_service.extract_company_domain`). Personal-provider
         // addresses correctly yield nothing, so an em-dash here means
         // "consumer email", not "lookup failed". `companyDisplay` prefers the
         // resolved name ("Infosys Limited") when the paid lookup found one;
@@ -475,7 +475,7 @@ export function LeadsPage(): ReactElement {
         header: <span className="text-[var(--ds-success)]">BANT</span>,
         // BANT scoring is a Standard+ feature (`hasFeature('bant')`). On Free
         // AND Starter the RAG pipeline skips extraction, so the dimension
-        // pills would render as four blank neutrals — worse than an honest
+        // pills would render as four blank neutrals. Worse than an honest
         // lock. Route the click straight to the qualification upgrade.
         render: (lead) =>
           !bantUnlocked ? (
@@ -536,7 +536,7 @@ export function LeadsPage(): ReactElement {
         ),
       },
       ];
-      // Free tier keeps every column VISIBLE — the Quality/Location cells
+      // Free tier keeps every column VISIBLE, the Quality/Location cells
       // render a locked affordance (see their `render`), and the row opens a
       // locked lead-detail drawer. Nothing is hidden; the paid bits are gated.
       return all;

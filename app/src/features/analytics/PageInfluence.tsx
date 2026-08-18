@@ -5,12 +5,12 @@ import { useJourneyAnalytics } from './useJourneyAnalytics';
 import type { JourneyTopPageRow } from '../../services/api';
 
 /**
- * PageInfluence — ranked list of the actual pages visitors were on
+ * PageInfluence. Ranked list of the actual pages visitors were on
  * before opening the chatbot, ordered by their share of chatbot
  * openers. Each row shows a horizontal bar scaled to that share so
  * the eye can compare influence at a glance.
  *
- * Data comes from ``useJourneyAnalytics`` — specifically the
+ * Data comes from ``useJourneyAnalytics``. Specifically the
  * ``pre``-phase top pages (URLs the visitor saw BEFORE opening
  * chat) plus ``summary.sessions_with_journey`` as the denominator.
  * No bucketing: the raw ``path`` from the API is what renders, so
@@ -26,9 +26,9 @@ interface InfluenceRow {
   path: string;
   label: string;
   sessions: number;
-  /** Total visits — distinguishes rows that tie on distinct visitors. */
+  /** Total visits. Distinguishes rows that tie on distinct visitors. */
   visits: number;
-  /** Bar width as a percent of the leader's session count (0–100). */
+  /** Bar width as a percent of the leader's session count (0 to 100). */
   barPct: number;
 }
 
@@ -82,8 +82,8 @@ function scopedLabel(path: string): string {
  *
  * When two rows collapse to the same pretty label (`/blog/post-1` and
  * `/case-studies/post-1` both → "Post 1"), the loser is relabelled
- * with its parent segment so the visible list stays unambiguous —
- * otherwise readers had to hover for the tooltip to spot the distinct
+ * with its parent segment so the visible list stays unambiguous.
+ * Otherwise readers had to hover for the tooltip to spot the distinct
  * paths.
  */
 function composeRows(rows: readonly JourneyTopPageRow[]): InfluenceRow[] {
@@ -109,7 +109,7 @@ function composeRows(rows: readonly JourneyTopPageRow[]): InfluenceRow[] {
   );
 }
 
-// Categorical palette — one hue per row, cycled by index. Same set the
+// Categorical palette, one hue per row, cycled by index. Same set the
 // flow diagram at the top of the page uses (blue / purple / green /
 // orange / red / yellow), so the two panels read as one system. Not a
 // gradient, not rank-graded, not neon.
@@ -244,22 +244,22 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
 }
 
 /**
- * PageInfluenceHelp — a small "i" icon beside the panel title that
+ * PageInfluenceHelp, a small "i" icon beside the panel title that
  * reveals a plain-language explanation ON HOVER (and on keyboard focus,
  * so it stays accessible). Written for a non-technical bot owner: no
  * analytics jargon, no talk of "sessions" or "denominators".
  *
  * The tooltip is anchored to the LEFT edge of the (relatively
  * positioned) header rather than to the icon, so its fixed 18rem width
- * always stays inside the card — the card clips overflow, and at the
+ * always stays inside the card, the card clips overflow, and at the
  * `lg` breakpoint this panel is only half-width. The panel content is
  * non-interactive text, so opening on the icon's hover/focus (and not
  * requiring the pointer to travel onto the panel) is enough.
  *
  * Input handling covers all three modes:
- *  · Mouse — hover in/out via mouseenter/mouseleave.
- *  · Keyboard — focus opens, blur/Escape closes.
- *  · Touch — no hover exists, so a tap toggles via onClick. A tap also
+ *  · Mouse. Hover in/out via mouseenter/mouseleave.
+ *  · Keyboard. Focus opens, blur/Escape closes.
+ *  · Touch, no hover exists, so a tap toggles via onClick. A tap also
  *    fires `focus` BEFORE `click`; without guarding, focus would open
  *    and the click would immediately toggle it back shut. `pointerRef`
  *    records that the interaction came from a pointer so the focus

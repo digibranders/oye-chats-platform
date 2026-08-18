@@ -2,7 +2,7 @@
 
 The seat add-on (P0-3) is a SEPARATE Razorpay subscription. Every path that
 ends/supersedes the parent cancels it only best-effort, and the cutover
-re-create is an external call a rolled-back activation can strand — so an
+re-create is an external call a rolled-back activation can strand, so an
 add-on can outlive its parent and keep billing ₹499/seat/month. These tests
 cover ``seat_addon_reports``: it must cancel exactly the orphans (parent dead
 or no local owner), leave live-owned add-ons alone, and clear the local
@@ -160,7 +160,7 @@ def test_detect_only_mode_does_not_cancel(db, monkeypatch):
 
 
 def test_iterator_accepts_both_seat_rails(db, monkeypatch):
-    """F3 — the sweep's defensive plan-id filter must admit BOTH seat plan ids;
+    """F3, the sweep's defensive plan-id filter must admit BOTH seat plan ids;
     filtering to the INR id alone hid every USD seat mandate from orphan
     reconciliation."""
     pages = [
@@ -190,7 +190,7 @@ def test_iterator_accepts_both_seat_rails(db, monkeypatch):
 
 
 def test_razorpay_originated_cancellation_retires_seat_addon(db, monkeypatch):
-    """F4 — a cancellation arriving FROM Razorpay (customer cancelled in their
+    """F4, a cancellation arriving FROM Razorpay (customer cancelled in their
     UPI app / Razorpay's emails) must retire the seat add-on mandate like every
     other cancellation path, parking the count for a later reactivation."""
     client = _client(db, "rzp-cancel-seat@e.com")

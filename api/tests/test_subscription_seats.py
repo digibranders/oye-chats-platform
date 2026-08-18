@@ -1,7 +1,7 @@
 """Tests for POST /subscription/seats (``change_seat_count``).
 
 The floor check (can't drop below included seats) already existed; these
-tests cover the new ceiling check added alongside it — a client should
+tests cover the new ceiling check added alongside it, a client should
 never be able to buy more seats than their plan allows them to actually
 use (mirrors the cap enforced in ``operator_routes.create_operator``).
 """

@@ -1,4 +1,4 @@
-"""Affiliate program v1 — service layer (money-free).
+"""Affiliate program v1. Service layer (money-free).
 
 This module owns every read/write on ``affiliates``, ``referral_codes``, and
 ``referral_clicks``, plus the atomic first-touch attribution UPDATE on
@@ -6,7 +6,7 @@ This module owns every read/write on ``affiliates``, ``referral_codes``, and
 they do not touch the ORM directly so the same logic is reusable from
 background workers, scripts, and tests.
 
-v1 scope is intentionally limited to the referral-code mechanic — no
+v1 scope is intentionally limited to the referral-code mechanic, no
 commission %, no customer discount, no payouts. Those land in v2 (see
 ``platform/docs/affiliate-program.md``).
 """
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ──────────────────────────────────────────────────────────
 
-# v1 program cap — 5 hand-picked affiliates. Enforced at the service layer
+# v1 program cap. 5 hand-picked affiliates. Enforced at the service layer
 # (not in the DB) so raising it later does not need a migration.
 MAX_ACTIVE_AFFILIATES = 5
 
@@ -42,7 +42,7 @@ DEFAULT_MAX_ACTIVE_CODES = 10
 # 400 with a human-readable message instead of an IntegrityError from PG.
 CODE_REGEX = re.compile(r"^[A-Za-z0-9_-]{3,20}$")
 
-# Magic-link invite TTL — long enough that a busy founder still finds the
+# Magic-link invite TTL. Long enough that a busy founder still finds the
 # email after a weekend, short enough that a leaked invite link doesn't sit
 # accepting indefinitely.
 INVITE_TTL_DAYS = 14
@@ -51,14 +51,14 @@ INVITE_TTL_DAYS = 14
 # of URL-safe base64; well over the 128-bit guess-resistance threshold.
 INVITE_TOKEN_BYTES = 32
 
-# Hard ceiling on commission_bps. 10000 bps = 100% — we never allow a
+# Hard ceiling on commission_bps. 10000 bps = 100%. We never allow a
 # negative commission or one that exceeds the gross. Both ends of the
 # range are also enforced at the DB layer via a CHECK constraint.
 MAX_COMMISSION_BPS = 10000
 
 # Business ceiling on the *customer-facing* discount, independent of the
 # affiliate's pool (remediation C3). Even if a super-admin set a 100% pool, a
-# single code may not discount a recurring plan by more than this — it stops a
+# single code may not discount a recurring plan by more than this, it stops a
 # near-free (e.g. 99.99%) plan being mintable. 5000 bps = 50%.
 MAX_CUSTOMER_DISCOUNT_BPS = 5000
 
@@ -87,9 +87,9 @@ def _assert_not_reserved(code: str) -> None:
 # existing import (``from app.services.affiliate_service import pct_to_bps``)
 # keeps working without dragging the old behaviour around. Centralising
 # means an admin's ``12.345%`` becomes the SAME bps value here, in the
-# legacy coupon flow, and in the audit metadata — fixing
+# legacy coupon flow, and in the audit metadata. Fixing
 # the "quote vs invoice differ by 1 bps" gap surfaced by the audit.
-from app.core.money import bps_to_pct, pct_to_bps  # noqa: E402,F401
+from app.core.money import bps_to_pct, pct_to_bps  # noqa: E402  F401
 
 # ─── Exceptions ─────────────────────────────────────────────────────────
 
@@ -191,7 +191,7 @@ def validate_code(session: Session, code: str) -> ReferralCode | None:
 
     Returns the ``ReferralCode`` ORM row when the code exists and is active,
     or ``None`` otherwise. Lookup is case-insensitive (``code`` column is
-    ``CITEXT``). Callers must not log the code on a miss — that would help
+    ``CITEXT``). Callers must not log the code on a miss. That would help
     enumeration attempts.
     """
     if not code:
@@ -224,7 +224,7 @@ def record_click(
     """Append a click row for ``code`` if the code is valid + active.
 
     IP and User-Agent are hashed with a per-day rotating salt before
-    insertion — raw values never reach the DB. ``referrer`` is trimmed to
+    insertion. Raw values never reach the DB. ``referrer`` is trimmed to
     500 chars to bound storage. Returns ``True`` if a row was written.
     Invalid codes return ``False`` silently (no error) so the public
     endpoint cannot be probed for valid-code enumeration via timing.
@@ -252,7 +252,7 @@ def is_own_code(session: Session, client_id: int, code_row: ReferralCode) -> boo
     """True when ``code_row`` belongs to ``client_id``'s own affiliate profile.
 
     Lets the apply-referral endpoint tell an affiliate *why* their code didn't
-    attach ("you can't use your own code") instead of a generic failure —
+    attach ("you can't use your own code") instead of a generic failure.
     ``attribute_signup`` itself stays silent by design (signup must never
     fail on referral problems).
     """
@@ -264,7 +264,7 @@ def attribute_signup(session: Session, client_id: int, code: str | None) -> bool
     """Attribute a freshly-created client to a referral code (first-touch wins).
 
     The attribution is performed as a single atomic ``UPDATE WHERE
-    referral_code_id IS NULL`` — if two concurrent registrations race on
+    referral_code_id IS NULL``. If two concurrent registrations race on
     the same client (which should never happen, but belt-and-suspenders),
     exactly one wins and the other is a no-op. Re-attribution is also
     impossible: once ``clients.referral_code_id`` is non-null, this
@@ -284,7 +284,7 @@ def attribute_signup(session: Session, client_id: int, code: str | None) -> bool
 
     # Self-referral block: an affiliate cannot earn from their own signup.
     # The check happens here (not at code creation) because v1 ships before
-    # we have a multi-account / aliasing story — this is the cheapest guard.
+    # we have a multi-account / aliasing story. This is the cheapest guard.
     affiliate = session.get(Affiliate, code_row.affiliate_id)
     if affiliate is None:
         # Dangling code → defensive; should be impossible via FK RESTRICT.
@@ -335,7 +335,7 @@ def attribute_signup(session: Session, client_id: int, code: str | None) -> bool
     )
     attributed = result.rowcount == 1
     if not attributed:
-        # Client was already attributed (race / retry) — release the slot we
+        # Client was already attributed (race / retry). Release the slot we
         # just claimed so the redemption count stays exact.
         session.execute(
             update(ReferralCode)
@@ -361,7 +361,7 @@ def _validate_split(
 ) -> None:
     """Ensure (my-commission + friend-reward) ≤ affiliate's pool.
 
-    Both halves must independently be ≥ 0 and ≤ 100% — that's also a DB
+    Both halves must independently be ≥ 0 and ≤ 100%. That's also a DB
     CHECK, but failing here gives a clean error message. The pool check
     is application-only because Postgres CHECK can't reach across tables.
     """
@@ -413,19 +413,19 @@ def create_code(
     """Create a referral code for the given affiliate.
 
     The ``affiliate_commission_bps`` + ``customer_discount_bps`` pair defines
-    the per-code split — what the affiliate keeps vs. what the referred
+    the per-code split. What the affiliate keeps vs. what the referred
     customer gets. Their sum must not exceed the affiliate's pool
     (``affiliates.commission_bps``, set by the super-admin).
 
     Raises:
-      InvalidCodeFormat            — code does not match the regex
-      CodeAlreadyExists            — global unique constraint hit (case-insensitive)
-      CodeLimitReached             — affiliate is at their ``max_active_codes`` ceiling
-      CommissionSplitExceedsPool   — split goes over the affiliate's pool
+      InvalidCodeFormat            (code does not match the regex
+      CodeAlreadyExists) global unique constraint hit (case-insensitive)
+      CodeLimitReached             (affiliate is at their ``max_active_codes`` ceiling
+      CommissionSplitExceedsPool) split goes over the affiliate's pool
     """
     code = (code or "").strip()
     if not CODE_REGEX.match(code):
-        raise InvalidCodeFormat("Code must be 3–20 characters of letters, digits, '_' or '-'.")
+        raise InvalidCodeFormat("Code must be 3 to 20 characters of letters, digits, '_' or '-'.")
     _assert_not_reserved(code)
 
     _validate_split(affiliate, affiliate_commission_bps, customer_discount_bps)
@@ -472,7 +472,7 @@ def update_code(
     Renaming a code (``code`` arg) is allowed but destructive in effect: the
     old URL (``?ref=OLDNAME``) immediately stops validating. Existing
     referred clients keep their attribution (they FK to the row by ``id``,
-    not by the string), and historical clicks survive intact — only the
+    not by the string), and historical clicks survive intact. Only the
     inbound URL string changes. The frontend surfaces a warning before the
     PATCH so affiliates don't accidentally break links they've already shared.
 
@@ -506,7 +506,7 @@ def update_code(
         # save doesn't trigger uniqueness checks.
         if cleaned_code.lower() != str(row.code).lower():
             if not CODE_REGEX.match(cleaned_code):
-                raise InvalidCodeFormat("Code must be 3–20 characters of letters, digits, '_' or '-'.")
+                raise InvalidCodeFormat("Code must be 3 to 20 characters of letters, digits, '_' or '-'.")
             _assert_not_reserved(cleaned_code)
             row.code = cleaned_code
             try:
@@ -545,7 +545,7 @@ def list_codes_with_stats(session: Session, affiliate_id: int) -> list[dict]:
     Conversion is computed as ``signups / clicks * 100``, ``None`` when
     ``clicks == 0``.
     """
-    # Two correlated subqueries — cheap because both columns are indexed
+    # Two correlated subqueries. Cheap because both columns are indexed
     # and there are O(5) affiliates × O(10) codes worst case in v1.
     click_count = (
         select(func.count(ReferralClick.id))
@@ -627,7 +627,7 @@ def list_code_referrals(
 ) -> dict:
     """Return the per-customer referral list for a single code.
 
-    Output shape — surfaced verbatim to both the affiliate and the super
+    Output shape. Surfaced verbatim to both the affiliate and the super
     admin so the UI can render the same modal in both contexts::
 
         {
@@ -647,7 +647,7 @@ def list_code_referrals(
           ]
         }
 
-    ``include_platform`` is True only for the super-admin route — the
+    ``include_platform`` is True only for the super-admin route, the
     affiliate must never see the platform's revenue cut. Email is masked
     when ``include_platform=False`` to protect customer privacy on the
     affiliate side.
@@ -678,7 +678,7 @@ def list_code_referrals(
         # the affiliate's per-code commission + the customer's discount
         # are paid out of the affiliate's pool; everything else stays
         # with OyeChats. The "code unused pool" is leeway the affiliate
-        # didn't allocate (e.g. pool=25, code=15+5 → 5pp unused) — it's
+        # didn't allocate (e.g. pool=25, code=15+5 → 5pp unused), it's
         # still in the pool budget, so it doesn't accrue to the platform.
         platform_bps = max(0, MAX_COMMISSION_BPS - pool_bps)
         breakdown["platform_pct"] = bps_to_pct(platform_bps)
@@ -697,7 +697,7 @@ def list_code_referrals(
 
     def _mask_email(email: str | None) -> str:
         if not email or "@" not in email:
-            return "—"
+            return "-"
         local, _, domain = email.partition("@")
         # Keep one char of local + the TLD; hide the rest. ``a@b.co`` →
         # ``a***@***.co``; ``stevejson@gmail.com`` → ``s***@***.com``.
@@ -718,7 +718,7 @@ def list_code_referrals(
     #
     # ``full_plan_price`` is sourced from the customer's plan row at the
     # current billing cycle. Free / no-sub / no-price customers fall to all
-    # zeroes — no contribution to the aggregate either way.
+    # zeroes, no contribution to the aggregate either way.
     #
     # We batch the plan + subscription lookups in two queries so a 100-
     # referral code stays a constant-time fetch.
@@ -742,7 +742,7 @@ def list_code_referrals(
             )
         ).all()
         for sub_row in sub_rows:
-            # Report earnings in the currency the customer is ACTUALLY billed —
+            # Report earnings in the currency the customer is ACTUALLY billed.
             # INR (the platform's single Razorpay rail). The prior code sourced
             # the plan's fixed USD headline columns while charging INR, so the
             # affiliate modal showed $ figures that never matched a single real
@@ -764,7 +764,7 @@ def list_code_referrals(
     cust_share = cust_bps / MAX_COMMISSION_BPS
     platform_share = max(0.0, 1.0 - pool_bps / MAX_COMMISSION_BPS) if include_platform else 0.0
 
-    # Aggregate totals — sum across every referred customer's monthly-equiv
+    # Aggregate totals. Sum across every referred customer's monthly-equiv
     # contribution. Surfaced at the top of the modal so the affiliate can
     # see "your codes are pulling in ~$X/mo at full price" at a glance.
     total_full_cents = 0
@@ -791,7 +791,7 @@ def list_code_referrals(
         if full_cents > 0:
             distribution_currency = distribution_currency or currency
 
-        # Round half-up to the nearest cent rather than truncating (M1) — these
+        # Round half-up to the nearest cent rather than truncating (M1). These
         # are display-only earnings estimates, and flooring each independently
         # dropped up to a cent per bucket. (The three shares intentionally do
         # NOT partition the whole: ``platform_share`` is the unallocated pool
@@ -832,7 +832,7 @@ def list_code_referrals(
     distribution: dict[str, int | str | None] = {
         # ``currency`` is the dominant currency in the referral set. When
         # the set is empty (no paying referrals yet) we report None so the
-        # UI can render "—" instead of pretending it's USD.
+        # UI can render "-" instead of pretending it's USD.
         "currency": distribution_currency,
         "paying_referrals": total_paying,
         "monthly_total_cents": total_full_cents,
@@ -924,9 +924,9 @@ def invite_affiliate(
     function side-effect-free w.r.t. external services (good for tests).
 
     Raises:
-      AffiliateLimitReached — 5 active affiliates already exist
-      AlreadyAffiliate      — client already has an active affiliate row
-      InviteAlreadyPending  — a pending invite already exists for the email
+      AffiliateLimitReached (5 active affiliates already exist
+      AlreadyAffiliate) client already has an active affiliate row
+      InviteAlreadyPending , a pending invite already exists for the email
     """
     if count_active_affiliates(session) >= MAX_ACTIVE_AFFILIATES:
         raise AffiliateLimitReached(
@@ -1011,7 +1011,7 @@ def lookup_invite_by_token(session: Session, raw_token: str) -> AffiliateInvite:
     Raises ``InviteNotFound`` if no row matches, ``InviteAlreadyUsed`` if
     the row was already accepted or revoked, or ``InviteExpired`` if past
     ``expires_at``. These three errors are deliberately separate so the
-    UI can show distinct messages — "this link is invalid", "already
+    UI can show distinct messages. "this link is invalid", "already
     accepted", or "expired, ask for a new one".
     """
     if not raw_token:
@@ -1040,14 +1040,14 @@ def accept_invite(
     company_name: str | None = None,
     website: str | None = None,
 ) -> tuple[Client, Affiliate]:
-    """Accept a magic-link invite — atomically create Client + Affiliate.
+    """Accept a magic-link invite. Atomically create Client + Affiliate.
 
     The caller (route handler) is responsible for hashing the password and
     generating the api_key so this function stays free of crypto imports.
 
     Raises:
-      InviteNotFound / InviteExpired / InviteAlreadyUsed — see lookup_invite_by_token
-      AffiliateLimitReached — 5 active affiliates already exist by the
+      InviteNotFound / InviteExpired / InviteAlreadyUsed (see lookup_invite_by_token
+      AffiliateLimitReached) 5 active affiliates already exist by the
                               time the invite is accepted
     """
     invite = lookup_invite_by_token(session, raw_token)
@@ -1058,7 +1058,7 @@ def accept_invite(
     if count_active_affiliates(session) >= MAX_ACTIVE_AFFILIATES:
         raise AffiliateLimitReached(
             f"Active affiliates are capped at {MAX_ACTIVE_AFFILIATES}. "
-            "The program filled up before you accepted — contact support."
+            "The program filled up before you accepted. Contact support."
         )
 
     # Defensive: someone could have signed up with this email between
@@ -1080,7 +1080,7 @@ def accept_invite(
         website=(website or "").strip() or None,
         is_superadmin=False,
         # Already proven: the magic link was emailed to ``invite.email`` and the
-        # account's address is forced to that same value below — the acceptor
+        # account's address is forced to that same value below, the acceptor
         # never chooses it. Holding the link therefore demonstrates control of
         # the inbox, exactly the reasoning that lets Google sign-ups skip the
         # OTP (see oauth_routes.py). Leaving this False would strand invitees:
@@ -1115,15 +1115,15 @@ def accept_invite_for_existing_client(
     """Accept a magic-link invite for a CURRENTLY-LOGGED-IN client.
 
     Separate from ``accept_invite`` because the existing-client path doesn't
-    create a new Client row — it just creates the Affiliate row tied to the
+    create a new Client row, it just creates the Affiliate row tied to the
     one the caller is already authenticated as. The auth check happens at
     the route layer; this function trusts ``client`` is who they claim.
 
     The token's target email MUST match the client's email. We enforce this
     to prevent a logged-in attacker from redeeming someone else's invite by
     pasting their token. Returns 403 (via ``AffiliateProgramError`` subclass)
-    on mismatch — separate from the not-found case so the UI can render
-    "this invite is for X@example.com — sign in with that email instead".
+    on mismatch. Separate from the not-found case so the UI can render
+    "this invite is for X@example.com. Sign in with that email instead".
 
     Raises:
       InviteNotFound / InviteExpired / InviteAlreadyUsed (token-state errors)
@@ -1133,14 +1133,14 @@ def accept_invite_for_existing_client(
     """
     invite = lookup_invite_by_token(session, raw_token)
 
-    # Token-vs-caller email check — case-insensitive to mirror how email
+    # Token-vs-caller email check. Case-insensitive to mirror how email
     # comparison happens elsewhere in the auth layer.
     if (invite.email or "").strip().lower() != (client.email or "").strip().lower():
         raise InviteEmailMismatch(
             f"This invite was sent to {invite.email}. Sign in with that account, or contact sales to update the invite."
         )
 
-    # Already enrolled? Treat as a soft success — the link was probably
+    # Already enrolled? Treat as a soft success, the link was probably
     # clicked twice. Surfacing this distinctly lets the UI deep-link to the
     # dashboard with a "you're already a Partner" toast instead of an error.
     existing = session.execute(select(Affiliate).where(Affiliate.client_id == client.id)).scalars().first()
@@ -1148,7 +1148,7 @@ def accept_invite_for_existing_client(
         # Mark the invite consumed even though we didn't create a new row, so a
         # third click hits InviteAlreadyUsed. We need it durable across the
         # AlreadyAffiliate raise (which the caller's context-manager turns into
-        # a rollback), but we must NOT ``session.commit()`` here — that would
+        # a rollback), but we must NOT ``session.commit()`` here. That would
         # commit the caller's other pending work too, hijacking its transaction
         # boundary (remediation H3). Persist the mark in its own transaction on
         # the same engine instead.
@@ -1166,7 +1166,7 @@ def accept_invite_for_existing_client(
     if count_active_affiliates(session) >= MAX_ACTIVE_AFFILIATES:
         raise AffiliateLimitReached(
             f"Active affiliates are capped at {MAX_ACTIVE_AFFILIATES}. "
-            "The program filled up before you accepted — contact support."
+            "The program filled up before you accepted. Contact support."
         )
 
     affiliate = Affiliate(
@@ -1296,7 +1296,7 @@ def update_affiliate(
     own, but leaves their referred clients' ``referral_code_id`` intact so
     historical attribution is never lost.
 
-    ``commission_bps`` is in basis points (0–10000). The route layer
+    ``commission_bps`` is in basis points (0 to 10000). The route layer
     accepts whole-percent input from the super-admin UI and converts via
     ``pct_to_bps`` before calling here.
     """
@@ -1314,7 +1314,7 @@ def update_affiliate(
             raise AffiliateProgramError("Commission must be between 0% and 100%.")
         # Reducing the pool to below the total committed by an existing
         # code would leave that code paying out more than the affiliate
-        # is allowed to earn — silently honouring it is how programs lose
+        # is allowed to earn. Silently honouring it is how programs lose
         # money. We refuse the reduction and list the conflicting codes
         # so the admin can deactivate or shrink them first.
         current_pool = int(aff.commission_bps or 0)
@@ -1335,7 +1335,7 @@ def update_affiliate(
                 more = "" if len(conflicting) <= 5 else f" (and {len(conflicting) - 5} more)"
                 new_pct = bps_to_pct(commission_bps)
                 raise CommissionSplitExceedsPool(
-                    f"Cannot reduce pool to {new_pct}% — {len(conflicting)} active code(s) "
+                    f"Cannot reduce pool to {new_pct}% - {len(conflicting)} active code(s) "
                     f"already commit a higher split: {names}{more}. "
                     "Deactivate or shrink those codes first, then retry the pool change."
                 )
@@ -1353,10 +1353,10 @@ def update_affiliate(
             .values(active=False, deactivated_at=func.now())
         )
     elif deactivate is False and aff.deactivated_at is not None:
-        # Reactivate the affiliate but do NOT auto-reactivate their codes —
-        # that's an explicit per-code action so they can pick which to bring back.
+        # Reactivate the affiliate but do NOT auto-reactivate their codes.
+        # That's an explicit per-code action so they can pick which to bring back.
         if count_active_affiliates(session) >= MAX_ACTIVE_AFFILIATES:
-            raise AffiliateLimitReached("Cannot reactivate — the 5-seat active-affiliate cap is full.")
+            raise AffiliateLimitReached("Cannot reactivate, the 5-seat active-affiliate cap is full.")
         aff.deactivated_at = None
 
     return aff
@@ -1366,7 +1366,7 @@ def delete_affiliate(session: Session, affiliate_id: int) -> None:
     """Hard-delete an affiliate, all their codes, and the entire click history.
 
     Cascading cleanup order matters because the FK from ``referral_codes`` to
-    ``affiliates`` is ``ON DELETE RESTRICT`` (intentional — we never want
+    ``affiliates`` is ``ON DELETE RESTRICT`` (intentional. We never want
     accidental loss). We explicitly delete codes first; their child
     ``referral_clicks`` rows cascade automatically via that FK
     (``ON DELETE CASCADE``), and any ``clients`` rows that point at one of
@@ -1374,19 +1374,19 @@ def delete_affiliate(session: Session, affiliate_id: int) -> None:
     (``ON DELETE SET NULL``).
 
     Effect on referred clients:
-      - They are NOT deleted — the customer relationship survives.
+      - They are NOT deleted, the customer relationship survives.
       - Their ``referral_code_id`` becomes NULL, so historical attribution
         is irreversibly lost from their row. This is the deliberate
         trade-off for a clean removal.
 
     Raises:
-      NotAffiliate — when ``affiliate_id`` doesn't exist
+      NotAffiliate. When ``affiliate_id`` doesn't exist
     """
     aff = session.get(Affiliate, affiliate_id)
     if aff is None:
         raise NotAffiliate("Affiliate not found.")
 
-    # Capture before delete — reading aff.client_id after session.delete can
+    # Capture before delete. Reading aff.client_id after session.delete can
     # raise ObjectDeletedError / return None once the row is expired.
     client_id = aff.client_id
     # Wipe codes (cascade fans out to clicks; nulls out clients).

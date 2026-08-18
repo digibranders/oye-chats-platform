@@ -13,7 +13,7 @@ import { useBotContext } from '../../../context/BotContext';
  * grace subscription on the TARGET plan, so `getCurrentSubscription` reports
  * `status: 'past_due'`. That status alone would render as a failed-payment
  * alarm (see PastDueBanner), which is the wrong story: nothing was charged and
- * nothing failed — the customer chose to downgrade and simply owes one final
+ * nothing failed, the customer chose to downgrade and simply owes one final
  * authorization. The `reauth` block on the payload disambiguates the two, and
  * this banner tells the calmer, accurate story.
  *
@@ -33,7 +33,7 @@ interface ReauthState {
 // so a banner that hammers the API buys nothing.
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
-/** "today" / "in 1 day" / "in N days" — never "in 0 days". */
+/** "today" / "in 1 day" / "in N days", never "in 0 days". */
 function deadlinePhrase(daysLeft: number | null): string {
   if (daysLeft === null) return 'soon';
   if (daysLeft <= 0) return 'today';
@@ -70,7 +70,7 @@ export function DowngradeReauthBanner(): ReactElement | null {
         const data = await getCurrentSubscription(botId ?? undefined);
         if (!cancelled) setState(readReauth(data));
       } catch {
-        // A failed probe must never surface as a warning — the customer would
+        // A failed probe must never surface as a warning, the customer would
         // see a downgrade notice caused purely by our own request failing.
         if (!cancelled) setState(null);
       }
@@ -96,7 +96,7 @@ export function DowngradeReauthBanner(): ReactElement | null {
       <Clock size={16} aria-hidden="true" className="shrink-0 text-[var(--ds-warning)]" />
       <p className="min-w-0 flex-1 text-[13px] text-[var(--ds-text)]">
         <span className="font-medium">Finish downgrading to {plan}.</span> Confirm the new payment
-        authorization to keep {plan} — we’ve emailed you the link. Your workspace stays on {plan}{' '}
+        authorization to keep {plan}. We’ve emailed you the link. Your workspace stays on {plan}{' '}
         until you drop to Free {deadlinePhrase(state.days_left)}.
       </p>
       <Button size="sm" variant="secondary" onClick={() => navigate('/workspace/billing')}>

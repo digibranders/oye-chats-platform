@@ -3,7 +3,7 @@
 Two defects motivated the split, and both are easy to reintroduce:
 
 1. ``PUSH_ENABLED`` was derived purely from VAPID web-push keys, yet the
-   fan-out helpers early-returned on it — so dropping VAPID silently killed
+   fan-out helpers early-returned on it, so dropping VAPID silently killed
    *mobile* push, which needs no local key material at all.
 
 2. Dispatch skipped any operator holding a WebSocket, treating "connected" as
@@ -81,7 +81,7 @@ def test_operator_gets_both_transports_by_default(monkeypatch):
 def test_connected_operator_keeps_expo_but_not_web(monkeypatch):
     """The regression that left mobile silent.
 
-    A connected operator has an in-page toast, so web push is redundant — but a
+    A connected operator has an in-page toast, so web push is redundant, but a
     browser toast is invisible on a phone, so Expo must still fire.
     """
     seen = _capture(monkeypatch)
@@ -153,5 +153,5 @@ def test_owner_opt_out_is_honoured():
     assert push_service.client_wants_push(per_event, 1, "handoff_request") is False
     assert push_service.client_wants_push(per_event, 1, "chat_transferred") is True
 
-    # Absent prefs mean opted in — the convention used throughout push_service.
+    # Absent prefs mean opted in, the convention used throughout push_service.
     assert push_service.client_wants_push(_Session([None]), 1, "handoff_request") is True

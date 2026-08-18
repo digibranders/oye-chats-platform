@@ -1,4 +1,4 @@
-"""Tests for app.api.auth_routes — authentication endpoints."""
+"""Tests for app.api.auth_routes. Authentication endpoints."""
 
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
@@ -138,7 +138,7 @@ class TestLogin:
 
     def test_login_rejects_suspended_client(self, monkeypatch):
         """A suspended client must be rejected at the login handler itself, not
-        just downstream — so the frontend can render a clear message instead of
+        just downstream, so the frontend can render a clear message instead of
         handing back an api_key that immediately 403s on the first API call."""
         from app.api import auth_routes
 
@@ -167,7 +167,7 @@ class TestLogin:
         assert "suspended" in response.json()["detail"].lower()
 
     def test_login_rejects_deactivated_client(self, monkeypatch):
-        """Same story for a hard-deleted (post-trial retention) client — the
+        """Same story for a hard-deleted (post-trial retention) client, the
         message must name the deletion so the customer knows to contact
         support instead of retrying with a fresh signup that fails on the
         duplicate-email check."""
@@ -438,7 +438,7 @@ class TestPasswordReset:
         """
         from app.core.rate_limit import limiter
 
-        # Older slowapi or non-memory backend — best-effort only; the tests
+        # Older slowapi or non-memory backend. Best-effort only; the tests
         # still work most of the time without a reset.
         with suppress(Exception):
             limiter.reset()
@@ -483,8 +483,8 @@ class TestPasswordReset:
         assert client_obj.reset_otp is not None
 
     def test_request_reset_rejects_deactivated_client(self, monkeypatch):
-        """A hard-deleted (post-trial) client mustn't receive a reset OTP —
-        they'd set a new password only to be blocked at login."""
+        """A hard-deleted (post-trial) client mustn't receive a reset OTP.
+        They'd set a new password only to be blocked at login."""
         from app.api import auth_routes
 
         client_obj = SimpleNamespace(
@@ -571,7 +571,7 @@ class TestPasswordReset:
 
     def test_reset_confirm_rejects_deactivated_client(self, monkeypatch):
         """Belt-and-braces: even a valid OTP must not land a new password
-        on a deactivated account — the customer would just be blocked at
+        on a deactivated account, the customer would just be blocked at
         login anyway. Covers the race where deactivation lands between
         the OTP-request and OTP-confirm calls."""
         from datetime import UTC, datetime, timedelta
@@ -601,7 +601,7 @@ class TestPasswordReset:
 
         assert response.status_code == 403
         assert "deleted" in response.json()["detail"].lower()
-        # Password unchanged — the reset must not land.
+        # Password unchanged, the reset must not land.
         assert client_obj.hashed_password == "old_hash"
 
     def test_reset_with_expired_otp(self, monkeypatch):

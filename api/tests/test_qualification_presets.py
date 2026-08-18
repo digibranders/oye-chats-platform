@@ -4,7 +4,7 @@ Before this, the BANT preset correctly defaulted its need/timeline pills off
 (documented rationale: interrogative qualification pills hurt conversion,
 matching Drift/Intercom Fin/HubSpot's own defaults), but MEDDIC, CHAMP, and
 GPCTBA+C&I left several dimensions ``cta_enabled: True`` by default with no
-equivalent rationale — an authoring inconsistency, not a deliberate
+equivalent rationale, an authoring inconsistency, not a deliberate
 framework-specific choice.
 """
 

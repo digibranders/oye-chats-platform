@@ -1,4 +1,4 @@
-"""Super-admin seller-profile routes — GET defaults, PUT validate + persist + audit."""
+"""Super-admin seller-profile routes. GET defaults, PUT validate + persist + audit."""
 
 import os
 from contextlib import contextmanager

@@ -1,5 +1,5 @@
 """
-Lightweight URL discovery — sitemap-first, with a same-domain link scan.
+Lightweight URL discovery. Sitemap-first, with a same-domain link scan.
 
 Does NOT extract page content; only discovers URLs. Intentionally avoids
 Playwright so it completes in a few seconds even for large sites.
@@ -7,23 +7,23 @@ Playwright so it completes in a few seconds even for large sites.
 Two discovery functions, used together by ``POST /crawl/discover`` and by
 ``crawl_provider.crawl_website``:
 
-``discover_website_urls`` — strictly robots.txt + sitemap.xml:
+``discover_website_urls``. Strictly robots.txt + sitemap.xml:
   1. Fetch robots.txt → extract Sitemap: directives
   2. Try standard sitemap paths (/sitemap.xml, /sitemap_index.xml) if
      robots.txt declared none
   3. Parse sitemaps (handles sitemap index, two levels deep)
   4. Guarantee the seed URL itself is included in the result so the
-     customer's typed entry point is never silently dropped — even when
+     customer's typed entry point is never silently dropped, even when
      the sitemap omits it.
   It does no HTML link-scanning of its own; ``Disallow`` rules are honored.
 
-``discover_via_links`` — bounded same-domain ``<a href>`` scan, used as the
+``discover_via_links``. Bounded same-domain ``<a href>`` scan, used as the
   fallback when the sitemap path yields nothing usable (<= 1 URL). Browser-free
   and bounded on every axis (depth, pages fetched, URLs returned).
 
 So a page absent from the sitemap can still be discovered, via the link scan.
-Only when NEITHER yields anything — typically a client-rendered SPA whose links
-exist only after JavaScript — does ``crawl_website`` fall back to Spider's
+Only when NEITHER yields anything (typically a client-rendered SPA whose links
+exist only after JavaScript) does ``crawl_website`` fall back to Spider's
 recursive crawl.
 
 (An earlier version of this docstring claimed "no HTML link-scanning, no BFS
@@ -51,17 +51,17 @@ _USER_AGENT = "OyeChats-Bot/1.0 (+https://www.oyechats.com)"
 
 def _parse_robots_rules(robots_text: str | None) -> RobotFileParser:
     """Parse ``Disallow``/``Allow`` rules from an already-fetched robots.txt
-    body (AR-24) — never a second network fetch of our own; both discovery
+    body (AR-24), never a second network fetch of our own; both discovery
     functions already fetch robots.txt (for Sitemap: directives, or need to
     start doing so) via the SSRF-guarded ``fetch_text_safely``, so the same
     body is reused here.
 
     Before this, the crawler was sitemap-aware only and never honored
-    ``Disallow`` — a site owner excluding e.g. ``/admin/*`` via robots.txt
+    ``Disallow``, a site owner excluding e.g. ``/admin/*`` via robots.txt
     had no guarantee that page wouldn't still be crawled, embedded, and
     later surfaced via RAG if a stale sitemap or internal link referenced it.
 
-    ``RobotFileParser.parse()`` (not ``.read()``) is used deliberately —
+    ``RobotFileParser.parse()`` (not ``.read()``) is used deliberately.
     ``.read()`` does its own blocking, unguarded network fetch, which would
     both duplicate the request and bypass the SSRF guard entirely.
     """
@@ -69,7 +69,7 @@ def _parse_robots_rules(robots_text: str | None) -> RobotFileParser:
     if robots_text:
         parser.parse(robots_text.splitlines())
     else:
-        # No robots.txt (or fetch failed) — RobotFileParser with no rules
+        # No robots.txt (or fetch failed). RobotFileParser with no rules
         # parsed defaults to allow-all, which is the correct "absence of a
         # robots.txt means no restrictions" behavior.
         parser.parse([])
@@ -167,7 +167,7 @@ _SKIP_EXTENSIONS = frozenset(
         ".xlsx",
         ".doc",
         ".docx",
-        # Feeds and machine-readable docs — these slipped through before and
+        # Feeds and machine-readable docs. These slipped through before and
         # showed up in the diff "new" bucket because the original crawler
         # never ingests them, so the URL was always going to look orphaned.
         ".xml",
@@ -185,7 +185,7 @@ _SKIP_PATH_PREFIXES = ("/sitemap", "/feed", "/rss", "/atom", "/wp-json")
 
 # WordPress (and similar CMS) shortlink query-only params that resolve to the
 # same canonical post/page as another URL the crawler already has. Pages whose
-# query string consists *only* of these keys are duplicates — keeping them
+# query string consists *only* of these keys are duplicates. Keeping them
 # makes the recrawl-diff hallucinate "new" pages every run.
 _WP_SHORTLINK_PARAMS = frozenset({"p", "page_id", "attachment_id", "cat", "tag_id", "feed", "preview", "preview_id"})
 
@@ -232,7 +232,7 @@ async def discover_website_urls(
 ) -> list[str]:
     """Return up to *max_urls* content-page URLs found on the site.
 
-    Hits the network asynchronously with aiohttp — safe to await from
+    Hits the network asynchronously with aiohttp. Safe to await from
     FastAPI's async event loop. Never spawns a subprocess or browser.
 
     Args:
@@ -276,8 +276,8 @@ async def discover_website_urls(
                 f"{base}/sitemap_index.xml",
             ]
 
-        # AR-24: Disallow/Allow rules from the same robots.txt fetch above —
-        # filters both the sitemap-derived list and the guaranteed-seed
+        # AR-24: Disallow/Allow rules from the same robots.txt fetch above.
+        # Filters both the sitemap-derived list and the guaranteed-seed
         # fallback below.
         robots_rules = _parse_robots_rules(robots_text)
 
@@ -328,7 +328,7 @@ async def discover_website_urls(
         # Even when the customer's sitemap omits the seed URL (homepages
         # sometimes are; vanity URLs nearly always are), we keep it in the
         # result list so the page they typed is always part of the
-        # discoverable set. No further expansion — same-domain HTML link
+        # discoverable set. No further expansion, same-domain HTML link
         # scanning was removed so the discovery scope is exactly
         # "robots.txt-declared sitemap ∪ {seed_url}".
         if _is_html_url(seed_url) and seed_url not in seen_pages and robots_rules.can_fetch(_USER_AGENT, seed_url):
@@ -391,7 +391,7 @@ async def discover_via_links(
     the customer's origin: at most ``max_fetch`` pages are fetched to expand the
     frontier, link-following stops at ``max_depth``, and the returned set is
     capped at ``max_urls``. Strictly same-registered-host (``www.`` stripped),
-    which — combined with the seed already being SSRF-validated by the caller —
+    which (combined with the seed already being SSRF-validated by the caller)
     keeps the SSRF surface identical to :func:`discover_website_urls`.
 
     Args:
@@ -419,7 +419,7 @@ async def discover_via_links(
 
     async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
         # AR-24: robots.txt Disallow/Allow, same SSRF-guarded fetch pattern as
-        # discover_website_urls — this path previously never checked robots.txt
+        # discover_website_urls. This path previously never checked robots.txt
         # at all.
         robots = await fetch_text_safely(session, f"{base}/robots.txt")
         robots_text = robots[1] if robots and robots[0] == 200 else None
@@ -440,7 +440,7 @@ async def discover_via_links(
             # could drive the loop up to ``max_urls`` GETs instead of ``max_fetch``.
             fetched += 1
             # SSRF-guarded fetch (code-review RV3): validates the URL, re-checks
-            # every redirect hop, and caps the body — so a same-host page that
+            # every redirect hop, and caps the body, so a same-host page that
             # 302s to an internal address can't bounce this server-side GET.
             result = await fetch_text_safely(session, url)
             if not result or result[0] != 200:
@@ -505,7 +505,7 @@ async def check_urls_alive(
                 # AR-42: liveness probe goes through the SSRF-pinned
                 # connector (code-review RV4 + DNS-rebinding fix) instead of
                 # issuing raw session.head()/session.get() requests directly
-                # — validate_public_url and the actual connection now agree
+                # . Validate_public_url and the actual connection now agree
                 # on exactly one resolved IP, closing the TOCTOU window
                 # where aiohttp's own connect-time DNS resolution could
                 # return a different (private/metadata) address than the

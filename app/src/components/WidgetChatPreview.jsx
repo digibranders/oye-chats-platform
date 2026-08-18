@@ -125,7 +125,7 @@ function PreviewSafeLink({ href, children, ...props }) {
  * Applied to the Live Preview subtree so its typography matches the real
  * rendered widget instead of inheriting the dashboard's Inter body font.
  *
- * Must stay byte-identical to `--font-sans` in widget/src/index.css — that
+ * Must stay byte-identical to `--font-sans` in widget/src/index.css. That
  * file carries the note on why no Office-bundled face (Calibri, Gill Sans MT)
  * may lead it. If you change one, change both, or the preview starts lying
  * about what visitors see.

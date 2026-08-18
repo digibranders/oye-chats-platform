@@ -2,10 +2,10 @@
 
 Two defence-in-depth checks had no direct coverage:
 
-* :func:`is_visitor_injection_attempt` — the INBOUND check. A visitor message
+* :func:`is_visitor_injection_attempt`, the INBOUND check. A visitor message
   that matches the shared injection pattern set triggers a refusal instead of
   being handed to the model as an instruction.
-* :func:`contains_system_prompt_leak` — the OUTBOUND check. If the model has
+* :func:`contains_system_prompt_leak`, the OUTBOUND check. If the model has
   been talked into echoing the platform's system prompt, the reply is replaced
   with a refusal rather than shipped to the visitor.
 
@@ -13,7 +13,7 @@ Both are pure string predicates, so they can be pinned exactly. The tests are
 written to be mutation-sensitive in both directions: a **false negative** (an
 attack that slips through) and a **false positive** (ordinary customer prose
 that gets refused) are each a real production failure, and the second is the
-reason the pattern set is deliberately tiered — see
+reason the pattern set is deliberately tiered. See
 ``app/security/injection_patterns.py``.
 """
 
@@ -115,7 +115,7 @@ def test_you_are_now_exclusion_is_narrower_than_its_comment_claims():
     This is over-blocking (a false positive that refuses a legitimate visitor),
     NOT an under-blocking security hole, so it is recorded here rather than
     silently "fixed" by loosening a security filter. If the pattern is
-    tightened later, this test is the one to update — deliberately.
+    tightened later, this test is the one to update. Deliberately.
     """
     # Bare forms: excluded, as intended.
     assert is_visitor_injection_attempt("you are now assistant") is False

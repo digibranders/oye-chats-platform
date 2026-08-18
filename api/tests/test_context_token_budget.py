@@ -1,7 +1,7 @@
 """Tests for the context token-budget enforcement in _build_reference_context (AR-19).
 
 Before this, there was no total-token/char budget anywhere in context
-assembly — only a per-chunk 5000-char cap. Up to 15-20 retrieved chunks
+assembly. Only a per-chunk 5000-char cap. Up to 15-20 retrieved chunks
 meant 75k-100k chars of context alone before system prompt/history, with
 nothing to stop a bot near CAG_LITE_THRESHOLD with large chunks from
 approaching or exceeding the model's context window; the code just called
@@ -52,7 +52,7 @@ class TestBuildReferenceContextTokenBudget:
             assert f"doc{i}.txt" in context
 
     def test_lowest_relevance_chunks_dropped_when_over_budget(self):
-        """final_results is ordered best-first — chunks are dropped from the
+        """final_results is ordered best-first. Chunks are dropped from the
         END (lowest relevance), never from the start."""
         self._reset_encoding_cache()
         # Each chunk is large enough that only ~2 fit in a small budget.
@@ -65,7 +65,7 @@ class TestBuildReferenceContextTokenBudget:
 
     def test_always_includes_at_least_the_top_chunk(self):
         """Even a single oversized top chunk must not result in empty
-        context — an empty-context refusal for a legitimate on-topic
+        context, an empty-context refusal for a legitimate on-topic
         question is worse than one oversized chunk."""
         self._reset_encoding_cache()
         huge_chunk = [_FakeDoc(1, "huge.txt", "word " * 5000)]

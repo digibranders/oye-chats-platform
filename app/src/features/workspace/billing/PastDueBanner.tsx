@@ -30,7 +30,7 @@ interface RecoveryState {
 // banner that hammers the API buys nothing.
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
-/** "today" / "in 1 day" / "in N days" — never "in 0 days". */
+/** "today" / "in 1 day" / "in N days", never "in 0 days". */
 function deadlinePhrase(daysLeft: number | null): string {
   if (daysLeft === null) return 'soon';
   if (daysLeft <= 0) return 'today';
@@ -42,7 +42,7 @@ export function PastDueBanner(): ReactElement | null {
   const botId = selectedBot?.id ?? null;
   const [state, setState] = useState<RecoveryState | null>(null);
 
-  // No state is written synchronously in the effect body — the fetch resolves
+  // No state is written synchronously in the effect body, the fetch resolves
   // first, and the `cancelled` flag stops a late response from updating an
   // unmounted banner. Matches the pattern in features/workspace/useBillingData.
   useEffect(() => {
@@ -50,12 +50,12 @@ export function PastDueBanner(): ReactElement | null {
 
     const load = async (): Promise<void> => {
       try {
-        // Unvalidated wire shape — go through `unknown` rather than asserting a
+        // Unvalidated wire shape. Go through `unknown` rather than asserting a
         // JSON object is already this interface.
         const data = (await getPaymentRecovery(botId ?? undefined)) as unknown as RecoveryState;
         if (!cancelled) setState(data);
       } catch {
-        // A failed probe must never surface as an error banner — the customer
+        // A failed probe must never surface as an error banner, the customer
         // would see a payment warning caused purely by our own request failing.
         if (!cancelled) setState(null);
       }

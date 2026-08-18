@@ -3,8 +3,8 @@
 The tasks themselves are async wrappers around a synchronous ``_run()``
 inner function that does the SQLAlchemy work. We test the public async
 entry points end-to-end with a stubbed session so the behaviour the
-operator depends on — correct status transitions, idempotent email
-markers, day-bucket reminder cadence — is locked in regardless of any
+operator depends on (correct status transitions, idempotent email
+markers, day-bucket reminder cadence) is locked in regardless of any
 future internal refactor.
 
 What we cover:
@@ -18,7 +18,7 @@ What we cover:
 What we deliberately don't cover here:
     * the real Brevo email delivery (mocked out)
     * the real Postgres query planner / FK cascades (we trust SQLAlchemy)
-    * the cron scheduler itself — ARQ's cron is a thin wrapper that just
+    * the cron scheduler itself. ARQ's cron is a thin wrapper that just
       calls these awaitables at the right time
 """
 
@@ -127,7 +127,7 @@ class _FakeSession:
 
 class TestTaskExpireTrials:
     """Trialing subs past ``trial_end`` flip to ``trial_expired`` and the
-    workspace owner gets one — and only one — trial-ended email."""
+    workspace owner gets one (and only one) trial-ended email."""
 
     @pytest.mark.asyncio
     async def test_flips_status_and_sends_email(self):
@@ -168,13 +168,13 @@ class TestTaskExpireTrials:
             await cron_tasks.task_expire_trials({})
 
         # The cron still flips status (idempotent rebuild) but does NOT
-        # re-send the email — that's the whole point of the marker.
+        # re-send the email. That's the whole point of the marker.
         assert sub.status == "trial_expired"
         mock_email.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_email_failure_does_not_block_status_flip(self):
-        """If Brevo errors, the status flip still commits — the email is
+        """If Brevo errors, the status flip still commits, the email is
         retryable; the customer's trial is over either way."""
         now = datetime.now(UTC)
         sub = _trial_sub(trial_end=now - timedelta(hours=1))
@@ -200,7 +200,7 @@ class TestTaskExpireTrials:
 
 
 class TestTaskTrialReminderEmails:
-    """Trial reminder cadence on a 7-day trial — halfway (T-4) / T-2 / T-1
+    """Trial reminder cadence on a 7-day trial. Halfway (T-4) / T-2 / T-1
     buckets, gated by JSONB ``trial_emails_sent`` markers so each fires
     exactly once. Marker keys keep their historical ``day_7`` / ``day_11``
     / ``day_13`` names from the previous 14-day cadence so existing
@@ -235,7 +235,7 @@ class TestTaskTrialReminderEmails:
     @pytest.mark.parametrize("days_left", [7, 5, 3])
     @pytest.mark.asyncio
     async def test_skips_off_cadence_days(self, days_left):
-        """T-7 / T-5 / T-3 are not in the 7-day cadence — nothing fires."""
+        """T-7 / T-5 / T-3 are not in the 7-day cadence, nothing fires."""
         now = datetime.now(UTC)
         sub = _trial_sub(trial_end=now + timedelta(days=days_left - 1, hours=12))
         fake_session = _FakeSession([sub], {sub.client_id: _owner()})
@@ -272,7 +272,7 @@ class TestTaskTrialReminderEmails:
 
     @pytest.mark.asyncio
     async def test_expired_trial_yields_nothing(self):
-        """``seconds_left <= 0`` short-circuits BEFORE the cadence lookup —
+        """``seconds_left <= 0`` short-circuits BEFORE the cadence lookup.
         ``task_expire_trials`` owns the post-trial transition."""
         now = datetime.now(UTC)
         sub = _trial_sub(trial_end=now - timedelta(hours=1))
@@ -456,7 +456,7 @@ class TestTaskExpirePastDueSubscriptions:
     @pytest.mark.asyncio
     async def test_preserves_existing_canceled_at_and_reason(self):
         """Do NOT overwrite an existing customer-initiated cancellation
-        stamp — only the empties get the dunning marker."""
+        stamp. Only the empties get the dunning marker."""
         now = datetime.now(UTC)
         existing_canceled_at = now - timedelta(days=3)
         sub = _trial_sub(

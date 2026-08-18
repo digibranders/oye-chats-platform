@@ -1,4 +1,4 @@
-"""`Bot.plan_slug` — the per-agent plan the admin UI gates on.
+"""`Bot.plan_slug`, the per-agent plan the admin UI gates on.
 
 Billing attaches to the Bot, so one workspace holds a Professional agent and a
 Free agent at the same time. The admin dashboard's per-agent feature gates
@@ -7,7 +7,7 @@ agent's answer, and account-level entitlements deliberately report the
 highest-priced plan across the workspace.
 
 The frontend used to infer the per-agent slug from the credit-balance payload,
-which lists only agents holding their own ledger — a Free agent has none, so it
+which lists only agents holding their own ledger, a Free agent has none, so it
 was absent and silently fell back to the account slug, rendering paid controls
 on exactly the agent the fallback existed to protect. Serving the slug from the
 same `get_bot_entitlements` the server's own gates use removes the inference.
@@ -71,7 +71,7 @@ class TestBotPlanName:
     """The chip and the switch come from one call, so they cannot disagree.
 
     `useSelectedBotPlan` derived the display name from the credit-balance
-    payload — the same source that omits Free agents — so a Free agent sat
+    payload (the same source that omits Free agents) so a Free agent sat
     under a "Professional" chip while its controls were (correctly) locked.
     """
 

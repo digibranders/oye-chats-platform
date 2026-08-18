@@ -45,7 +45,7 @@ export default function WorkspaceAccessDeniedModal() {
     }
 
     function handleSignOut() {
-        // An impersonated tab must end only the support session — see
+        // An impersonated tab must end only the support session. See
         // endImpersonationSessionFromSignOut.
         if (endImpersonationSessionFromSignOut()) return;
         clearAuthStorage();

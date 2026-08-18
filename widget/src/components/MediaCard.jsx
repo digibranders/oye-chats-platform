@@ -2,17 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { FileText, Play } from 'lucide-react';
 
 /**
- * MediaCard — inline chat card for a single YouTube video OR a downloadable
+ * MediaCard. Inline chat card for a single YouTube video OR a downloadable
  * file. Rendered by MessageBubble beneath the bot's text when a message
  * carries a ``media_card`` property, which the backend injects into
  * FINAL_METADATA whenever the LLM emits ``[YOUTUBE_CARD:VIDEO_ID]`` or
- * ``[DOWNLOAD_CARD:URL|FILENAME]`` — see ``_extract_media_card`` in
+ * ``[DOWNLOAD_CARD:URL|FILENAME]``. See ``_extract_media_card`` in
  * ``platform/api/app/services/rag_service.py``.
  *
  * Minimal treatment (per product decision):
  *   - YouTube: thumbnail + video title + click-to-watch.
  *   - Download: file icon + filename + download button.
- * No channel name, no duration, no date — kept intentionally spare so the
+ * No channel name, no duration, no date. Kept intentionally spare so the
  * card reads as an accent to the answer, not a takeover.
  *
  * Props:
@@ -22,16 +22,16 @@ import { FileText, Play } from 'lucide-react';
 
 // Cross-instance in-memory cache of resolved YouTube titles. Keyed by
 // video_id so the same video only ever costs one oEmbed roundtrip in the
-// lifetime of the widget script. Never hits localStorage — the widget runs
+// lifetime of the widget script. Never hits localStorage, the widget runs
 // in the customer's page and we don't want to reserve storage there.
 const _ytTitleCache = new Map();
 
-// oEmbed endpoint — free, keyless, CORS-enabled. Returns title, author_name,
+// oEmbed endpoint. Free, keyless, CORS-enabled. Returns title, author_name,
 // thumbnail_url, and a few others; we only read title. Failures fall back to
 // a generic label so the card never blocks the answer.
 const YT_OEMBED_URL = 'https://www.youtube.com/oembed';
 
-// Format a video length (integer seconds) as ``M:SS`` — or ``H:MM:SS`` for
+// Format a video length (integer seconds) as ``M:SS``, or ``H:MM:SS`` for
 // videos an hour or longer. Returns ``null`` for anything unusable so the
 // caller can conditionally omit the pill rather than render "NaN".
 const _formatDuration = (totalSeconds) => {
@@ -49,8 +49,8 @@ const _formatDuration = (totalSeconds) => {
 const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
     const durationLabel = _formatDuration(durationSeconds);
     // A server-scraped title (populated at ingest time and passed through
-    // FINAL_METADATA) always wins over the client-side oEmbed lookup —
-    // it's already ready by the time the card mounts, so the title
+    // FINAL_METADATA) always wins over the client-side oEmbed lookup.
+    // It's already ready by the time the card mounts, so the title
     // renders in the same frame as the thumbnail instead of flickering
     // in a beat later. Prime the cache too so a subsequent re-render or
     // another card for the same video skips oEmbed entirely.
@@ -58,11 +58,11 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
     if (_serverTitle && !_ytTitleCache.has(videoId)) {
         _ytTitleCache.set(videoId, _serverTitle);
     }
-    // React's official "reset state when a prop changes" pattern — track the
+    // React's official "reset state when a prop changes" pattern. Track the
     // last ``videoId`` we rendered for, and if the incoming prop differs,
     // re-derive state during render. That keeps the state up-to-date on
     // prop change without calling setState in an effect (which React 19's
-    // ``react-hooks/set-state-in-effect`` rule flags as a smell — cascading
+    // ``react-hooks/set-state-in-effect`` rule flags as a smell. Cascading
     // renders when the value could just be derived synchronously).
     // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
     const [renderedVideoId, setRenderedVideoId] = useState(videoId);
@@ -76,7 +76,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
     }
 
     useEffect(() => {
-        // Cache hit — the state above is already correct; no fetch needed.
+        // Cache hit, the state above is already correct; no fetch needed.
         if (_ytTitleCache.has(videoId)) return undefined;
         let cancelled = false;
         // Abort on unmount so a slow oEmbed request doesn't call setState on
@@ -97,7 +97,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
             })
             .catch(() => {
                 if (cancelled) return;
-                // Cache the empty result too — no point re-fetching a video
+                // Cache the empty result too, no point re-fetching a video
                 // whose oEmbed we know we cannot resolve (private, deleted,
                 // region-locked). The card falls back to a generic label.
                 _ytTitleCache.set(videoId, '');
@@ -132,7 +132,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
                     className="h-full w-full object-cover"
                     onError={(e) => {
                         // Fall back to the medium-quality still if hqdefault
-                        // 404s (very rare — usually region blocks or takedowns).
+                        // 404s (very rare. Usually region blocks or takedowns).
                         if (!e.currentTarget.dataset.fallback) {
                             e.currentTarget.dataset.fallback = '1';
                             e.currentTarget.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
@@ -144,7 +144,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
                         <Play className="h-6 w-6 fill-current" aria-hidden="true" />
                     </span>
                 </div>
-                {/* Duration pill — bottom-right corner of the thumbnail,
+                {/* Duration pill. Bottom-right corner of the thumbnail,
                     matching YouTube's native duration overlay: solid black
                     fill, semibold white text, ~13px, generous horizontal
                     padding, small radius so the shape reads as a chip
@@ -175,8 +175,8 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
 
 // File-type presentation table. Each entry maps an uppercased extension to
 // the tint used for the icon badge and the short label shown in the meta row.
-// Anything not listed falls back to ``_DEFAULT_FILE_META`` — a neutral slate
-// badge labelled with the raw extension — so the card degrades gracefully for
+// Anything not listed falls back to ``_DEFAULT_FILE_META`` (a neutral slate
+// badge labelled with the raw extension) so the card degrades gracefully for
 // file types we haven't styled explicitly.
 const _FILE_META = {
     PDF: { tint: '#E4483D', label: 'PDF' },
@@ -202,14 +202,14 @@ const _DEFAULT_FILE_META = { tint: '#64748B', label: 'FILE' };
 
 // Extensions the browser can render inline (open in a new tab) rather than
 // force-download. Drives the action verb ("View" vs "Download") and whether we
-// set the ``download`` attribute — we only hint a save for non-viewable types.
+// set the ``download`` attribute. We only hint a save for non-viewable types.
 const _OPENABLE_EXTS = new Set([
     'PDF', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'TXT', 'MD',
 ]);
 
 // Cross-instance cache of resolved file sizes, keyed by URL. Stores the
 // formatted label (e.g. "1.5 MB") on success, or ``null`` when the size can't
-// be determined — so a file whose host blocks the HEAD probe is asked about
+// be determined, so a file whose host blocks the HEAD probe is asked about
 // only once per widget lifetime, not on every re-render. Never touches
 // localStorage; the widget runs on the customer's page.
 const _fileSizeCache = new Map();
@@ -233,7 +233,7 @@ const _formatBytes = (bytes) => {
 
 // Adobe-style document glyph: a white sheet with a folded top-right corner and
 // the file-type label across the body, sitting on the tinted badge. Purely
-// decorative — the surrounding anchor carries the accessible label.
+// decorative, the surrounding anchor carries the accessible label.
 const _FileGlyph = ({ tint, label }) => (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path
@@ -280,7 +280,7 @@ const DownloadCard = ({ url, name }) => {
     }
 
     useEffect(() => {
-        // Cache hit (success or a cached "unknown") — no probe needed.
+        // Cache hit (success or a cached "unknown"), no probe needed.
         if (_fileSizeCache.has(url)) return undefined;
         let cancelled = false;
         const controller = new AbortController();
@@ -312,7 +312,7 @@ const DownloadCard = ({ url, name }) => {
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            // ``download`` is a hint only — cross-origin servers ignore it, so
+            // ``download`` is a hint only. Cross-origin servers ignore it, so
             // the browser falls back to native handling. We only set it for
             // non-viewable types; viewable ones (PDF, images) open in a tab.
             download={openable ? undefined : rawName}
@@ -326,7 +326,7 @@ const DownloadCard = ({ url, name }) => {
                 <_FileGlyph tint={tint} label={label} />
             </span>
             {/* Title wraps to two lines so long, hyphenated filenames stay
-                readable — ``line-clamp-2`` keeps the card height bounded and
+                readable. ``line-clamp-2`` keeps the card height bounded and
                 ``break-all`` lets the browser wrap mid-hyphen when the
                 filename contains no whitespace (common: kebab-case slugs).
                 Size drops to a small caption below the title so the title
@@ -343,7 +343,7 @@ const DownloadCard = ({ url, name }) => {
     );
 };
 
-// Compact secondary chip — one small row per related asset, rendered under
+// Compact secondary chip, one small row per related asset, rendered under
 // the primary card. Purely an opt-in pointer ("here's a related file/video
 // if you want it"); intentionally quiet so it never competes with the
 // primary card for attention. Same visual weight as a caption. Kept
@@ -393,7 +393,7 @@ const _SecondaryChip = ({ item }) => {
 
 // Small overline hint sitting above the media card. Names the medium the
 // visitor is about to interact with ("watch the video" / "open the document")
-// so the card never lands without a cue — a deterministic fallback for the
+// so the card never lands without a cue, a deterministic fallback for the
 // LLM's bridge sentence, which is mandated in the system prompt but not 100%
 // reliable in practice. Intentionally muted (11px, gray-500, subtle icon) so
 // on well-bridged answers it reads as a card label rather than a duplicate
@@ -445,12 +445,12 @@ const MediaCard = ({ card, secondary }) => {
         primary = <DownloadCard url={card.url} name={card.name} />;
     }
     if (!primary) {
-        // Unknown card type — silently render nothing so a future backend
+        // Unknown card type. Silently render nothing so a future backend
         // addition doesn't break existing widget bundles in the wild.
         return null;
     }
     // ``secondary`` is a list (0 or 1 element today) shaped like the primary
-    // ``card`` payload — see ``_pick_secondary_media`` in rag_service.py.
+    // ``card`` payload. See ``_pick_secondary_media`` in rag_service.py.
     // Keeping it as a list means the server can later relax the one-chip cap
     // without another metadata migration on the wire.
     const chips = Array.isArray(secondary) ? secondary.filter(Boolean) : [];

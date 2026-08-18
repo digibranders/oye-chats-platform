@@ -1,4 +1,4 @@
-"""Foreign-exchange conversion for export invoices — pure, integer-only, no I/O.
+"""Foreign-exchange conversion for export invoices. Pure, integer-only, no I/O.
 
 WHY THIS EXISTS
 ---------------
@@ -13,22 +13,22 @@ the date of the time of supply". (Goods use the CBIC-notified Customs rate under
 Rule 34(1); services deliberately do not.)
 
 Razorpay's payment entity supplies exactly that. On a non-INR payment it
-returns ``base_amount`` — "the converted payment amount ... represented in the
-smallest unit of the base_currency" — converted at "the exchange rate
+returns ``base_amount``. "the converted payment amount ... represented in the
+smallest unit of the base_currency". Converted at "the exchange rate
 (according to the processing bank) on the date the payment was made". That is a
 bank rate on the transaction date: a realised, third-party-evidenced,
 GAAP-consistent rate, and it is the same figure Razorpay settles on, so the
 invoice reconciles against the settlement and the FIRC.
 
-We therefore never *choose* a rate — we record the one the money actually moved
+We therefore never *choose* a rate. We record the one the money actually moved
 at, and store it on the document so an assessing officer can reproduce the
 arithmetic years later.
 
 THE ONE THING THIS MODULE DEFENDS AGAINST
 -----------------------------------------
 Unit confusion. ``base_amount`` is documented in paise, but if it ever arrives
-in rupees — an API change, a zero-decimal currency such as JPY, a hand-built
-payload in a backfill — the implied rate lands 100x off and the document would
+in rupees (an API change, a zero-decimal currency such as JPY, a hand-built
+payload in a backfill) the implied rate lands 100x off and the document would
 misstate the taxable value by two orders of magnitude. A missing tax document
 can be issued late; a wrong one has already been filed. So an implausible rate
 is a hard refusal, not a warning.
@@ -56,7 +56,7 @@ class FxError(ValueError):
 def _round_half_up(numerator: int, denominator: int) -> int:
     """Round ``numerator / denominator`` to the nearest integer, halves up.
 
-    Integer-only, mirroring ``app.core.tax._round_half_up`` — money never goes
+    Integer-only, mirroring ``app.core.tax._round_half_up``. Money never goes
     through a float.
     """
     return (2 * numerator + denominator) // (2 * denominator)
@@ -86,7 +86,7 @@ def convert_minor(foreign_minor: int, rate_micros: int) -> int:
     """Convert a foreign minor-unit amount to paise at ``rate_micros``.
 
     Used for the COMPONENTS of the breakup (taxable value, tax). The document
-    TOTAL is never re-derived through this — it is Razorpay's ``base_amount``
+    TOTAL is never re-derived through this, it is Razorpay's ``base_amount``
     verbatim, so the invoice ties to the settlement to the paisa.
     """
     if foreign_minor < 0:

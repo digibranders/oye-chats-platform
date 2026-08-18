@@ -49,9 +49,9 @@ function normalizeUrl(value: string): string {
  * The most pages a single crawl may train on, given what the plan still allows.
  *
  * Two independent ceilings apply and the tighter one wins:
- *  - `planPagesLeft` — what is left of the workspace's `page_scraping`
+ *  - `planPagesLeft`. What is left of the workspace's `page_scraping`
  *    allowance (`Infinity` on an unlimited plan).
- *  - `result.plan_max` — the server's own per-crawl ceiling for this plan,
+ *  - `result.plan_max`, the server's own per-crawl ceiling for this plan,
  *    returned by `/crawl/discover`. `-1` (paid tiers) means "no per-crawl cap;
  *    spend is governed by credits", so it is NOT a constraint.
  *
@@ -68,7 +68,7 @@ function crawlPageCap(result: CrawlDiscovery, planPagesLeft: number): number {
 
 /**
  * The page set to pre-tick after a scan: every discovered page, trimmed to what
- * the plan allows and — when the balance cannot cover the whole site — to what
+ * the plan allows and (when the balance cannot cover the whole site) to what
  * the credits actually buy.
  *
  * Trimming happens in DISCOVERY order (see `canonicalCrawlUrls`), which puts the
@@ -111,7 +111,7 @@ function pageLabel(source: KnowledgeSource): string {
  * The flow is: URL → **Scan website** → pick pages in `CrawlPageTree` →
  * **Train your chatbot** → live progress. Scanning is a deliberate, named
  * action rather than something Continue does silently, and the tree IS the
- * review — which is why there is no separate "ready to train?" confirmation.
+ * review, which is why there is no separate "ready to train?" confirmation.
  * The page picker is the same component the Knowledge tab uses
  * (`CrawlPageTree` / `AddKnowledgePanel`), so both surfaces behave identically.
  *

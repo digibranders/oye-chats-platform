@@ -1,4 +1,4 @@
-"""Seller profile service — defaults, validation, persistence."""
+"""Seller profile service. Defaults, validation, persistence."""
 
 import os
 

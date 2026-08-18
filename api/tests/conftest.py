@@ -277,7 +277,7 @@ def _reset_rate_limiter():
     Wave 3.2 put per-client ceilings on the money routes; test files reuse a
     handful of api_keys across dozens of requests, so without a reset the
     in-memory counters bleed across tests and unrelated assertions start
-    seeing 429s. Prod uses Redis storage — this touches only the test
+    seeing 429s. Prod uses Redis storage. This touches only the test
     process's in-memory counters.
     """
     import contextlib
@@ -294,7 +294,7 @@ def _reset_entitlements_cache():
     """Flush the Redis entitlements cache before every test.
 
     The cache is keyed by client_id and the DB is truncated between tests, so
-    ids are reused — without this, one test's Free-plan entitlements poison a
+    ids are reused, without this, one test's Free-plan entitlements poison a
     later test's freshly built paid client (the Wave 4b topup gate surfaced
     exactly that as an order-dependent failure).
     """

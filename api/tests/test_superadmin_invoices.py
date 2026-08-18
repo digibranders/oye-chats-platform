@@ -1,4 +1,4 @@
-"""Super-admin invoice console endpoints — list/detail/resend/regenerate."""
+"""Super-admin invoice console endpoints. List/detail/resend/regenerate."""
 
 import os
 from contextlib import contextmanager

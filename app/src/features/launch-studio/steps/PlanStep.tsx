@@ -31,14 +31,14 @@ import type { StepProps } from '../steps.config';
 import type { BillingCycle } from '../../workspace/billing/planPricing';
 
 // ─── Local data loader ────────────────────────────────────────────────────────
-// Fetches only what the plan step needs — avoids pulling in invoices / seats /
+// Fetches only what the plan step needs. Avoids pulling in invoices / seats /
 // billing details that are irrelevant during onboarding.
 
 interface PlanStepData {
   subscription: SubscriptionView;
   /** The account's current plan slug (e.g. 'free'). */
   currentPlanSlug: string;
-  /** Monthly price minor of the current plan — used by PlanConfirmModal for up/downgrade logic. */
+  /** Monthly price minor of the current plan. Used by PlanConfirmModal for up/downgrade logic. */
   currentMonthlyPriceMinor: number;
   availablePlans: PlanView[];
   trialUsed: boolean;
@@ -74,7 +74,7 @@ async function loadPlanStepData(): Promise<PlanStepData> {
 // ─── PlanStep ─────────────────────────────────────────────────────────────────
 
 /**
- * PlanStep — Step 2 of the Launch Studio onboarding.
+ * PlanStep. Step 2 of the Launch Studio onboarding.
  *
  * Shows the full plan picker (cards + cycle toggle + compare grid) so the user
  * selects and pays for a plan BEFORE creating their first agent. This ensures
@@ -131,7 +131,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
     void fetchData();
   }, [fetchData]);
 
-  // ── Billing cycle (monthly default — less intimidating in onboarding) ──────
+  // ── Billing cycle (monthly default. Less intimidating in onboarding) ──────
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
 
   // ── Plan confirm modal ────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
   const [detailsPrompt, setDetailsPrompt] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<PlanView | null>(null);
 
-  // ── Chosen flag — gates the Continue button ───────────────────────────────
+  // ── Chosen flag. Gates the Continue button ───────────────────────────────
   const [planChosen, setPlanChosen] = useState(false);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
@@ -221,7 +221,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
     [markPlanChosen, refreshData, refreshEntitlements],
   );
 
-  // PlanConfirmModal calls onClose when done — we use this as our signal to advance.
+  // PlanConfirmModal calls onClose when done. We use this as our signal to advance.
   const handleModalClose = useCallback((): void => {
     setConfirmPlan(null);
     // Advance only on a settled purchase. Leaving the step mid-activation
@@ -237,7 +237,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
     (plan: PlanView): void => {
       // A paid-for plan is still switching on - no path may reopen checkout.
       if (activationBlocking) return;
-      // Free plan — account is already on Free; just advance. The
+      // Free plan. Account is already on Free; just advance. The
       // `!isContactSales` clause is load-bearing: a bespoke, per-contract tier
       // is priced on request and so is `!isPaid`, and must NOT be treated as
       // Free.
@@ -247,7 +247,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
         return;
       }
       // Paid, trial, and bespoke contact-sales tiers all open the confirm
-      // modal — it short-circuits the quote for `isContactSales` and renders a
+      // modal, it short-circuits the quote for `isContactSales` and renders a
       // real "Contact sales" anchor in place of the pay button, so the hand-off
       // keeps link semantics (middle-click, copy address, link role). One
       // contact-sales surface instead of two, matching BillingPage.
@@ -265,7 +265,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
           Choose your plan
         </h1>
         <p className="mt-2 text-[15px] text-[var(--ds-text-muted)]">
-          Pick the plan that fits your needs. You can upgrade, downgrade, or cancel any time — no lock-in.
+          Pick the plan that fits your needs. You can upgrade, downgrade, or cancel any time, no lock-in.
         </p>
       </header>
 
@@ -307,7 +307,7 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
               />
             )}
 
-            {/* Plan picker — reuses the full billing surface */}
+            {/* Plan picker. Reuses the full billing surface */}
             <PlansPanel
               plans={data.availablePlans}
               currentSlug={data.currentPlanSlug}

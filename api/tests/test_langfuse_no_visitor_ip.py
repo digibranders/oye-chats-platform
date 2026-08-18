@@ -5,7 +5,7 @@
 <addr>" once the background geo lookup rewrites the stored column). Both RAG
 entry points used to hand that value straight to ``propagate_attributes`` as
 trace metadata, shipping a visitor IP to a third-party processor on every
-message — personal data under GDPR and under India's DPDP Act, where this
+message. Personal data under GDPR and under India's DPDP Act, where this
 product's basis is consent-only.
 
 The field is dropped rather than redacted (a redacted "IP: …" stamp collapses
@@ -29,7 +29,7 @@ IPV4 = "203.0.113.42"
 IPV6 = "2001:db8::dead:beef"
 
 # The three shapes ``chat_routes`` actually stores, plus the IPv6 variant of the
-# pre-resolution stamp — see ``app.core.visitor_privacy``.
+# pre-resolution stamp. See ``app.core.visitor_privacy``.
 LOCATION_SHAPES = [
     f"IP: {IPV4}",
     f"Mumbai, India | {IPV4}",
@@ -110,7 +110,7 @@ def _assert_clean(payloads: list[dict], location: str) -> None:
         assert IPV6 not in blob, f"visitor IP leaked to Langfuse: {payload!r}"
         assert location not in blob, f"stored location leaked to Langfuse: {payload!r}"
 
-    # The payload is still worth having — bot_id/question/device survive.
+    # The payload is still worth having. Bot_id/question/device survive.
     trace_metadata = [p["metadata"] for p in payloads if "metadata" in p]
     assert any("bot_id" in m for m in trace_metadata), "the fix stripped more than location"
 

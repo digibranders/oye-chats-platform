@@ -4,7 +4,7 @@ spendable by the FIFO allocator.
 Before the fix, a refund with no live grant inflated the balance
 (``get_balance`` sums all deltas) but raised ``InsufficientCredits`` on the next
 deduction because ``_grants_for`` excluded ``reason="refund"`` from the
-allocatable set — leaving the customer with a positive-but-unspendable balance.
+allocatable set. Leaving the customer with a positive-but-unspendable balance.
 """
 
 import os
@@ -32,7 +32,7 @@ def test_refund_credits_are_spendable(db):
 
     assert credit_service.get_balance(db, client.id) == 50
 
-    # This must NOT raise InsufficientCredits — the refunded 50 is real balance.
+    # This must NOT raise InsufficientCredits, the refunded 50 is real balance.
     new_balance = credit_service.check_and_deduct(db, client.id, 10, reason="url_scan")
     db.commit()
 

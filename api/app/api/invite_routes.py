@@ -2,11 +2,11 @@
 
 Two responsibilities:
 
-1. **Invite CRUD** — owners and admins create, list, resend, revoke invites
+1. **Invite CRUD**. Owners and admins create, list, resend, revoke invites
    for their workspace. Public airlock endpoints let the invitee view invite
    metadata by token and accept once authenticated as a Client.
 
-2. **``GET /me/workspaces``** — returns every workspace the caller can act in
+2. **``GET /me/workspaces``**. Returns every workspace the caller can act in
    (owned + linked-operator memberships). The frontend uses this to populate
    the workspace switcher.
 
@@ -46,7 +46,7 @@ router = APIRouter(prefix="/invites", tags=["invites"])
 me_router = APIRouter(prefix="/me", tags=["me"])
 
 
-# Matches the same simple pattern used in ``offline_message_routes.py`` — the
+# Matches the same simple pattern used in ``offline_message_routes.py``, the
 # ``EmailStr`` pydantic type would require the ``email-validator`` dep which
 # isn't installed in this project, so we hand-roll a lightweight equivalent.
 # Plaintext invite token as it appears in the emailed URL: 256 bits of
@@ -120,7 +120,7 @@ class MeWorkspacesResponse(BaseModel):
 class SelfOperatorRequest(BaseModel):
     """Body for ``POST /me/self-operator``.
 
-    ``bot_id`` is required because operators are bot-scoped — the owner must
+    ``bot_id`` is required because operators are bot-scoped, the owner must
     pick which bot they'll take chats for. Reactivating a previously-added
     self-op row with a different ``bot_id`` reassigns it.
     """
@@ -129,7 +129,7 @@ class SelfOperatorRequest(BaseModel):
 
 
 class SelfOperatorResponse(BaseModel):
-    """Response for ``POST /me/self-operator`` — the owner-as-operator row."""
+    """Response for ``POST /me/self-operator``, the owner-as-operator row."""
 
     operator_id: int
     role: str
@@ -148,7 +148,7 @@ def _accept_url_for_token(plaintext_token: str) -> str:
     """Build the fully-qualified airlock URL for the given plaintext token.
 
     Uses ``FRONTEND_URL`` from config which defaults to ``http://localhost:5174``
-    in dev — so an invite link the developer generates locally opens the
+    in dev, so an invite link the developer generates locally opens the
     local dashboard, not production.
     """
     base = FRONTEND_URL.rstrip("/")
@@ -165,7 +165,7 @@ def _dispatch_invite_email(
 ) -> None:
     """Fire the invite email through Brevo. Fire-and-forget.
 
-    A Brevo failure never rolls back the invite row — the invite stays valid
+    A Brevo failure never rolls back the invite row, the invite stays valid
     and the owner can Resend to regenerate the email. When Brevo isn't
     configured (``EMAIL_ENABLED = False``) the email service already
     short-circuits and logs a WARN, so no extra guard is needed here.
@@ -180,7 +180,7 @@ def _dispatch_invite_email(
             "[dev] invite %s accept_url=%s (email %s)",
             invite_id,
             accept_url,
-            "sending via Brevo" if EMAIL_ENABLED else "SKIPPED — no BREVO_API_KEY",
+            "sending via Brevo" if EMAIL_ENABLED else "SKIPPED, no BREVO_API_KEY",
         )
 
     try:
@@ -193,7 +193,7 @@ def _dispatch_invite_email(
         )
     except Exception:
         logger.exception(
-            "Failed to send invite email — invite %s created but email did not go out",
+            "Failed to send invite email. Invite %s created but email did not go out",
             invite_id,
         )
 
@@ -231,7 +231,7 @@ def _map_invite_error(err: InviteError) -> HTTPException:
 @router.post("", response_model=InviteCreatedResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("15/hour")
 def create_invite(
-    request: Request,  # noqa: ARG001 — required by SlowAPI decorator
+    request: Request,  # noqa: ARG001  Required by SlowAPI decorator
     body: CreateInviteRequest,
     auth: dict = Depends(get_current_client_or_operator),
     _verified: None = Depends(require_verified_email_for_workspace),
@@ -251,7 +251,7 @@ def create_invite(
             linked_id = auth.get("linked_client_id") or auth["entity"].linked_client_id
             if linked_id is None:
                 # A legacy operator (own password, no linked Client identity) can
-                # still be an admin — but they can't send invites in v1 because
+                # still be an admin, but they can't send invites in v1 because
                 # we need a Client identity to attribute the invite to.
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -289,7 +289,7 @@ def create_invite(
         target_email = invite.email
         session.commit()
 
-    # Fire the email OUTSIDE the DB transaction — Brevo failures must never
+    # Fire the email OUTSIDE the DB transaction. Brevo failures must never
     # roll back an accepted invite row.
     accept_url = _accept_url_for_token(plaintext_token)
     _dispatch_invite_email(
@@ -352,7 +352,7 @@ def resend_invite(
             raise _map_invite_error(err) from err
         view = _invite_to_view(invite)
         workspace_name = _resolve_workspace_name(session, workspace_id)
-        # Snapshot every field we need OUTSIDE the session before commit — see
+        # Snapshot every field we need OUTSIDE the session before commit. See
         # ``create_invite`` for the DetachedInstanceError rationale.
         actor_name = actor.name
         target_email = invite.email
@@ -400,7 +400,7 @@ def revoke_invite(
 def get_invite_public(request: Request, token: InviteToken):  # noqa: ARG001
     """Look up an invite by plaintext token.
 
-    Unauthenticated — the airlock page uses this before login to render the
+    Unauthenticated, the airlock page uses this before login to render the
     correct state (signup vs login vs accept). Returns only workspace + inviter
     name + status + target email; no IDs or tokens are leaked.
 
@@ -415,7 +415,7 @@ def get_invite_public(request: Request, token: InviteToken):  # noqa: ARG001
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": "invite_not_found", "message": "This invite link is invalid."},
             )
-        # Lazy expire — so an invite pending past its TTL surfaces as "expired"
+        # Lazy expire, so an invite pending past its TTL surfaces as "expired"
         # here rather than silently accepting.
         invite_service._mark_expired_if_stale(session, invite)  # noqa: SLF001
         workspace_name = _resolve_workspace_name(session, invite.client_id)
@@ -436,7 +436,7 @@ class AcceptInviteResponse(BaseModel):
     workspace_name: str
     operator_id: int
     role: str
-    # Where the frontend should land after accept — the invited workspace's
+    # Where the frontend should land after accept, the invited workspace's
     # /support page. Included so the airlock page can navigate without a
     # separate lookup.
     redirect_url: str
@@ -451,14 +451,14 @@ def accept_invite_public(
 ):
     """Accept the invite as the currently-authenticated Client.
 
-    ``X-API-Key`` ONLY — deliberately uses ``get_current_client_strict``
+    ``X-API-Key`` ONLY. Deliberately uses ``get_current_client_strict``
     instead of ``get_current_client``. The latter accepts ``X-Operator-Key``
     and resolves it to the **workspace owner's** Client, which would silently
     bind the resulting linked-Operator row to the wrong identity if a legacy
     operator (whose Client is Acme's owner) clicked their own invite link.
 
     A legacy operator who genuinely wants to accept an invite has to sign
-    out and log in as their personal Client account first — matches the
+    out and log in as their personal Client account first. Matches the
     airlock's own "one identity per acceptance" model.
 
     Case-insensitive email match between the invite target and the caller's
@@ -507,15 +507,15 @@ def add_self_as_operator(
 ):
     """Add the calling Client as an operator in their own workspace.
 
-    Idempotent — returns the existing row if the caller already self-added
+    Idempotent. Returns the existing row if the caller already self-added
     (reactivating a previously left row via ``DELETE /me/self-operator``).
     The self-operator row has ``role='owner'`` and ``linked_client_id == id``
     where both point at the caller's Client identity (which is also the
     workspace ID by design).
 
-    Feature-gated by ``live_chat`` — a Free-tier owner CANNOT self-add.
+    Feature-gated by ``live_chat``, a Free-tier owner CANNOT self-add.
 
-    Seat-counted like every other operator — the workspace owner acting as
+    Seat-counted like every other operator, the workspace owner acting as
     an operator consumes 1 of their plan's operator seats, same as an
     invited teammate. This matches industry-standard per-seat pricing
     (Slack, Intercom, Notion, Linear all count owner-as-agent). See
@@ -532,7 +532,7 @@ def add_self_as_operator(
     identity authenticating as their true self can self-add.
     """
     with get_session() as session:
-        # Feature gate — reuses the shared invite-service helper so the
+        # Feature gate. Reuses the shared invite-service helper so the
         # rejection semantics stay in one place. Superadmin bypass applied
         # inside the helper.
         try:
@@ -541,7 +541,7 @@ def add_self_as_operator(
             raise _map_invite_error(err) from err
 
         # Validate the bot belongs to this workspace before touching operator
-        # state — reject fast rather than accidentally binding self-op to
+        # state. Reject fast rather than accidentally binding self-op to
         # a bot the caller doesn't own.
         bot_row = session.execute(
             select(Bot.id).where(Bot.id == body.bot_id, Bot.client_id == client.id)
@@ -556,7 +556,7 @@ def add_self_as_operator(
             )
         ).scalar_one_or_none()
 
-        # Already active AND on the same bot — pure idempotent no-op. Do NOT
+        # Already active AND on the same bot. Pure idempotent no-op. Do NOT
         # re-run the seat check; the row's existing ``is_active=True`` is
         # already in current usage. Bot mismatch falls through and reassigns.
         if existing is not None and existing.is_active and existing.bot_id == body.bot_id:
@@ -569,13 +569,13 @@ def add_self_as_operator(
             )
 
         # Either reactivating a soft-deleted row or creating fresh. Both
-        # paths flip an inactive/absent seat to active — that consumes one
+        # paths flip an inactive/absent seat to active. That consumes one
         # of the plan's operator seats, so gate on the seat check now. The
         # helper takes a ``FOR UPDATE`` lock on the workspace's subscription
         # so a concurrent invite-create + self-op race can't both squeak
         # past the limit.
         try:
-            # Seats are per-bot — gate against the target bot the owner is
+            # Seats are per-bot. Gate against the target bot the owner is
             # self-adding to, not the workspace-wide operator total.
             invite_service._require_seat_available(session, client.id, body.bot_id)  # noqa: SLF001
         except InviteError as err:
@@ -629,8 +629,8 @@ def remove_self_as_operator(client: Client = Depends(get_current_client_strict))
 
     Sets ``is_active = False`` rather than deleting the row so historical
     chat sessions and audit logs still reference a stable operator. A later
-    ``POST /me/self-operator`` reactivates the same row. Idempotent —
-    calling this when no self-operator exists (or when it's already
+    ``POST /me/self-operator`` reactivates the same row. Idempotent.
+    Calling this when no self-operator exists (or when it's already
     inactive) is a no-op.
 
     In-flight live chats aren't force-closed: the assigned chat completes
@@ -670,7 +670,7 @@ def list_my_workspaces(client: Client = Depends(get_current_client)):
     # suspended_at). ``company_name`` is NOT in that set, so accessing it
     # would trigger a lazy refresh on a detached instance and raise
     # ``DetachedInstanceError``. We snapshot the id up front and re-query the
-    # display fields via column selects — cheaper than a full re-attach and
+    # display fields via column selects. Cheaper than a full re-attach and
     # avoids depending on which attributes the auth path chose to warm.
     caller_id = client.id
     with get_session() as session:
@@ -678,12 +678,12 @@ def list_my_workspaces(client: Client = Depends(get_current_client)):
             select(Client.company_name, Client.name, Client.email).where(Client.id == caller_id)
         ).first()
         if caller_row is None:
-            # Client vanished between auth resolution and now — treat as no
+            # Client vanished between auth resolution and now. Treat as no
             # accessible workspaces rather than 500.
             return MeWorkspacesResponse(workspaces=[])
         caller_company_name, caller_name, caller_email = caller_row
 
-        # Owner path — the caller's own workspace. Frontend hides this entry
+        # Owner path, the caller's own workspace. Frontend hides this entry
         # from the switcher list when ``bot_count == 0`` AND the caller is
         # invited-only (see ``isInvitedOnly`` on WorkspaceContext), but we
         # always return it so the client can compute that state.
@@ -700,14 +700,14 @@ def list_my_workspaces(client: Client = Depends(get_current_client)):
             bot_count=owner_bot_count,
         )
 
-        # Linked-operator memberships — one row per workspace where the caller
+        # Linked-operator memberships, one row per workspace where the caller
         # holds an active linked-operator role. The partial unique index
         # ``ux_operators_linked_per_workspace`` guarantees at most one row per
         # (workspace, caller) so no dedup is needed.
         #
         # EXCLUDES the self-operator row (workspace owner acting as operator in
         # their own workspace). That row has ``client_id == linked_client_id ==
-        # caller_id`` — if we let it through here it would appear as a separate
+        # caller_id``. If we let it through here it would appear as a separate
         # "operator" workspace entry alongside the owner entry we just added,
         # inflating ``workspaces.length`` and making the switcher pill show up
         # for a solo owner who has no real cross-workspace memberships.
@@ -754,7 +754,7 @@ def list_my_workspaces(client: Client = Depends(get_current_client)):
             )
 
         # Owner entry always first; operator entries alphabetical by display
-        # name — mirrors the frontend switcher's own ordering.
+        # name. Mirrors the frontend switcher's own ordering.
         operator_entries.sort(key=lambda w: w.name.lower())
         return MeWorkspacesResponse(workspaces=[owner_entry, *operator_entries])
 
@@ -781,7 +781,7 @@ def _resolve_actor_client(session, auth: dict) -> Client:
 
 
 def _resolve_workspace_name(session, workspace_id: int) -> str:
-    """Best display name for a workspace — company name > client name > email."""
+    """Best display name for a workspace. Company name > client name > email."""
     row = session.execute(
         select(Client.company_name, Client.name, Client.email).where(Client.id == workspace_id)
     ).first()

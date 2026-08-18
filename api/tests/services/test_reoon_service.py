@@ -59,7 +59,7 @@ def test_verify_email_returns_none_without_api_key(monkeypatch):
 def test_verify_email_includes_junk_detection_fields(monkeypatch):
     """The submit-time widget gate (chat_routes.validate_email_endpoint)
     needs these three fields to tell "clear junk" apart from "unconfirmed
-    catch-all" — see docs/superpowers/plans/2026-08-08-visitor-intelligence.md."""
+    catch-all". See docs/superpowers/plans/2026-08-08-visitor-intelligence.md."""
     monkeypatch.setenv("REOON_API_KEY", "test-key")
     payload = {
         "status": "disposable",

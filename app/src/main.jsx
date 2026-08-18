@@ -49,7 +49,7 @@ if (!impersonationHandoffToken && !isImpersonating() && isSessionExpired()) {
 // Dev builds and anything served from localhost are excluded: the DSN lives in
 // developers' local .env too, and without this gate every hot-reload crash and
 // half-finished refactor raises a Sentry alert that buries real production
-// issues. `PROD` alone is not enough — `vite preview` serves a PROD build from
+// issues. `PROD` alone is not enough. `vite preview` serves a PROD build from
 // localhost.
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
 if (SENTRY_DSN && import.meta.env.PROD && !isLocalHostname(window.location.hostname)) {
@@ -59,7 +59,7 @@ if (SENTRY_DSN && import.meta.env.PROD && !isLocalHostname(window.location.hostn
     // Errors + light tracing only. Session Replay, Profiling and structured
     // Logs are deliberately NOT enabled: we are on the Sentry free plan, where
     // exhausting any one of those quotas pauses ingestion for the whole
-    // project — taking error reporting down with it. Do not add
+    // project. Taking error reporting down with it. Do not add
     // replayIntegration / browserProfilingIntegration / enableLogs without a
     // paid plan behind them.
     integrations: [Sentry.browserTracingIntegration()],

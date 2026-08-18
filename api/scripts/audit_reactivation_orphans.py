@@ -5,8 +5,8 @@ mutating Razorpay endpoint.
 
 Background: ``/subscriptions/cancel`` used to issue Razorpay's cancel
 immediately, ~30 days before the plan actually ended. Razorpay has no
-un-cancel, so ``/subscriptions/resume`` had to mint a FRESH subscription —
-which, minted without ``start_at``, Razorpay started and charged in full right
+un-cancel, so ``/subscriptions/resume`` had to mint a FRESH subscription.
+Which, minted without ``start_at``, Razorpay started and charged in full right
 away. Two failure modes came out of that:
 
 1. **Double-charged overlap.** The customer paid a second full cycle for days
@@ -47,9 +47,9 @@ from app.services import credit_service, razorpay_service
 def _fetch_gateway_state(razorpay_subscription_id: str) -> dict[str, Any]:
     """Best-effort read of a Razorpay subscription. Never raises."""
     try:
-        rzp = razorpay_service._get_razorpay()  # noqa: SLF001 — ops script, read-only
+        rzp = razorpay_service._get_razorpay()  # noqa: SLF001. Ops script, read-only
         entity = rzp.subscription.fetch(razorpay_subscription_id)
-    except Exception as exc:  # noqa: BLE001 — a fetch failure is data, not a crash
+    except Exception as exc:  # noqa: BLE001, a fetch failure is data, not a crash
         return {"error": str(exc)}
     return {
         "status": entity.get("status"),
@@ -149,15 +149,15 @@ def collect(session) -> list[dict[str, Any]]:
 
 def _verdict(adopted: bool, gateway: dict[str, Any], has_paid_invoice: bool) -> str:
     if "error" in gateway:
-        return "GATEWAY_UNREACHABLE — could not read Razorpay; re-run before deciding"
+        return "GATEWAY_UNREACHABLE. Could not read Razorpay; re-run before deciding"
     status = (gateway.get("status") or "").lower()
     if not adopted and status in ("active", "authenticated"):
-        return "ORPHAN_MANDATE — live at Razorpay with no local row; will keep debiting. Adopt or cancel."
+        return "ORPHAN_MANDATE. Live at Razorpay with no local row; will keep debiting. Adopt or cancel."
     if not adopted:
-        return f"ABANDONED_CHECKOUT — never authorised (gateway status '{status}'); safe to clear the marker."
+        return f"ABANDONED_CHECKOUT, never authorised (gateway status '{status}'); safe to clear the marker."
     if has_paid_invoice and int(gateway.get("paid_count") or 0) >= 1:
-        return "CHARGED — reactivation was billed. Check the overlap against the old period end for a refund."
-    return "ADOPTED — local row exists; verify the period dates line up."
+        return "CHARGED. Reactivation was billed. Check the overlap against the old period end for a refund."
+    return "ADOPTED. Local row exists; verify the period dates line up."
 
 
 def main() -> int:

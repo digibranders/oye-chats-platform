@@ -63,7 +63,7 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
         e.preventDefault();
         setError('');
         if (!formatValid) {
-            setError("Code must be 3–20 characters of letters, digits, '_' or '-'.");
+            setError("Code must be 3 to 20 characters of letters, digits, '_' or '-'.");
             return;
         }
         if (myCommission !== '' && (!Number.isFinite(myNum) || myNum < 0 || myNum > 100)) {
@@ -177,7 +177,7 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
                                     disabled={isSaving}
                                 />
                                 <p className="text-[11px] text-surface-500 dark:text-surface-400">
-                                    3–20 characters · letters, digits, hyphens, underscores · case-insensitive
+                                    3 to 20 characters · letters, digits, hyphens, underscores · case-insensitive
                                 </p>
                             </div>
 

@@ -90,7 +90,7 @@ export function AgentCreditHero({ pool, agentName, onTopup }: AgentCreditHeroPro
         {/* Facts + CTA */}
         <div className="flex flex-col gap-4 border-t border-[var(--ds-border)] pt-5 lg:min-w-[220px] lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
           {/* "Roll over" IS "never expire", and it was printed unconditionally
-              — directly above a section that states a real expiry date when
+             . Directly above a section that states a real expiry date when
               there is one. Whether top-ups expire is a term of sale, so this
               states only what this pool's own ledger proves: the date when a
               grant is dated, "Never expire" only when grants exist and none

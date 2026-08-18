@@ -1,14 +1,14 @@
 """The deploy workflow's `.env` block and its `envs:` allow-list must agree.
 
 `deploy-api.yml` rewrites `api/.env` in full on every deploy, so the droplet's
-configuration is entirely what that block writes — a hand-edit on the box
+configuration is entirely what that block writes, a hand-edit on the box
 survives only until the next push. The block interpolates shell variables that
 `appleboy/ssh-action` only forwards if they are named in its `envs:` list. Miss
 the list and the variable is simply empty inside the remote script: the deploy
 goes green, the `.env` line is written as `FOO=`, and the feature is off (or
 worse, the credential is blank) with nothing anywhere saying so.
 
-That is not hypothetical — it is how `CRAWL_FAVICON_AVATAR_ENABLED` shipped
+That is not hypothetical, it is how `CRAWL_FAVICON_AVATAR_ENABLED` shipped
 unreachable: defined in `config.py`, read by the crawl orchestrator, and never
 passed to production at all.
 
@@ -52,7 +52,7 @@ def _allow_list(text: str) -> set[str]:
 def _env_file_references(text: str) -> set[str]:
     """Every `${VAR}` / `${VAR:-default}` interpolated into a `"KEY=..."` line.
 
-    Deliberately does not require the closing quote right after `}` — a line
+    Deliberately does not require the closing quote right after `}`, a line
     like `"CORS_ORIGINS=${CORS_ORIGINS},https://x"` is perfectly ordinary, and
     anchoring on it would silently drop that variable from the comparison and
     fail the reverse check with a misleading message.
@@ -81,7 +81,7 @@ def test_the_favicon_avatar_flag_is_deployable_and_defaults_off(workflow):
     An unset variable interpolates to the empty string. `config.py`'s `_env`
     already treats an empty value as absent and falls back to "false", so the
     `:-false` here is the second of two independent defaults, not the only
-    one — but it is the one that keeps `api/.env` on the droplet readable as
+    one, but it is the one that keeps `api/.env` on the droplet readable as
     a statement of intent rather than a blank."""
     assert "CRAWL_FAVICON_AVATAR_ENABLED: ${{ vars.CRAWL_FAVICON_AVATAR_ENABLED }}" in workflow
     assert "CRAWL_FAVICON_AVATAR_ENABLED" in _allow_list(workflow)
@@ -90,7 +90,7 @@ def test_the_favicon_avatar_flag_is_deployable_and_defaults_off(workflow):
 
 def test_the_flag_is_still_shipped_off_in_code():
     """The same decision from the other side. Takes no `workflow` fixture on
-    purpose — this holds in a checkout with no `.github` at all, and skipping
+    purpose. This holds in a checkout with no `.github` at all, and skipping
     it along with the workflow tests would lose the only assertion that the
     code default itself has not been flipped."""
     from app.config import CRAWL_FAVICON_AVATAR_ENABLED

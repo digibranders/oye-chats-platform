@@ -103,7 +103,7 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
     <Card>
       {/* `CardContent` zeroes its top padding (it's meant to pair with a
           CardHeader). This panel has no header, so restore the top padding to
-          match the card's other sides — otherwise the heading hugs the border. */}
+          match the card's other sides. Otherwise the heading hugs the border. */}
       <CardContent className="pt-5 space-y-8">
         {/* ── Subscription mandate ─────────────────────────────────────── */}
         <div>
@@ -121,7 +121,7 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
                   </p>
                   <p className="mt-0.5 text-[var(--ds-text-muted)]">
                     Held securely by Razorpay. To pay with a different instrument, cancel and
-                    reactivate — Razorpay authorises a new mandate rather than swapping the old one.
+                    reactivate. Razorpay authorises a new mandate rather than swapping the old one.
                   </p>
                 </>
               ) : (
@@ -199,7 +199,7 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
 
           <p className={cn('mt-5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]')}>
             We never see or store your card number. Only the last four digits, the network and the
-            issuing bank are kept — RBI rules prohibit storing anything more.
+            issuing bank are kept. RBI rules prohibit storing anything more.
           </p>
         </div>
       </CardContent>

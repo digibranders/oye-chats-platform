@@ -2,7 +2,7 @@
  * `getEmbedEnvironment` decides whether the copy-paste embed snippet points at
  * the locally served widget preview or the production CDN. A local API endpoint
  * must select the local widget (the two have to be able to talk to each other);
- * everything else — including a malformed URL — must fail safe to production.
+ * everything else (including a malformed URL) must fail safe to production.
  */
 import { describe, expect, it } from 'vitest';
 

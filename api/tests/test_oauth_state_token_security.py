@@ -6,7 +6,7 @@ the token can be *attacked*, which is what the token exists for: ``state`` is
 the CSRF defence on the OAuth callback, and it also carries promo/affiliate
 attribution that a user must not be able to self-grant.
 
-Every check below fails if the corresponding guard is removed — swapping
+Every check below fails if the corresponding guard is removed. Swapping
 ``hmac.compare_digest`` for ``==`` still passes the existing round-trip test,
 but forging a signature here would then succeed.
 """
@@ -55,7 +55,7 @@ def test_issued_token_verifies_and_carries_its_payload():
     assert payload["mode"] == "register"
     assert payload["promo"] == "SAVE10"
     assert payload["ref"] == "AFF9"
-    assert payload["n"]  # nonce present — the cookie/URL pair is built on it
+    assert payload["n"]  # nonce present, the cookie/URL pair is built on it
 
 
 def test_each_token_carries_a_fresh_nonce():
@@ -83,7 +83,7 @@ def test_tampered_payload_is_rejected():
 
 
 def test_redirect_target_cannot_be_rewritten():
-    """``next`` drives a post-login redirect — an open-redirect vector if it
+    """``next`` drives a post-login redirect, an open-redirect vector if it
     could be swapped without invalidating the signature."""
     token = issue_state_token(next_path="/billing")
     body, sig = _split(token)
@@ -143,7 +143,7 @@ def test_non_json_payload_is_rejected_without_leaking_an_internal_error():
 
 
 def test_expired_token_is_rejected():
-    """A correctly-signed but stale state token must not be replayable — this is
+    """A correctly-signed but stale state token must not be replayable. This is
     the window an intercepted callback URL would be reused in."""
     from app.services import oauth_service
 
@@ -179,7 +179,7 @@ def test_token_with_missing_or_zero_timestamp_is_rejected():
 
 
 def test_a_token_just_inside_the_window_still_verifies():
-    """Boundary in the other direction — the expiry check must not reject a
+    """Boundary in the other direction, the expiry check must not reject a
     token that is still legitimately fresh."""
     from app.services import oauth_service
 

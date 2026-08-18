@@ -1,17 +1,17 @@
 """CAS session transitions for the WS close paths + live queue size (audit F31, F33).
 
-F31 — the ``leave_queue`` / ``visitor_end_chat`` / ``close_chat`` WS handlers
+F31, the ``leave_queue`` / ``visitor_end_chat`` / ``close_chat`` WS handlers
 mutated ``ChatSession.status`` with a plain read-then-write, bypassing the
 CAS-protected state machine. An operator accept (``waiting → live`` via a
 guarded UPDATE) interleaving with a visitor's leave-queue write could be
-silently clobbered back to ``bot`` — operator chatting into a dead session.
+silently clobbered back to ``bot``. Operator chatting into a dead session.
 The handlers now route through module-level helpers that call
 ``transition_session`` with ``expected_current`` (row-locked CAS + audit log).
 
-F33 — ``_current_queue_size`` counted ``LiveChatQueueEntry`` rows, but no code
+F33. ``_current_queue_size`` counted ``LiveChatQueueEntry`` rows, but no code
 path ever populates that table, so QUEUE_FULL protection (and real queue
-positions) were permanently dead. It now counts ``waiting`` ChatSessions —
-the state every handoff/accept/timeout path actually maintains — with a
+positions) were permanently dead. It now counts ``waiting`` ChatSessions
+(the state every handoff/accept/timeout path actually maintains) with a
 staleness bound so crash-orphaned rows can't brick the queue.
 """
 
@@ -62,8 +62,8 @@ def _audit_actions(db, sid):
 
 def test_cas_rejects_when_already_at_target_but_expected_state_lost(wired):
     # The session is ALREADY 'bot' (e.g. a timeout fired first). A CAS that
-    # expected 'waiting' must FAIL, not short-circuit as idempotent success —
-    # callers key side effects (system message, close broadcast) off success.
+    # expected 'waiting' must FAIL, not short-circuit as idempotent success.
+    # Callers key side effects (system message, close broadcast) off success.
     _mk_session(wired, "cas-1", "bot")
     with pytest.raises(InvalidTransitionError):
         transition_session("cas-1", "bot", expected_current="waiting", audit_action="visitor_left_queue")
@@ -97,7 +97,7 @@ def test_leave_queue_helper_flips_waiting_and_reports_race_loss(wired):
     assert wired.get(ChatSession, "lq-1").status == "bot"
     assert _audit_actions(wired, "lq-1") == ["visitor_left_queue"]
 
-    _mk_session(wired, "lq-2", "live")  # accept won — leave_queue must lose
+    _mk_session(wired, "lq-2", "live")  # accept won. Leave_queue must lose
     assert ws_routes._leave_queue_transition("lq-2") is False
     assert wired.get(ChatSession, "lq-2").status == "live"
 
@@ -122,7 +122,7 @@ def test_operator_close_helper_never_resurrects_closed_sessions(wired):
     c = Client(name="W", email="cas-op@test.example", api_key="key-cas-op")
     wired.add(c)
     wired.flush()
-    # ``Operator.bot_id`` is NOT NULL — seed a bot in the workspace and bind
+    # ``Operator.bot_id`` is NOT NULL. Seed a bot in the workspace and bind
     # the operator to it. The test's close-transition path doesn't inspect
     # the binding; the FK constraint is the only reason we need it here.
     b = Bot(client_id=c.id, name="B", bot_key="bot-cas-op")
@@ -186,6 +186,6 @@ def test_queue_size_ignores_crash_orphaned_stale_waiting_rows(db):
     db.commit()
 
     # A row abandoned hours ago (crashed worker, lost timeout task) must not
-    # count toward QUEUE_FULL — that would permanently push visitors to the
+    # count toward QUEUE_FULL. That would permanently push visitors to the
     # offline form.
     assert _current_queue_size(b.id, db) == 1

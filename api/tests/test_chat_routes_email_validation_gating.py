@@ -1,6 +1,6 @@
 """Plan gating for real-time email validation (Standard + Professional).
 
-A Free/Starter bot must never fire the paid Reoon call — not just have its
+A Free/Starter bot must never fire the paid Reoon call, not just have its
 result hidden. Both the real-time widget endpoint and the background
 lead-enrichment path are covered.
 """
@@ -23,7 +23,7 @@ def _no_verdict_cache(monkeypatch):
     verdict in a live Redis keyed only on the address, so the first run of
     `test_runs_reoon_when_plan_has_feature_and_agent_opted_in` cached
     "undeliverable" for `junk@disposable-mail.test` and every run for the rest
-    of the TTL then read the cache and never reached the mock — a test that
+    of the TTL then read the cache and never reached the mock, a test that
     passed on a clean Redis and failed for hours afterwards. The cache's own
     behaviour is covered in `test_reoon_verdict_cache.py`.
     """
@@ -112,8 +112,8 @@ class TestBackgroundEnrichmentGating:
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
 
-        mock_domain.assert_called_once()  # free — always runs
-        mock_verify.assert_not_called()  # paid — gated
+        mock_domain.assert_called_once()  # free. Always runs
+        mock_verify.assert_not_called()  # paid. Gated
 
     def test_reoon_runs_for_bot_with_feature_and_credits(self, monkeypatch):
         from app.api import chat_routes
@@ -183,9 +183,9 @@ class TestBackgroundEnrichmentGating:
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
 
-        mock_domain.assert_called_once()  # free — still runs
+        mock_domain.assert_called_once()  # free. Still runs
         mock_charge.assert_not_called()  # never even reaches the charge
-        mock_verify.assert_not_called()  # metered — skipped when opted out
+        mock_verify.assert_not_called()  # metered. Skipped when opted out
 
     def test_reoon_skipped_when_credits_insufficient(self, monkeypatch):
         """Plan + agent opt-in OK, but the ledger can't cover the charge → skip."""
@@ -213,5 +213,5 @@ class TestBackgroundEnrichmentGating:
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
 
-        mock_domain.assert_called_once()  # free — still runs
-        mock_verify.assert_not_called()  # metered — skipped when unpaid
+        mock_domain.assert_called_once()  # free. Still runs
+        mock_verify.assert_not_called()  # metered. Skipped when unpaid

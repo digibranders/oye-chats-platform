@@ -1,4 +1,4 @@
-"""GST tax engine — pure, integer-paise computation, no I/O.
+"""GST tax engine. Pure, integer-paise computation, no I/O.
 
 Given a charge amount and the supply classification, produces the CGST/SGST/
 IGST breakup that later invoicing phases snapshot onto the invoice. Every
@@ -6,10 +6,10 @@ result reconciles exactly: ``taxable + total_tax == total`` and
 ``cgst + sgst + igst == total_tax`` (single rounding point + largest-remainder
 split), which is the property a GST audit checks.
 
-CGST/SGST split — deliberate convention: we round ``total_tax`` once and split
+CGST/SGST split. Deliberate convention: we round ``total_tax`` once and split
 it (``cgst = total_tax // 2``, odd paisa → SGST), rather than rounding each
 half independently from ``rate/2``. This guarantees ``cgst + sgst`` equals the
-carved-out ``total_tax`` with no reconciliation gap — per-component rounding
+carved-out ``total_tax`` with no reconciliation gap. Per-component rounding
 can make the halves sum to ``total_tax ± 1`` paisa and break the inclusive
 "customer pays exactly the sticker price" invariant. The two methods coincide
 exactly at whole-rupee taxable bases (the only granularity billed here); they
@@ -43,8 +43,8 @@ class TaxBreakup:
     total_minor: int
     is_export: bool  # derived: supply_kind == "export"
     supply_kind: SupplyKind
-    rate_bps: int  # the full GST rate applied — snapshotted so the PDF can print "@ 18%"
-    # True only for a zero-rated export under a filed LUT — distinguishes that
+    rate_bps: int  # the full GST rate applied (snapshotted so the PDF can print "@ 18%"
+    # True only for a zero-rated export under a filed LUT) distinguishes that
     # legend-bearing case from a genuine 0%-rate supply (both have zero tax).
     zero_rated_export: bool = False
 
@@ -53,7 +53,7 @@ def _round_half_up(numerator: int, denominator: int) -> int:
     """Round ``numerator / denominator`` to the nearest integer, halves up.
 
     Integer-only (no float): ``floor((n + d/2) / d) == (2n + d) // (2d)`` for
-    non-negative inputs — avoids binary-float rounding drift on money.
+    non-negative inputs. Avoids binary-float rounding drift on money.
     """
     return (2 * numerator + denominator) // (2 * denominator)
 
@@ -62,14 +62,14 @@ def supply_kind(seller_state: str | None, buyer_state: str | None, buyer_country
     """Classify a supply as intra / inter / export.
 
     A non-Indian buyer country is an export. Domestically, the supply is
-    intra-state when the buyer's state matches the seller's — and, per Circular
+    intra-state when the buyer's state matches the seller's, and, per Circular
     242/36/2024, a B2C sale with no state on record has its place of supply at
     the supplier's location, i.e. intra-state.
 
     Precondition: ``seller_state`` and ``buyer_state`` must already be canonical
     2-char zero-padded GST state codes (as produced by ``seller_profile_service``
     and validated on ``Client.billing_state_code``). This function compares them
-    literally and does NOT re-pad — ``"7"`` and ``"07"`` would classify as
+    literally and does NOT re-pad. ``"7"`` and ``"07"`` would classify as
     inter-state. Whitespace is tolerated; zero-padding is the caller's job.
     """
     # Empty / whitespace-only country means "no country on record" → domestic,
@@ -108,7 +108,7 @@ def compute_tax(
 
     is_export = kind == "export"
 
-    # Export under a filed LUT is zero-rated — no tax carved out or added.
+    # Export under a filed LUT is zero-rated, no tax carved out or added.
     if is_export and lut_active:
         return TaxBreakup(
             taxable_minor=amount_minor,

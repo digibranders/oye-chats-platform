@@ -31,7 +31,7 @@ import { Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
  * @param {boolean} [props.disabled] - Hard-disable the trigger (e.g. crawl already running).
  */
 // Plan slugs that unlock delta recrawl. Mirrors
-// `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test —
+// `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test,
 // a bespoke per-contract slug is NOT granted delta here, matching the server.
 const DELTA_RECRAWL_SLUGS = new Set(['standard', 'professional', 'enterprise']);
 

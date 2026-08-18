@@ -6,7 +6,7 @@ Urgency starts at day 3, when retries are genuinely exhausted.
 
 The cadence CATCHES UP to the newest unsent bucket rather than matching an
 exact day. Exact matching silently dropped an email forever whenever a tick was
-missed — and not only on a worker outage: any tick where the gateway lookup
+missed, and not only on a worker outage: any tick where the gateway lookup
 failed left the marker unwritten and burned that bucket. Losing day 5 means a
 customer is suspended having received only "don't worry, we'll retry".
 """

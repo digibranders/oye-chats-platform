@@ -113,7 +113,7 @@ export interface SessionDetails {
   page_url: string | null;
   /** Where the visitor arrived from. */
   referrer: string | null;
-  /** Post-chat satisfaction rating (1–5), or null when not rated. */
+  /** Post-chat satisfaction rating (1 to 5), or null when not rated. */
   visitor_rating: number | null;
   bant: { need: string | null; timeline: string | null; authority: string | null; budget: string | null } | null;
   lead_info: {

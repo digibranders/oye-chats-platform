@@ -11,14 +11,14 @@ const FIELD_CONFIG = {
     company: { label: 'Company', icon: Building2, type: 'text', placeholder: 'Acme Inc.' },
 };
 
-// Inline pre-chat lead form. Renders WITHIN the chat window's messages area —
+// Inline pre-chat lead form. Renders WITHIN the chat window's messages area,
 // the parent ChatWindow already supplies the header (bot avatar, name, close
 // button) and outer container, so this component MUST NOT render its own.
 // Adding chrome here produces a "second chat window stacked on top" look.
 const LeadCaptureForm = ({ settings, onSubmit }) => {
     // Email-first by default so the real-time check below (fires on blur)
     // runs in the background while the visitor fills in the remaining
-    // fields. Only applies when the customer hasn't set their own order —
+    // fields. Only applies when the customer hasn't set their own order,
     // an explicit settings.lead_form_fields is never silently reordered.
     const fields = settings?.lead_form_fields || [
         { field: 'email', required: true },
@@ -35,7 +35,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur from the email field — validates in the background
+    // Fires on blur from the email field. Validates in the background
     // while the visitor moves on to the next field.
     const handleEmailBlur = () => {
         const email = formData.email?.trim();

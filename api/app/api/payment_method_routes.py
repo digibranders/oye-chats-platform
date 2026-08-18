@@ -2,7 +2,7 @@
 
 Scope note: these are instruments for ONE-OFF payments (credit top-ups). The
 instrument funding a subscription is its MANDATE, which Razorpay cannot swap in
-place — replacing that runs the re-mandate flow via ``/subscriptions/resume``,
+place. Replacing that runs the re-mandate flow via ``/subscriptions/resume``,
 not an endpoint here. Conflating the two would promise a swap the gateway
 cannot perform.
 """
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/payment-methods", tags=["billing"])
 
 
 def _serialize(row: PaymentMethod) -> dict:
-    """RBI-permitted fields only — there is deliberately no expiry to expose."""
+    """RBI-permitted fields only. There is deliberately no expiry to expose."""
     return {
         "id": row.id,
         "token_id": row.razorpay_token_id,
@@ -52,7 +52,7 @@ def list_payment_methods(request: Request, client: Client = Depends(get_current_
 
     Serves the local mirror and only calls Razorpay when it is stale, or when
     ``?refresh=true``. A naive read-through would fire one gateway call per
-    Billing page load — burning our rate limit and turning a page refresh into
+    Billing page load. Burning our rate limit and turning a page refresh into
     a DoS against our own Razorpay account. The rate limit is a second
     backstop.
 

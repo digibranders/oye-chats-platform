@@ -73,7 +73,7 @@ function rowValues(label: string): string[] {
   );
 }
 
-describe('PlanMatrix — AI chatbots included row', () => {
+describe('PlanMatrix. AI chatbots included row', () => {
   it('renders the unlimited sentinel as "Unlimited", never as a count of -1', () => {
     renderMatrix();
     expect(rowValues('AI chatbots included (add more anytime)').at(-1)).toBe('Unlimited');

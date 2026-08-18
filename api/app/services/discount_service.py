@@ -53,7 +53,7 @@ def resolve_referral_conversion_snapshot(session: Session, client: Client) -> di
 
     Unlike :func:`resolve_customer_discount_bps`, this does NOT gate on a
     non-zero customer discount: a COMMISSION-ONLY code (``customer_discount_bps
-    == 0`` — the affiliate still earns a pool cut, the customer just gets no
+    == 0``, the affiliate still earns a pool cut, the customer just gets no
     discount) is a real referral conversion and must be recorded, otherwise the
     super-admin referral-conversions view systematically undercounts (finding
     MED-2). Returns ``None`` only when there is no active attributed code (no

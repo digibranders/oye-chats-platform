@@ -1,4 +1,4 @@
-"""Credit notes — CN series, proportional tax reversal, idempotency, wiring."""
+"""Credit notes. CN series, proportional tax reversal, idempotency, wiring."""
 
 import os
 import threading
@@ -113,8 +113,8 @@ def test_refund_exceeding_original_is_clamped(db, enabled):
 
 
 def test_refund_created_claws_but_does_not_issue_note(db, enabled):
-    # refund.created = initiated, not settled. A bank refund can still FAIL —
-    # issuing the Section 34 document here would risk a credit note for a
+    # refund.created = initiated, not settled. A bank refund can still FAIL.
+    # Issuing the Section 34 document here would risk a credit note for a
     # refund that never happened (F1).
     from app.services import razorpay_service as rzp
 
@@ -205,12 +205,12 @@ def test_issued_datetime_of_finalize(db, enabled):
 def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
     """Two DISTINCT reversal events for the SAME original invoice, processed by
     genuinely overlapping transactions (not just sequential calls in one
-    session — see ``test_refund_then_dispute_cannot_over_reverse`` for that),
+    session. See ``test_refund_then_dispute_cannot_over_reverse`` for that),
     must not both read ``already_reversed`` as 0 and over-reverse.
 
     Session A takes the row lock ``create_credit_note`` now takes, inserts its
     reversal, and holds the transaction open (uncommitted) for a moment.
-    Session B's ``create_credit_note`` call — for the SAME original invoice —
+    Session B's ``create_credit_note`` call (for the SAME original invoice)
     must block on that lock rather than proceeding with a stale read, and only
     resume once A commits, then correctly see A's reversal and clamp its own
     to whatever's left."""
@@ -280,7 +280,7 @@ def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
     assert elapsed >= MIN_BLOCKED_SECONDS, "session B must block on session A's row lock, not race past it"
 
     # Session A reversed 89,950 first; session B must see that and clamp its
-    # own reversal to the 89,950 still remaining — never over-reversing past
+    # own reversal to the 89,950 still remaining, never over-reversing past
     # the original invoice's 179,900.
     assert note_b is not None
     assert note_b.amount_cents == 89950

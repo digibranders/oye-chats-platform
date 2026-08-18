@@ -2,7 +2,7 @@
 
 Every email is rendered from the shared design system in ``email_design`` (monochrome +
 single-indigo-accent, dark-mode hardened for Outlook). All 19 senders build raw HTML in
-code and dispatch through ``send_email_async`` — there are no server-side Brevo saved
+code and dispatch through ``send_email_async``. There are no server-side Brevo saved
 templates in the send path anymore, so the design lives in one place and the gallery
 (``scripts/build_email_gallery``) renders these same functions.
 """
@@ -41,16 +41,16 @@ def redact_email(to_email: str) -> str:
 
     The one address redactor for everything that emits a recipient: this module,
     ``worker.tasks``' two send tasks, and ``offline_message_routes``. Local part
-    cut to its first character, domain kept. The domain is the diagnostic —
+    cut to its first character, domain kept. The domain is the diagnostic.
     "every @outlook.com send is bouncing" is a real finding and a fully masked
-    address cannot express it — and it is not personal data on its own. Anything
+    address cannot express it, and it is not personal data on its own. Anything
     without an ``@`` collapses to ``***``, because a value that is not an address
     is a value we cannot vouch for.
 
     Public because a recipient here is often a *visitor's* address (the chat
     follow-up in ``lead_routes``, the offline-message reply), which is personal
     data under GDPR and under India's DPDP Act, where this product's basis is
-    consent-only — and because Sentry's LoggingIntegration turns every log
+    consent-only, and because Sentry's LoggingIntegration turns every log
     record that carries one into a breadcrumb or an event. There should be no
     second copy of this rule.
     """
@@ -67,10 +67,10 @@ _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 def _email_failure_tags(tags: dict) -> dict[str, str]:
     """Build the ``email.*`` Sentry tags for :func:`_capture_email_failure`.
 
-    PRIVACY — every address in a tag value goes through :func:`redact_email`
+    PRIVACY. Every address in a tag value goes through :func:`redact_email`
     before it leaves the process. Callers pass the recipient verbatim (as
-    ``to=`` or ``email=``), and for the visitor-facing senders — the chat
-    follow-up in ``lead_routes``, the offline-message notification — that
+    ``to=`` or ``email=``), and for the visitor-facing senders (the chat
+    follow-up in ``lead_routes``, the offline-message notification) that
     recipient is a *visitor's* address, personal data under GDPR and under
     India's DPDP Act, where this product's basis is consent-only. Most of these
     call sites already redacted the same value for their local log; the Sentry
@@ -80,8 +80,8 @@ def _email_failure_tags(tags: dict) -> dict[str, str]:
     and d041a7a) because ``g***@example.com`` is not a constant: the domain
     survives, which is the whole reason to tag a send failure with a recipient
     at all. Applied as a substitution over the value rather than per key, so it
-    also catches the ``reason`` tag — Brevo's error bodies quote the offending
-    address back at us — and so a caller inventing a new key cannot reopen this.
+    also catches the ``reason`` tag (Brevo's error bodies quote the offending
+    address back at us) and so a caller inventing a new key cannot reopen this.
     """
     return {
         f"email.{key}": _EMAIL_RE.sub(lambda m: redact_email(m.group(0)), str(value)) for key, value in tags.items()
@@ -91,8 +91,8 @@ def _email_failure_tags(tags: dict) -> dict[str, str]:
 def _capture_email_failure(exc: Exception, **tags) -> None:
     """Capture an email-send failure to Sentry (if configured) with tags.
 
-    Fire-and-forget daemon threads otherwise lose these exceptions entirely
-    — logger.error is not enough because no one reads app logs proactively.
+     Fire-and-forget daemon threads otherwise lose these exceptions entirely
+    . Logger.error is not enough because no one reads app logs proactively.
     """
     with contextlib.suppress(Exception):
         import sentry_sdk
@@ -124,7 +124,7 @@ def _extract_brevo_error(exc: Exception) -> str:
 
 # ── Brevo Template IDs (legacy) ──────────────────────────────────────────────
 # Retained for the super-admin template catalogue + backward compatibility. The
-# send path no longer uses saved templates — every email renders in code — but
+# send path no longer uses saved templates (every email renders in code) but
 # the IDs still exist in the Brevo account.
 TEMPLATE_PASSWORD_RESET = 57
 TEMPLATE_QUALIFIED_LEAD = 60
@@ -150,7 +150,7 @@ def _send_brevo_email(
     """Send an email via Brevo transactional API using raw HTML. Returns True on success."""
     if not EMAIL_ENABLED:
         logger.warning(
-            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s",
+            "Email skipped. EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s",
             redact_email(to_email),
             subject,
         )
@@ -201,7 +201,7 @@ def _send_brevo_template(
     """
     if not EMAIL_ENABLED:
         logger.warning(
-            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s",
+            "Email skipped. EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s",
             redact_email(to_email),
             template_id,
         )
@@ -536,7 +536,7 @@ def send_offline_message_email(
     )
     html_body = shell(
         subject=f"New offline message from {bot_name}",
-        preheader=f"New message from {visitor_name} on {bot_name} — reply when you're back.",
+        preheader=f"New message from {visitor_name} on {bot_name}. Reply when you're back.",
         inner=inner,
     )
     send_email_async(
@@ -558,7 +558,7 @@ def send_password_reset_email(to_email: str, otp: str):
         + p("We received a request to reset the password on your account. Enter the code below to choose a new one.")
         + code_box(otp)
         + ed.alert(
-            f"This code expires in {strong('15 minutes')}. Never share it — "
+            f"This code expires in {strong('15 minutes')}. Never share it. "
             f"{esc(BRAND_NAME)} staff will never ask for it.",
             "warning",
         )
@@ -569,7 +569,7 @@ def send_password_reset_email(to_email: str, otp: str):
         f"Your {BRAND_NAME} password reset code",
         shell(
             subject=f"Your {BRAND_NAME} password reset code",
-            preheader="Your password reset code — expires in 15 minutes.",
+            preheader="Your password reset code. Expires in 15 minutes.",
             inner=inner,
         ),
     )
@@ -594,7 +594,7 @@ def send_verification_otp_email(to_email: str, name: str, otp: str) -> None:
         f"Your {BRAND_NAME} verification code",
         shell(
             subject=f"Your {BRAND_NAME} verification code",
-            preheader="Your verification code — expires in 15 minutes.",
+            preheader="Your verification code. Expires in 15 minutes.",
             inner=inner,
         ),
     )
@@ -611,7 +611,7 @@ def send_email_change_otp(to_email: str, name: str, otp: str) -> None:
         + code_box(otp)
         + p(
             f"This code expires in {strong('15 minutes')}. If this wasn&rsquo;t you, you can ignore this "
-            f"email — your account email won&rsquo;t change."
+            f"email. Your account email won&rsquo;t change."
         )
     )
     send_email_async(
@@ -619,7 +619,7 @@ def send_email_change_otp(to_email: str, name: str, otp: str) -> None:
         f"Confirm your new {BRAND_NAME} email address",
         shell(
             subject=f"Confirm your new {BRAND_NAME} email address",
-            preheader="Confirm your new email address — code expires in 15 minutes.",
+            preheader="Confirm your new email address. Code expires in 15 minutes.",
             inner=inner,
         ),
     )
@@ -634,7 +634,7 @@ def send_email_change_requested_notice(to_email: str, name: str, new_email: str)
             f"{esc(BRAND_NAME)} account to {strong(esc(new_email))}."
         )
         + p(
-            "The change only takes effect once that address confirms a verification code — this "
+            "The change only takes effect once that address confirms a verification code. This "
             "inbox stays your login email until then."
         )
         + ed.alert(
@@ -715,10 +715,10 @@ def send_transcript_email(to_email: str, bot_name: str, messages: list[dict], *,
     )
     send_email_async(
         to_email,
-        f"Chat Transcript — {bot_name}",
+        f"Chat Transcript ({bot_name}",
         shell(
-            subject=f"Chat Transcript — {bot_name}",
-            preheader=f"Your conversation with {bot_name} — full transcript.",
+            subject=f"Chat Transcript) {bot_name}",
+            preheader=f"Your conversation with {bot_name}. Full transcript.",
             inner=inner,
             visitor=True,
         ),
@@ -739,7 +739,7 @@ def send_visitor_confirmation_email(
             f"Thanks for reaching out to {strong(safe_company)}. We&rsquo;ve received your message and "
             f"our team has been notified. Someone will get back to you shortly."
         )
-        + ed.alert("Message received — no action needed on your end. We&rsquo;ll be in touch by email.", "success")
+        + ed.alert("Message received, no action needed on your end. We&rsquo;ll be in touch by email.", "success")
         + p("You can reply directly to this email if you have anything to add.")
     )
     send_email_async(
@@ -747,7 +747,7 @@ def send_visitor_confirmation_email(
         f"Thank you for contacting {company_name or BRAND_NAME}",
         shell(
             subject=f"Thank you for contacting {company_name or BRAND_NAME}",
-            preheader=f"Thanks {visitor_name or 'there'} — your message was received.",
+            preheader=f"Thanks {visitor_name or 'there'}. Your message was received.",
             inner=inner,
             visitor=True,
         ),
@@ -764,7 +764,7 @@ def send_affiliate_welcome_email(to_email: str, name: str | None = None) -> None
     inner = (
         h1(f"You&rsquo;re now an {esc(BRAND_NAME)} affiliate")
         + p(
-            f"Hi {_first_name(name)} — you&rsquo;ve just been enrolled in the {esc(BRAND_NAME)} affiliate "
+            f"Hi {_first_name(name)}. You&rsquo;ve just been enrolled in the {esc(BRAND_NAME)} affiliate "
             f"program. You can now create referral codes, share them anywhere, and track how each one "
             f"performs from your dashboard."
         )
@@ -801,7 +801,7 @@ def send_affiliate_invite_email(to_email: str, accept_url: str, *, expires_in_da
         + f'<p class="oc-link" style="margin:0 0 16px 0;font-family:{ed.FONT};font-size:13px;'
         f'color:{ed.ACCENT};word-break:break-all;line-height:1.5;">{link(esc(accept_url), accept_url)}</p>'
         + p(
-            "Didn&rsquo;t expect this? You can safely ignore it — the invite will expire and no account will be created."
+            "Didn&rsquo;t expect this? You can safely ignore it, the invite will expire and no account will be created."
         )
     )
     send_email_async(
@@ -825,7 +825,7 @@ def send_operator_invite_email(
 ) -> None:
     """Magic-link invite for a new operator to join ``workspace_name``.
 
-    ``accept_url`` carries the plaintext invite token (path or query) —
+    ``accept_url`` carries the plaintext invite token (path or query).
     ``invite_service.accept_invite`` matches it back against the pending
     row. Single-use in effect: once accepted, the token no longer
     resolves to a pending invite, so a resend goes through a new URL.
@@ -849,7 +849,7 @@ def send_operator_invite_email(
         + f'<p class="oc-link" style="margin:0 0 16px 0;font-family:{ed.FONT};font-size:13px;'
         f'color:{ed.ACCENT};word-break:break-all;line-height:1.5;">{link(esc(accept_url), accept_url)}</p>'
         + p(
-            "Didn&rsquo;t expect this? You can safely ignore it — the invite will expire and no account will be created."
+            "Didn&rsquo;t expect this? You can safely ignore it, the invite will expire and no account will be created."
         )
     )
     send_email_async(
@@ -873,7 +873,7 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         h1(f"Welcome to {esc(BRAND_NAME)}, {_first_name(name)}")
         + p(
             f"Your {strong(f'{duration_days}-day free trial')} is live. You&rsquo;ve got "
-            f"{strong(f'{credits:,} credits')} to spend however you like — chats, website training, document "
+            f"{strong(f'{credits:,} credits')} to spend however you like. Chats, website training, document "
             f"uploads. Your trial runs until {strong(esc(end_human))}. No card on file, no auto-charge."
         )
         + button("Open my dashboard", APP_URL)
@@ -881,9 +881,9 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         + ed.section_label("A 3-step path to your first chat")
         + ed.steps(
             [
-                f"{link('Upload your knowledge base', APP_URL + '/knowledge')} — PDFs, docs, or paste your website URL and we train on it.",
-                f"{link('Style the widget', APP_URL + '/chatbot')} — colors, logo, welcome message.",
-                f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site — one line of HTML and you&rsquo;re live.",
+                f"{link('Upload your knowledge base', APP_URL + '/knowledge')}. PDFs, docs, or paste your website URL and we train on it.",
+                f"{link('Style the widget', APP_URL + '/chatbot')}. Colors, logo, welcome message.",
+                f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site, one line of HTML and you&rsquo;re live.",
             ]
         )
         + p(f"Stuck on something? Just reply to this email or write to {_SUPPORT_LINK}.")
@@ -891,9 +891,9 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
     try:
         send_email_async(
             to_email,
-            f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
+            f"Welcome to {BRAND_NAME} (your {duration_days}-day trial is live",
             shell(
-                subject=f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
+                subject=f"Welcome to {BRAND_NAME}) your {duration_days}-day trial is live",
                 preheader=f"You've got {credits:,} credits and {duration_days} days to build your bot.",
                 inner=inner,
             ),
@@ -904,17 +904,17 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
 
 
 def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Halfway-through nudge — fires at T-4 on the 7-day trial cadence."""
+    """Halfway-through nudge. Fires at T-4 on the 7-day trial cadence."""
     inner = (
         h1(f"You&rsquo;re halfway through your trial, {_first_name(name)}")
         + p(
-            f"Quick check-in — you&rsquo;ve got {strong(f'{days_remaining} days left')}. If your bot is live "
+            f"Quick check-in. You&rsquo;ve got {strong(f'{days_remaining} days left')}. If your bot is live "
             f"and answering visitors, you&rsquo;re ahead of the curve. If you haven&rsquo;t uploaded knowledge "
             f"or dropped the script tag yet, this is the week to do it."
         )
         + button("Open my dashboard", APP_URL)
         + p(
-            f"Already sold? {link('Pick a plan', APP_URL + '/billing')} any time — conversion preserves your "
+            f"Already sold? {link('Pick a plan', APP_URL + '/billing')} any time. Conversion preserves your "
             f"bot, documents, and chat history.",
             top=8,
         )
@@ -925,7 +925,7 @@ def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining:
             f"You’re halfway through your {BRAND_NAME} trial",
             shell(
                 subject=f"You’re halfway through your {BRAND_NAME} trial",
-                preheader=f"Halfway through your trial — {days_remaining} days left.",
+                preheader=f"Halfway through your trial - {days_remaining} days left.",
                 inner=inner,
             ),
         )
@@ -940,7 +940,7 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
     if days_remaining <= 1:
         headline = f"your {safe_plan} trial ends tomorrow"
         lead = (
-            f"Heads up — your trial wraps up in about {strong(f'{days_remaining} day')}. After that your "
+            f"Heads up. Your trial wraps up in about {strong(f'{days_remaining} day')}. After that your "
             f"widget will switch to its offline message until you pick a plan."
         )
         subject = f"Your {BRAND_NAME} trial ends tomorrow"
@@ -953,11 +953,11 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
         subject = f"{days_remaining} days left in your {BRAND_NAME} trial"
 
     inner = (
-        h1(f"Hi {_first_name(name)} — {headline}")
+        h1(f"Hi {_first_name(name)} - {headline}")
         + p(lead)
         + p(
             "Your knowledge base, settings, and chat history are kept safe for 15 days after the trial "
-            "ends — nothing is lost if you decide later."
+            "ends, nothing is lost if you decide later."
         )
         + button("Pick a plan", f"{APP_URL}/billing")
         + p(f"Questions about pricing? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
@@ -990,7 +990,7 @@ def send_promo_precharge_reminder_email(
     safe_plan = esc(plan_name)
     subject = f"Your free months on {BRAND_NAME} end soon"
     inner = (
-        h1(f"Hi {_first_name(name)} — your free {safe_plan} period ends on {esc(charge_date)}")
+        h1(f"Hi {_first_name(name)}. Your free {safe_plan} period ends on {esc(charge_date)}")
         + p(
             f"You&rsquo;ve been on {strong(safe_plan)} free of charge. On {strong(esc(charge_date))} your "
             f"first payment of {strong(esc(amount_display))} will be collected from the card or UPI on file, "
@@ -1018,7 +1018,7 @@ def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, d
     inner = (
         h1("Your trial has ended")
         + p(
-            f"Hi {_first_name(name)} — your trial of {strong(safe_plan)} wrapped up today. Your bot is now "
+            f"Hi {_first_name(name)}. Your trial of {strong(safe_plan)} wrapped up today. Your bot is now "
             f"showing its offline message to visitors. Pick a plan and it&rsquo;s back online within a minute."
         )
         + ed.alert(
@@ -1027,14 +1027,14 @@ def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, d
             "warning",
         )
         + button("Choose a plan to reactivate", f"{APP_URL}/billing")
-        + p(f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback — {_SUPPORT_LINK}.", top=8)
+        + p(f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback - {_SUPPORT_LINK}.", top=8)
     )
     try:
         send_email_async(
             to_email,
-            f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
+            f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
             shell(
-                subject=f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
+                subject=f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
                 preheader=f"Reactivate by {retention_human} to keep your bot and data.",
                 inner=inner,
             ),
@@ -1049,12 +1049,10 @@ def send_trial_data_deleted_email(to_email: str, *, name: str | None) -> None:
     inner = (
         h1("Your workspace has been deleted")
         + p(
-            f"Hi {_first_name(name)} — as scheduled, we&rsquo;ve permanently deleted the bots, documents, "
+            f"Hi {_first_name(name)}, as scheduled, we&rsquo;ve permanently deleted the bots, documents, "
             f"and chat history from your trial workspace. Nothing is recoverable from this account."
         )
-        + p(
-            f"If you ever want to give {esc(BRAND_NAME)} another look, you can start fresh any time — no hard feelings."
-        )
+        + p(f"If you ever want to give {esc(BRAND_NAME)} another look, you can start fresh any time, no hard feelings.")
         + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.")
     )
     try:
@@ -1083,12 +1081,12 @@ def send_downgrade_reauth_email(
     inner = (
         h1(f"One step to finish your switch to {safe_new}")
         + p(
-            f"Hi {_first_name(name)} — your billing cycle on {strong(safe_old)} has ended and your scheduled "
+            f"Hi {_first_name(name)}. Your billing cycle on {strong(safe_old)} has ended and your scheduled "
             f"move to {strong(safe_new)} is ready. Because your payments run on a UPI mandate, we can&rsquo;t "
-            f"change the plan on the existing mandate — you&rsquo;ll need to authorize a new one for the lower plan."
+            f"change the plan on the existing mandate. You&rsquo;ll need to authorize a new one for the lower plan."
         )
         + ed.alert(
-            "It takes under a minute. Until you confirm, your account stays paused on the new plan — "
+            "It takes under a minute. Until you confirm, your account stays paused on the new plan. "
             "please complete it soon to keep your bot live.",
             "warning",
         )
@@ -1115,7 +1113,7 @@ def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, 
     change (finding A follow-up).
 
     A plan cutover cancels the old seat add-on mandate and mints a new one, which
-    — like the plan itself — must be re-authorized before it charges (and before
+    (like the plan itself) must be re-authorized before it charges (and before
     the seats are re-entitled). This emails the hosted re-auth link so carried
     seats aren't silently suspended with no path back.
     """
@@ -1123,12 +1121,12 @@ def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, 
     inner = (
         h1("Re-authorize your operator seats")
         + p(
-            f"Hi {_first_name(name)} — after your recent plan change, your {strong(seats)} moved to a new "
+            f"Hi {_first_name(name)}. After your recent plan change, your {strong(seats)} moved to a new "
             f"payment mandate. Because seats bill on their own UPI mandate, you&rsquo;ll need to authorize it "
             f"once more so your team keeps its seats."
         )
         + ed.alert(
-            "It takes under a minute. Until you confirm, the extra seats stay paused — please complete it soon.",
+            "It takes under a minute. Until you confirm, the extra seats stay paused. Please complete it soon.",
             "warning",
         )
         + button("Authorize my seats", reauth_url)
@@ -1157,7 +1155,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
     is_credit_note = invoice.invoice_type == "credit_note"
 
     # Format in the document's OWN currency. This used to hardcode rupees, so a
-    # $9 export was announced to the customer as "₹9.00" — a figure that matches
+    # $9 export was announced to the customer as "₹9.00", a figure that matches
     # neither the attached PDF nor their card statement.
     def money(minor: int | None) -> str:
         return _fmt_invoice_money(minor, invoice.currency)
@@ -1178,7 +1176,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
     lead = (
         f"Your refund has been processed. The credit note from {strong(seller_name)} is ready."
         if is_credit_note
-        else f"Thank you for your payment. Your {doc_label.lower()} from {strong(seller_name)} is ready — "
+        else f"Thank you for your payment. Your {doc_label.lower()} from {strong(seller_name)} is ready. "
         f"the PDF is attached to this email."
     )
     hero = (
@@ -1199,7 +1197,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
 
     attachments: list[dict] | None = None
     if pdf_bytes:
-        # Invoice numbers contain slashes (e.g. "DB/26-27/000001") — flatten to a safe filename.
+        # Invoice numbers contain slashes (e.g. "DB/26-27/000001"). Flatten to a safe filename.
         safe_number = str(invoice.invoice_number or invoice.id).replace("/", "-")
         attachments = [{"content": base64.b64encode(pdf_bytes).decode("ascii"), "name": f"{safe_number}.pdf"}]
 
@@ -1208,7 +1206,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
         f"{doc_label} {invoice.invoice_number} from {seller_raw}",
         shell(
             subject=f"{doc_label} {invoice.invoice_number} from {seller_raw}",
-            preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
+            preheader=f"{doc_label} {invoice.invoice_number} - {amount}",
             inner=inner,
         ),
         attachments=attachments,
@@ -1218,8 +1216,8 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
 # ── Dunning (failed recurring payment) ───────────────────────────────────────
 #
 # Razorpay sends its own subscription notifications and hosts the card-update
-# page. These emails deliberately do NOT duplicate the payment mechanics —
-# they add what Razorpay structurally cannot know: that the customer's AI
+# page. These emails deliberately do NOT duplicate the payment mechanics.
+# They add what Razorpay structurally cannot know: that the customer's AI
 # agents stop responding when OyeChats' grace window elapses.
 
 
@@ -1255,7 +1253,7 @@ def _send_dunning(to_email: str, subject: str, preheader: str, inner: str, *, ev
 
     The CALLER must write the cadence marker only on ``True``. ``due_email``
     fires on the exact day bucket only, so a marker written after a failed
-    hand-off drops that email permanently — and day 3 is the one that carries
+    hand-off drops that email permanently, and day 3 is the one that carries
     the recovery link.
 
     "Handed off" is the honest boundary: past the enqueue, delivery failures
@@ -1281,7 +1279,7 @@ def send_payment_failed_email(to_email: str, *, name: str | None, plan_name: str
     Deliberately calm and asks for NOTHING. At this point the subscription is
     ``pending`` and Razorpay retries roughly daily for ~3 days; most of these
     succeed on their own. An alarming email here creates support load for a
-    problem that usually self-resolves — and needs no recovery link, which also
+    problem that usually self-resolves, and needs no recovery link, which also
     spares a gateway call per past-due customer per cron pass.
     """
     safe_plan = esc(plan_name)
@@ -1302,8 +1300,8 @@ def send_payment_failed_email(to_email: str, *, name: str | None, plan_name: str
     )
     return _send_dunning(
         to_email,
-        "We couldn't process your payment — we'll retry",
-        "No action needed yet — we'll retry the charge automatically.",
+        "We couldn't process your payment (we'll retry",
+        "No action needed yet) we'll retry the charge automatically.",
         inner,
         event="payment_failed",
     )
@@ -1371,7 +1369,7 @@ def send_payment_final_warning_email(
 def send_subscription_suspended_email(
     to_email: str, *, name: str | None, plan_name: str, recovery_url: str | None
 ) -> bool:
-    """Grace elapsed. Still recoverable — say so, and keep the door open.
+    """Grace elapsed. Still recoverable. Say so, and keep the door open.
 
     ``recovery_url`` is optional: the gateway may be unreachable, or the
     mandate may have reached a terminal state. Falling back to prose beats
@@ -1397,7 +1395,7 @@ def send_subscription_suspended_email(
     return _send_dunning(
         to_email,
         "Your OyeChats subscription has been suspended",
-        "Your data is safe — restore payment to bring your agents back.",
+        "Your data is safe. Restore payment to bring your agents back.",
         inner,
         event="subscription_suspended",
     )

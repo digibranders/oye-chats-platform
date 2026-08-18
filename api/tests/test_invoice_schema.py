@@ -46,7 +46,7 @@ def test_tax_fields_roundtrip(db):
         hsn_sac="997331",
         seller_snapshot={"legal_name": "Digibranders Pvt Ltd", "gstin": "27AAPFU0939F1ZV"},
         buyer_snapshot={"name": "T", "state_code": "27"},
-        line_items=[{"description": "Starter — monthly", "amount_minor": 179900}],
+        line_items=[{"description": "Starter. Monthly", "amount_minor": 179900}],
     )
     db.add(inv)
     db.flush()
@@ -188,7 +188,7 @@ def test_list_invoices_hides_tax_fields_in_shadow_mode(db, monkeypatch):
     assert row["amount_cents"] == 179900
     assert row["invoice_number"] is None
     assert row["total_tax_minor"] is None
-    # The rendered document itself must hide too — pdf_url/invoice_url on a
+    # The rendered document itself must hide too. Pdf_url/invoice_url on a
     # NUMBERED row follow the same kill switch (P0: a capability URL here
     # would leak the full Rule-46 document while delivery is disabled).
     assert row["pdf_url"] is None

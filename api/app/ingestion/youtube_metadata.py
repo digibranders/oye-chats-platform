@@ -2,14 +2,14 @@
 
 Extracts duration (in seconds) AND title of a YouTube video by scraping
 the public watch page. We use scrape rather than the YouTube Data API v3
-so customers don't need to set up a Google Cloud API key — this data is
+so customers don't need to set up a Google Cloud API key. This data is
 a card-polish detail, not core functionality, and degrading gracefully
 to "no title / no duration" is acceptable when a scrape fails.
 
 Both fields are extracted from the same HTTP response so a video costs
 one round-trip at ingest, not two. The scrape targets the ``lengthSeconds``
 field in the ``ytInitialPlayerResponse`` JSON blob and the ``og:title``
-meta tag in the HTML head — both are server-rendered on every watch page
+meta tag in the HTML head, both are server-rendered on every watch page
 and have been stable across YouTube redesigns.
 
 Called at ingest time from :mod:`app.ingestion.pipeline` so the network
@@ -18,7 +18,7 @@ path. Results are cached in-process for the lifetime of the worker.
 
 Why title matters as much as duration:
     Without titles, the LLM's "Available media" context lists only
-    ``video_id + url`` — indistinguishable strings from the model's
+    ``video_id + url``. Indistinguishable strings from the model's
     perspective. When a retrieved chunk carries several video URLs
     (common on multi-episode pages where pypdf packs them together),
     the LLM has no signal to pick "the busybox video" over "the
@@ -68,7 +68,7 @@ _USER_AGENT = (
 _ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 
 # Kept short so a slow / hanging fetch during a crawl doesn't stall
-# ingestion. Metadata is optional polish — better to skip it than to
+# ingestion. Metadata is optional polish. Better to skip it than to
 # block a whole batch on one unresponsive request.
 _TIMEOUT_SECONDS = 5.0
 
@@ -89,7 +89,7 @@ _CHANNEL_CACHE: dict[str, list[dict[str, str]]] = {}
 
 # Every YouTube channel/watch/videos page embeds its video list inside
 # the initial ``ytInitialData`` JSON blob. Each video appears as
-# ``"videoId":"XXXXXXXXXXX"`` — 11-char URL-safe alphabet. Anchor on
+# ``"videoId":"XXXXXXXXXXX"``. 11-char URL-safe alphabet. Anchor on
 # that JSON key rather than a broader ``\d+`` so we don't false-positive
 # on incidental numeric IDs elsewhere on the page.
 _VIDEO_ID_IN_CHANNEL_PAGE = re.compile(r'"videoId":"([A-Za-z0-9_-]{11})"')
@@ -105,7 +105,7 @@ def fetch_youtube_metadata(video_id: str) -> dict[str, int | str] | None:
     """Return ``{"duration_seconds": int, "title": str}`` or ``None`` on failure.
 
     Either individual field may be missing from the returned dict when
-    that specific field failed to parse — callers should ``.get()`` with
+    that specific field failed to parse. Callers should ``.get()`` with
     a default rather than assume both keys are present. When BOTH fields
     fail the function returns ``None`` so the caller can distinguish
     "video exists but metadata partial" from "video is unreachable".
@@ -153,7 +153,7 @@ def fetch_youtube_metadata(video_id: str) -> dict[str, int | str] | None:
         try:
             seconds = int(duration_match.group(1))
             # Negative or absurdly large duration is a parse error, not a
-            # real video. Cap at 24h — no legitimate podcast episode or
+            # real video. Cap at 24h, no legitimate podcast episode or
             # product demo is longer.
             if 0 < seconds <= 24 * 60 * 60:
                 result["duration_seconds"] = seconds
@@ -180,7 +180,7 @@ def fetch_youtube_duration(video_id: str) -> int | None:
     """Return the video's duration in whole seconds, or ``None`` on failure.
 
     Thin wrapper around :func:`fetch_youtube_metadata` for callers that
-    only need duration (kept for API stability — earlier code paths
+    only need duration (kept for API stability. Earlier code paths
     imported this by name).
     """
     meta = fetch_youtube_metadata(video_id)
@@ -199,7 +199,7 @@ def enrich_media_urls_with_metadata(media_urls: dict) -> None:
 
     On successful fetch each YouTube entry gains ``duration_seconds``
     (int, if parseable) AND ``title`` (str, if parseable). On failure the
-    keys are simply absent — callers do not need to distinguish "not
+    keys are simply absent. Callers do not need to distinguish "not
     fetched yet" from "fetch failed", the widget/LLM path degrades
     gracefully in either case.
     """
@@ -225,7 +225,7 @@ def enrich_media_urls_with_metadata(media_urls: dict) -> None:
             entry["title"] = title
 
 
-# Backwards-compatible alias — the existing pipeline import continues
+# Backwards-compatible alias, the existing pipeline import continues
 # to work while a follow-up rename can migrate callers at leisure.
 enrich_media_urls_with_durations = enrich_media_urls_with_metadata
 
@@ -244,12 +244,12 @@ def fetch_channel_videos(channel_url: str) -> list[dict[str, str]]:
 
     Fetches the channel's ``/videos`` page (which is what YouTube serves
     at a bare channel URL anyway) and greps the ``ytInitialData`` blob
-    for every ``"videoId":"..."`` occurrence — same technique the
+    for every ``"videoId":"..."`` occurrence, same technique the
     hand-run injection script used earlier in the codebase's evolution.
 
     Failure modes silently return ``[]``: dead channels, geo-blocked
     pages, network errors, YouTube-HTML shape drift. A silent zero here
-    is fine — the bot just misses this customer's videos, which is the
+    is fine, the bot just misses this customer's videos, which is the
     same state as before Layer 1.5 shipped, so it never regresses
     existing behaviour.
     """
@@ -280,7 +280,7 @@ def fetch_channel_videos(channel_url: str) -> list[dict[str, str]]:
             },
         )
         with urlopen(req, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310 -- fixed https scheme
-            # 8 MB cap — channel pages carry richer JSON than watch pages,
+            # 8 MB cap. Channel pages carry richer JSON than watch pages,
             # so give a bit more headroom than fetch_youtube_metadata's 4MB.
             body = response.read(8 * 1024 * 1024).decode("utf-8", errors="replace")
     except (URLError, TimeoutError, ValueError, OSError) as exc:

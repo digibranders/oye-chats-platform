@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 
 
 def test_financial_year_label_indian_fy():
-    # India FY runs 1 Apr – 31 Mar.
+    # India FY runs 1 Apr. 31 Mar.
     assert financial_year_label(datetime(2026, 7, 2, tzinfo=UTC)) == "26-27"
     assert financial_year_label(datetime(2026, 3, 31, tzinfo=UTC)) == "25-26"
     assert financial_year_label(datetime(2026, 4, 1, tzinfo=UTC)) == "26-27"
@@ -49,7 +49,7 @@ def test_counter_row_created_and_incremented(db):
 
 def test_concurrent_allocation_is_gapless(db, pg_engine):
     """Two independent transactions allocating against the same counter must get
-    consecutive numbers with no gap or duplicate — the FOR UPDATE row lock
+    consecutive numbers with no gap or duplicate, the FOR UPDATE row lock
     serializes them."""
     dt = datetime(2026, 7, 2, tzinfo=UTC)
     # Seed the counter row + commit so both sessions see it.
@@ -100,7 +100,7 @@ def test_rolled_back_allocation_does_not_burn_serial(db, pg_engine):
 
 
 def test_financial_year_boundary_is_ist_not_utc():
-    # 31 Mar 20:00 UTC is already 1 Apr 01:30 IST — the Indian FY has flipped,
+    # 31 Mar 20:00 UTC is already 1 Apr 01:30 IST, the Indian FY has flipped,
     # so the serial must land in the NEW FY series even though UTC says March.
     assert financial_year_label(datetime(2026, 3, 31, 20, 0, tzinfo=UTC)) == "26-27"
     # And just before the IST boundary it stays in the old FY.

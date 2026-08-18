@@ -165,7 +165,7 @@ export interface PoolCredit {
   readonly topupRemaining: number;
   /** Total spendable credits (plan + top-up); the pool stops at 0 here. */
   readonly totalRemaining: number;
-  /** Share of this pool's monthly grant already consumed, 0–100. */
+  /** Share of this pool's monthly grant already consumed, 0 to 100. */
   readonly planUsedPct: number;
   /** When the plan bucket refills, ISO 8601. */
   readonly resetsAt: string | null;
@@ -175,7 +175,7 @@ export interface PoolCredit {
    *
    * `CreditPool` has always carried this and `poolCredit()` silently dropped
    * it, so per-pool surfaces had no way to tell the truth about expiry and
-   * fell back to the slogan "Roll over" — printed unconditionally, directly
+   * fell back to the slogan "Roll over". Printed unconditionally, directly
    * above a section stating a real expiry date. Whether top-ups expire is a
    * TERM OF SALE; any surface that mentions it needs the evidence.
    */
@@ -253,7 +253,7 @@ export interface CreditBalance {
   readonly topupRemaining: number;
   /** Total spendable credits (plan + top-up). The bot stops at 0 here. */
   readonly totalRemaining: number;
-  /** Share of the monthly grant already consumed, 0–100. */
+  /** Share of the monthly grant already consumed, 0 to 100. */
   readonly planUsedPct: number;
   /** True when total remaining has fallen to ≤20% of the monthly grant. */
   readonly lowBalance: boolean;
@@ -438,7 +438,7 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
  * The one honest statement this app can make about top-up expiry.
  *
  * "Top-up credits never expire" is a TERM OF SALE, true only when
- * `pricing_config.topup_expiry_months = 0` — a server-side value no endpoint
+ * `pricing_config.topup_expiry_months = 0`, a server-side value no endpoint
  * exposes. The only evidence the client holds is the customer's own ledger:
  * `soonestExpiry` is non-null exactly when a top-up they hold carries an
  * `expires_at` that the daily sweep will act on.

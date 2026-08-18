@@ -1,4 +1,4 @@
-"""Tests for superadmin plan CRUD — verifies all fields are accepted and returned."""
+"""Tests for superadmin plan CRUD. Verifies all fields are accepted and returned."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -97,7 +97,7 @@ def test_create_plan_extra_seat_price_cents(db, monkeypatch):
     plan = next(p for p in listing if p["id"] == plan_id)
     assert plan["extra_seat_price_cents"] == RAZORPAY_SEAT_PLAN_PRICE_CENTS
 
-    # A seat price the add-on won't actually charge is rejected — the catalog can
+    # A seat price the add-on won't actually charge is rejected, the catalog can
     # never advertise a price the customer won't be billed.
     bad = c.post(
         "/superadmin/plans",
@@ -135,7 +135,7 @@ def test_pricing_content_round_trip(db, monkeypatch):
 
 def test_update_plan_merges_limits_and_features_instead_of_replacing(db, monkeypatch):
     """The admin editor sends only the JSON keys its typed UI knows about.
-    A PUT must merge those into the stored JSONB — replacing wholesale deleted
+    A PUT must merge those into the stored JSONB. Replacing wholesale deleted
     backend-only keys (max_crawl_*, topup_allowed) in prod, and entitlements
     fail closed, so paid customers silently degraded to Free-tier gates."""
     c = _client(db, monkeypatch)

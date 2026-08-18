@@ -3,7 +3,7 @@
 Each of the seven states gets one happy-path test so a regression in the
 priority order (e.g. accidentally checking queue size before operator count)
 fails loudly. The resolver is intentionally side-effect free, which makes
-these unit tests fast — no Redis or DB required, just a mocked Session and
+these unit tests fast, no Redis or DB required, just a mocked Session and
 patched presence module.
 """
 
@@ -32,8 +32,8 @@ def _bot(**overrides):
 
 
 def _mock_session_with_operator_count_and_queue_size(operator_count: int, queue_size: int):
-    """Mock the two scalar_one() calls the resolver makes — operator count and
-    queue size — in the order they're called.
+    """Mock the two scalar_one() calls the resolver makes (operator count and
+    queue size) in the order they're called.
     """
     session = MagicMock()
     scalar_results = [operator_count, queue_size]
@@ -47,7 +47,7 @@ def _mock_session_with_operator_count_and_queue_size(operator_count: int, queue_
 
 def test_returns_feature_disabled_when_bot_toggle_off():
     """When ``bot.live_chat_enabled`` is False, the resolver short-circuits
-    before touching presence or the DB — no operators are queried."""
+    before touching presence or the DB, no operators are queried."""
     bot = _bot(live_chat_enabled=False)
     session = MagicMock()
 
@@ -154,7 +154,7 @@ def test_returns_all_busy_when_operators_at_capacity(_mock_ids, _mock_capacity):
 @patch("app.services.live_chat_availability_service.presence.get_online_operators_with_capacity")
 @patch("app.services.live_chat_availability_service.presence.get_online_operator_ids", return_value={1})
 def test_returns_available_when_operator_ready_to_route(_mock_ids, mock_capacity):
-    """The happy path — at least one operator online with capacity → ROUTE.
+    """The happy path, at least one operator online with capacity → ROUTE.
     No queue position needed because routing happens immediately."""
     mock_capacity.return_value = [SimpleNamespace(id=1, max_concurrent_chats=5)]
 
@@ -173,7 +173,7 @@ def test_returns_available_when_operator_ready_to_route(_mock_ids, mock_capacity
 
 def test_feature_disabled_beats_no_operators():
     """If both feature_disabled AND no_operators apply, feature_disabled
-    should win — the bot toggle is the higher-priority signal."""
+    should win, the bot toggle is the higher-priority signal."""
     bot = _bot(live_chat_enabled=False)
     # Session is irrelevant since feature_disabled short-circuits, but we
     # still pass a mock to satisfy the type contract.

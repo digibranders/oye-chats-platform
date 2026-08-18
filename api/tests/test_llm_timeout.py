@@ -45,7 +45,7 @@ def test_generate_response_passes_a_positive_timeout(monkeypatch):
 # company_profile_service writes to a CROSS-TENANT cache. Without strict= it
 # cannot tell "this page describes no company" from "the model was
 # unreachable", and would record a provider outage as a permanent fact about
-# someone's domain. These test the real function, not a mock of it — the
+# someone's domain. These test the real function, not a mock of it, the
 # resolver's own tests patch it wholesale, so nothing there would notice if
 # strict= stopped raising.
 

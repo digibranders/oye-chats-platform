@@ -16,7 +16,7 @@ from app.services import footer_harvester
 
 @pytest.fixture(autouse=True)
 def _stub_youtube_enrichers(monkeypatch):
-    """Never hit YouTube from tests — the enrichers are proven separately.
+    """Never hit YouTube from tests, the enrichers are proven separately.
 
     Autouse so every test in this module gets deterministic no-op enrichers;
     individual tests can still override to assert on the calls they receive.
@@ -242,7 +242,7 @@ async def test_harvest_runs_enrichers_off_the_event_loop(monkeypatch):
     concurrent_flag = {"woke": False}
 
     def _blocking_channel_enricher(media):
-        # 200 ms of blocking work — long enough that an event-loop-bound
+        # 200 ms of blocking work. Long enough that an event-loop-bound
         # implementation would starve the concurrent asyncio.sleep below.
         seen_threads["channels"] = threading.get_ident()
         _time.sleep(0.2)

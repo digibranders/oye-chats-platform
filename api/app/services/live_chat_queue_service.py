@@ -1,4 +1,4 @@
-"""Live chat queue — FIFO waiting line backed by Postgres.
+"""Live chat queue. FIFO waiting line backed by Postgres.
 
 Why Postgres and not pure Redis: the queue is a low-volume, high-consequence
 data structure. A handful of visitors per bot at any time, but losing one to
@@ -14,7 +14,7 @@ Postgres row is the source of truth; Redis is the index.
 
 - ``enqueue`` appends an entry, returns position (1-indexed).
 - ``dequeue_next`` pops the FIFO head and marks the previous tail entries
-  as still waiting — called by the routing service when an operator frees up.
+  as still waiting. Called by the routing service when an operator frees up.
 - ``timeout_expired`` walks dequeued_at-null entries that have aged past
   the bot's ``live_chat_queue_timeout_seconds`` and triggers fallback.
 - ``abandon`` marks a single entry as visitor-disconnected.
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class QueueEnqueueResult:
-    """Returned by enqueue() — tells the caller what happened."""
+    """Returned by enqueue(). Tells the caller what happened."""
 
     entry_id: int
     position: int
@@ -67,7 +67,7 @@ def enqueue(session_id: str, bot_id: int, db_session: Session) -> QueueEnqueueRe
 
     Position is computed AFTER insert so it reflects true ordering even
     under concurrent enqueues. Caller is responsible for checking
-    ``LiveChatAvailability.state != QUEUE_FULL`` before calling — this
+    ``LiveChatAvailability.state != QUEUE_FULL`` before calling. This
     function doesn't double-check (would defeat the resolver's caching).
     """
     # Guard against double-enqueue if the same visitor clicks twice
@@ -106,7 +106,7 @@ def enqueue(session_id: str, bot_id: int, db_session: Session) -> QueueEnqueueRe
         chat_session.status = "waiting"
         db_session.commit()
 
-    # Bust the availability cache — the queue size just changed.
+    # Bust the availability cache, the queue size just changed.
     availability.invalidate(bot_id)
 
     logger.info(
@@ -209,7 +209,7 @@ def find_timeouts(bot_id: int, timeout_seconds: int, db_session: Session) -> lis
     """Return queue entries that have waited longer than ``timeout_seconds``.
 
     Caller (the timeout cron / WebSocket handler) is responsible for taking
-    action — typically sending the visitor a "your wait timed out, would you
+    action. Typically sending the visitor a "your wait timed out, would you
     like to leave a message" prompt and dequeuing with REASON_TIMEOUT.
     """
     from datetime import timedelta

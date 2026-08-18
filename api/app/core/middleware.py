@@ -66,7 +66,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
        explains the shape in full; the client now gets ``type``/``loc``/``msg``,
        which is all the dashboard ever read.
 
-    2. The log line was ``logger.error`` over those same raw values — so a
+    2. The log line was ``logger.error`` over those same raw values, so a
        mistyped login body wrote the password's neighbourhood into journalctl
        and, via the Sentry log integration, off the box entirely. It is now
        WARNING (a 422 is the caller's mistake, not an incident, and paging on it
@@ -110,7 +110,7 @@ async def session_ownership_exception_handler(request: Request, exc):
 
 async def intl_payments_disabled_handler(request: Request, exc):
     """Map ``IntlPaymentsDisabled`` (service-layer USD kill switch, P1-2/F8) to
-    the 409 ``intl_usd_pending`` contract the checkout quote already renders —
+    the 409 ``intl_usd_pending`` contract the checkout quote already renders,
     so /change-plan, /resume and /seats surface the same contact-sales card
     instead of an opaque 5xx when a non-Indian account hits a paid action with
     international payments off. Logged at WARNING: it is a policy refusal the
@@ -143,11 +143,11 @@ async def plan_not_checkoutable_handler(request: Request, exc):
     code, so the frontend branches on one vocabulary across both surfaces.
 
     Logged at WARNING, matching ``intl_payments_disabled_handler``: it is a
-    policy refusal, not a bug — but a real buyer reached a tier this environment
+    policy refusal, not a bug, but a real buyer reached a tier this environment
     cannot charge, which is a wiring gap someone has to close. The operator
     instruction itself is logged once, at ERROR, by the service layer.
     """
-    logger.warning("Checkout refused — plan not wired for the gateway: %s", exc)
+    logger.warning("Checkout refused. Plan not wired for the gateway: %s", exc)
     return JSONResponse(
         status_code=409,
         content={
@@ -164,8 +164,8 @@ async def subscription_activation_conflict_handler(request: Request, exc):
     """Map ``SubscriptionActivationConflict`` to a structured 409 instead of the
     raw 500 the underlying ``IntegrityError`` used to produce mid-checkout.
 
-    The customer has PAID by the time this fires — only the local switch-over
-    could not complete — so the response says so explicitly (``payment_captured``)
+    The customer has PAID by the time this fires (only the local switch-over
+    could not complete) so the response says so explicitly (``payment_captured``)
     and the message never mentions the constraint. The operator instruction lives
     in ``exc.ops_detail`` and is logged here, at ERROR: unlike the two policy
     refusals above this is not "working as designed", it means a client holds two
@@ -193,8 +193,8 @@ async def subscription_activation_conflict_handler(request: Request, exc):
 async def generic_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions: generic body out, full traceback in the log.
 
-    The body carries an ``error_id`` — an opaque per-occurrence token, also set
-    as the ``X-Error-Id`` response header — that appears verbatim on the log
+    The body carries an ``error_id`` (an opaque per-occurrence token, also set
+    as the ``X-Error-Id`` response header) that appears verbatim on the log
     line and on the Sentry event. That handle is the reason this response can
     afford to say nothing else: support can resolve "it broke, here's the code"
     to an exact traceback without the traceback ever leaving the box, which is
@@ -241,11 +241,11 @@ async def generic_exception_handler(request: Request, exc: Exception):
 def _retry_after_seconds(request: Request) -> int | None:
     """Seconds until the caller's window resets, or ``None`` if unknowable.
 
-    Read straight from the limiter's storage rather than by calling SlowAPI's
-    ``_inject_headers``, which is gated behind ``Limiter(headers_enabled=True)``
-    — and turning that on would add a storage round-trip to *every* response on
-    a chat API, to serve a header that only matters on the rare 429. This runs
-    on the 429 path alone.
+     Read straight from the limiter's storage rather than by calling SlowAPI's
+     ``_inject_headers``, which is gated behind ``Limiter(headers_enabled=True)``
+    , and turning that on would add a storage round-trip to *every* response on
+     a chat API, to serve a header that only matters on the rare 429. This runs
+     on the 429 path alone.
     """
     view_limit = getattr(request.state, "view_rate_limit", None)
     limiter = getattr(request.app.state, "limiter", None)
@@ -270,11 +270,11 @@ def rate_limit_exceeded_handler(request: Request, exc):
       added; ``error`` is kept verbatim so nothing reading it today breaks.
 
     - It publishes the exact configured ceiling and window, which is the one
-      number a credential-stuffing or credit-drain run wants — it says precisely
+      number a credential-stuffing or credit-drain run wants, it says precisely
       how slowly to grind to stay under the limit. The body no longer states it.
 
     Withholding it costs a legitimate client nothing, because the timing they
-    actually need now arrives as ``Retry-After`` — which SlowAPI was not sending
+    actually need now arrives as ``Retry-After``, which SlowAPI was not sending
     at all (``headers_enabled`` defaults off), leaving every 429 on this service
     with no machine-readable backoff signal. A 429 without ``Retry-After`` is an
     incomplete answer under RFC 6585 §4, and the widget had nothing to pace
@@ -317,13 +317,13 @@ def get_cors_origins() -> list[str]:
             return [o.strip() for o in origins_str.split(",") if o.strip()]
         return []
 
-    # Dev origins — kept permissive for the local widget-on-test-site flow.
+    # Dev origins. Kept permissive for the local widget-on-test-site flow.
     # The widget inherits the host page's origin, so the API has to accept
     # whichever port the test page is being served from. Covers: Vite preview
     # (4173), VSCode Live Server (5500), http-server / serve / python -m
     # http.server (8080, 8000, 3000), Next.js (3000), CRA (3000), and the
     # 127.0.0.1 aliases (browsers treat 127.0.0.1 and localhost as DIFFERENT
-    # origins for CORS — both must be allowlisted).
+    # origins for CORS, both must be allowlisted).
     _dev_ports = [
         "3000",
         "3001",
@@ -356,7 +356,7 @@ def get_cors_origin_regex() -> str | None:
     loopback dev domains) on any port, over http or https.
 
     In production the embeddable widget relies on ``CORS_ORIGINS='*'`` (any
-    origin), so this stays ``None`` — we never quietly widen an explicit
+    origin), so this stays ``None``. We never quietly widen an explicit
     production allowlist to arbitrary subdomains.
     """
     env = os.getenv("APP_ENV", "development")

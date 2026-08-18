@@ -1,11 +1,11 @@
 """Paid checkout collects the buyer identity Rule 46 ACTUALLY mandates (F6).
 
 An invoice is issued from a WEBHOOK, so there is no second chance to ask who
-was billed — but WHAT must be asked depends on the buyer (see
+was billed, but WHAT must be asked depends on the buyer (see
 ``_missing_billing_fields``): a GST-registered buyer needs their registered
 legal name + address on record (their input tax credit depends on it); an
 export buyer needs an address (Rule 46's export proviso); an unregistered
-domestic buyer below ₹50,000 (Rule 46(f)) owes NOTHING — the account name and
+domestic buyer below ₹50,000 (Rule 46(f)) owes NOTHING, the account name and
 the Circular 242 supplier-state fallback make the invoice valid, and asking
 anyway was blocking legitimate B2C payments.
 """
@@ -87,8 +87,8 @@ def test_state_code_is_not_required_outside_india(db):
 
 def test_unset_country_is_domestic_b2c_and_owes_nothing(db):
     """NULL country defaults to IN throughout the billing stack; an
-    unregistered domestic buyer below the Rule 46(f) threshold owes nothing —
-    place of supply falls back to the supplier state (Circular 242)."""
+    unregistered domestic buyer below the Rule 46(f) threshold owes nothing.
+    Place of supply falls back to the supplier state (Circular 242)."""
     from app.api.subscription_routes import _missing_billing_fields
 
     client = _client_row(
@@ -101,7 +101,7 @@ def test_unset_country_is_domestic_b2c_and_owes_nothing(db):
 
 
 def test_address_without_line1_counts_as_missing_for_registered_buyer(db):
-    """Rule 46 wants an address, not a city on its own — enforced where the
+    """Rule 46 wants an address, not a city on its own. Enforced where the
     address is mandatory (a registered buyer)."""
     from app.api.subscription_routes import _missing_billing_fields
 

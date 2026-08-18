@@ -30,7 +30,7 @@ _CANCEL_TTL = _SUBPROCESS_TIMEOUT + 60  # cancel flag self-expires after the cra
 _DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # crawl + ingestion margin
 
 # In-process fallback for single-worker dev (no Redis). Without these the
-# entire progress + lock subsystem is a no-op locally — the UI polls forever
+# entire progress + lock subsystem is a no-op locally, the UI polls forever
 # on "idle" while the BackgroundTask runs and silently completes/fails out
 # of view. DO NOT REMOVE: every "tidy-up" of these dicts has immediately
 # broken the local crawl flow because Redis is genuinely unavailable on the
@@ -141,8 +141,8 @@ def refresh_crawl_heartbeat(client_id: int) -> None:
     orchestrator drives this from a live coroutine (see :func:`crawl_heartbeat`)
     throughout BOTH the crawl and the batch-embedding phases, neither of which
     otherwise writes progress. Because the ticks come from the live worker, a
-    genuinely dead worker stops emitting and ``_reap_if_stale`` still fires —
-    only a slow-but-alive job is spared. Touches nothing but the timestamp, and
+    genuinely dead worker stops emitting and ``_reap_if_stale`` still fires.
+    Only a slow-but-alive job is spared. Touches nothing but the timestamp, and
     only for ``running`` rows. No-op when no row exists or Redis is unreachable.
     """
     import time as _time
@@ -171,7 +171,7 @@ async def crawl_heartbeat(client_id: int, *, interval: int = _HEARTBEAT_REFRESH_
     """Keep the crawl's Redis heartbeat fresh for the duration of the block.
 
     Spawns a background task that re-stamps ``heartbeat_at`` every ``interval``
-    seconds while the wrapped pipeline runs — covering long phases with no
+    seconds while the wrapped pipeline runs. Covering long phases with no
     natural per-item checkpoint (a single blocking Spider ``/crawl`` call, the
     batch-embedding loop). The task is bound to the caller's coroutine, so if the
     worker process dies the ticks stop and ``_reap_if_stale`` still catches it.
@@ -242,7 +242,7 @@ def clear_crawl_progress(client_id: int) -> None:
 
 
 # Lua compare-and-delete: only remove the lock key if its value still matches
-# the caller's token. Executed server-side so the GET+DEL is atomic — a stale
+# the caller's token. Executed server-side so the GET+DEL is atomic, a stale
 # holder whose token no longer matches (its TTL expired and someone else
 # re-acquired) can never delete the new owner's lock.
 _RELEASE_IF_OWNER_LUA = (
@@ -254,7 +254,7 @@ def acquire_crawl_lock(client_id: int, ttl: int = _DEFAULT_LOCK_TTL, *, kind: st
     """Try to take the per-client crawl lock. Returns an ownership token, or ``None``.
 
     On success returns a ``"{kind}:{uuid_hex}"`` token that the caller MUST pass
-    back to :func:`release_crawl_lock` so the release is ownership-checked — a
+    back to :func:`release_crawl_lock` so the release is ownership-checked, a
     holder whose TTL expired mid-run can then only ever free its own lock, never
     a second crawl's freshly-acquired one. Returns ``None`` when the lock is
     already held (existing ``if not acquire_crawl_lock(...)`` callers keep
@@ -359,8 +359,8 @@ def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
     fires. We detect this on the read path: any non-terminal row whose
     ``heartbeat_at`` is older than :data:`_HEARTBEAT_STALE_SECONDS` is
     treated as dead. The terminal state is written BACK to Redis so every
-    subsequent read is consistent and so the per-client crawl lock — which
-    keys off "is anything running?" upstream of this — gets released.
+    subsequent read is consistent and so the per-client crawl lock, which
+    keys off "is anything running?" upstream of this. Gets released.
 
     Reap mapping:
       * ``running``    → ``failed`` ("worker died")
@@ -380,11 +380,11 @@ def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
         return data
     heartbeat = data.get("heartbeat_at")
     if heartbeat is None:
-        # Legacy row written before heartbeats were added — fall back to
+        # Legacy row written before heartbeats were added. Fall back to
         # ``started_at`` if present so existing in-flight crawls still benefit
         # from the reaper without a redeploy gap.
         heartbeat = data.get("started_at")
-    # Anchorless non-terminal row — only possible from pre-heartbeat code
+    # Anchorless non-terminal row. Only possible from pre-heartbeat code
     # or from a writer that crashed before stamping anything. Both mean
     # it isn't live; reap immediately rather than wait for the 1-hour TTL.
     age = float(_HEARTBEAT_STALE_SECONDS + 1) if heartbeat is None else _time.time() - float(heartbeat)
@@ -412,7 +412,7 @@ def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
             client_id,
             int(age),
         )
-        terminal_error = "Crawl did not complete — the worker process appears to have died. Please try again."
+        terminal_error = "Crawl did not complete, the worker process appears to have died. Please try again."
         set_crawl_progress(
             client_id,
             status="failed",
@@ -421,7 +421,7 @@ def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
         )
         terminal_status = "failed"
 
-    # Drop the per-client lock too — whatever held it is gone. Without this,
+    # Drop the per-client lock too. Whatever held it is gone. Without this,
     # the next ``POST /crawl`` would 429 against the live lock for an hour
     # while the customer wonders what's broken.
     with contextlib.suppress(Exception):
@@ -448,8 +448,8 @@ def get_crawl_progress(client_id: int) -> dict[str, Any]:
     yet (or Redis is unavailable).
 
     Detects ghost ``running`` rows whose heartbeat is older than
-    :data:`_HEARTBEAT_STALE_SECONDS` and rewrites them as ``failed`` —
-    necessary because a SIGKILL of the worker process skips the orchestrator's
+    :data:`_HEARTBEAT_STALE_SECONDS` and rewrites them as ``failed``.
+    Necessary because a SIGKILL of the worker process skips the orchestrator's
     own failure handlers, leaving Redis stuck at ``running`` until its
     1-hour TTL. See :func:`_reap_if_stale`.
     """

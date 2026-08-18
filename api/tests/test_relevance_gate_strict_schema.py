@@ -1,7 +1,7 @@
 """Tests for the relevance gate's strict-schema structured output (AR-33).
 
 Before this, the gate used the loose ``json_object`` format with no schema
-enforcement — a malformed/wrong-shaped response fell through to the blanket
+enforcement, a malformed/wrong-shaped response fell through to the blanket
 ``except Exception`` and failed open, identically to a chunk that
 successfully manipulated the score to 1.0. Combined with AR-18's chunk-
 content injection gap, a chunk engineered to break JSON parsing bypassed the
@@ -41,7 +41,7 @@ class TestStrictSchemaRequest:
 class TestFailsOpenOnMalformedResponse:
     def test_extra_unexpected_field_fails_open(self, monkeypatch):
         """A response with an extra field the schema forbids must not crash
-        the pipeline — falls back to the safe fail-open default."""
+        the pipeline. Falls back to the safe fail-open default."""
         monkeypatch.setattr("app.services.relevance_gate.cache_get", lambda *_a, **_k: None)
         monkeypatch.setattr("app.services.relevance_gate.cache_set", lambda *_a, **_k: None)
         chunk = MagicMock(content="irrelevant")
@@ -76,7 +76,7 @@ class TestFailsOpenOnMalformedResponse:
 
     def test_out_of_range_score_fails_open_not_silently_clamped(self, monkeypatch):
         """Before AR-33, an out-of-range score was silently clamped via
-        max(0.0, min(1.0, score)) — masking a judge that returned a garbage
+        max(0.0, min(1.0, score)). Masking a judge that returned a garbage
         value as if it were a legitimate boundary score. The schema's
         ge=0.0/le=1.0 constraint now makes this a validation failure (fails
         open) instead of a silent clamp."""

@@ -84,7 +84,7 @@ export function deriveAgentHealth(bot: Bot): AgentHealth {
 
   // Trained-state first (same rule as agent-health.ts): a failed
   // `last_crawl_status` only describes the last ATTEMPT, so it must not
-  // override what the agent currently knows — checking it first made a single
+  // override what the agent currently knows. Checking it first made a single
   // failed recrawl report a fully-trained live agent as "Needs attention".
   if (!trained) {
     if (bot.last_crawl_status === 'failed') {
@@ -116,7 +116,7 @@ export interface AgentSummary {
   /** Qualified leads (MQL + SAL + SQL) captured by this agent. */
   leads: number;
   hotLeads: number;
-  /** Answer success rate for this agent, as a percentage (0–100). */
+  /** Answer success rate for this agent, as a percentage (0 to 100). */
   successRate: number;
   /** Active operators assigned to this agent (per-bot seat usage). */
   operators: number;
@@ -130,7 +130,7 @@ export interface HomeTotals {
   /** Qualified leads (MQL + SAL + SQL) across all agents. */
   leads: number;
   hotLeads: number;
-  /** Conversation-weighted answer success rate across all agents (0–100). */
+  /** Conversation-weighted answer success rate across all agents (0 to 100). */
   successRate: number;
 }
 

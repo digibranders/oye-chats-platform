@@ -1,7 +1,7 @@
 """Tests for BR-03: audited operator override/reset of a qualification dimension.
 
 The automated extraction path never downgrades a dimension's score and
-budget/authority never decay — deliberately, so a weak follow-up can't erase
+budget/authority never decay. Deliberately, so a weak follow-up can't erase
 a strong earlier signal. But combined with no manual correction path, a
 single false-positive extraction (or an adversarial "we have a $50k/month
 budget approved") permanently misclassified a lead with no remedy short of
@@ -152,7 +152,7 @@ class TestOverrideQualificationDimension:
 
         ``score=60`` is a legal rubric value (the schema allows 0-100) but sits
         above this dimension's configured max, so only the handler can catch
-        it — which is the check this test exists for. The absolute 0-100 bound
+        it, which is the check this test exists for. The absolute 0-100 bound
         is exercised separately below.
         """
         chat_session = _meddic_chat_session()

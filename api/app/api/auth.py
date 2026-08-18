@@ -55,7 +55,7 @@ workspace_id_header = APIKeyHeader(name=WORKSPACE_ID_NAME, auto_error=False)
 IMPERSONATION_TOKEN_NAME = "X-Impersonation-Token"
 impersonation_token_header = APIKeyHeader(name=IMPERSONATION_TOKEN_NAME, auto_error=False)
 
-# One message for expired / revoked / unknown / malformed tokens — the caller
+# One message for expired / revoked / unknown / malformed tokens, the caller
 # already holds the token, so distinguishing the failure modes would only help
 # someone probing with tokens they never had.
 IMPERSONATION_REJECTED_DETAIL = "Impersonation session expired or revoked."
@@ -63,7 +63,7 @@ IMPERSONATION_REJECTED_DETAIL = "Impersonation session expired or revoked."
 # ── Credential shape ─────────────────────────────────────────────────────────
 #
 # Every credential above is a header, and headers get none of the schema
-# validation a request body does — ``APIKeyHeader`` hands the value through
+# validation a request body does. ``APIKeyHeader`` hands the value through
 # verbatim. Each one is then used as an equality filter in a DB query and, for
 # the bot key, as a Redis cache-key fragment. A megabyte-long header is
 # therefore a megabyte-long cache key and a megabyte-long query parameter, and
@@ -75,7 +75,7 @@ IMPERSONATION_REJECTED_DETAIL = "Impersonation session expired or revoked."
 # they reach log lines verbatim.
 #
 # Deliberately NOT a charset allow-list. Every credential this platform mints
-# today is a ``uuid4().hex``, so a hex-only rule would fit — but seeded and
+# today is a ``uuid4().hex``, so a hex-only rule would fit, but seeded and
 # legacy accounts carry other shapes, and narrowing the charset would lock
 # those accounts out to prevent nothing: a key that does not match a stored
 # credential already fails the lookup. Guessing at a format the platform never
@@ -95,7 +95,7 @@ def _usable_credential(raw: object) -> str | None:
     Typed ``object``, not ``str | None``, on purpose. These resolvers are also
     invoked DIRECTLY rather than through ``Depends`` (see the call in
     ``chat_routes.get_history_endpoint``), and an argument the caller leaves
-    unfilled arrives as a ``fastapi.params.Security`` sentinel — an object that
+    unfilled arrives as a ``fastapi.params.Security`` sentinel, an object that
     is truthy and has no string methods. Treating a non-string as "no
     credential" is both the safe reading and the one that matches how those
     call sites already expect unfilled parameters to behave.
@@ -108,7 +108,7 @@ def _usable_credential(raw: object) -> str | None:
     return raw
 
 
-# Methods an impersonated session may always use — they cannot mutate the
+# Methods an impersonated session may always use. They cannot mutate the
 # customer's Account.
 _IMPERSONATION_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -140,7 +140,7 @@ def impersonation_writable(fn: _EndpointT) -> _EndpointT:
         def create_canned_response(...): ...
 
     (FastAPI's route decorators happen to return the undecorated function, so
-    today the marker survives the other order too — but that is an
+    today the marker survives the other order too, but that is an
     implementation detail of the framework, not a guarantee. Any wrapping
     decorator placed between the two would register a function the marker was
     never set on, and the endpoint would silently stay denied. Keep it below.)
@@ -152,7 +152,7 @@ def impersonation_writable(fn: _EndpointT) -> _EndpointT:
 def find_active_impersonation_token(session: Session, raw_token: str | None) -> ImpersonationToken | None:
     """Return the live ``ImpersonationToken`` for a raw token, else ``None``.
 
-    "Live" means present, not revoked, and not expired — the single predicate
+    "Live" means present, not revoked, and not expired, the single predicate
     every impersonation entry point (per-request auth and the redeem endpoint)
     must agree on. Lookup is by sha256 equality on the indexed unique
     ``token_hash`` column, so the raw token is never compared in Python.
@@ -189,7 +189,7 @@ def _enforce_impersonation_write_guard(request: Request, *, actor_id: int, targe
 
     The matched route is read from ``request.scope["route"]``, which Starlette
     populates before dependencies resolve. (``scope["endpoint"]`` is *not* part
-    of the contract we rely on — ``scope["route"].endpoint`` is the function the
+    of the contract we rely on. ``scope["route"].endpoint`` is the function the
     router registered, which is the object the marker was set on.)
     """
     if request.method.upper() in _IMPERSONATION_SAFE_METHODS:
@@ -225,7 +225,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
 
     * ``_ensure_client_authenticatable`` is **not** called. Impersonating a
       suspended or deactivated Account is allowed on purpose (design decision
-      D-2) — debugging *why* an Account is suspended is a real support need, and
+      D-2). Debugging *why* an Account is suspended is a real support need, and
       the write guard caps the damage.
     * ``api_key`` is scrubbed from the returned instance. It is a permanent,
       unrevocable credential (design constraint 3.1); handing it to a support
@@ -234,7 +234,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
       echo it back.
     """
     # Kill switch (design §14). Checked before the token lookup so flipping it
-    # ends every session already in flight, not just new redemptions — the
+    # ends every session already in flight, not just new redemptions, the
     # whole point of an emergency switch. The 401 (rather than 403) is
     # deliberate: the customer app already treats 401 as "session ended" and
     # renders its terminal notice, so an operator flipping this cleanly
@@ -259,7 +259,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
         target_id = record.target_id
         token_id = record.id
 
-        # Load target AND actor in one round trip — both are needed for the
+        # Load target AND actor in one round trip, both are needed for the
         # privilege re-checks below, and this keeps the per-request cost at two
         # queries rather than three.
         rows = session.execute(select(Client).where(Client.id.in_({target_id, actor_id}))).scalars().all()
@@ -280,7 +280,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
         # target, but a point-in-time check at mint is NOT sufficient:
         #
         #   * a target promoted to super-admin AFTER minting would, for the rest
-        #     of the 30-minute window, resolve to a super-admin Client — and
+        #     of the 30-minute window, resolve to a super-admin Client, and
         #     ``get_superadmin`` only inspects the RESOLVED client, so the
         #     session would reach ``/superadmin/*``. Every read there is a safe
         #     method, which the write guard waves through by design, so the
@@ -320,7 +320,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
         if is_permitted_write:
             # Audit centrally, here, rather than per-endpoint. The design's
             # compensating control for allowing writes at all is that every one
-            # of them is attributable to the super-admin who made it — and a
+            # of them is attributable to the super-admin who made it, and a
             # per-route ``record_audit`` call is exactly the kind of thing that
             # gets forgotten on the next endpoint someone marks writable. This
             # sits on the one code path every permitted mutation must traverse,
@@ -330,7 +330,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
             # during dependency resolution, BEFORE the endpoint's own authz
             # (ownership, plan gating, 404s) or business logic runs. It is
             # therefore a record that the write was AUTHORIZED to proceed, not
-            # proof it succeeded — an endpoint that subsequently 403s/404s or
+            # proof it succeeded, an endpoint that subsequently 403s/404s or
             # rolls back still leaves this row. Recording post-hoc instead
             # would under-report (a handler crash after mutating state loses
             # the trail entirely), which is the worse failure for the control
@@ -386,7 +386,7 @@ def _parse_workspace_id(raw: str | None) -> int | None:
     """Coerce the X-Workspace-Id header to an int; ``None`` if absent or malformed.
 
     Malformed values are treated as absent (legacy behavior) rather than 4xx so
-    a bugged frontend doesn't hard-fail every API call — the downstream check
+    a bugged frontend doesn't hard-fail every API call, the downstream check
     against the actual workspace ownership will still catch cross-tenant leaks.
     """
     if raw is None:
@@ -434,7 +434,7 @@ def _ensure_not_suspended(client: Client) -> None:
     stop working uniformly.
 
     Superadmins are platform staff, never customers, and must never be locked
-    out of the console — so they are exempt even in the defensive case where a
+    out of the console, so they are exempt even in the defensive case where a
     ``suspended_at`` timestamp is somehow present on a superadmin row.
     """
     if getattr(client, "is_superadmin", False):
@@ -455,11 +455,11 @@ def _ensure_not_deactivated(client: Client) -> None:
     At that point the workspace's bots, documents, and chat history have all
     been hard-deleted; the Client row is kept only for support / audit.
     Letting the customer authenticate past that point drops them into a
-    ghost dashboard with no way back — friendlier to fail closed here with a
+    ghost dashboard with no way back. Friendlier to fail closed here with a
     clear reason the frontend can render ("your account was deleted; please
     contact support to restore or start a new signup").
 
-    Superadmins are exempt for the same reason as suspension — they are
+    Superadmins are exempt for the same reason as suspension. They are
     platform staff, not customers, and must never be locked out.
     """
     if getattr(client, "is_superadmin", False):
@@ -496,7 +496,7 @@ def get_current_client(
     Also accepts:
     - X-Operator-Key / X-Agent-Key: resolves the operator's workspace Client.
     - X-Impersonation-Token: resolves a super-admin support session to the
-      impersonated Account. It takes precedence over every other credential —
+      impersonated Account. It takes precedence over every other credential,
       the frontend sends only one, and the backend is explicit so the ambiguity
       has a defined answer.
 
@@ -506,7 +506,7 @@ def get_current_client(
     ``get_current_bot`` instead; admin-only endpoints requiring strict client
     auth should use ``get_current_client_strict``.
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     api_key = _usable_credential(api_key)
@@ -586,7 +586,7 @@ def get_current_operator(
     Dependency: Authenticate an Operator via X-Operator-Key header.
     Returns the Operator object with client_id accessible for scoping queries.
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     operator_key = _usable_credential(operator_key)
@@ -644,7 +644,7 @@ def get_current_client_or_operator(
     Used by endpoints that both admins and operators can access.
 
     An ``X-Impersonation-Token`` takes precedence over both and always presents
-    as ``type="client"`` — impersonating an Operator is out of scope, so a
+    as ``type="client"``. Impersonating an Operator is out of scope, so a
     support session always acts as the Account owner.
 
     Workspace-aware routing
@@ -654,13 +654,13 @@ def get_current_client_or_operator(
     row for that workspace and returns ``type="operator"`` scoped to it. This
     lets one Client identity act as an operator in another workspace via the
     invite flow, while every existing endpoint that scopes on ``auth["client_id"]``
-    continues to work unchanged — the workspace's owner id lands there.
+    continues to work unchanged, the workspace's owner id lands there.
 
     Legacy ``X-Operator-Key`` sessions ignore ``X-Workspace-Id`` (they're
     implicitly scoped to their one workspace). ``X-API-Key`` sessions without
     an ``X-Workspace-Id`` header default to the caller's own workspace.
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     api_key = _usable_credential(api_key)
@@ -706,7 +706,7 @@ def get_current_client_or_operator(
                     operator.is_online,
                 )
                 # An operator's access is governed by the owning client's
-                # standing — a suspended workspace locks out its operators too.
+                # standing, a suspended workspace locks out its operators too.
                 owner = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if owner is not None:
                     _ = owner.id, owner.is_superadmin, owner.suspended_at, owner.deactivated_at
@@ -753,7 +753,7 @@ def get_current_client_or_operator(
                     "operator_id": None,
                 }
 
-            # Cross-workspace request — validate the caller has a linked-operator
+            # Cross-workspace request. Validate the caller has a linked-operator
             # role there, and present as operator so downstream role guards see
             # the operator's role (not the Client's unrestricted status).
             operator = _resolve_linked_operator_for_workspace(session, client.id, requested_workspace_id)
@@ -781,7 +781,7 @@ def get_current_client_or_operator(
                     },
                 )
 
-            # Workspace owner's standing gates every operator's access — a
+            # Workspace owner's standing gates every operator's access, a
             # suspended workspace locks out its linked operators too.
             owner = session.execute(select(Client).where(Client.id == requested_workspace_id)).scalars().first()
             if owner is not None:
@@ -804,7 +804,7 @@ def get_current_client_or_operator(
             return {
                 "type": "operator",
                 "entity": operator,
-                # Workspace's owning client_id — every existing downstream query
+                # Workspace's owning client_id. Every existing downstream query
                 # that scopes ``WHERE ... client_id = auth["client_id"]`` keeps
                 # working transparently.
                 "client_id": requested_workspace_id,
@@ -812,7 +812,7 @@ def get_current_client_or_operator(
                 # Operator↔bot one-to-one binding. Downstream routes use it to
                 # scope bot lists, chat routing, and accept guards.
                 "bot_id": operator.bot_id,
-                # New: the underlying Client identity — useful for auditing and
+                # New: the underlying Client identity, useful for auditing and
                 # for cache-key invalidation across workspaces.
                 "linked_client_id": client.id,
             }
@@ -840,7 +840,7 @@ def get_current_client_strict(
     the sensitive mutations these routes carry stay denied unless explicitly
     marked with :func:`impersonation_writable`.
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     api_key = _usable_credential(api_key)
@@ -881,7 +881,7 @@ def get_superadmin(client: Client = Depends(get_current_client_strict)):
     """
     Dependency: Ensure authenticated Client is a Superadmin.
 
-    Uses ``get_current_client_strict`` (X-API-Key only) — NOT ``get_current_client``.
+    Uses ``get_current_client_strict`` (X-API-Key only). NOT ``get_current_client``.
     The latter also resolves an ``X-Operator-Key`` to its workspace's owning Client,
     which would let any operator of a super-admin's workspace authenticate *as* that
     super-admin and reach ``/superadmin/*``. The super-admin console authenticates
@@ -901,7 +901,7 @@ def get_current_affiliate(
 ) -> Affiliate:
     """Dependency: Authenticate a Client and verify they are an active affiliate.
 
-    Uses ``get_current_client_strict`` (X-API-Key only) — bot keys and
+    Uses ``get_current_client_strict`` (X-API-Key only). Bot keys and
     operator keys cannot impersonate an affiliate for code management.
     Resolves the affiliate row in a fresh session and detaches it so the
     caller can use the fields after the session closes.
@@ -981,9 +981,9 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "company_lookup_enabled": bot.company_lookup_enabled,
         # Three more the public settings endpoint publishes and this dict
         # forgot, found by the round-trip test rather than by inspection:
-        #  * calcom_url — the widget's meeting-booking link simply vanishes on
+        #  * calcom_url, the widget's meeting-booking link simply vanishes on
         #    every cache hit.
-        #  * widget_installed_at — read as None forever, so the install-stamp
+        #  * widget_installed_at. Read as None forever, so the install-stamp
         #    branch in get_bot_settings_public fires on EVERY external-origin
         #    widget load, issuing a pointless UPDATE + commit on the hottest
         #    endpoint in the product. Its comment claims the cache
@@ -1042,7 +1042,7 @@ def _bot_from_cache_dict(data: dict) -> Bot:
     for key, value in data.items():
         # Datetimes are stored ISO-encoded (cache_set JSON-dumps with
         # default=str, so an un-encoded datetime would come back as a string
-        # anyway — being explicit on both sides keeps the round trip typed).
+        # anyway. Being explicit on both sides keeps the round trip typed).
         if key in _CACHED_DATETIME_FIELDS and isinstance(value, str):
             value = datetime.fromisoformat(value)
         setattr(bot, key, value)
@@ -1101,7 +1101,7 @@ def _ensure_bot_owner_not_suspended(session, client_id: int) -> None:
     ``get_current_bot`` runs on the hot chat path, so this adds one narrow
     ``suspended_at`` / ``deactivated_at`` / ``is_superadmin`` lookup keyed
     by ``client_id`` rather than loading the whole Client row. A missing
-    owner (client row already purged) is treated as not-suspended — the
+    owner (client row already purged) is treated as not-suspended, the
     surrounding bot lookup already validated the bot exists, and the
     hard-delete cron leaves the Client row in place anyway.
     """
@@ -1143,7 +1143,7 @@ def get_current_bot(
     returned on mismatch. The X-API-Key fallback path is intentionally exempt
     (the admin dashboard manages its own bot from inside the dashboard).
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     bot_key = _usable_credential(bot_key)
@@ -1153,7 +1153,7 @@ def get_current_bot(
         cached = cache_get(bot_config_key(bot_key))
         if cached:
             bot = _bot_from_cache_dict(cached)
-            # Enforce owner suspension even on cache hits — a suspended customer's
+            # Enforce owner suspension even on cache hits, a suspended customer's
             # cached bots must stop serving immediately, not only after TTL expiry.
             with get_session() as session:
                 _ensure_bot_owner_not_suspended(session, bot.client_id)
@@ -1215,7 +1215,7 @@ def get_current_bot(
                         bot._subscription_bot_id = None
                     session.expunge(bot)
                     return bot
-                # No bot exists — client hasn't created one yet (expected for new accounts)
+                # No bot exists. Client hasn't created one yet (expected for new accounts)
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="No active bot found. Please create an AI chatbot first.",
@@ -1236,14 +1236,14 @@ def _resolve_preview_client(
 
     Accepts either the owner's own ``X-API-Key`` or a live impersonation
     token. The impersonated path exists so a super-admin debugging an Account
-    can actually exercise its AI Agent — the most common support question on a
+    can actually exercise its AI Agent, the most common support question on a
     chatbot platform is "why did it answer that?", which is unanswerable
     without sending a message.
 
     This is the ONLY chat path an impersonated caller may take. It is safe
     precisely because the returned bot carries ``_is_preview``, so the reply
     skips credit deduction entirely: it cannot spend the Account's money. The
-    paid widget path on the same endpoint stays unreachable — the impersonation
+    paid widget path on the same endpoint stays unreachable, the impersonation
     token is deliberately never forwarded to :func:`get_current_bot`.
 
     Suspension is enforced for a real owner but deliberately NOT for an
@@ -1251,7 +1251,7 @@ def _resolve_preview_client(
     is suspended is a core support need, and a preview reply costs nothing.
     """
     if impersonation_token:
-        # Kill switch (design §14) — the preview path is a second entry point
+        # Kill switch (design §14), the preview path is a second entry point
         # into impersonation and must honour it too.
         if not is_impersonation_enabled():
             raise HTTPException(
@@ -1273,7 +1273,7 @@ def _resolve_preview_client(
         _ = client.id, client.is_superadmin, client.suspended_at
 
         # Same per-request privilege re-checks as ``_resolve_impersonated_client``
-        # — this is a second entry point into impersonation and a mint-time
+        # . This is a second entry point into impersonation and a mint-time
         # check cannot cover a target promoted mid-session, a legacy token row,
         # or an actor demoted after minting.
         if client.is_superadmin:
@@ -1325,16 +1325,16 @@ def get_bot_for_chat(
     client can test *any of their own bots* from the dashboard's Build Studio:
 
     When ``preview`` is true AND ``bot_id`` is given AND the caller presents an
-    owner credential — either ``X-API-Key`` or a live ``X-Impersonation-Token``
-    (see :func:`_resolve_preview_client`) — the bot is resolved by id and its
+    owner credential, either ``X-API-Key`` or a live ``X-Impersonation-Token``
+    (see :func:`_resolve_preview_client`), the bot is resolved by id and its
     owner asserted to be that client (404 otherwise). The origin/``allowed_domains`` check
-    is intentionally skipped — the caller is the authenticated owner, not an
-    anonymous widget visitor — and the returned bot carries ``_is_preview =
+    is intentionally skipped (the caller is the authenticated owner, not an
+    anonymous widget visitor) and the returned bot carries ``_is_preview =
     True`` so the chat endpoints can serve the reply for free (no credit
     deduction). Every other request falls through to ``get_current_bot``
     unchanged, so existing (non-preview) widget traffic is unaffected.
     """
-    # Header credentials get no schema validation — normalise every one to a
+    # Header credentials get no schema validation. Normalise every one to a
     # usable shape (or None) before it reaches a query, a cache key or a log
     # line. See ``_usable_credential``.
     bot_key = _usable_credential(bot_key)
@@ -1358,7 +1358,7 @@ def get_bot_for_chat(
             _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
             _ = bot.allowed_domains, bot.domain_check_enabled
             # Pre-resolve the ledger scope exactly like get_current_bot so credit
-            # routing never lazy-loads bot.subscription on a detached object —
+            # routing never lazy-loads bot.subscription on a detached object,
             # even though preview replies skip deduction, downstream code that
             # inspects _subscription_bot_id stays consistent.
             if bot.subscription_id:
@@ -1397,8 +1397,8 @@ def get_client_bot(
 
 # Subscription statuses that grant full feature access. ``trialing`` is
 # included so prospects evaluating the product can exercise everything a
-# paying customer can. ``past_due`` is intentionally treated as "active" —
-# we don't yank functionality the moment a card retry fails; the dunning
+# paying customer can. ``past_due`` is intentionally treated as "active".
+# We don't yank functionality the moment a card retry fails; the dunning
 # cron handles that escalation separately.
 _ACTIVE_SUBSCRIPTION_STATUSES = frozenset({"trialing", "active", "past_due"})
 
@@ -1414,9 +1414,9 @@ def require_active_subscription(client: Client = Depends(get_current_client)):
     The structured ``detail`` is intentionally a dict instead of a plain
     string so frontends can branch on ``error`` without parsing English.
     Existing routes that should accept any authenticated client unchanged
-    must NOT depend on this — pair it only with explicitly gated routes.
+    must NOT depend on this. Pair it only with explicitly gated routes.
     """
-    # Superadmins are platform staff, not customers — they never need a
+    # Superadmins are platform staff, not customers. They never need a
     # paying subscription to manage the system. Free pass.
     if getattr(client, "is_superadmin", False):
         return None
@@ -1428,11 +1428,11 @@ def require_active_subscription(client: Client = Depends(get_current_client)):
         # ``expired`` promoted-old row, or a ``canceled`` row from re-checkout)
         # while an older row is still live; ordering by ``created_at`` alone
         # would 403 them. ``get_client_subscription`` is the shared active-row
-        # resolver (remediation H2) — reuse it so the gate agrees with the rest
+        # resolver (remediation H2). Reuse it so the gate agrees with the rest
         # of the billing stack.
         sub = plan_service.get_client_subscription(session, client.id)
 
-        # No subscription at all is treated as "needs to pick a plan" —
+        # No subscription at all is treated as "needs to pick a plan",
         # the same UX as an expired trial. Should never happen for a
         # self-serve signup once PR1 is live; defensive for legacy rows.
         sub_status = sub.status if sub else "missing"
@@ -1474,7 +1474,7 @@ def require_active_subscription_for_workspace(
     Endpoints that accept both client (``X-API-Key``) and operator
     (``X-Operator-Key``) callers should depend on this. The subscription
     belongs to the workspace's owning client, so an operator's access is
-    governed by the *owner's* subscription state — when the owner's trial
+    governed by the *owner's* subscription state. When the owner's trial
     expires, every operator in that workspace also loses access.
 
     Returns the resolved ``Subscription`` (or ``None`` for superadmins) so
@@ -1489,7 +1489,7 @@ def require_active_subscription_for_workspace(
             return None
 
     with get_session() as session:
-        # Same active-row resolution as :func:`require_active_subscription` —
+        # Same active-row resolution as :func:`require_active_subscription`,
         # the workspace owner's live subscription, not their newest row (which
         # may be a terminal sibling). See that function for the rationale.
         sub = plan_service.get_client_subscription(session, client_id)
@@ -1523,7 +1523,7 @@ def require_active_subscription_for_workspace(
 
 
 # ── Email-verification gate (B2) ────────────────────────────────────────────
-# Defers — never walls — a small set of sensitive mutations until the account
+# Defers (never walls) a small set of sensitive mutations until the account
 # proves ownership of its email. Onboarding (bot create, crawl, ingest, chat)
 # and all reads stay open so an unverified user can still explore and reach the
 # billing/upgrade prompts; only the money-committing checkout and the outbound
@@ -1547,7 +1547,7 @@ def require_verified_email(client: Client = Depends(get_current_client_strict)) 
     for an un-verified account.
     """
     # Superadmins are platform staff and may be provisioned outside the
-    # email-verify OAuth path (``is_verified`` never flipped) — never 403 them,
+    # email-verify OAuth path (``is_verified`` never flipped), never 403 them,
     # mirroring the bypass in :func:`require_verified_email_for_workspace`.
     if getattr(client, "is_superadmin", False):
         return client
@@ -1570,7 +1570,7 @@ def require_verified_email_for_workspace(
     verified. Mirrors :func:`require_active_subscription_for_workspace` so an
     or-operator route is never accidentally narrowed to X-API-Key-only auth.
     """
-    # Superadmin clients bypass the gate (platform staff) — short-circuit before
+    # Superadmin clients bypass the gate (platform staff). Short-circuit before
     # any DB lookup, matching the subscription workspace gate.
     if auth["type"] == "client":
         client = auth["entity"]

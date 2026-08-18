@@ -1,11 +1,11 @@
-"""Downgrade cutover hardening — land on the TARGET plan, never Free.
+"""Downgrade cutover hardening. Land on the TARGET plan, never Free.
 
 Under the UPI re-auth model a paid→paid downgrade cancels the old mandate at
 period end and, at cutover, ``transition_service.promote_scheduled_change``
 mints a NEW (unauthorized) Razorpay subscription for the lower plan. Before this
 fix no local row existed until the customer re-authorized, so
 ``get_client_subscription`` found nothing active and entitlements fell back to
-**Free** — a "downgrade to Standard" silently became a "downgrade to Free".
+**Free**, a "downgrade to Standard" silently became a "downgrade to Free".
 
 The fix creates a short-lived ``past_due`` GRACE subscription on the target plan
 at cutover so the customer keeps target-tier entitlements during the re-auth
@@ -167,7 +167,7 @@ def test_cutover_creates_grace_row_on_target_plan(db, monkeypatch):
 
 def test_promotion_is_idempotent_single_grace_row(db, monkeypatch):
     """A double cutover (completed + cancelled + cron) must not mint a second
-    grace row — the second call no-ops on the cleared scheduled trio."""
+    grace row, the second call no-ops on the cleared scheduled trio."""
     client = _make_client(db, email="grace-idem@e.com")
     pro = _make_plan(db, slug="gi-pro", price_cents=139900)
     std = _make_plan(db, slug="gi-std", price_cents=94900)

@@ -2,7 +2,7 @@
 
 `user@mail.acme.co.uk` must resolve to `acme.co.uk`, not `co.uk` and not
 `mail.acme.co.uk`. A naive rsplit on "." breaks every multi-part TLD, and
-getting it wrong silently mis-attributes a lead to the wrong company — or
+getting it wrong silently mis-attributes a lead to the wrong company, or
 creates a cache entry keyed on a public suffix that then serves the wrong
 profile to every lead under it.
 """
@@ -19,7 +19,7 @@ from app.services.domain_normalizer import registrable_domain
         ("www.acme.com", "acme.com"),
         ("mail.acme.com", "acme.com"),
         ("deep.sub.acme.com", "acme.com"),
-        # Multi-part suffixes — the case a naive split gets wrong.
+        # Multi-part suffixes, the case a naive split gets wrong.
         ("acme.co.uk", "acme.co.uk"),
         ("mail.acme.co.uk", "acme.co.uk"),
         ("acme.co.in", "acme.co.in"),
@@ -117,13 +117,13 @@ def test_platform_and_missing_suffixes_never_collapse_onto_the_host(host):
         "acme.ed.jp",
         "acme.gv.at",
         "acme.nhs.uk",
-        # An ICANN suffix on its own is nobody's company — no email at co.uk.
+        # An ICANN suffix on its own is nobody's company, no email at co.uk.
         "com.co",
         "co.uk",
     ],
 )
 def test_unknown_or_bare_icann_suffix_degrades_to_none(host):
-    """A miss is cheap — the caller falls back. A poisoned shared key is not."""
+    """A miss is cheap, the caller falls back. A poisoned shared key is not."""
     assert registrable_domain(host) is None
 
 
@@ -131,7 +131,7 @@ def test_unknown_or_bare_icann_suffix_degrades_to_none(host):
     ("host", "expected"),
     [
         # A PLATFORM apex is a real company's own domain, unlike an ICANN
-        # suffix — Squarespace and Medium have staff; `co.uk` does not.
+        # suffix. Squarespace and Medium have staff; `co.uk` does not.
         ("squarespace.com", "squarespace.com"),
         ("medium.com", "medium.com"),
         ("netlify.com", "netlify.com"),
@@ -164,7 +164,7 @@ def test_label_regex_rejects_an_embedded_newline():
     a label through. The value becomes a DB primary key and part of a crawl
     URL, so it must be `fullmatch`.
 
-    A newline at the very END is different — surrounding whitespace is stripped
+    A newline at the very END is different. Surrounding whitespace is stripped
     before validation, which is the desired normalisation for a value read from
     a file or a header.
     """
@@ -189,7 +189,7 @@ def test_unknown_suffix_backstop_is_load_bearing():
     """Guard against the backstop becoming inert again.
 
     A previous version advertised this protection through a constant that was
-    provably dead — emptying it failed zero tests. These assertions fail if the
+    provably dead. Emptying it failed zero tests. These assertions fail if the
     rule is weakened, so the guarantee in the docstring stays true.
     """
     # Generic second level + non-flat TLD -> fail closed.

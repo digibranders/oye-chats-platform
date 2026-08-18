@@ -74,7 +74,7 @@ def _sanitize_url(url: str | None, max_len: int = 2000) -> str | None:
 
 
 # Caps for widget-supplied visitor_journey payloads. The array reaches the
-# database as JSONB and is rendered as a timeline in the admin UI — bounding
+# database as JSONB and is rendered as a timeline in the admin UI. Bounding
 # both entry count and per-field length keeps row size predictable on
 # high-navigation sites (SPA with hundreds of history.pushState calls) and
 # blocks obvious injection (long strings, unexpected schemes).
@@ -88,7 +88,7 @@ _MAX_JOURNEY_PATH_LEN = 500
 _MAX_JOURNEY_TS_LEN = 40
 
 # Whitelisted phase and event tags for journey entries. Anything outside
-# these sets is dropped by _sanitize_journey — never trust widget input.
+# these sets is dropped by _sanitize_journey, never trust widget input.
 _JOURNEY_PHASES = frozenset({"pre", "chat", "post"})
 _JOURNEY_EVENTS = frozenset(
     {
@@ -105,12 +105,12 @@ _JOURNEY_EVENTS = frozenset(
 def _sanitize_journey(entries: list | None) -> list[dict] | None:
     """Normalize the widget's ``journey`` array into a bounded list of dicts.
 
-    Accepts the widget's payload — ``[{"path": "/services", "ts":
-    "2026-07-09T12:00:15Z", "phase": "pre", "event": "chat_opened"}, ...]``
-    — and drops anything malformed rather than raising. ``phase`` and
-    ``event`` are optional; each is dropped if not in the whitelist.
-    Preserves order (matters for the timeline UI). Returns ``None`` when
-    the input is empty or every entry was rejected.
+     Accepts the widget's payload. ``[{"path": "/services", "ts":
+     "2026-07-09T12:00:15Z", "phase": "pre", "event": "chat_opened"}, ...]``
+    , and drops anything malformed rather than raising. ``phase`` and
+     ``event`` are optional; each is dropped if not in the whitelist.
+     Preserves order (matters for the timeline UI). Returns ``None`` when
+     the input is empty or every entry was rejected.
     """
     if not entries:
         return None
@@ -181,7 +181,7 @@ def _merge_journey(existing: list[dict] | None, incoming: list[dict] | None) -> 
 
     The widget sends the full current journey on every update (not a
     delta), so ``incoming`` is usually a superset of ``existing``. We
-    still union defensively — if the widget lost its localStorage
+    still union defensively. If the widget lost its localStorage
     (private tab, storage cleared, cross-device return) it may send a
     shorter payload that we must not let overwrite our history. Entries
     are deduped by ``_entry_key``; incoming order is preserved for new
@@ -222,7 +222,7 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
     with get_session() as db:
         existing = db.execute(select(ChatSession).where(ChatSession.id == provided)).scalar_one_or_none()
     if existing is not None and existing.bot_id != bot_id:
-        # Session exists but belongs to a different bot — reject and mint a fresh ID
+        # Session exists but belongs to a different bot. Reject and mint a fresh ID
         return str(uuid.uuid4())
     return provided
 
@@ -240,7 +240,7 @@ class ValidateEmailRequest(PydanticBaseModel):
     #
     # This endpoint's entire contract is "is this address usable?", and the
     # widget treats any non-2xx as *pass* (``if (!response.ok) return {valid:
-    # true}`` — it fails open so a vendor outage never blocks a real visitor).
+    # true}``, it fails open so a vendor outage never blocks a real visitor).
     # Answering 422 for a syntactically invalid address would therefore make
     # the widget accept exactly the addresses this endpoint exists to catch.
     # The handler's ``_EMAIL_RE`` check returns the correct
@@ -267,7 +267,7 @@ class BehavioralSignalsRequest(PydanticBaseModel):
     is_return_visit: bool = False
     # Ordered list of ``{"path": "/services", "ts": "2026-07-09T12:00:15Z"}``
     # entries recorded by the widget as the visitor navigated between
-    # pages on the host site before opening chat. Optional — omitted for
+    # pages on the host site before opening chat. Optional. Omitted for
     # legacy widget builds. ``_sanitize_journey`` normalises each entry and
     # keeps at most ``_MAX_JOURNEY_ENTRIES``; the bound here refuses an
     # oversized array up front rather than parsing and discarding it, so the
@@ -278,7 +278,7 @@ class BehavioralSignalsRequest(PydanticBaseModel):
 class MeetingBookedRequest(PydanticBaseModel):
     session_id: SessionId
     # Rendered as an anchor href in the admin Leads UI and in notification
-    # email — scheme allow-listing is what keeps a ``javascript:`` payload out
+    # email. Scheme allow-listing is what keeps a ``javascript:`` payload out
     # of the customer's dashboard.
     booking_url: HttpUrlStr | None = None
     # ISO-8601. Previously parsed with ``contextlib.suppress``, so an
@@ -351,7 +351,7 @@ def _is_resolver_owned_location(current: str) -> bool:
 
     True for the empty string, for the ``"IP: x.x.x.x"`` stamp the request
     handler writes synchronously, and for any value in this resolver's own
-    output shape — ``"<city>, <country> | <ip>"``. The last is what lets a
+    output shape. ``"<city>, <country> | <ip>"``. The last is what lets a
     genuinely new IP replace a stale resolved city.
 
     False for anything else, so a manually-set or future-resolver value is
@@ -375,7 +375,7 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
 
     Both call sites fire this resolver on every message, so a ten-turn
     conversation used to spend ten ipapi.is lookups plus ten geolocation
-    lookups on one unchanging IP — measured at 6 calls for 4 sessions even on
+    lookups on one unchanging IP. Measured at 6 calls for 4 sessions even on
     short conversations. The answer cannot change between turns, so all but the
     first is waste, and ipapi.is is metered.
 
@@ -386,8 +386,8 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
     and can legitimately not exist yet.
 
     **This is read-then-act, not atomic, and it only deduplicates SEQUENTIAL
-    turns.** Two messages whose background threads overlap — a double-send, a
-    widget retry, /chat and /chat/stream racing — both read "not resolved" and
+    turns.** Two messages whose background threads overlap (a double-send, a
+    widget retry, /chat and /chat/stream racing) both read "not resolved" and
     both pay. The window is the width of the whole resolution (up to ~11s of
     vendor timeouts and row-wait retries), so it is not narrow. That is
     accepted rather than fixed: this is a cost optimisation, the duplicate
@@ -407,13 +407,13 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
             # A resolved location is written as "<city>, <country> | <ip>", so
             # the trailing IP is the whole test. That deliberately excludes the
             # bare "IP: x.x.x.x" stamp the request handler writes synchronously
-            # before this thread runs — counting that as resolved would mean
+            # before this thread runs. Counting that as resolved would mean
             # geolocation never ran at all.
             location = row.location or ""
             has_location = location.endswith(f"| {ip_address}")
             return has_intel, has_location
     except Exception:
-        # A failed check must never SUPPRESS resolution — fall through and do
+        # A failed check must never SUPPRESS resolution. Fall through and do
         # the work rather than silently skipping it.
         logger.debug("could not read prior resolution for session %s", session_id, exc_info=True)
         return False, False
@@ -423,7 +423,7 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
 # columns default OFF (migration ``b3d9f1a7c2e5``): enrichment spends credits,
 # so it is an explicit opt-in the customer switches on, not a metered feature
 # left running until they find the settings page. This is the third of three
-# independent gates — the plan and the super-admin kill switch still have to
+# independent gates, the plan and the super-admin kill switch still have to
 # pass as well.
 _AGENT_TOGGLE_COLUMN = {
     "email_verification": "email_verification_enabled",
@@ -437,7 +437,7 @@ def _agent_enrichment_opt_in(bot_id: int | None, action: str) -> bool:
     The THIRD of three independent gates, all of which must pass before a
     credit is spent: the plan (Standard/Professional), the super-admin kill
     switch (``feature.<action>_enabled``), and this customer toggle. It is a
-    real server-side gate, not a UI convenience — hiding a switch in the admin
+    real server-side gate, not a UI convenience. Hiding a switch in the admin
     app would not stop the charge.
 
     Denies on any error, and denies an unknown action, matching the
@@ -460,14 +460,14 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
     """Reserve credits for a metered enrichment lookup. Return True to proceed.
 
     Skips silently (returns ``False``) when the super-admin feature switch is
-    off, the bot can't be resolved, or the ledger can't cover the cost — the
+    off, the bot can't be resolved, or the ledger can't cover the cost, the
     lead / conversation has already been captured, so a billing shortfall must
     never break it, only drop the optional enrichment. ``action`` doubles as the
     ledger ``reason`` and the ``feature.<action>`` toggle key.
 
     ``idempotency_key`` is REQUIRED in practice, even though it is optional in
     the signature. Every caller of this function sits on a path that fires more
-    than once per billable unit — ``_resolve_and_update_location`` runs on every
+    than once per billable unit. ``_resolve_and_update_location`` runs on every
     chat message, and ``/chat/lead-capture`` is posted by the widget from both
     the pre-chat form and the handoff form. Without a key, one visitor is
     charged once per MESSAGE or once per POST instead of once per lead, and the
@@ -478,7 +478,7 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
     the enrichment write that follows. Never raises.
     """
     if idempotency_key is None:
-        logger.warning("enrichment charge for %s has no idempotency key — it may double-charge", action)
+        logger.warning("enrichment charge for %s has no idempotency key, it may double-charge", action)
     if bot_id is None:
         return False
     from app.services import credit_service
@@ -492,7 +492,7 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
                 return False
             cost = credit_service.get_credit_cost(session, action)
             if cost <= 0:
-                return True  # priced to 0 (or misconfigured) — nothing to charge
+                return True  # priced to 0 (or misconfigured), nothing to charge
             try:
                 credit_service.check_and_deduct(
                     session,
@@ -500,9 +500,9 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
                     cost,
                     reason=action,
                     reference_id=bot_id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope. None when pooled
                     idempotency_key=idempotency_key,
-                    attributed_bot_id=bot.id,  # attribution — always the real bot
+                    attributed_bot_id=bot.id,  # attribution. Always the real bot
                 )
             except (credit_service.InsufficientCredits, credit_service.KillSwitchActive):
                 return False
@@ -510,7 +510,7 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
             return True
     except Exception:
         logger.warning(
-            "Enrichment charge failed | bot_id=%s action=%s — skipping",
+            "Enrichment charge failed | bot_id=%s action=%s. Skipping",
             bot_id,
             action,
             exc_info=True,
@@ -524,19 +524,19 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
     ``bot_id`` gates the paid Visitor-Intelligence company lookup
     (``fetch_ip_intel``): it fires only for a Professional bot, when the
     ``company_name`` feature switch is on, and only after 10 credits are
-    successfully reserved — otherwise it is skipped silently. The free
+    successfully reserved. Otherwise it is skipped silently. The free
     geolocation below always runs regardless of plan.
 
-    PRIVACY — THIS MUST STAY OFF THE REQUEST PATH, and not only for latency.
+    PRIVACY. THIS MUST STAY OFF THE REQUEST PATH, and not only for latency.
     Every vendor call in here (and in ``ip_intel_service.fetch_ip_intel``) puts
-    the visitor's address in the URL — ``https://ipwho.is/<addr>``,
+    the visitor's address in the URL. ``https://ipwho.is/<addr>``,
     ``https://ipapi.co/<addr>/json/``, ``?q=<addr>&key=<vendor key>``. Sentry's
     StdlibIntegration patches ``http.client`` and records outbound URLs with
     ``parse_url(real_url, sanitize=False)``: full path, full query, no
     redaction, as the span name and as ``span.data["url"]``. A span is only
     emitted into a live transaction, and ``submit_background`` forks a fresh
     scope per task (``core.thread_pool``) precisely so one can never be
-    inherited here — which is what keeps the address and the vendor key out of
+    inherited here, which is what keeps the address and the vendor key out of
     Sentry today. Call any of this inline from a route and both ship on a
     tenth of all traffic, because ``traces_sample_rate=0.1``.
     """
@@ -553,14 +553,14 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
         is_local = parsed_ip.is_loopback or parsed_ip.is_private
         if is_local:
-            # Local/private IPs are from dev testing or internal health checks —
-            # there is no meaningful visitor geolocation to resolve.
+            # Local/private IPs are from dev testing or internal health checks.
+            # There is no meaningful visitor geolocation to resolve.
             return
 
         has_intel, has_location = _already_resolved(session_id, ip_address)
 
         # ORDER IS LOAD-BEARING: dedup, then plan gate, then the lookup, and
-        # the charge LAST — only once we know we have something to sell.
+        # the charge LAST. Only once we know we have something to sell.
         #
         # The metering (a paid, Professional-only lookup costing
         # `credit_cost.company_name`) and the per-session dedup were written
@@ -590,7 +590,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                 # Most visitors cannot be resolved to a company at all: an IP
                 # only names one when that company owns its range. Measured on
                 # production traffic, 10 resolutions produced ZERO usable
-                # names — 9 consumer ISPs and a subnet label — and
+                # names (9 consumer ISPs and a subnet label) and
                 # `ip_intel_service` correctly nulls `company_name` for every
                 # one of those. Charging before the lookup therefore billed the
                 # full 10 credits for "no company identified" nearly every
@@ -598,7 +598,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                 # customer pays only for an answer.
                 #
                 # The network signal (`asn_org`, VPN/proxy flags) rides along
-                # free — it is the same API response, and the Leads panel
+                # free, it is the same API response, and the Leads panel
                 # presents it as routing information rather than as a company.
                 identified = bool(ip_intel and ip_intel.get("company_name"))
                 if identified and not _charge_for_enrichment(
@@ -614,19 +614,19 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                     # Keep the free network signal so the operator still sees
                     # who routed the visitor and the dedup still latches, but
                     # withhold the paid identification.
-                    logger.info("company identified but not charged | session=%s — withholding", session_id)
+                    logger.info("company identified but not charged | session=%s. Withholding", session_id)
                     ip_intel = dict(ip_intel)
                     ip_intel["company_name"] = None
                     ip_intel["company_domain"] = None
         if ip_intel:
             # Recorded so a later turn can tell "already done" from "done for a
-            # different IP" — see _already_resolved.
+            # different IP". See _already_resolved.
             ip_intel["resolved_for_ip"] = ip_address
             for _ in range(5):
                 with get_session() as session:
                     chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if chat_session:
-                        # MERGE under a namespaced key — never overwrite the whole
+                        # MERGE under a namespaced key, never overwrite the whole
                         # blob. ``visitor_metadata`` predates this feature and is
                         # also read by the operator console's session panel, which
                         # looks for user-agent keys (browser/os). Assigning a fresh
@@ -648,12 +648,12 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
         location = None
 
-        # PRIVACY — the vendor-failure logs below key on ``session_id``, never on
+        # PRIVACY, the vendor-failure logs below key on ``session_id``, never on
         # ``ip_address``. Sentry's LoggingIntegration turns every WARNING record
         # into a breadcrumb, so an address interpolated here rode out attached to
         # the next error this process reported. ``session_id`` is the join key to
-        # everything else anyway — including the stored address, for an operator
-        # with DB access — so the line lost nothing worth having. The two
+        # everything else anyway (including the stored address, for an operator
+        # with DB access) so the line lost nothing worth having. The two
         # requests themselves carry the address in their URL; see the PRIVACY
         # paragraph in this function's docstring.
 
@@ -704,7 +704,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
         # The ChatSession row is INSERTed by rag_pipeline on the same request
         # that spawned this thread. Geo lookups (200-1000ms) usually finish
         # after the INSERT, but a fast ip-api response can race ahead of it
-        # — retry briefly so the resolved value isn't dropped on the floor.
+        # . Retry briefly so the resolved value isn't dropped on the floor.
         for _ in range(5):
             with get_session() as session:
                 chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -720,12 +720,12 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                     # dropped here, `_already_resolved` then never saw a
                     # location matching the new IP, and so every subsequent
                     # message re-ran both geo vendors and threw the answer away
-                    # — on a 10k/month free tier.
+                    # , on a 10k/month free tier.
                     current = chat_session.location or ""
                     if _is_resolver_owned_location(current):
                         chat_session.location = location
                         session.commit()
-                        # PRIVACY — the stored value is "<City>, <Country> | <IP>";
+                        # PRIVACY, the stored value is "<City>, <Country> | <IP>";
                         # the log gets the geography only. This is the one site in
                         # this function where redaction beats dropping the field:
                         # ``format_visitor_location`` leaves a real city behind
@@ -746,7 +746,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
         logger.warning(f"Background geolocation: session row never appeared | session={session_id}")
     except Exception as e:
-        # PRIVACY — ``e`` only. The vendor URLs above carry the visitor's address
+        # PRIVACY. ``e`` only. The vendor URLs above carry the visitor's address
         # in their path, and urllib's exceptions do not repeat the URL in
         # ``str()``; nothing else in this function may put one in a log record.
         logger.warning(f"Background geolocation failed | session={session_id} | {e}")
@@ -755,15 +755,15 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int | None = None):
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
-    Two independent checks, not chained — the domain is free and always
+    Two independent checks, not chained, the domain is free and always
     attempted regardless of plan; Reoon validation (Standard + Professional
-    only — checked via ``is_email_validation_enabled_for_bot`` — and metered
+    only. Checked via ``is_email_validation_enabled_for_bot``, and metered
     at ``credit_cost.email_verification``, so skipped when the feature switch
     is off or the ledger can't cover it) determines is_valid_email/email_score
     but never blocks the domain from being written, and neither one ever blocks
     lead capture itself (that already succeeded before this was scheduled).
     Power mode can take
-    seconds to over a minute per Reoon's own docs — that's fine here since
+    seconds to over a minute per Reoon's own docs. That's fine here since
     nothing is waiting on this thread. ``bot_id`` is optional only for
     backward-compat with any already-queued background task from before
     this signature changed; a missing bot_id denies the paid check
@@ -783,11 +783,11 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
         plan_allows_verification = bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session)
     # Reoon is a metered call (10 credits): only fire it when the plan allows it,
     # the agent has opted in (AI Agent → Advanced), the feature switch is on, AND
-    # the credits are reserved — otherwise skip silently (domain extraction below
+    # the credits are reserved. Otherwise skip silently (domain extraction below
     # still runs; lead capture already succeeded).
     #
     # Keyed per (session, address) because the widget POSTs /chat/lead-capture
-    # from TWO places — the pre-chat form and the handoff form — so one visitor
+    # from TWO places (the pre-chat form and the handoff form) so one visitor
     # who fills the form and then asks for a human produces two calls, one lead,
     # and would otherwise be billed twice. That endpoint is rate-limited per
     # BOT KEY, which is embedded in the widget and therefore public, so an
@@ -816,7 +816,7 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             if lead.company and lead.company != domain:
                 # The visitor corrected their address to a different employer.
                 # `company_name` / description / logo were resolved FROM the old
-                # domain, so they are now simply wrong — and `companyDisplay`
+                # domain, so they are now simply wrong, and `companyDisplay`
                 # renders the resolved name ABOVE the domain, which would put
                 # "Infosys Limited" over "wipro.com" on a sales rep's screen.
                 # Clearing them here is also what lets the dedup guard in
@@ -829,7 +829,7 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             # Use the SAME predicate the widget's blur check uses. Storing
             # Reoon's strict ``is_safe_to_send`` here instead meant a lead the
             # widget had just accepted (catch-all corporate domain) was stored
-            # as invalid and could then never be sent a follow-up — the widget
+            # as invalid and could then never be sent a follow-up, the widget
             # and the follow-up gate disagreed about the same address.
             lead.is_valid_email = not is_obviously_undeliverable(validation)
             lead.email_score = validation.get("overall_score")
@@ -844,7 +844,7 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
 
-    # Resolve the domain to the company's own declared identity — QUEUED, not
+    # Resolve the domain to the company's own declared identity. QUEUED, not
     # run here. See `_queue_lead_company_resolution`.
     _queue_lead_company_resolution(session_id, domain, bot_id)
 
@@ -856,7 +856,7 @@ def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: 
     that was simply wrong: the pool is FIFO, so total worker-seconds are
     identical either way, and staying on an already-acquired slot lets the
     crawl BYPASS the queue rather than waiting behind queued geolocation and
-    BANT — worse for the neighbours the comment claimed to protect.
+    BANT. Worse for the neighbours the comment claimed to protect.
 
     The real problem it created: `/chat/lead-capture` is authenticated by the
     widget's bot key, which is public, and the resolution charges only for an
@@ -899,8 +899,8 @@ def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: 
 def _company_already_resolved(session_id: str, domain: str) -> bool:
     """Has this lead's company already been answered FOR THIS DOMAIN?
 
-    The widget POSTs /chat/lead-capture from TWO places — the pre-chat form and
-    the handoff form — so one visitor produces two runs. The shared ledger key
+    The widget POSTs /chat/lead-capture from TWO places (the pre-chat form and
+    the handoff form) so one visitor produces two runs. The shared ledger key
     makes the second one free for the CUSTOMER, but nothing stopped it
     re-crawling on OUR vendor account. This is the IP path's `_already_resolved`
     guard, which the domain path never had.
@@ -909,12 +909,12 @@ def _company_already_resolved(session_id: str, domain: str) -> bool:
 
     * It does not skip when the domain has CHANGED. `lead.company` is rewritten
       on every capture, so a second POST with a different address moves the
-      domain while a name-only guard would freeze the old `company_name` — and
+      domain while a name-only guard would freeze the old `company_name`, and
       `companyDisplay` would then render "Infosys Limited" above "wipro.com",
       a confidently wrong company on a sales rep's screen.
     * It does not fail closed. This is a cost optimisation, not a gate: a
       transient DB error must never SUPPRESS the enrichment, because nothing
-      retries it — the only trigger is another lead-capture POST. Matching
+      retries it, the only trigger is another lead-capture POST. Matching
       `_already_resolved`, an error falls through and does the work.
     """
     from app.db.models import LeadInfo
@@ -924,7 +924,7 @@ def _company_already_resolved(session_id: str, domain: str) -> bool:
             existing = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
             return existing is not None and bool(existing.company_name) and existing.company == domain
     except Exception:
-        logger.warning("company dedup check failed for session=%s — resolving anyway", session_id, exc_info=True)
+        logger.warning("company dedup check failed for session=%s. Resolving anyway", session_id, exc_info=True)
         return False
 
 
@@ -936,7 +936,7 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
     site's OWN declared identity (schema.org, then og:site_name) and only
     spends an LLM call when the site declares nothing. Results are cached in a
     cross-tenant table keyed by registrable domain, so the second lead from any
-    company — on any customer's bot — is free.
+    company (on any customer's bot) is free.
 
     Gated exactly like the IP→company lookup, because to a customer they are
     one feature ("who is this visitor's company?") with two signal sources:
@@ -947,7 +947,7 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
     again from the email domain must not bill twice. Whichever signal gets
     there first pays, once per session.
 
-    ``lead.company`` keeps the raw domain either way — a failed resolution
+    ``lead.company`` keeps the raw domain either way, a failed resolution
     degrades to "infosys.com", never to nothing.
     """
     if not domain or bot_id is None:
@@ -973,7 +973,7 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
         # Charge only for an answer, same rule as the IP path: we absorb the
         # crawl when we cannot identify anyone.
         if not _charge_for_enrichment(bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"):
-            logger.info("company resolved for %s but not charged — withholding", session_id)
+            logger.info("company resolved for %s but not charged. Withholding", session_id)
             return
 
         with get_session() as session:
@@ -1018,7 +1018,7 @@ def _polite_offline_payload(bot: Bot, *, reason: str) -> dict:
 def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
     """Return a previously-charged ``ai_chat`` credit when generation ultimately
     produced no real answer (both LLMs exhausted / mid-stream error). The LLM
-    layer never raises — it returns a canned error message — so the credit is
+    layer never raises (it returns a canned error message) so the credit is
     committed before we know the reply failed; this reverses it.
 
     Best-effort: a refund failure must never mask the response or the original
@@ -1036,8 +1036,8 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
                 cost,
                 reference_id=bot.id,
                 note="ai_chat generation failed",
-                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
-                attributed_bot_id=bot.id,  # attribution — mirrors the deduction it reverses
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope. None when pooled
+                attributed_bot_id=bot.id,  # attribution. Mirrors the deduction it reverses
             )
             db.commit()
         logger.info("Refunded ai_chat credit (generation failed) bot_id=%s cost=%s", bot.id, cost)
@@ -1052,7 +1052,7 @@ def _deduct_ai_chat_credit_sync(bot: Bot) -> int:
     DB work (get_session + check_and_deduct + commit) can run in a threadpool via
     ``asyncio.to_thread`` instead of on the async event loop, where it stalled
     every concurrent chat. Semantics are unchanged: on an empty balance it raises
-    HTTP 402, on the billing kill switch HTTP 503 — both propagate out of
+    HTTP 402, on the billing kill switch HTTP 503, both propagate out of
     ``to_thread`` to the caller exactly as an inline raise would. Callers must
     skip this for preview replies (they are free).
     """
@@ -1067,8 +1067,8 @@ def _deduct_ai_chat_credit_sync(bot: Bot) -> int:
                 cost,
                 reason="ai_chat",
                 reference_id=bot.id,
-                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
-                attributed_bot_id=bot.id,  # attribution — always the real bot
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope. None when pooled
+                attributed_bot_id=bot.id,  # attribution. Always the real bot
             )
             db.commit()
         except credit_service.InsufficientCredits as exc:
@@ -1098,7 +1098,7 @@ def _final_metadata_failure_flag(chunk: str) -> bool | None:
     The pipeline yields the terminal frame as its own ``\\nFINAL_METADATA:{...}``
     yield, so a genuine frame is exactly the marker (ignoring surrounding
     whitespace) followed by JSON. Answer text that merely *contains* the marker
-    mid-sentence is NOT treated as a frame — that's why we require the stripped
+    mid-sentence is NOT treated as a frame. That's why we require the stripped
     chunk to *start* with the marker rather than searching for it anywhere.
     Combined with the caller taking the LAST frame's flag (the genuine terminal
     frame is always emitted last), a forged mid-stream frame cannot cause a
@@ -1116,7 +1116,7 @@ def _final_metadata_failure_flag(chunk: str) -> bool | None:
 # NOTE ON DECORATOR ORDER: ``impersonation_writable`` sits directly under the
 # route decorator and ABOVE ``limiter.limit``. ``limiter.limit`` returns a
 # wrapper, and the router registers whatever the decorator directly beneath it
-# produced — so the marker must be applied to that wrapper, not to the inner
+# produced, so the marker must be applied to that wrapper, not to the inner
 # function, or the guard would read it back off the wrong object.
 @router.post("/chat")
 @impersonation_writable
@@ -1132,7 +1132,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
     "Preview-mode test chat"): an owner-preview reply skips credit deduction
     entirely, so exercising the AI Agent costs the Account nothing.
 
-    IMPORTANT — the write guard does **not** run on this endpoint. It lives in
+    IMPORTANT, the write guard does **not** run on this endpoint. It lives in
     the Client resolvers, and this route authenticates through
     ``get_bot_for_chat`` instead, which resolves a Bot. The marker is therefore
     not what makes this safe. The real constraint is enforced in
@@ -1159,7 +1159,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         return _polite_offline_payload(bot, reason=f"subscription_{owner_status}")
 
     # ── Credit enforcement: must match /chat/stream ──
-    # Owner-preview (Build Studio) replies are free — skip deduction entirely,
+    # Owner-preview (Build Studio) replies are free. Skip deduction entirely,
     # but bounded by a per-bot daily quota (PREVIEW_DAILY_LIMIT) so an owner
     # can't proxy real visitor traffic through preview for unlimited free LLM
     # completions. See app/services/preview_quota.py.
@@ -1183,8 +1183,8 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
                     cost,
                     reason="ai_chat",
                     reference_id=bot.id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
-                    attributed_bot_id=bot.id,  # attribution — always the real bot
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope. None when pooled
+                    attributed_bot_id=bot.id,  # attribution. Always the real bot
                 )
                 db.commit()
             except credit_service.InsufficientCredits as exc:
@@ -1235,7 +1235,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         ans_len = len(result.get("answer", ""))
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
         # Refund the credit when the pipeline only produced a canned error
-        # message (both LLMs exhausted) — the visitor got no real answer.
+        # message (both LLMs exhausted), the visitor got no real answer.
         if result.get("generation_failed") and not is_preview:
             _refund_ai_chat_credit(bot, cost)
         return result
@@ -1255,7 +1255,7 @@ def _offline_stream(bot: Bot, reason: str):
 
     The widget expects ``METADATA:{...}`` → text chunks → ``FINAL_METADATA:{...}``.
     We emit a complete shape here so the widget's parser doesn't fall into
-    its error path when the bot is offline — visitor sees the offline
+    its error path when the bot is offline. Visitor sees the offline
     message rendered like a normal reply.
     """
     import json
@@ -1271,7 +1271,7 @@ def _offline_stream(bot: Bot, reason: str):
     yield f"\nFINAL_METADATA:{json.dumps({**metadata, 'answer': message})}\n"
 
 
-# Decorator order matters exactly as on ``POST /chat`` above — the marker goes
+# Decorator order matters exactly as on ``POST /chat`` above, the marker goes
 # above ``limiter.limit`` so it lands on the object the router registers.
 @router.post("/chat/stream")
 @impersonation_writable
@@ -1282,7 +1282,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
     Authenticated via X-Bot-Key (widget) or X-API-Key. Owner-preview requests
     (Build Studio: ``?preview=true&bot_id=``) resolve any owned bot and are free
-    — no credit deduction — exactly like the non-streaming ``POST /chat``.
+    (no credit deduction) exactly like the non-streaming ``POST /chat``.
 
     Marked writable for a super-admin impersonation session (design §6.1,
     "Preview-mode test chat"), with the same mechanics documented on ``POST
@@ -1291,7 +1291,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     ``auth._resolve_preview_client`` rather than by the marker.
     """
     # ── Subscription gate (widget side) ──
-    # Mirror ``/chat`` — when the bot owner's subscription is inactive,
+    # Mirror ``/chat``. When the bot owner's subscription is inactive,
     # stream the offline message rather than running the RAG pipeline. No
     # credits are deducted; the SSE shape stays the same so the widget
     # renders the message exactly like a normal short reply.
@@ -1315,7 +1315,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
         )
 
     # ── Credit enforcement: deduct 1 credit per AI reply (configurable) ──
-    # Owner-preview (Build Studio) replies are free — skip deduction entirely,
+    # Owner-preview (Build Studio) replies are free. Skip deduction entirely,
     # mirroring POST /chat, but bounded by a per-bot daily quota
     # (PREVIEW_DAILY_LIMIT) so an owner can't proxy real visitor traffic
     # through preview for unlimited free LLM completions. ``cost`` stays 0 so
@@ -1351,8 +1351,8 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     # A global gate caps in-flight chat generations under the connection pool so
     # a traffic spike can never exhaust it (the measured collapse mode). Excess
     # requests wait briefly then get a fast 503 (Retry-After) instead of a 30s
-    # QueuePool hang. Acquired here — after the cheap subscription/credit gates so
-    # their early-returns never hold a slot — and released in the generator's
+    # QueuePool hang. Acquired here (after the cheap subscription/credit gates so
+    # their early-returns never hold a slot) and released in the generator's
     # finally below (covers success, error, and client disconnect). If the gate
     # sheds this request we refund the credit just deducted, so a rejected chat is
     # never charged.
@@ -1368,7 +1368,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
         """Proxy the RAG stream and, once it finishes, refund the credit if the
         terminal FINAL_METADATA frame flagged a failed generation (both LLMs
         exhausted / mid-stream error). A client disconnect before that frame
-        cancels this generator and skips the refund — correct, since we never
+        cancels this generator and skips the refund. Correct, since we never
         confirmed a failed reply and must never over-refund a delivered one.
 
         Always releases the concurrency slot on exit (success, error, or the
@@ -1419,19 +1419,19 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     """Real-time check the widget calls on email-field blur, before the
     visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
 
-    Paid plans only (every tier above Free) — gated per-bot via
+    Paid plans only (every tier above Free). Gated per-bot via
     ``is_email_validation_enabled_for_bot`` so a Free bot never fires the
     paid Reoon call (not just hides its result): its widget still submits
     the form normally, exactly as it did before this feature existed.
 
     Deliberately lenient: blocks only unambiguous junk (bad syntax,
     disposable addresses, spamtraps, domains with no working mail server).
-    Catch-all and "unknown" results are let through — many real B2B
+    Catch-all and "unknown" results are let through. Many real B2B
     companies run catch-all mail gateways that Reoon can't confirm
     deliverability on either way, and this endpoint's job is to keep fake
     leads out, not to reject genuine visitors it can't fully verify. Fails
     open (valid=True) if Reoon is unreachable, unconfigured, or the bot's
-    plan doesn't include this feature — an infra hiccup or a lower tier
+    plan doesn't include this feature, an infra hiccup or a lower tier
     must never block a real visitor from talking to a human. See
     docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
     """
@@ -1442,7 +1442,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     with get_session() as session:
         # Plan gate (Standard + Professional), the per-agent customer opt-in, AND
         # the super-admin feature switch. This real-time blur check is NOT metered
-        # — it's a pre-submit UX helper, not the billable per-lead verification —
+        # (it's a pre-submit UX helper, not the billable per-lead verification)
         # but it must respect the same on/off controls so it never calls Reoon
         # for an agent that has verification turned off.
         from app.services import credit_service
@@ -1459,8 +1459,8 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
 
     # CACHED, because this call is UNMETERED and the endpoint is public.
     #
-    # It is authenticated only by the widget's bot key — embedded in customer
-    # pages — and rate-limited at 20/min per key, so it was 20 free Reoon calls
+    # It is authenticated only by the widget's bot key (embedded in customer
+    # pages) and rate-limited at 20/min per key, so it was 20 free Reoon calls
     # a minute per widget, on OyeChats' account, with no ledger row anywhere.
     # Metering it would be the wrong fix: this is a pre-submit UX helper that
     # fires on field blur, and charging a customer because a visitor tabbed
@@ -1469,14 +1469,14 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
     # directions. A "deliverable" answer is safe to hold for a day: the worst
     # case is that we let through an address that went bad since. An
-    # "undeliverable" answer BLOCKS the visitor — `HandoffForm` refuses to
-    # submit on it — and `is_obviously_undeliverable` reads a live DNS/SMTP
+    # "undeliverable" answer BLOCKS the visitor (`HandoffForm` refuses to
+    # submit on it) and `is_obviously_undeliverable` reads a live DNS/SMTP
     # probe that this codebase already documents as having known false
     # positives. Holding one of those for 24 hours pins a real person out of
     # every OyeChats widget on the internet (the key is the address, not the
     # tenant, because deliverability is a property of the address). A short
-    # window still collapses the abuse case — a loop on the public bot key
-    # hammers the same few addresses within seconds — while letting a
+    # window still collapses the abuse case (a loop on the public bot key
+    # hammers the same few addresses within seconds) while letting a
     # transient false verdict clear on the visitor's next try.
     #
     # Keyed on a hash so no raw address is stored in Redis, and prefixed like
@@ -1491,7 +1491,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     else:
         validation = verify_email(email)
         if validation is None:
-            # Reoon unreachable — fail OPEN. A visitor must never be blocked
+            # Reoon unreachable. Fail OPEN. A visitor must never be blocked
             # from submitting because our vendor is down. Not cached: the next
             # attempt should retry rather than inherit an outage.
             return {"valid": True}
@@ -1500,7 +1500,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
 
     if undeliverable:
-        return {"valid": False, "reason": "This email address doesn't look right — mind double-checking it?"}
+        return {"valid": False, "reason": "This email address doesn't look right. Mind double-checking it?"}
     return {"valid": True}
 
 
@@ -1510,10 +1510,10 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key.
 
     Email validation (Reoon) runs entirely in the background via
-    ``_enrich_lead_in_background`` — never here. Reoon's power mode can take
+    ``_enrich_lead_in_background``, never here. Reoon's power mode can take
     seconds to over a minute; blocking this endpoint on it would hang the
     visitor's live chat request. A possibly-invalid email is still captured:
-    Reoon has known false positives (confirmed empirically — see
+    Reoon has known false positives (confirmed empirically. See
     docs/superpowers/plans/2026-08-08-visitor-intelligence.md §04), so
     hard-rejecting a lead the visitor is actively submitting risks losing a
     real one. The validation result instead gates the *manual* follow-up
@@ -1528,7 +1528,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             # Snapshot UTM + visitor_journey onto the lead row only when the
             # owning client's plan includes Lead Source Attribution. Free /
             # Starter clients still get their lead captured (with contact
-            # info) — they just don't get the durable per-lead attribution
+            # info). They just don't get the durable per-lead attribution
             # copy that Standard / Professional clients see in the Leads UI.
             utm_snapshot: dict | None = None
             journey_snapshot: list | None = None
@@ -1614,7 +1614,7 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             # phase, event, ts) so widget resends are idempotent. Reassign
             # the column (not mutate in place) so SQLAlchemy detects the
             # change on JSONB. Skip the whole branch when the widget sent
-            # no journey — preserves the pre-2.0-widget fast path.
+            # no journey. Preserves the pre-2.0-widget fast path.
             safe_journey = _sanitize_journey(body.journey)
             if safe_journey:
                 merged_journey = _merge_journey(chat_session.visitor_journey, safe_journey)
@@ -1682,14 +1682,14 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             logger.info(f"Behavioral signals recorded | bot={bot.id} session={body.session_id} score={new_score}")
             return {"success": True, "behavioral_score": chat_session.behavioral_score}
     except SessionOwnershipError:
-        # Let the global handler turn this into a clean 404 — don't mask as 500.
+        # Let the global handler turn this into a clean 404. Don't mask as 500.
         raise
     except IntegrityError as e:
         # Two near-simultaneous widget requests for a brand-new session_id can
         # race on the chat_sessions PK insert. ``ensure_chat_session`` retries
         # internally, but the retry's re-SELECT can still miss the winner if its
         # commit isn't yet visible. Behavioral signals are idempotent from the
-        # widget's perspective — losing one signal is harmless and far better
+        # widget's perspective. Losing one signal is harmless and far better
         # than 500ing, which makes the widget retry and amplifies the race.
         logger.warning(f"Behavioral signals race ignored | bot={bot.id} session={body.session_id} | {e.orig}")
         return {"success": True, "behavioral_score": None}
@@ -1707,7 +1707,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
 
         with get_session() as session:
             ensure_chat_session(session, body.session_id, bot_id=bot.id)
-            # Already parsed and validated by the schema — an unparseable
+            # Already parsed and validated by the schema, an unparseable
             # timestamp is a 422 rather than a booking silently stored with
             # no time on it.
             meeting_time = body.meeting_time
@@ -1750,7 +1750,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
 def get_lead_info_endpoint(session_id: SessionId, bot: Bot = Depends(get_current_bot)):
     """
     Fetch existing lead info for a widget session. Auth: X-Bot-Key.
-    Always returns HTTP 200 — non-critical endpoint that must never block widget load.
+    Always returns HTTP 200. Non-critical endpoint that must never block widget load.
     Used by the widget to pre-fill HandoffForm fields and skip re-asking known info.
     """
     try:
@@ -1825,7 +1825,7 @@ def get_history_endpoint(
     request: Request,
     session_id: SessionId,
     bot_id: RowId | None = Query(None),
-    before: int | None = Query(None, ge=1, description="Cursor — return messages with id < this value"),
+    before: int | None = Query(None, ge=1, description="Cursor. Return messages with id < this value"),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
 ):
     """Retrieve chat history for a given session.
@@ -1835,8 +1835,8 @@ def get_history_endpoint(
     """
     # Dual auth: try client/operator first, fall back to bot key (widget).
     # Only fall back to bot-key when NO admin auth headers were provided.
-    # If admin headers are present but invalid, propagate the error —
-    # otherwise a deactivated operator with a valid bot key could still
+    # If admin headers are present but invalid, propagate the error.
+    # Otherwise a deactivated operator with a valid bot key could still
     # read chat history by triggering the silent fallback.
     auth = None
     resolved_bot_id = bot_id
@@ -1850,7 +1850,7 @@ def get_history_endpoint(
         # This is the one place the resolver is invoked directly rather than via
         # ``Depends``, so FastAPI does not fill the defaults for us. EVERY
         # parameter must be passed explicitly: the unfilled defaults are
-        # ``fastapi.params.Security`` sentinel objects, which are truthy — a
+        # ``fastapi.params.Security`` sentinel objects, which are truthy, a
         # partially-specified call would take the impersonation branch for every
         # caller and blow up in ``_parse_workspace_id`` on a sentinel.
         auth = get_current_client_or_operator(
@@ -1892,7 +1892,7 @@ def get_history_endpoint(
                 resolve_bot_ids = list(bots)
 
             # Plan-driven retention cutoff for admin / operator callers.
-            # Widget calls (``auth["type"] == "bot"``) skip this — a visitor's
+            # Widget calls (``auth["type"] == "bot"``) skip this, a visitor's
             # in-progress conversation must be readable regardless of the
             # workspace owner's plan, otherwise a mid-chat refresh would blank
             # out messages the visitor is actively looking at.
@@ -1917,7 +1917,7 @@ def get_history_endpoint(
                     stmt = stmt.where(BotModel.id == resolved_bot_id)
                 elif resolve_bot_ids:
                     stmt = stmt.where(BotModel.id.in_(resolve_bot_ids))
-                # Filter by the parent session's ``created_at`` — a whole
+                # Filter by the parent session's ``created_at``, a whole
                 # conversation older than the retention window is hidden as
                 # a unit. Message-level filtering would leak "session started
                 # 20 days ago, but here are 3 recent messages" fragments that
@@ -1956,7 +1956,7 @@ def get_history_endpoint(
         raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e
 
 
-# ── Visitor file upload — presigned B2 PUT URL ──
+# ── Visitor file upload. Presigned B2 PUT URL ──
 
 _ALLOWED_CONTENT_TYPES = {
     "image/png",
@@ -1979,7 +1979,7 @@ class UploadUrlRequest(PydanticBaseModel):
     # the presigned POST policy; bounded so an oversized string never reaches
     # the signing call.
     content_type: str = Field(..., min_length=1, max_length=128)
-    # bytes — the caller's declared size. ``ge=1`` closes the negative-size
+    # bytes, the caller's declared size. ``ge=1`` closes the negative-size
     # case: the handler's only guard was ``> _MAX_SIZE_BYTES``, which -1
     # passes. The upper bound stays in the handler so an oversized request
     # keeps its established ``400`` contract rather than becoming a 422, and
@@ -2023,13 +2023,13 @@ async def get_visitor_upload_url(
 
     from app.services.r2_service import _build_public_url, generate_presigned_post, safe_object_extension
 
-    # The stored key never contains the caller's name — only a fresh UUID and
+    # The stored key never contains the caller's name. Only a fresh UUID and
     # an allow-listed extension. Sharing the helper with ``upload_chat_file``
     # keeps the two upload paths from drifting apart on what an extension is.
     key = f"chat-files/{uuid.uuid4()}.{safe_object_extension(body.filename)}"
 
     # Presigned POST (not PUT) so R2 enforces the 10 MB ceiling via the policy's
-    # content-length-range — the request-body ``size`` is otherwise only
+    # content-length-range, the request-body ``size`` is otherwise only
     # advisory and a holder of a presigned PUT could store an arbitrary-size
     # object on the public CDN.
     presigned = generate_presigned_post(key, body.content_type, _MAX_SIZE_BYTES)
@@ -2129,7 +2129,7 @@ def send_chat_transcript(
 
 class ConnectRequestResponseBody(PydanticBaseModel):
     accepted: bool
-    request_id: Identifier | None = None  # optional — extra guard against stale popups
+    request_id: Identifier | None = None  # optional. Extra guard against stale popups
 
 
 @router.get("/chat/connect-request/{session_id}")
@@ -2148,7 +2148,7 @@ def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_cu
 
     from app.services.live_chat_service import manager as live_manager
 
-    # Widget polls this every 5s while in bot mode — perfect signal for
+    # Widget polls this every 5s while in bot mode. Perfect signal for
     # "visitor is still on the page chatting with the AI". We piggyback the
     # heartbeat here so we don't need a second endpoint for presence.
     live_manager.record_bot_session_activity(session_id)
@@ -2174,7 +2174,7 @@ async def respond_to_connect_request(
 
     On accept we atomically promote the session to live chat and assign it to
     the requesting operator. On decline (or stale ``request_id``) we just
-    consume the pending entry — the bot conversation continues unchanged.
+    consume the pending entry, the bot conversation continues unchanged.
     """
     from sqlalchemy import update as sa_update
 
@@ -2185,7 +2185,7 @@ async def respond_to_connect_request(
     if not pending:
         return {"ok": True, "result": "expired"}
 
-    # Optional request_id guard — protects against an old popup the visitor
+    # Optional request_id guard. Protects against an old popup the visitor
     # left open while the operator already cancelled & re-issued.
     if body.request_id and body.request_id != pending["request_id"]:
         return {"ok": True, "result": "stale"}
@@ -2202,7 +2202,7 @@ async def respond_to_connect_request(
         operator_name = pending["operator_name"]
         operator = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
         if not operator or operator.client_id != bot.client_id:
-            # Operator was removed mid-flight — clear the request and bail out.
+            # Operator was removed mid-flight. Clear the request and bail out.
             live_manager.clear_connect_request(session_id)
             await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired", visitor_name=None)
             return {"ok": True, "result": "expired"}
@@ -2224,7 +2224,7 @@ async def respond_to_connect_request(
             )
             return {"ok": True, "result": "declined"}
 
-        # Accept path — must be a bot session AND still in bot status.
+        # Accept path. Must be a bot session AND still in bot status.
         if chat_session.status != "bot":
             live_manager.clear_connect_request(session_id)
             await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired")
@@ -2266,14 +2266,14 @@ async def respond_to_connect_request(
     if not accepted_ok:
         logger.warning(
             "DB accepted connect-request for %s → operator %s but manager rejected it. "
-            "DB is authoritative — proceeding.",
+            "DB is authoritative. Proceeding.",
             session_id,
             operator_id,
         )
 
     await live_manager.notify_connect_request_resolved(operator_id, session_id, "accepted", visitor_name=visitor_name)
 
-    # Refresh the operator console's qualified-bot list — this session has
+    # Refresh the operator console's qualified-bot list. This session has
     # been removed from the "still chatting with AI" pool.
     import asyncio as _asyncio
 

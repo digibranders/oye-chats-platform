@@ -1,6 +1,6 @@
 """Export a CUSTOMER-FACING OpenAPI document for the public docs site.
 
-``app.openapi()`` describes every route the process mounts — including the
+``app.openapi()`` describes every route the process mounts, including the
 whole ``/superadmin`` surface, impersonation minting, the inbound Razorpay
 webhook and the internal health/ops probes. That document must never be
 published: it is a map of the platform's privileged control plane, and the
@@ -49,7 +49,7 @@ _DENY_PATTERNS: tuple[str, ...] = (
     # super-admin price-drift diagnostic that lives under /subscriptions.
     r"^/activation",
     r"^/subscriptions/admin/",
-    # Inbound gateway webhook — Razorpay posts here, customers never do.
+    # Inbound gateway webhook. Razorpay posts here, customers never do.
     r"^/webhooks/razorpay$",
     # Ops probes and internal object proxy.
     r"^/health/full$",
@@ -128,7 +128,7 @@ def build_public_document(raw: dict[str, Any]) -> dict[str, Any]:
     if components:
         document["components"] = components
 
-    # Tag list, when present, is generated from the routers — prune the tags no
+    # Tag list, when present, is generated from the routers. Prune the tags no
     # surviving operation uses so the document has no dangling superadmin tags.
     used_tags = {
         tag
@@ -169,7 +169,7 @@ def main() -> int:
     if args.check:
         current = destination.read_text() if destination.exists() else ""
         if current != rendered:
-            print(f"{destination} is stale — re-run without --check.", file=sys.stderr)
+            print(f"{destination} is stale. Re-run without --check.", file=sys.stderr)
             return 1
         print(f"{destination} is up to date.")
         return 0

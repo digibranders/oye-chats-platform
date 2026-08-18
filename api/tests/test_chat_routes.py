@@ -1,4 +1,4 @@
-"""Tests for app.api.chat_routes — chat endpoint functionality."""
+"""Tests for app.api.chat_routes. Chat endpoint functionality."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -42,7 +42,7 @@ def _allow_subscription(monkeypatch):
     path patch this same symbol back to a non-active value.
 
     Also defaults every test's bot to a plan that includes real-time email
-    validation (Standard/Professional) — TestValidateEmail's tests assert
+    validation (Standard/Professional). TestValidateEmail's tests assert
     on Reoon's result and predate the Standard+Professional plan gate;
     the new gating tests in test_chat_routes_email_validation_gating.py
     override this back to False per-test to exercise the denial path.
@@ -277,7 +277,7 @@ class TestValidateEmail:
             "app.services.reoon_service.verify_email",
             return_value={
                 "status": "catch_all",
-                "is_safe_to_send": False,  # not positively confirmed — but not junk either
+                "is_safe_to_send": False,  # not positively confirmed, but not junk either
                 "is_disposable": False,
                 "is_valid_syntax": True,
                 "is_spamtrap": False,

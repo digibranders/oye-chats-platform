@@ -1,7 +1,7 @@
 """Superadmin-provisioned clients verify their email like anyone else.
 
 ``POST /superadmin/clients`` creates a real paying customer, not platform staff
-— the ``is_superadmin`` bypass in ``require_verified_email`` does not cover
+- the ``is_superadmin`` bypass in ``require_verified_email`` does not cover
 them. It used to leave ``is_verified`` at its column default of False while
 never sending an OTP, so once the front-end verification gate landed, such an
 account would have been held on /verify-email with no code in its inbox.

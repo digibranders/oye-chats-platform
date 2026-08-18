@@ -1,8 +1,8 @@
 """Wave 4b: topup plan-gating + pack rounding + status-based cancel terminality.
 
-* ``topup_allowed`` was frontend-only (a hidden button) — a Free account
+* ``topup_allowed`` was frontend-only (a hidden button), a Free account
   calling the API directly could buy credits its plan matrix forbids.
-* Pack matching used ``int()`` truncation on operator-edited float prices —
+* Pack matching used ``int()`` truncation on operator-edited float prices,
   a "1599.99" pack silently never matched anything.
 * The gateway-cancel error paths sniffed English substrings out of SDK
   exceptions to decide "already terminal" (F8). Razorpay rewording a
@@ -84,7 +84,7 @@ def _mk(db, monkeypatch, *, features):
     monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))
     monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: None)
     monkeypatch.setattr(subscription_routes, "RAZORPAY_ENABLED", True)
-    # Entitlements cache would serve a stale plan across tests — bypass it.
+    # Entitlements cache would serve a stale plan across tests. Bypass it.
     from app.services import plan_entitlements_service
 
     monkeypatch.setattr(plan_entitlements_service, "_read_cache", lambda *a, **k: None)

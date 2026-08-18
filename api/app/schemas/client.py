@@ -11,8 +11,8 @@ class ClientSettingsUpdate(BaseModel):
     """Legacy client-scoped widget settings (``PATCH /client/settings``).
 
     Superseded by the bot-scoped ``PATCH /bots/{id}`` for workspaces that have
-    a bot, but still reachable, so it is held to the same constraints —
-    otherwise it is simply the unvalidated way in to the same columns.
+    a bot, but still reachable, so it is held to the same constraints.
+    Otherwise it is simply the unvalidated way in to the same columns.
     """
 
     bot_name: Name | None = None
@@ -29,7 +29,7 @@ def _is_public_hostname(hostname: str) -> bool:
     try:
         infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
-        # DNS resolution failed — reject to be safe
+        # DNS resolution failed. Reject to be safe
         return False
 
     if not infos:
@@ -57,7 +57,7 @@ class DocumentPagesResponse(BaseModel):
 
 
 class CrawlDiscoverRequest(BaseModel):
-    """Request body for POST /crawl/discover — URL-only pre-crawl page count."""
+    """Request body for POST /crawl/discover. URL-only pre-crawl page count."""
 
     url: str
 
@@ -86,7 +86,7 @@ class CrawlDiscoverRequest(BaseModel):
 
 
 class CrawlDiffRequest(CrawlDiscoverRequest):
-    """Request body for POST /crawl/diff — diff a recrawl against existing pages."""
+    """Request body for POST /crawl/diff. Diff a recrawl against existing pages."""
 
     replace_source: str = Field(
         ...,
@@ -98,7 +98,7 @@ class CrawlDiffRequest(CrawlDiscoverRequest):
         description="Recrawl preview mode. ``full`` shows the totals for a re-scrape "
         "of every URL (charged per page regardless of content change). ``delta`` "
         "shows the URL-level diff and defers content-change detection to the "
-        "ingestion pipeline's SHA-256 dedup — only new or changed pages are billed. "
+        "ingestion pipeline's SHA-256 dedup. Only new or changed pages are billed. "
         "``delta`` is gated to Standard+; Free/Starter callers get 403.",
     )
 
@@ -114,7 +114,7 @@ class CrawlDiffRequest(CrawlDiscoverRequest):
 class CrawlRequest(BaseModel):
     url: str
     # Upper bound is enforced by the route layer against the caller's plan tier
-    # — the authoritative per-tier ceilings live in the plan config (DB) and are
+    # , the authoritative per-tier ceilings live in the plan config (DB) and are
     # resolved via ``plan_service.get_crawl_limits`` in the crawl route, not
     # hard-coded here (paid tiers use a credit-derived budget rather than a fixed
     # page cap). This schema keeps only the absolute floor so a malicious zero or
@@ -128,7 +128,7 @@ class CrawlRequest(BaseModel):
     replace_source: str | None = Field(
         default=None,
         description="Root domain to atomically replace after a successful crawl (e.g. 'fynix.digital'). "
-        "Old chunks for this source are deleted only after new ingestion succeeds — "
+        "Old chunks for this source are deleted only after new ingestion succeeds. "
         "so the bot always has knowledge during the recrawl.",
     )
     expected_new_pages: int | None = Field(
@@ -137,7 +137,7 @@ class CrawlRequest(BaseModel):
         description="Optional client-supplied page count from a prior /crawl/diff call, used "
         "to right-size the credit pre-flight on a recrawl (only honored when "
         "``replace_source`` is set). Per-page atomic deduction inside the ingestion "
-        "pipeline remains authoritative — this only loosens the upfront ceiling so a "
+        "pipeline remains authoritative. This only loosens the upfront ceiling so a "
         "9-new-page recrawl isn't blocked by a 1200-page worst-case reservation.",
     )
     discovered_pages: int | None = Field(
@@ -146,9 +146,9 @@ class CrawlRequest(BaseModel):
         description="Optional client-supplied sitemap page count from a prior "
         "/crawl/discover call. Used to right-size the credit pre-flight on an "
         "INITIAL crawl (honored only when ``replace_source`` is NOT set) so a small "
-        "site isn't gated at the plan's full max-pages ceiling — e.g. a 13-page site "
+        "site isn't gated at the plan's full max-pages ceiling. E.g. a 13-page site "
         "reserves 13×cost, not plan_max×cost. Per-page atomic deduction inside the "
-        "ingestion pipeline stays authoritative — this only tightens the upfront "
+        "ingestion pipeline stays authoritative. This only tightens the upfront "
         "reservation to the discovered count.",
     )
     ordered_urls: list[str] | None = Field(
@@ -161,11 +161,11 @@ class CrawlRequest(BaseModel):
     mode: str = Field(
         default="delta",
         description="Recrawl mode. ``full`` forces re-embed + charge for every "
-        "discovered URL (Free/Starter's only option) — the ingestion pipeline's "
+        "discovered URL (Free/Starter's only option), the ingestion pipeline's "
         "SHA-256 dedup is bypassed so unchanged pages still bill. ``delta`` uses "
         "the existing dedup so only new or content-changed pages bill. ``delta`` "
         "is gated to Standard+; Free/Starter callers get 403. First-time crawls "
-        "(no ``replace_source``) always run as full — the mode field is ignored.",
+        "(no ``replace_source``) always run as full, the mode field is ignored.",
     )
 
     @field_validator("mode")
@@ -199,7 +199,7 @@ class CrawlRequest(BaseModel):
         except ValueError as exc:
             if "not allowed" in str(exc):
                 raise
-            # hostname is not a literal IP — resolve DNS and verify all results are public
+            # hostname is not a literal IP. Resolve DNS and verify all results are public
             if not _is_public_hostname(hostname):
                 raise ValueError("URL resolves to a private/internal address and cannot be crawled") from None
 

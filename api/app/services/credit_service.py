@@ -41,8 +41,8 @@ from app.db.models import Bot, CreditLedger, PricingConfig, Subscription
 #
 # Every public read/write below takes an optional ``bot_id`` argument:
 #
-#   * ``bot_id=None`` (default)  → operates on the **client pool** —
-#     ledger rows whose ``bot_id IS NULL``. This is the legacy /
+#   * ``bot_id=None`` (default)  → operates on the **client pool**.
+#     Ledger rows whose ``bot_id IS NULL``. This is the legacy /
 #     account-level shape used by grandfathered (``is_legacy_pooled=True``)
 #     bots and the Free single bot.
 #   * ``bot_id=<int>``           → operates on an **isolated per-bot ledger**.
@@ -66,7 +66,7 @@ def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     - legacy-pooled / Free bots
     - bots whose ``subscription_id`` is a convenience pointer set by the
       per-bot-billing migration but whose subscription still has
-      ``bot_id = NULL`` — credits live in the client pool for those bots.
+      ``bot_id = NULL``. Credits live in the client pool for those bots.
 
     Credit routing path:
     - ``get_current_bot()`` pre-resolves ``subscription.bot_id`` into
@@ -88,7 +88,7 @@ def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     sub_bot_id = getattr(bot, "_subscription_bot_id", _UNSET)
     if sub_bot_id is _UNSET:
         # Slow path: bot was loaded with an active session (subscription_routes,
-        # billing endpoints) — lazy-load the relationship normally.
+        # billing endpoints). Lazy-load the relationship normally.
         sub = getattr(bot, "subscription", None)
         sub_bot_id = getattr(sub, "bot_id", None) if sub is not None else None
     if sub_bot_id != bot_pk:
@@ -131,7 +131,7 @@ _pricing_cache_lock = threading.Lock()
 # the migration seeds these so they should always be present).
 _DEFAULT_PRICING: dict[str, Any] = {
     "credit_cost.ai_chat": 1,
-    # URL crawl per page — bumped from 3 to 5. Each page goes through the
+    # URL crawl per page. Bumped from 3 to 5. Each page goes through the
     # crawler, cleaner, chunker, embedder, and pgvector write; 5 credits
     # reflects the real cost more honestly and aligns with the tightened
     # plan limits (Free 30 pages = 150 credits worst case).
@@ -147,12 +147,12 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # ``feature.company_name_enabled`` kill switch; skipped silently on an
     # empty balance.
     "credit_cost.company_name": 5,
-    # Per-file knowledge base upload — the MINIMUM charge for one file. The
+    # Per-file knowledge base upload, the MINIMUM charge for one file. The
     # cost scales with document size (below); a file short enough to price
     # under this floor still costs this much.
     "credit_cost.document_upload": 1,
     # Size-based upload pricing: one flat rate, no buckets. A document costs
-    # ``ceil(words / 250)`` credits — 1 credit per 250 words — floored at the
+    # ``ceil(words / 250)`` credits (1 credit per 250 words) floored at the
     # minimum above. Both halves are super-admin tunable from the pricing
     # panel; this replaced a five-bucket word-tier table whose EXCLUSIVE
     # ``max_words`` edges had to be restated identically in the customer-facing
@@ -160,7 +160,7 @@ _DEFAULT_PRICING: dict[str, Any] = {
     "credit_cost.document_upload_words_per_credit": 250,
     "seat_price_cents": 1500,
     # Lifetime top-ups: 0 (or any non-positive value) means top-up grants never
-    # expire — ``grant_topup`` writes ``expires_at=None`` and the daily
+    # expire. ``grant_topup`` writes ``expires_at=None`` and the daily
     # ``expire_old_topups`` sweep skips them entirely. One-time purchase, credits
     # carry forward forever.
     "topup_expiry_months": 0,
@@ -168,9 +168,9 @@ _DEFAULT_PRICING: dict[str, Any] = {
     "kill_switch": False,
     # Master on/off switches for the two metered enrichment features, editable
     # from the super-admin pricing panel (pricing_config KV). When False the
-    # feature is skipped for everyone regardless of plan — no lookup, no charge.
+    # feature is skipped for everyone regardless of plan, no lookup, no charge.
     "feature.email_verification_enabled": True,
-    # Company lookup — LAUNCHED. Off = no lookup and no charge, anywhere.
+    # Company lookup. LAUNCHED. Off = no lookup and no charge, anywhere.
     # Note this feature charges only when a company is actually IDENTIFIED
     # (see chat_routes._resolve_and_update_location): most visitors arrive on
     # consumer ISP ranges that name no employer, and the customer must not pay
@@ -283,7 +283,7 @@ def get_credit_cost(session: Session, action: str) -> int:
         return max(int(raw), 0)
     except (TypeError, ValueError):
         logger.warning(
-            "credit_cost.%s is non-numeric (%r) — failing closed to %d",
+            "credit_cost.%s is non-numeric (%r). Failing closed to %d",
             action,
             raw,
             _DEFAULT_CREDIT_COST,
@@ -294,7 +294,7 @@ def get_credit_cost(session: Session, action: str) -> int:
 def count_words(text: str) -> int:
     """Rough word count for size-based upload pricing.
 
-    Uses whitespace-split — matches how a user would eyeball the doc's
+    Uses whitespace-split. Matches how a user would eyeball the doc's
     length. Punctuation attached to words counts as one word; hyphenated
     compounds count as one. Good enough for a 250-words-per-credit rate, where
     a 10-word imprecision moves the charge only on an exact multiple of 250.
@@ -311,12 +311,12 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     """Return the credit cost for uploading a document of ``word_count`` words.
 
     One flat rate: ``ceil(words / rate)`` credits, where ``rate`` is
-    ``credit_cost.document_upload_words_per_credit`` (250 — i.e. 1 credit per
+    ``credit_cost.document_upload_words_per_credit`` (250. I.e. 1 credit per
     250 words), never below the ``credit_cost.document_upload`` minimum. Both
     keys are super-admin tunable from the pricing panel.
 
     This replaced a five-bucket word-tier table. The buckets priced the same
-    idea in a shape that had to be restated — with EXCLUSIVE edges — in the
+    idea in a shape that had to be restated (with EXCLUSIVE edges) in the
     customer-facing table in ``UsagePage.tsx``, and the two drifted: every
     bounded boundary advertised one price and charged the next bucket up, 3x
     at 100 words. A single rate has no edges to restate.
@@ -342,13 +342,13 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     if words_per_credit <= 0:
         logger.warning(
             "credit_cost.document_upload_words_per_credit is missing or not a positive "
-            "integer (%r) — falling back to %d words per credit",
+            "integer (%r). Falling back to %d words per credit",
             raw_rate,
             _DEFAULT_WORDS_PER_CREDIT,
         )
         words_per_credit = _DEFAULT_WORDS_PER_CREDIT
 
-    # Integer ceiling division — a partial block of words is a whole credit.
+    # Integer ceiling division, a partial block of words is a whole credit.
     charged = (word_count + words_per_credit - 1) // words_per_credit
     return max(charged, minimum)
 
@@ -360,7 +360,7 @@ def is_kill_switch_active(session: Session) -> bool:
 
 # Values a super-admin might plausibly type into the pricing panel's untyped
 # `value: Any` editor meaning "off". `bool("false")` is True in Python, so a
-# bare bool() here turns every one of these into ON — the opposite of intent,
+# bare bool() here turns every one of these into ON, the opposite of intent,
 # on a switch whose entire job is to stop a metered feature from charging.
 _FEATURE_FALSY = frozenset({"0", "false", "no", "off", "disabled", ""})
 
@@ -368,7 +368,7 @@ _FEATURE_FALSY = frozenset({"0", "false", "no", "off", "disabled", ""})
 def is_feature_enabled(session: Session, feature: str) -> bool:
     """Return the super-admin on/off state for a metered feature.
 
-    Reads ``feature.<name>_enabled`` from pricing config — e.g.
+    Reads ``feature.<name>_enabled`` from pricing config. E.g.
     ``feature.email_verification_enabled``, ``feature.company_name_enabled``.
 
     **The ``_enabled`` suffix is load-bearing and was missing.** This function
@@ -377,15 +377,15 @@ def is_feature_enabled(session: Session, feature: str) -> bool:
     fail-open default below, that made every switch permanently ON. Verified
     against a real database: with ``feature.company_name_enabled = False``
     physically present, this returned ``True``. So the Visitor-Intelligence
-    company lookup — the one the admin UI badges "Coming soon" and whose own
-    comment promises it "never charges" — deducted 10 credits per visitor
+    company lookup (the one the admin UI badges "Coming soon" and whose own
+    comment promises it "never charges") deducted 10 credits per visitor
     session, and a super-admin turning it off in the panel changed nothing.
     On Professional that is the full 10,000-credit monthly allowance in 1,000
     sessions, for an unlaunched feature.
 
     Fails OPEN (defaults to True) only for a genuinely ABSENT key, so a feature
     shipped without a config row behaves like its default rather than silently
-    dying. A key that is present and falsy is honoured — that is the whole
+    dying. A key that is present and falsy is honoured. That is the whole
     point of the switch.
     """
     value = get_pricing(session).get(f"feature.{feature}_enabled", True)
@@ -415,7 +415,7 @@ def get_balance(session: Session, client_id: int, bot_id: int | None = None) -> 
     Equals the raw delta sum MINUS the still-unconsumed remainder of top-up grants
     that have passed their expiry but which the daily sweep hasn't zeroed yet
     (finding O3). Without this subtraction the balance would overstate what the
-    FIFO allocator — which skips expired grants — can actually spend, causing the
+    FIFO allocator (which skips expired grants) can actually spend, causing the
     same "short allocation" / stuck-balance divergence finding E fixed for refunds
     (up to one sweep interval). The overhang is 0 in the common case (nothing
     expired-and-unswept), so this stays cheap.
@@ -561,11 +561,11 @@ def check_and_deduct(
     deductions are paused.
 
     ``idempotency_key`` (finding H): an OPT-IN, globally-unique token identifying
-    one billable unit of work. Only the crawl ingestion path passes one today —
+    one billable unit of work. Only the crawl ingestion path passes one today.
     ``ingest:{client_id}:{bot_id}:{crawl_job_id}:{url_sha}`` (see
     ``pipeline.batch_web_ingestion``); the visitor ``/chat`` path deliberately
     does NOT (a client-held key there is a free-chat vector). When supplied, a
-    retry / re-queued ARQ job carrying the same key is a no-op — the existing
+    retry / re-queued ARQ job carrying the same key is a no-op, the existing
     deduction stands and the current balance is returned. ``reference_id`` remains
     a coarse AUDIT label (bot/doc id) and does NOT drive idempotency; callers that
     pass no key keep the exact prior behaviour (charge per call). A partial unique
@@ -575,7 +575,7 @@ def check_and_deduct(
     untrusted/visitor-facing endpoints: a caller that can freely hold the key
     constant across distinct billable events would get them for free. Callers
     MUST namespace the key to include the ledger scope (client/bot) so two
-    different scopes can never mint the same key — that makes the cross-scope
+    different scopes can never mint the same key. That makes the cross-scope
     unique-index race unreachable; same-scope retries are serialised by the
     advisory lock and caught by the check below.
 
@@ -586,7 +586,7 @@ def check_and_deduct(
     correct) alongside a concrete ``attributed_bot_id`` (so per-bot reporting
     still works). It defaults to ``bot_id`` so every bot-scoped deduction stays
     attributed without the caller doing anything; only pooled callers need to
-    pass it explicitly. Balance maths MUST NEVER read this column — see
+    pass it explicitly. Balance maths MUST NEVER read this column. See
     ``_scope_clause``.
     """
     if amount <= 0:
@@ -600,7 +600,7 @@ def check_and_deduct(
     # Idempotency (finding H): short-circuit if a deduction with this key already
     # exists. Runs under the advisory lock so two concurrent retries can't both
     # pass. Keys are globally unique (namespaced by caller), so the lookup is not
-    # scope-restricted — a stray cross-scope collision should surface, not silently
+    # scope-restricted, a stray cross-scope collision should surface, not silently
     # double-charge.
     if idempotency_key is not None:
         prior = session.execute(
@@ -611,14 +611,14 @@ def check_and_deduct(
         if prior:
             # Defense-in-depth: a key is meant to be 1:1 with a fixed billable
             # unit. If it's ever reused for a DIFFERENT amount/reason, skipping
-            # silently could leak value — so fail loud in the log rather than
+            # silently could leak value, so fail loud in the log rather than
             # quietly no-op a larger charge. (Not currently reachable: every key
             # is server-derived and 1:1 with its work unit.)
             prior_reason, prior_amount = prior[0]
             if len(prior) > 1 or int(prior_amount) != amount or prior_reason != reason:
                 logger.warning(
                     "credit_service: idempotency_key=%s reused with a different unit "
-                    "(prior reason=%s amount=%s; now reason=%s amount=%s) — skipping anyway",
+                    "(prior reason=%s amount=%s; now reason=%s amount=%s). Skipping anyway",
                     idempotency_key,
                     prior_reason,
                     prior_amount,
@@ -627,7 +627,7 @@ def check_and_deduct(
                 )
             else:
                 logger.info(
-                    "credit_service: idempotent skip — deduction for key=%s already recorded",
+                    "credit_service: idempotent skip. Deduction for key=%s already recorded",
                     idempotency_key,
                 )
             return get_balance(session, client_id, bot_id)
@@ -663,7 +663,7 @@ def check_and_deduct(
         remaining -= take
 
     if remaining > 0:
-        # Should never happen — balance check would have failed first.
+        # Should never happen. Balance check would have failed first.
         logger.error(
             "credit_service: short allocation for client %s bot %s (need %d, short %d)",
             client_id,
@@ -689,8 +689,8 @@ def refund(
 ) -> int:
     """Reverse a previous deduction (e.g., per-page crawl failure).
 
-    Writes a positive ``refund`` delta. Does not re-attribute to a grant —
-    refunded credits behave like a fresh manual adjustment for FIFO purposes.
+    Writes a positive ``refund`` delta. Does not re-attribute to a grant.
+    Refunded credits behave like a fresh manual adjustment for FIFO purposes.
 
     ``attributed_bot_id`` mirrors :func:`check_and_deduct`: this row reverses a
     specific bot's spend, so it carries the same reporting attribution (and the
@@ -759,9 +759,9 @@ def grant_topup(
 
     When ``topup_expiry_months`` is positive, uses calendar-month arithmetic
     (``add_months``) not 30-day approximations, so a top-up bought on Jun 10
-    expires on Jun 10 the next year — not Jun 5 (which the old ``months * 30``
+    expires on Jun 10 the next year, not Jun 5 (which the old ``months * 30``
     day count would produce, losing 5 days). When it is 0 (or negative) the
-    grant is written with ``expires_at=None`` — a lifetime, one-time top-up
+    grant is written with ``expires_at=None``, a lifetime, one-time top-up
     that never expires.
 
     Per-bot top-ups land in that bot's isolated ledger when ``bot_id`` is
@@ -769,7 +769,7 @@ def grant_topup(
 
     ``reference_id`` links the grant to the originating ``Invoice.id`` so a
     refund claws back *this* top-up rather than the most-recent one in scope
-    (remediation C2 — fixes refunding the older of two same-bot top-ups).
+    (remediation C2. Fixes refunding the older of two same-bot top-ups).
     """
     if amount <= 0:
         raise ValueError("grant_topup requires positive amount")
@@ -828,7 +828,7 @@ def reset_monthly_plan_credits(session: Session, client_id: int, bot_id: int | N
     Implementation: writes one negative ledger entry per *still-positive*
     plan_grant row, each tied to that grant's ``grant_id``. This is the same
     pattern ``check_and_deduct`` uses for normal consumption, and is the
-    ONLY shape that ``get_balance_breakdown`` correctly attributes — an
+    ONLY shape that ``get_balance_breakdown`` correctly attributes, an
     orphan negative entry (no ``grant_id``) would float in the raw sum but
     never reduce the breakdown's per-grant remaining, causing last month's
     unused credits to be silently rolled into the new month's bucket. That
@@ -853,7 +853,7 @@ def reset_monthly_plan_credits(session: Session, client_id: int, bot_id: int | N
                 note="Monthly reset (use-it-or-lose-it)",
             )
         )
-        # Flush per row — SQLAlchemy's batched insertmany path doesn't cast
+        # Flush per row. SQLAlchemy's batched insertmany path doesn't cast
         # the ``reason`` enum column correctly on PostgreSQL, and that path
         # only triggers when 2+ rows are queued at once. Flushing each row
         # individually forces the single-row INSERT that does cast properly.
@@ -884,7 +884,7 @@ def expire_old_topups(session: Session) -> int:
     total_expired = 0
     for grant in expired_grants:
         # Finding O1: take the per-scope advisory lock BEFORE reading consumption.
-        # Reading `consumed` first and locking afterwards is a TOCTOU — a
+        # Reading `consumed` first and locking afterwards is a TOCTOU, a
         # concurrent deduction landing between the read and the lock would leave
         # `unused` stale and over-sweep the grant (expiring credits the customer
         # just spent). Locking first serialises against check_and_deduct so the
@@ -943,8 +943,8 @@ def grant_for_subscription(
 
     Annual subscriptions advance their billing period by 12 months and are
     only granted once per period (see ``grant_subscription_period_once`` /
-    the renewal cron), so the grant itself must scale by ``billing_cycle`` —
-    otherwise an annual subscriber receives only 1/12th of the credits they
+    the renewal cron), so the grant itself must scale by ``billing_cycle``.
+    Otherwise an annual subscriber receives only 1/12th of the credits they
     paid for.
     """
     plan = subscription.plan
@@ -965,7 +965,7 @@ def _backfill_plan_grant_reference(session: Session, subscription: Subscription,
     """Link the most recent un-referenced plan_grant in scope to ``invoice_id``.
 
     Only ever touches a row whose ``reference_id`` is still NULL, so it can
-    never clobber a real, already-correct link — at most it fills in the one
+    never clobber a real, already-correct link, at most it fills in the one
     gap left by an activation-time grant that predates its invoice (see the
     caller). Scoped by client + bot exactly like every other grant/clawback
     lookup so a per-bot subscription's backfill can't reach the account pool
@@ -979,7 +979,7 @@ def _backfill_plan_grant_reference(session: Session, subscription: Subscription,
                 CreditLedger.reason == "plan_grant",
                 # Positive rows only: reset debits share reason="plan_grant"
                 # and a NULL reference_id, and rows written in one transaction
-                # share the same server-side created_at — without these two
+                # share the same server-side created_at, without these two
                 # guards the invoice link could land on a NEGATIVE reset row,
                 # silently disabling precise refund clawback (P0-1 aggravator).
                 CreditLedger.delta > 0,
@@ -1002,7 +1002,7 @@ def _backfill_plan_grant_reference(session: Session, subscription: Subscription,
 # re-expands to the anchor day (Mar 31). A strictly monotonic marker would treat
 # the webhook's larger value as a fresh period and re-run reset+grant. Any real
 # billing cycle is ≥ 28 days, so a ≤ 4-day advance can never be a legitimate new
-# period — treat it as already granted.
+# period. Treat it as already granted.
 _PERIOD_KEY_TOLERANCE = timedelta(days=4)
 
 
@@ -1022,7 +1022,7 @@ def grant_subscription_period_once(
 
     Both the reset and the grant are scoped to ``subscription.bot_id`` so an
     account-level subscription (``bot_id IS NULL``) touches only the client
-    pool and a per-bot subscription touches only that bot's ledger — the two
+    pool and a per-bot subscription touches only that bot's ledger, the two
     never cross-contaminate. This is the single source of truth for per-period
     granting shared by the Razorpay webhook path and the renewal cron (BL-5 /
     NB-8); keep the two callers behaviourally identical by routing both here.
@@ -1032,8 +1032,8 @@ def grant_subscription_period_once(
     rather than silently double-granting on a later event.
 
     Concurrency (T5 review): the ``last_granted_period_end`` marker check below
-    is the idempotency decision, and it is shared by two independent callers —
-    the renewal cron and the ``subscription.charged`` webhook — that can run in
+    is the idempotency decision, and it is shared by two independent callers,
+    the renewal cron and the ``subscription.charged`` webhook. That can run in
     overlapping transactions for the *same* period. The advisory lock inside
     ``reset_monthly_plan_credits`` / ``grant_plan_credits`` only serializes the
     ledger writes, not this read, so without a lock here both callers could read
@@ -1055,7 +1055,7 @@ def grant_subscription_period_once(
     UPDATE`` *before* pushing a marker set earlier in the same transaction (e.g.
     ``subscription.activated`` then ``subscription.charged`` handled in one
     transaction), reload the pre-set committed value, and clobber our own marker
-    back — reintroducing the double-grant it is meant to prevent. Flushing makes
+    back. Reintroducing the double-grant it is meant to prevent. Flushing makes
     the re-read observe read-your-own-writes; the FOR UPDATE still returns the
     latest committed row, so a concurrent committed grant is still seen.
 
@@ -1075,24 +1075,24 @@ def grant_subscription_period_once(
         and period_end <= subscription.last_granted_period_end + _PERIOD_KEY_TOLERANCE
     ):
         # Monotonic, not exact-equality: any period at or before the marker is
-        # already granted. A strict ``==`` check is exploitable — the
+        # already granted. A strict ``==`` check is exploitable, the
         # superadmin dead-letter "replay failed webhook" tool re-dispatches an
         # event by its original (never-committed) id, so an OLDER period's
         # charged event that failed and got dead-lettered can be replayed
         # AFTER a newer period's grant already advanced the marker past it.
-        # ``==`` would treat that stale replay as a fresh, ungranted period —
-        # granting a second time for a period the customer already burned
+        # ``==`` would treat that stale replay as a fresh, ungranted period.
+        # Granting a second time for a period the customer already burned
         # credits against, and regressing the marker backward so the very
         # next legitimate replay (or the real event, if it also redelivers)
         # can trigger yet another grant. ``<=`` makes the marker monotonic:
         # the old event now correctly no-ops instead of regressing anything.
         #
-        # The grant for this period already happened — almost always at
+        # The grant for this period already happened. Almost always at
         # ``subscription.activated``, which runs before any Invoice exists and
         # so calls ``grant_for_subscription`` with no ``reference_id`` (see
         # ``_handle_subscription_activated``). The invoice for that same charge
         # only shows up later via ``subscription.charged``, by which point this
-        # no-op branch is all that runs — the reference never gets attached.
+        # no-op branch is all that runs, the reference never gets attached.
         # Without it, ``clawback_refund`` on that invoice can't find its exact
         # grant and falls back to "most recent grant in scope", which on a
         # multi-period-old chargeback claws back a LATER period's still-in-use
@@ -1101,7 +1101,7 @@ def grant_subscription_period_once(
         # invoice_id becomes available for an already-granted period.
         #
         # Only backfill on an EXACT period match. ``_backfill_plan_grant_reference``
-        # links whatever the most recent un-referenced plan_grant is — correct when
+        # links whatever the most recent un-referenced plan_grant is. Correct when
         # this event's period is the same one that grant belongs to, but a stale
         # replay of an OLDER period (period_end < marker, the new ``<=`` case above)
         # could otherwise misattribute ITS invoice onto a newer, unrelated grant.
@@ -1115,7 +1115,7 @@ def grant_subscription_period_once(
         subscription.last_granted_period_end = period_end
     else:
         logger.warning(
-            "Granted subscription %s credits without a period end — marker not advanced",
+            "Granted subscription %s credits without a period end. Marker not advanced",
             subscription.razorpay_subscription_id,
         )
     return True
@@ -1138,14 +1138,14 @@ def clawback_refund(
     Accounting rule, intentionally lenient: claw back only the UNCONSUMED
     portion of the most recent matching grant **within the same ledger
     scope** the payment credited, scaled by the fraction of the original
-    charge that was refunded. Credits already spent on chats are gone — we
+    charge that was refunded. Credits already spent on chats are gone. We
     can't unscramble the LLM tokens that bought them, so the customer keeps
     whatever they used before the refund. The clawback caps at the grant's
     remaining balance so this can never drive the balance negative.
 
     Scoping (remediation C2):
 
-    * ``bot_id`` selects the ledger scope — the bot's isolated ledger when set,
+    * ``bot_id`` selects the ledger scope, the bot's isolated ledger when set,
       else the client pool. The reversal lands in, and the advisory lock is
       taken on, that same scope, so a per-bot refund no longer writes to the
       client pool (which left bot credits un-reversed and could drive the pool
@@ -1164,14 +1164,14 @@ def clawback_refund(
 
     _acquire_client_lock(session, client_id, bot_id)
 
-    # Cap the fraction at 1.0 — a partial refund larger than the original
+    # Cap the fraction at 1.0, a partial refund larger than the original
     # charge shouldn't happen, but if a webhook glitch ever sends one we
     # clamp instead of multiplying past the original grant.
     refund_fraction = min(1.0, float(refund_minor) / float(charge_minor))
 
     # Prefer the grant(s) LINKED to this invoice (remediation C2 / NV5): grants
     # stamp ``reference_id = Invoice.id`` at grant time, so we can claw back the
-    # exact grant(s) the refunded invoice paid for — not the most-recent grant of
+    # exact grant(s) the refunded invoice paid for, not the most-recent grant of
     # the same type, which mis-attributes when a client holds two same-scope
     # top-ups or refunds an old subscription invoice after a renewal.
     #
@@ -1180,7 +1180,7 @@ def clawback_refund(
     # credits backfill split into two rows). Clawing back only ONE row
     # under-reverses a full refund. Collect ALL grants linked to this invoice and
     # spread the clawback across them. This is safe from over-claw precisely
-    # because every row is scoped to THIS invoice — it can never reach a later
+    # because every row is scoped to THIS invoice, it can never reach a later
     # period's still-in-use grant.
     linked_grants: list[CreditLedger] = []
     if invoice_id is not None:
@@ -1209,7 +1209,7 @@ def clawback_refund(
         # A missed clawback is recoverable by ops; a wrong one is not.
         logger.error(
             "clawback_refund: no grant linked to invoice %s (client=%s bot=%s reasons=%s) "
-            "and unlinked fallback not allowed — nothing clawed; review manually",
+            "and unlinked fallback not allowed, nothing clawed; review manually",
             invoice_id,
             client_id,
             bot_id,
@@ -1220,7 +1220,7 @@ def clawback_refund(
         # Fallback for legacy / unlinked grants (rows created before C2 linking
         # and before ``Invoice.kind``): the most-recent matching grant in scope
         # is in practice the one this invoice paid for. Kept to a SINGLE row
-        # here — summing every unlinked grant in scope could reverse a later
+        # here. Summing every unlinked grant in scope could reverse a later
         # period's still-in-use credits, which the invoice linkage above exists
         # to prevent. Callers may only set ``allow_unlinked_fallback`` for
         # invoices whose ``kind`` is NULL (pre-migration rows).
@@ -1295,12 +1295,12 @@ def reverse_refund_clawback(
     during settlement; if the gateway then *rejects* the refund, those credits
     must come back. This finds the negative ``reason='refund'`` ledger rows this
     refund wrote (matched by their exact ``clawback_note``) and writes a
-    mirroring positive row against the SAME ``grant_id`` — restoring the grant's
+    mirroring positive row against the SAME ``grant_id``. Restoring the grant's
     remaining balance and keeping :func:`get_balance_breakdown` accurate.
 
     NOT self-idempotent (finding O4): re-running finds the same original clawback
     rows and writes ANOTHER mirroring positive, double-restoring the credits.
-    Idempotency is therefore the CALLER's responsibility — a ``refund_failed:<id>``
+    Idempotency is therefore the CALLER's responsibility, a ``refund_failed:<id>``
     marker in ``processed_webhooks`` must gate this so it runs at most once per
     failed refund. Returns total credits restored.
     """

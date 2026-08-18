@@ -4,8 +4,8 @@
 failure (Redis unset or a mid-op error). Since availability routing treats an
 empty set as ALL_OFFLINE, a brief Redis blip made *every* workspace report no
 operators online platform-wide. It must fall back to the ``Operator.is_online``
-column — the online flag actually maintained in the DB (set on WS connect,
-cleared on disconnect) — scoped to the workspace.
+column (the online flag actually maintained in the DB (set on WS connect,
+cleared on disconnect)) scoped to the workspace.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def test_get_online_operator_ids_falls_back_to_db_when_redis_down(db, monkeypatc
     db.flush()
 
     # Every operator is bound to exactly one bot (``Operator.bot_id`` NOT
-    # NULL — see migration ``b1c7e9d3f2a5_operator_bot_one_to_one``). The
+    # NULL. See migration ``b1c7e9d3f2a5_operator_bot_one_to_one``). The
     # test doesn't exercise the binding directly, but the FK constraint
     # forces us to seed a bot per workspace so the inserts don't blow up.
     bot_a = Bot(client_id=client_a.id, bot_key="bot-a", name="Bot A", system_prompt="")
@@ -63,5 +63,5 @@ def test_get_online_operator_ids_falls_back_to_db_when_redis_down(db, monkeypatc
 
     result_ids = presence.get_online_operator_ids(client_a.id)
 
-    # Only the online operator of client A — not the offline one, not client B's.
+    # Only the online operator of client A, not the offline one, not client B's.
     assert result_ids == {online.id}

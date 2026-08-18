@@ -1,8 +1,8 @@
 """The two RAG quality gates must be able to produce output at all.
 
 Both call an LLM for a tiny JSON verdict and both are deliberately fail-open:
-any exception means "let the answer through". That is the right posture — a
-gate outage must not break chat — and it is exactly why this went unnoticed.
+any exception means "let the answer through". That is the right posture (a
+gate outage must not break chat) and it is exactly why this went unnoticed.
 
 `GATE_MODEL` defaults to `gemini/gemini-2.5-flash`, a REASONING model: it
 spends output tokens thinking before emitting any text. Both gates capped
@@ -14,14 +14,14 @@ back empty. Measured against the live API:
     thinking off,
     max_tokens=20   content='{"score":1}'     completion=5    reasoning=none
 
-The call SUCCEEDS every time — nothing raises — so the empty string failed JSON
+The call SUCCEEDS every time (nothing raises) so the empty string failed JSON
 parsing and both gates fell through to fail-open on every request. Production
 logged 41 consecutive failures across both gates, at a perfect 1:1 ratio,
 visible only as a WARNING.
 
 These tests pin the two properties that make output possible at all. They
 cannot verify the vendor's behaviour without calling it, so they assert the
-request we send — which is the part we control and the part that was wrong.
+request we send, which is the part we control and the part that was wrong.
 """
 
 from __future__ import annotations
@@ -93,8 +93,8 @@ def test_the_token_budget_can_hold_the_verdict(module):
 @pytest.mark.parametrize("module", GATES)
 def test_an_empty_response_still_fails_open(module):
     """The exact production symptom: the vendor returns '' and the call does
-    NOT raise. The gate must let the answer through rather than block chat —
-    that posture is why this bug was survivable, and it stays."""
+    NOT raise. The gate must let the answer through rather than block chat.
+    That posture is why this bug was survivable, and it stays."""
     chunks = [{"text": "We build AI chatbots.", "score": 0.5}]
 
     with (

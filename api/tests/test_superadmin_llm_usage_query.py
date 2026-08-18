@@ -5,7 +5,7 @@ This endpoint 500'd in production with::
     TypeError: Function.__init__() got an unexpected keyword argument 'else_'
 
 Cause: the query used ``func.case(...)``. ``case`` is a standalone SQLAlchemy
-construct, not a member of ``func`` — ``func.case(...)`` builds a *generic SQL
+construct, not a member of ``func``. ``func.case(...)`` builds a *generic SQL
 function* named "case", which has no ``else_`` parameter. The failure happens
 at statement-CONSTRUCTION time, before any database is touched, so it needs no
 DB to reproduce and no DB to guard against.
@@ -37,7 +37,7 @@ def test_conditional_count_statement_builds():
 
 def test_conditional_count_compiles_to_a_real_case_expression():
     """Compile to Postgres and assert we emit SQL `CASE WHEN`, not a bogus
-    `case(...)` function call — the distinction that broke production."""
+    `case(...)` function call, the distinction that broke production."""
     stmt = select(_conditional_sum())
     sql = str(stmt.compile(dialect=postgresql.dialect())).upper()
     assert "CASE WHEN" in sql
@@ -59,7 +59,7 @@ def test_func_case_is_the_bug_and_still_raises():
 def test_route_module_does_not_use_func_case():
     """Belt-and-braces: no ``func.case(`` in the superadmin v2 routes' CODE.
 
-    Comments are stripped before matching — the route carries an explanatory
+    Comments are stripped before matching, the route carries an explanatory
     comment naming the bad construct, and flagging that would make the guard
     unusable exactly where it is most needed.
     """
@@ -73,4 +73,4 @@ def test_route_module_does_not_use_func_case():
         if not line.lstrip().startswith("#")
     ]
     offenders = [line.strip() for line in code_lines if "func.case(" in line]
-    assert not offenders, f"func.case( reintroduced — use the standalone case() construct: {offenders}"
+    assert not offenders, f"func.case( reintroduced. Use the standalone case() construct: {offenders}"

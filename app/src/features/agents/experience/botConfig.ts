@@ -26,9 +26,9 @@ export interface LiveChatConfig {
   offlineMessage: string;
   /** Delay before the handoff form appears after the bot suggests live chat. */
   handoffDelaySeconds: number;
-  /** How long a visitor waits in the queue before timing out (5–600s). */
+  /** How long a visitor waits in the queue before timing out (5 to 600s). */
   queueTimeoutSeconds: number;
-  /** Max visitors allowed to wait in the live-chat queue at once (1–100). */
+  /** Max visitors allowed to wait in the live-chat queue at once (1 to 100). */
   maxQueueSize: number;
 }
 

@@ -1,4 +1,4 @@
-"""Chat session state machine — enforces valid transitions and logs all changes.
+"""Chat session state machine. Enforces valid transitions and logs all changes.
 
 Valid states: bot, waiting, live, closed
 Valid transitions:
@@ -26,7 +26,7 @@ _TRANSITIONS: Final[dict[str, frozenset[str]]] = {
     "bot": frozenset({"waiting"}),
     "waiting": frozenset({"live", "bot", "closed"}),
     "live": frozenset({"bot", "closed", "waiting"}),
-    "closed": frozenset(),  # terminal state — no outbound transitions
+    "closed": frozenset(),  # terminal state, no outbound transitions
 }
 
 
@@ -82,7 +82,7 @@ def transition_session(
 
         current = chat_session.status
 
-        # CAS check FIRST — before the idempotency short-circuit. "Already at
+        # CAS check FIRST. Before the idempotency short-circuit. "Already at
         # target" still means the expected state was lost to a concurrent
         # transition (e.g. a timeout flipped waiting→bot before a visitor's
         # leave-queue CAS from waiting): callers key side effects off success,

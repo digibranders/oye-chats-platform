@@ -6,7 +6,7 @@ on sale: ``is_active`` is part of the slug lookup, so a soft-deleted or
 withdrawn tier 404s instead of quietly minting a subscription for a caller who
 skipped the plan list and posted the slug directly.
 
-Per-bot checkout mints a subscription **scoped to one bot** — the activation
+Per-bot checkout mints a subscription **scoped to one bot**, the activation
 webhook stamps ``subscription.bot_id`` with the bot it materialises, which in
 turn routes that bot to its own isolated credit ledger
 (``credit_service.resolve_bot_ledger_bot_id``).
@@ -15,14 +15,14 @@ A plan whose ``limits.bots`` is ``UNLIMITED`` (-1) is incoherent in that model:
 its whole promise is one credit pool shared across every agent on the account.
 Bought per-bot, the monthly credits land in a single bot's isolated ledger while
 every other agent the plan entitles falls back to the (unfunded) shared client
-pool. So the guard keys off the quota sentinel, never a slug — any future
+pool. So the guard keys off the quota sentinel, never a slug. Any future
 unlimited-agent plan is covered the moment it is seeded.
 
 These tests pin both sides: the unlimited plan is rejected, and an ordinary
 paid plan still reaches Razorpay exactly as before. The route tests can only
 reach the predicate through one plan shape each, so
-:func:`plan_entitlements_service.plan_grants_unlimited_bots` — a pure function
-over ``Plan.limits`` — is also asserted directly below, across every JSONB
+:func:`plan_entitlements_service.plan_grants_unlimited_bots`, a pure function
+over ``Plan.limits``. Is also asserted directly below, across every JSONB
 value that column can actually hold. It is what the whole guard turns on, and
 "conservative on bad data" is a claim about inputs no route test constructs.
 """
@@ -89,7 +89,7 @@ def _mock_session(plan: Plan) -> MagicMock:
     session.execute.return_value = _ExecuteResult(plan)
     # A real (transient) Client, not the default MagicMock: the route consults
     # ``clients.pending_checkout_*`` before minting, and every attribute of a
-    # MagicMock is truthy — so an auto-mocked client would look like it had a
+    # MagicMock is truthy, so an auto-mocked client would look like it had a
     # mandate in flight and send these plan-guard tests to the live gateway.
     # None across the marker columns is what a client with no in-flight
     # checkout actually looks like.
@@ -142,12 +142,12 @@ def test_finite_agent_quota_plan_still_reaches_checkout(monkeypatch):
 def test_plan_without_a_bots_quota_still_reaches_checkout(monkeypatch):
     """A bespoke plan row missing ``limits.bots`` is not an unlimited plan.
 
-    The guard must only fire on the explicit ``-1`` sentinel — treating a
+    The guard must only fire on the explicit ``-1`` sentinel. Treating a
     missing/garbled key as unlimited would block legitimate per-bot purchases
     on hand-provisioned plan rows.
     """
     # Built here rather than through ``_plan``, whose signature demands a
-    # ``bots`` quota — the absence of that key IS the case under test.
+    # ``bots`` quota, the absence of that key IS the case under test.
     session = _mock_session(Plan(id=9, name="Acme", slug="bespoke-acme", limits={"credits": 5000}, features={}))
     payload = {"subscription_id": "sub_test999", "key_id": "rzp_test_key"}
 
@@ -173,7 +173,7 @@ class TestPlanGrantsUnlimitedBots:
     Only the explicit ``-1`` sentinel may fire. Everything unreadable has to
     answer False, because a False here merely lets a per-bot purchase proceed
     as it always did, whereas a stray True refuses a legitimate sale on a
-    hand-provisioned plan row — and the customer has no way to tell why.
+    hand-provisioned plan row, and the customer has no way to tell why.
     """
 
     def test_the_sentinel_fires(self):
@@ -214,7 +214,7 @@ class TestPlanGrantsUnlimitedBots:
         assert plan_grants_unlimited_bots(_limits({"bots": 0})) is False
 
 
-# ── withdrawn plans (real SQL — the mock session ignores the WHERE clause) ────
+# ── withdrawn plans (real SQL, the mock session ignores the WHERE clause) ────
 
 
 def _persist_plan(db, *, slug: str, is_active: bool) -> Plan:
@@ -259,7 +259,7 @@ def test_deactivated_plan_is_not_purchasable_by_slug(db, monkeypatch):
     """A withdrawn / soft-deleted tier must 404, not mint a subscription.
 
     The plan list already hides it, so the only way here is a caller posting
-    the slug directly — which is exactly the case the predicate exists for.
+    the slug directly, which is exactly the case the predicate exists for.
     """
     owner = _owner(db, email="botco-inactive@e.com")
     _persist_plan(db, slug="retired-tier", is_active=False)
@@ -269,7 +269,7 @@ def test_deactivated_plan_is_not_purchasable_by_slug(db, monkeypatch):
         response = _post_db(db, monkeypatch, owner, plan_slug="retired-tier")
 
     assert response.status_code == 404, response.text
-    # Same wording as a slug that never existed — no probing for retired tiers.
+    # Same wording as a slug that never existed, no probing for retired tiers.
     assert "not found" in response.json()["detail"].lower()
     create_sub.assert_not_called()
 

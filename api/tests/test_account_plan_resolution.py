@@ -1,8 +1,8 @@
-"""Account plan/entitlement resolution — remediation H2 (real Postgres).
+"""Account plan/entitlement resolution. Remediation H2 (real Postgres).
 
 Under per-bot billing a client can hold several active subscriptions at once
 (one account-level + one per paid bot). The account-level resolver must pick the
-**highest tier**, not whichever was created most recently — otherwise a Standard
+**highest tier**, not whichever was created most recently. Otherwise a Standard
 customer who later adds a Free second bot is silently downgraded to Free.
 """
 
@@ -85,11 +85,11 @@ def test_single_subscription_still_resolves(db):
     assert plan_service.get_client_subscription(db, client.id).plan_id == plan.id
 
 
-# ── M7 / M4 / NV6 — usage counters & records ─────────────────────────────────
+# ── M7 / M4 / NV6. Usage counters & records ─────────────────────────────────
 
 
 def test_documents_counted_by_source_not_name_heuristic(db):
-    """M7 — an uploaded file named like a URL still counts as a document, and a
+    """M7, an uploaded file named like a URL still counts as a document, and a
     crawled page is excluded, because the count keys on ``source`` not the name."""
     from app.db.models import Document
     from app.services.plan_entitlements_service import _build_usage
@@ -126,7 +126,7 @@ def test_documents_counted_by_source_not_name_heuristic(db):
 
 
 def test_get_or_create_usage_record_is_idempotent(db):
-    """M4/NV6 — a second call in the same period returns the existing row
+    """M4/NV6, a second call in the same period returns the existing row
     deterministically, never a duplicate or an error."""
     client = Client(name="c", email="m4@e.com", api_key="m4", hashed_password="h")
     db.add(client)
@@ -142,7 +142,7 @@ def test_get_or_create_usage_record_is_idempotent(db):
 
 
 def test_get_subscription_for_bot_targets_specific_bot(db):
-    """N3 — a client with two per-bot subscriptions can resolve either one by
+    """N3, a client with two per-bot subscriptions can resolve either one by
     bot_id, not just the account's highest-tier subscription."""
     client = Client(name="c", email="n3@e.com", api_key="n3", hashed_password="h")
     db.add(client)

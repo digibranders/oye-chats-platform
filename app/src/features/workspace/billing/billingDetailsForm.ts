@@ -132,7 +132,7 @@ export function validateBillingDetailsForm(form: BillingDetailsForm): BillingDet
     if (rawState) {
       const state = rawState.padStart(2, '0');
       if (!GST_STATE_CODES.has(state)) {
-        errors.billing_state_code = 'Enter a valid GST state code (01–38, or 97).';
+        errors.billing_state_code = 'Enter a valid GST state code (01 to 38, or 97).';
       }
     }
   }

@@ -5,7 +5,7 @@ WHY THIS EXISTS
 A load test (see ``load-tests/``) measured the failure mode: past ~15 concurrent
 ``/chat/stream`` requests the SQLAlchemy pool (size 5 + overflow 10 = 15) is
 exhausted, requests wait ``pool_timeout`` (30s) and then raise
-``QueuePool limit ... connection timed out`` — 261 such errors at saturation —
+``QueuePool limit ... connection timed out`` (261 such errors at saturation)
 and the exhaustion even starved unrelated background jobs (a shared-pool
 cascading failure). The only limiters before this were per-key SlowAPI token
 buckets; there was no GLOBAL ceiling on concurrent expensive work, so a spike
@@ -17,13 +17,13 @@ A process-global async gate caps the number of chat generations in flight. It is
 sized *below* the DB pool so the pool can never be driven to exhaustion by chat
 traffic (leaving headroom for auth lookups and background jobs). Excess requests
 wait briefly for a slot (graceful queueing) and, if none frees up in time, are
-rejected with HTTP 503 + ``Retry-After`` — a fast, cheap, non-hanging signal that
+rejected with HTTP 503 + ``Retry-After``, a fast, cheap, non-hanging signal that
 does not trigger retry storms or hold a DB connection.
 
 This is per-process. With the single worker that ships today that is the whole
 service; when the WebSocket backplane lands and the app runs multiple
 workers/instances, this bound is per-instance (a distributed limiter would live
-in Redis — noted for that phase).
+in Redis. Noted for that phase).
 
 CONFIG
 ------
@@ -55,7 +55,7 @@ def _warn_if_gate_exceeds_pool() -> None:
     The gate's whole purpose is to sit BELOW the pool ceiling so chat can never
     exhaust it. Invert that and the failure is spectacular but misleading: the
     pool empties, requests queue on ``pool_timeout`` (30s), and gunicorn's 120s
-    reaper starts killing workers — while the database sits idle. It reads
+    reaper starts killing workers. While the database sits idle. It reads
     exactly like "the database cannot keep up" and sends you debugging the wrong
     tier.
 
@@ -99,7 +99,7 @@ class ChatConcurrencyGate:
     def __init__(self, limit: int, acquire_timeout_s: float) -> None:
         self._limit = limit
         self._timeout = acquire_timeout_s
-        # Created here but only bound to the running loop on first await — safe
+        # Created here but only bound to the running loop on first await. Safe
         # to construct at import time under uvicorn.
         self._sem = asyncio.Semaphore(limit)
         self._in_flight = 0
@@ -125,7 +125,7 @@ class ChatConcurrencyGate:
         if self._sem.locked() or self._in_flight >= self._limit:
             self._waited += 1
             logger.info(
-                "chat gate full (%d/%d in flight) — request waiting up to %.0fs",
+                "chat gate full (%d/%d in flight). Request waiting up to %.0fs",
                 self._in_flight,
                 self._limit,
                 self._timeout,

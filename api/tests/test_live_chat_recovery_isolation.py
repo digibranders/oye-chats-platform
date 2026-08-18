@@ -4,7 +4,7 @@
 from ALL tenants into the shared in-memory ``waiting_queue`` on startup. If it
 doesn't also populate ``_session_client_ids``, the F03 queue guard
 (``session_client_id is None`` → treated as unscoped) fails open, so a restored
-tenant-B session shows up in tenant-A's operator queue — the exact cross-tenant
+tenant-B session shows up in tenant-A's operator queue, the exact cross-tenant
 leak F03 closed, re-exposed on every deploy (F05 restarts services).
 """
 

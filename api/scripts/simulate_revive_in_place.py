@@ -2,8 +2,8 @@
 
 Sets up a bot that lapsed to Free (an expired subscription + deactivated
 knowledge), then drives the REAL ``subscription.activated`` handler with a
-``purpose=revive_bot`` payload — the exact webhook a downgraded bot's re-upgrade
-produces — and asserts:
+``purpose=revive_bot`` payload (the exact webhook a downgraded bot's re-upgrade
+produces) and asserts:
 
   * a NEW active subscription is created for the SAME bot_id (bot_key/embed kept)
   * the bot's previously-deactivated knowledge is reactivated

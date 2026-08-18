@@ -1,4 +1,4 @@
-"""Tests for app.db.repository — database operations."""
+"""Tests for app.db.repository. Database operations."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -82,7 +82,7 @@ class TestEnsureChatSession:
         assert result is existing
 
     def test_rejects_orphan_legacy_session_with_null_bot_id(self):
-        """Pre-multi-bot rows have bot_id=None — runtime must NOT auto-claim them."""
+        """Pre-multi-bot rows have bot_id=None. Runtime must NOT auto-claim them."""
         from app.db.repository import ensure_chat_session
 
         existing = SimpleNamespace(bot_id=None)
@@ -131,7 +131,7 @@ class TestEnsureChatSession:
         session.rollback.assert_called_once()
 
     def test_concurrent_create_then_cross_bot_winner_raises(self):
-        """Race winner belongs to a different bot — surface the ownership error."""
+        """Race winner belongs to a different bot. Surface the ownership error."""
         from sqlalchemy.exc import IntegrityError
 
         from app.db.repository import ensure_chat_session

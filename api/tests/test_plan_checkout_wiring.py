@@ -2,8 +2,8 @@
 
 The policy this file pins, and why it is not the obvious one: "this environment
 cannot charge for the tier" and "this tier must not be shown" are different
-statements. Conflating them — deriving ``plans.is_active`` from the gateway
-wiring — deletes the agency tier from ``GET /public/pricing-catalog``, the feed
+statements. Conflating them. Deriving ``plans.is_active`` from the gateway
+wiring. Deletes the agency tier from ``GET /public/pricing-catalog``, the feed
 oyechats.com/pricing renders, because a contact-sales tier needs no gateway plan
 id to be *listed*. It also makes the graceful path unreachable: an inactive plan
 is rejected by ``/checkout/quote`` and ``/checkout`` before either can answer
@@ -76,7 +76,7 @@ def test_a_paid_tier_with_a_half_wired_rail_is_not_self_serve(monthly, annual, l
 
 def test_an_empty_string_id_is_not_an_id():
     """Razorpay ids are non-empty strings; a blank column is an unset column.
-    ``bool("")`` is what makes this hold — pinned so a future ``is not None``
+    ``bool("")`` is what makes this hold. Pinned so a future ``is not None``
     rewrite cannot quietly call a blank row wired."""
     assert plan_checkout_is_wired(is_free=False, razorpay_plan_id_monthly="", razorpay_plan_id_annual="plan_a") is False
 
@@ -147,7 +147,7 @@ def test_the_seed_does_not_reactivate_a_deliberately_deactivated_tier(monkeypatc
 
     ``seed_plans`` used to force ``is_active = True`` on every row, silently
     undoing migration ``f1a2b3c4d5e6`` on every ``reset_and_seed.sh`` run. The
-    fix must not become "force it to the wiring predicate instead" — that
+    fix must not become "force it to the wiring predicate instead". That
     unlists a contact-sales tier. The seed simply does not write the column on a
     row that already exists, so a deactivation from ANY source (that migration,
     super-admin soft-delete, the plan editor) survives.
@@ -172,7 +172,7 @@ def test_the_seed_does_not_reactivate_a_deliberately_deactivated_tier(monkeypatc
 
 
 def test_the_seed_lists_the_rows_it_creates(monkeypatch):
-    """A row the seed creates has no history to respect, so it is listed — even
+    """A row the seed creates has no history to respect, so it is listed, even
     with no gateway ids, because an unwired paid tier sells by contact-sales
     rather than not at all. This is what puts Enterprise back on the pricing
     page after a prod reseed."""
@@ -185,12 +185,12 @@ def test_the_seed_lists_the_rows_it_creates(monkeypatch):
 
 
 def test_the_seed_names_the_tiers_that_are_not_self_serve(monkeypatch, capsys):
-    """The off-sale summary is the signal worth keeping from the old policy —
+    """The off-sale summary is the signal worth keeping from the old policy,
     but it must describe checkout, not listing, or it re-teaches the conflation."""
     _run_seed(monkeypatch, _RecordingSession([]), apply=False)
 
     out = capsys.readouterr().out
-    assert "CONTACT SALES — no Razorpay plan id" in out
+    assert "CONTACT SALES, no Razorpay plan id" in out
     assert "Not self-serve in this environment: starter, standard, professional, enterprise" in out
     assert "stays LISTED" in out
     assert "free" not in out.split("Not self-serve in this environment:")[1].split("\n")[0]
@@ -280,7 +280,7 @@ def _run_id_script(monkeypatch, session, *, apply: bool, **args) -> None:
 
 def test_attaching_an_id_prints_the_checkout_transition_and_leaves_listing_alone(monkeypatch, capsys):
     """Attaching ids opens self-serve checkout. It is NOT a listing decision, so
-    the script must not touch ``is_active`` in either direction — including on a
+    the script must not touch ``is_active`` in either direction, including on a
     tier a super admin deliberately unlisted."""
     row = _wireable_row(razorpay_plan_id_monthly=None, razorpay_plan_id_annual=None, is_active=False)
     session = _IdScriptSession([row])
@@ -317,7 +317,7 @@ def test_clearing_an_id_prints_the_reverse_transition_and_still_leaves_listing_a
 def test_creating_a_listed_paid_plan_with_no_ids_warns():
     """``CreatePlanRequest.is_active`` defaults True and every ``razorpay_plan_id_*``
     defaults None, so the single most likely create publishes a tier nobody can
-    buy. Under the listing policy that is survivable, not fatal — so it warns."""
+    buy. Under the listing policy that is survivable, not fatal, so it warns."""
     plan = Plan(
         name="Agency",
         slug="agency",
@@ -457,8 +457,8 @@ def _api(db, client) -> TestClient:
 
 @pg_only
 def test_an_unwired_paid_tier_is_still_on_the_public_pricing_catalog(db):
-    """``get_active_plans`` is what ``GET /public/pricing-catalog`` — the feed
-    oyechats.com/pricing renders — is built from. A contact-sales tier belongs
+    """``get_active_plans`` is what ``GET /public/pricing-catalog``, the feed
+    oyechats.com/pricing renders. Is built from. A contact-sales tier belongs
     on that page; deriving ``is_active`` from the gateway wiring took it off."""
     from app.services.plan_service import get_active_plans
 

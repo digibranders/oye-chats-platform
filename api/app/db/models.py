@@ -32,10 +32,10 @@ class Client(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     company_name = Column(String, nullable=True)
-    # ── Buyer tax identity (invoicing v2) — all nullable; captured in account
+    # ── Buyer tax identity (invoicing v2). All nullable; captured in account
     # settings / at checkout. billing_state_code is the GST place-of-supply
-    # input (Circular 242/36/2024 makes state mandatory for online B2C —
-    # enforced at checkout, not at the column level, to keep signup friction
+    # input (Circular 242/36/2024 makes state mandatory for online B2C.
+    # Enforced at checkout, not at the column level, to keep signup friction
     # unchanged).
     legal_name = Column(String, nullable=True)
     gstin = Column(String(15), nullable=True)
@@ -44,12 +44,12 @@ class Client(Base):
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
     # Push/alert opt-outs for the workspace owner. Same JSONB shape as
-    # ``Operator.notification_preferences`` so one evaluator serves both — the
+    # ``Operator.notification_preferences`` so one evaluator serves both, the
     # owner is a chat recipient too (``send_push_to_client``) and previously had
     # no way to mute anything.
     notification_preferences = Column(JSONB, nullable=True)
     # Newest billing-geo contradiction (claimed country vs server-side IP geo),
-    # both directions — durable GST/FEMA review trail, not just a WARN log.
+    # both directions. Durable GST/FEMA review trail, not just a WARN log.
     geo_mismatch_at = Column(DateTime(timezone=True), nullable=True)
     geo_mismatch_detail = Column(String(500), nullable=True)
     # In-flight FIRST checkout (H1 pattern): a sequential re-submit reuses this
@@ -58,7 +58,7 @@ class Client(Base):
     # cleared by the activation webhook. Upgrade/resume park theirs on the
     # Subscription row; a first checkout has no row yet, hence here.
     #
-    # Shared by BOTH first-mandate routes — ``POST /subscriptions/checkout`` and
+    # Shared by BOTH first-mandate routes. ``POST /subscriptions/checkout`` and
     # ``/subscriptions/change-plan`` Branch 3 (trial→paid, Free→paid, revive).
     # Branch 3 had no marker at all until 2026-08-14, so a retry there minted a
     # SECOND authorizable mandate and the customer was charged twice for one
@@ -66,7 +66,7 @@ class Client(Base):
     pending_checkout_subscription_id = Column(String, nullable=True)
     pending_checkout_plan_id = Column(Integer, nullable=True)
     pending_checkout_cycle = Column(String(8), nullable=True)
-    # The confirmed country the pending sub was minted under — part of the
+    # The confirmed country the pending sub was minted under. Part of the
     # reuse key so a country change never reuses a wrong-rail checkout.
     pending_checkout_country = Column(String(2), nullable=True)
     # The bot the pending mandate funds (change-plan's revive-in-place path), or
@@ -76,7 +76,7 @@ class Client(Base):
     # plan to the wrong ledger.
     pending_checkout_bot_id = Column(Integer, nullable=True)
     pending_checkout_at = Column(DateTime(timezone=True), nullable=True)
-    # Razorpay Customer id — the identity anchor for saved payment instruments.
+    # Razorpay Customer id, the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
     # this there is no saved-card capability at all.
     #
@@ -100,7 +100,7 @@ class Client(Base):
     # Effective bot limit is computed in plan_entitlements_service as
     # ``min(plan.limits.bots + extra_bot_seats, plan.limits.max_bots_cap)``.
     # Lives on Client (not Subscription) so a plan change doesn't clobber
-    # paid seats — same pattern as max_bots.
+    # paid seats, same pattern as max_bots.
     extra_bot_seats = Column(Integer, default=0, server_default="0", nullable=False)
     # Running total of *cleaned pre-chunk* characters ingested into this
     # account's knowledge base across every bot. Incremented at ingest time
@@ -129,7 +129,7 @@ class Client(Base):
 
     # Email change verification. The login email only ever moves to
     # ``pending_email`` once the OTP sent to that *new* address is confirmed
-    # (see /client/change-email/*) — a bare profile PATCH can no longer
+    # (see /client/change-email/*), a bare profile PATCH can no longer
     # overwrite ``email`` directly, so a hijacked session can't silently
     # redirect account recovery to an attacker-controlled inbox.
     pending_email = Column(String, nullable=True)
@@ -173,14 +173,14 @@ class Client(Base):
 
     # Relationships
     bots = relationship("Bot", back_populates="client", cascade="all, delete-orphan")
-    # Legacy relationships — kept until migration removes client_id from these tables
+    # Legacy relationships. Kept until migration removes client_id from these tables
     documents = relationship(
         "Document", back_populates="client", cascade="all, delete-orphan", foreign_keys="Document.client_id"
     )
     chat_sessions = relationship(
         "ChatSession", back_populates="client", cascade="all, delete-orphan", foreign_keys="ChatSession.client_id"
     )
-    # Affiliate membership (0..1). Derived ``is_affiliate`` reads this — the
+    # Affiliate membership (0..1). Derived ``is_affiliate`` reads this, the
     # ``affiliates`` row is the single source of truth.
     affiliate = relationship(
         "Affiliate",
@@ -197,7 +197,7 @@ class Client(Base):
     )
     # External identity providers linked to this Client (Google, future:
     # GitHub/Microsoft). Cascade-deletes so a workspace teardown also
-    # removes the OAuth links — provider rows on Google's side are not
+    # removes the OAuth links. Provider rows on Google's side are not
     # affected because we only store the provider's stable subject id.
     oauth_accounts = relationship(
         "OAuthAccount",
@@ -209,7 +209,7 @@ class Client(Base):
     def is_affiliate(self) -> bool:
         """True iff this client has an active (non-deactivated) affiliate row.
 
-        Derived from the ``affiliate`` relationship — there is no separate
+        Derived from the ``affiliate`` relationship. There is no separate
         boolean column, so the relationship is the single source of truth.
         Callers that touch this property must have the ``affiliate`` row
         loaded (eager or via the same session); otherwise it returns False.
@@ -222,13 +222,13 @@ class OAuthAccount(Base):
     """External identity provider link for a Client.
 
     One row per (provider, provider_user_id) pair. ``provider_user_id`` is
-    the provider's stable subject identifier (Google's ``sub`` claim) — never
+    the provider's stable subject identifier (Google's ``sub`` claim), never
     the user's email, which can change. Matching by ``provider_user_id`` is
     what lets a returning OAuth user log in even if they later changed their
     Google account's primary email.
 
     A single Client can have multiple OAuthAccount rows (future: Google +
-    GitHub on the same workspace) but only one per provider — enforced by
+    GitHub on the same workspace) but only one per provider. Enforced by
     the partial unique index on (client_id, provider).
     """
 
@@ -251,7 +251,7 @@ class OAuthAccount(Base):
     client = relationship("Client", back_populates="oauth_accounts")
 
     __table_args__ = (
-        # Same provider account can't be linked to two Clients — enforces
+        # Same provider account can't be linked to two Clients. Enforces
         # the "find by provider_user_id" lookup as a true primary key for
         # the OAuth identity.
         Index(
@@ -289,12 +289,12 @@ class Bot(Base):
     brand_tone = Column(Text, nullable=True)  # Auto-extracted or manually set brand voice/tone description
     # Which brand-tone preset chip is active: a key from brand_tone.PRESET_KEYS,
     # "custom" (text hand-edited away from any preset), or NULL (empty/never set).
-    # Descriptive metadata for the UI only — never fed to the prompt; rides along
+    # Descriptive metadata for the UI only, never fed to the prompt; rides along
     # with brand_tone on crawl/detect writes. See app/services/brand_tone.py.
     brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
-    # Cached onboarding "seed questions" — LLM-proposed + retrieval-verified as
+    # Cached onboarding "seed questions". LLM-proposed + retrieval-verified as
     # answerable from this bot's content (see seed_questions_service). Computed
     # once during the Build Studio Prove step; null = not computed yet, [] =
     # computed but nothing passed verification (show only the open input).
@@ -306,7 +306,7 @@ class Bot(Base):
     # /crawl/progress toast (which CrawlContext clears a few seconds after
     # completion).
     #
-    # ``last_crawl_status`` ∈ {'done','failed','cancelled'} — crawl-specific, so
+    # ``last_crawl_status`` ∈ {'done','failed','cancelled'}. Crawl-specific, so
     # only the crawl orchestrator writes it. It describes the last crawl ATTEMPT
     # and must never be read as "does this bot have knowledge": a bot can hold
     # plenty of content from uploads while its last crawl failed.
@@ -314,7 +314,7 @@ class Bot(Base):
     # ``indexed_chunk_count`` is the bot's CURRENT total stored chunk count and
     # ``crawl_completed_at`` the moment its knowledge last changed. Both are
     # recomputed from the documents table by ``sync_bot_knowledge_state`` after
-    # every knowledge mutation (crawl, upload, delete) — never incremented from
+    # every knowledge mutation (crawl, upload, delete), never incremented from
     # a single job's delta. That matters: a delta recrawl of an unchanged site
     # ingests zero new chunks, and a document upload runs no crawl at all, so
     # anything derived from one job's output would leave a well-trained bot
@@ -335,7 +335,7 @@ class Bot(Base):
     # customer did (uploading one OR removing one); "derived" = the crawl took
     # it from the site's favicon.
     #
-    # Provenance, deliberately NOT folded into `avatar_type` — that is a style
+    # Provenance, deliberately NOT folded into `avatar_type`. That is a style
     # selector with exactly three legal values that the admin UI renders as a
     # segmented control, and a fourth value would break it.
     #
@@ -359,7 +359,7 @@ class Bot(Base):
     # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
     # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
     # Higher = stricter (more refusals, more risk of false positives on legit questions).
-    # Reasonable range: 0.40 (lenient) — 0.70 (strict). Out-of-range is clamped at runtime.
+    # Reasonable range: 0.40 (lenient). 0.70 (strict). Out-of-range is clamped at runtime.
     relevance_threshold = Column(Float, nullable=True)
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
     orb_color = Column(String, nullable=True)
@@ -439,28 +439,28 @@ class Bot(Base):
     zcal_url = Column(String, nullable=True)
     calcom_url = Column(String, nullable=True)
 
-    # Feature flags — controls per-bot widget/operator behavior toggles
+    # Feature flags. Controls per-bot widget/operator behavior toggles
     feature_flags = Column(
         JSONB,
         nullable=False,
         server_default='{"file_sharing": false, "post_chat_rating": true, "show_branding": true, "queue_position": false, "typing_preview": true, "email_transcript": false}',
     )
 
-    # Widget messages — all customizable user-facing strings (welcome, chat input, error messages, etc.)
+    # Widget messages. All customizable user-facing strings (welcome, chat input, error messages, etc.)
     widget_messages = Column(
         JSONB,
         nullable=False,
         server_default='{"welcome_greeting": "Hi There, How can I help you today?", "welcome_suggestions": ["Our Services", "About us", "Contact us"], "input_placeholder": "Write a message...", "live_chat_label": "Live chat", "greeting_message": "Hi! Let us know if you have any questions.", "offline_message": "We\'ll be right back! Leave a message and we\'ll follow up shortly.", "rating_prompt": "How was your experience?", "end_chat_label": "End chat and return to AI"}',
     )
 
-    # Widget configuration — timing, thresholds, and advanced settings
+    # Widget configuration. Timing, thresholds, and advanced settings
     widget_config = Column(
         JSONB,
         nullable=False,
         server_default='{"welcome_exit_duration_ms": 350, "greeting_delay_ms": 3000, "typing_timeout_ms": 2000, "frustration_window_ms": 30000, "frustration_threshold_messages": 3, "max_reconnect_attempts": 15, "max_reconnect_delay_ms": 30000, "heartbeat_visible_ms": 25000, "heartbeat_hidden_ms": 50000, "handoff_auto_submit_delay_ms": 300}',
     )
 
-    # Widget branding — customizable branding text and URL
+    # Widget branding. Customizable branding text and URL
     branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
     branding_url = Column(
         String, default="https://www.oyechats.com", server_default="https://www.oyechats.com", nullable=False
@@ -473,12 +473,12 @@ class Bot(Base):
     services = Column(JSONB, nullable=True)  # list[str] of admin-defined service names
     services_url = Column(String, nullable=True)
 
-    # Smart links — admin-defined keyword→URL map, independent of ``services``.
+    # Smart links. Admin-defined keyword→URL map, independent of ``services``.
     # When the bot's answer naturally references one of these keywords it links
     # the phrase to the mapped page (e.g. "pricing" → the pricing page). Stored
     # as ``list[{"keyword": str, "url": str}]``. Nullable and additive: a bot
     # that never sets it behaves exactly as before. Distinct from the services
-    # answer-scope above — smart links never restrict what the bot may answer.
+    # answer-scope above. Smart links never restrict what the bot may answer.
     answer_links = Column(JSONB, nullable=True)
 
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
@@ -499,7 +499,7 @@ class Bot(Base):
     # Cross-subdomain session continuity. When set to a registrable domain
     # (e.g. ``example.com``), the widget mirrors the visitor's session id into a
     # cookie scoped to that parent domain so a conversation started on
-    # ``example.com`` continues on ``academy.example.com`` — ``localStorage``
+    # ``example.com`` continues on ``academy.example.com``. ``localStorage``
     # alone can't cross that origin boundary. NULL/empty = disabled (default),
     # meaning each origin keeps its own independent session as before. Stored as
     # a bare hostname; the widget prepends the leading dot at cookie-write time.
@@ -535,7 +535,7 @@ class Bot(Base):
     # ── Auto-recrawl (weekly refresh of previously-crawled URLs) ──────────
     # Gated by the ``auto_recrawl`` feature flag on the client's plan
     # (Standard + Professional). ``next_recrawl_at`` is stamped as
-    # ``now + 7 days`` on toggle-on and cleared on toggle-off — see
+    # ``now + 7 days`` on toggle-on and cleared on toggle-off. See
     # ``recrawl_service`` and ``task_auto_recrawl_sweep``. The partial
     # index ``ix_bots_next_recrawl_due`` keeps the sweep query cheap.
     recrawl_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
@@ -543,7 +543,7 @@ class Bot(Base):
     last_recrawl_at = Column(DateTime(timezone=True), nullable=True)
     last_recrawl_status = Column(String, nullable=True)  # success | partial | failed | empty
     last_recrawl_summary = Column(JSONB, nullable=True)
-    # Rolling window (most-recent 20) of past recrawl runs — powers the
+    # Rolling window (most-recent 20) of past recrawl runs. Powers the
     # Sources-table history expander. Each element: ``{"ran_at": str,
     # "status": str, "total": int, "unchanged": int, "changed": int,
     # "failed": int}``. Older entries are trimmed inside
@@ -573,17 +573,17 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # Legacy FK — kept during migration transition. Indexed (ix_documents_client_id)
+    # Legacy FK. Kept during migration transition. Indexed (ix_documents_client_id)
     # for the tenant filter in the vector-search query (repository.py).
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
-    # New FK — primary association. Indexed (ix_documents_bot_id) for the tenant
+    # New FK. Primary association. Indexed (ix_documents_bot_id) for the tenant
     # filter in the vector-search query (repository.py).
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True, index=True)
 
     document_name = Column(String, nullable=False)
     # Explicit ingestion source (remediation M7): "upload" for a file the
     # customer uploaded, "crawl" for a page ingested from a URL. Replaces the
-    # fragile ``document_name LIKE 'http%'`` heuristic for the documents quota —
+    # fragile ``document_name LIKE 'http%'`` heuristic for the documents quota,
     # a file literally named ``https-notes.pdf`` is no longer mis-classified.
     source = Column(String, nullable=False, default="upload", server_default="upload")
     # Whether this chunk is currently part of the bot's live knowledge. Every
@@ -596,14 +596,14 @@ class Document(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
-    # ``len(cleaned_source_text)`` — the character count of the SOURCE document
+    # ``len(cleaned_source_text)``, the character count of the SOURCE document
     # (post-clean, pre-chunk), replicated on every chunk of that source. Used to
     # (a) decrement ``clients.kb_characters_used`` on delete without re-computing
     # from scratch, and (b) rebuild the client counter from source-of-truth when
     # drift is suspected. Replicated (not stored once per source) because we
     # don't model a source-level parent row today; ``SELECT DISTINCT ON
     # (document_name, bot_id) source_char_count`` avoids double-counting. Nullable
-    # so pre-migration rows don't fail their NOT NULL check — treated as 0 by
+    # so pre-migration rows don't fail their NOT NULL check. Treated as 0 by
     # ``recompute_kb_usage``.
     source_char_count = Column(Integer, nullable=True)
     metadata_info = Column(JSONB, nullable=True)
@@ -620,13 +620,13 @@ class Document(Base):
         # Composite btree matching the filter EVERY vector search applies
         # (repository.py ``search_similar_documents``: bot_id + client_id +
         # is_active, then ORDER BY ``embedding <=>``). Retrieval runs as an exact
-        # bitmap scan over one tenant's rows — 100% recall, and faster than ANN
+        # bitmap scan over one tenant's rows. 100% recall, and faster than ANN
         # at these tenant sizes.
         #
         # There is deliberately NO global HNSW index (dropped in migration
         # c2e8b41f07d9). A global approximate index filters AFTER the graph walk,
         # so a small tenant inside a large shared graph got ZERO rows back with
-        # no error — measured: a 300-chunk tenant in a 45k-row corpus returned
+        # no error. Measured: a 300-chunk tenant in a 45k-row corpus returned
         # nothing, at every ``hnsw.ef_search`` value up to the maximum.
         #
         # Reintroduce ANN only per-tenant (partition by bot_id, one HNSW index
@@ -657,7 +657,7 @@ class LeadInfo(Base):
     # ── Resolved company identity (company_profile_service) ─────────────────
     #
     # Populated from the cross-tenant `company_profile` cache, which turns a
-    # domain into the company's own declared identity — "infosys.com" becomes
+    # domain into the company's own declared identity. "infosys.com" becomes
     # "Infosys Limited". Separate columns rather than overwriting `company`
     # so a failed or pending resolution always degrades to the domain rather
     # than to nothing, and so an operator can see both.
@@ -672,13 +672,13 @@ class LeadInfo(Base):
     email_score = Column(Integer, nullable=True)
 
     # Manual follow-up tracking (Gate 2 cooldown + audit trail). There is no
-    # automatic/timed send anywhere in this system — an operator triggers
+    # automatic/timed send anywhere in this system, an operator triggers
     # this from the Admin Panel; these two columns are what that endpoint
     # checks/records. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md §02.
     last_followup_sent_at = Column(DateTime(timezone=True), nullable=True)
     followup_sent_by_operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
 
-    # Durable source attribution — snapshot of the parent session's UTM +
+    # Durable source attribution. Snapshot of the parent session's UTM +
     # visitor journey at the moment this lead was captured. Kept on the
     # lead row (not just the session) so attribution survives session
     # pruning by retention policies. Populated only when the owning
@@ -701,7 +701,7 @@ class CompanyProfile(Base):
     company, so there is nothing to leak between tenants, and sharing means a
     popular domain is crawled once for the whole platform instead of once per
     customer. The key is the registrable domain from
-    ``domain_normalizer.registrable_domain`` — every employee of one company,
+    ``domain_normalizer.registrable_domain``. Every employee of one company,
     on whatever mail subdomain, must collapse to a single row.
 
     Failures are cached too. A dead, parked, or bot-walled domain records
@@ -721,11 +721,11 @@ class CompanyProfile(Base):
     logo_url = Column(String, nullable=True)
 
     resolution_failed = Column(Boolean, nullable=False, server_default="false")
-    # Set only when resolution_failed — gates re-crawl attempts.
+    # Set only when resolution_failed. Gates re-crawl attempts.
     retry_after = Column(DateTime(timezone=True), nullable=True)
     # Consecutive failures, so backoff can grow. ``retry_after`` alone cannot
     # encode attempt depth, which would leave a permanently-dead domain
-    # re-crawled at a fixed rate forever — the per-domain cost leak this table
+    # re-crawled at a fixed rate forever, the per-domain cost leak this table
     # exists to prevent, merely slowed.
     failure_count = Column(Integer, nullable=False, server_default="0")
     # Lazy refresh horizon for a SUCCESSFUL profile.
@@ -738,7 +738,7 @@ class CompanyProfile(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # NOTE app-side only, like every other model here — a raw UPDATE will not
+    # NOTE app-side only, like every other model here, a raw UPDATE will not
     # bump it. The likely future writer is a bulk "refresh stale rows" sweep,
     # which must set this explicitly.
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -749,7 +749,7 @@ class CompanyProfile(Base):
             "length(domain) BETWEEN 1 AND 253",
             name="chk_company_profile_domain_length",
         ),
-        # The two sweeps this table implies — refresh stale, retry failed —
+        # The two sweeps this table implies (refresh stale, retry failed)
         # would otherwise be full scans as the cache grows.
         Index(
             "ix_company_profile_refresh_due",
@@ -767,10 +767,10 @@ class CompanyProfile(Base):
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True)
-    # Legacy FK — kept during migration transition. Indexed (audit F27): every
+    # Legacy FK. Kept during migration transition. Indexed (audit F27): every
     # analytics query filters chat_sessions by client_id when bot_id is absent.
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
-    # New FK — primary association
+    # New FK. Primary association
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
 
     location = Column(String, nullable=True)
@@ -784,7 +784,7 @@ class ChatSession(Base):
     # Ordered list of ``{"path": "/services", "ts": "2026-07-09T12:00:15Z"}``
     # entries the widget recorded as the visitor moved between pages on
     # the host site before opening the chat. Written once from
-    # ``/chat/behavioral-signals`` — first payload with a non-empty journey
+    # ``/chat/behavioral-signals``. First payload with a non-empty journey
     # wins so later "just before opening chat" navigations don't overwrite
     # the earlier top-of-funnel context.
     visitor_journey = Column(JSONB, nullable=True)
@@ -814,10 +814,10 @@ class ChatSession(Base):
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
     # Per-session record of inline cards already surfaced to the visitor.
     # Shape: {"leave_message": true, "meeting": true}. Used to suppress
-    # duplicate card rendering across turns — the LLM cannot enforce
+    # duplicate card rendering across turns, the LLM cannot enforce
     # "at most once per conversation" on its own.
     inline_cards_shown = Column(JSONB, nullable=True)
-    visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1–5, null = not rated
+    visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1 to 5, null = not rated
     visitor_resolved = Column(Boolean, nullable=True)  # Post-chat: was the issue resolved? null = not answered
 
     # Unread-leads tracking: NULL = unread in the /leads admin view.
@@ -999,7 +999,7 @@ class Department(Base):
 
 
 class Operator(Base):
-    """Live chat operator — a team member who can handle customer conversations."""
+    """Live chat operator, a team member who can handle customer conversations."""
 
     __tablename__ = "operators"
 
@@ -1009,7 +1009,7 @@ class Operator(Base):
     email = Column(String, nullable=False)
     is_online = Column(Boolean, default=False, server_default="false", nullable=False)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
-    # Manual DND toggle — operator can stay "online" (WS connected) but stop
+    # Manual DND toggle. Operator can stay "online" (WS connected) but stop
     # accepting new chat assignments. Independent of is_online so capacity
     # planning can distinguish "off shift" from "busy with admin tasks".
     is_accepting_chats = Column(Boolean, default=True, server_default="true", nullable=False)
@@ -1020,7 +1020,7 @@ class Operator(Base):
     operator_api_key = Column(String, unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
-    # Bot binding — one operator, one bot. See migration
+    # Bot binding, one operator, one bot. See migration
     # ``b1c7e9d3f2a5_operator_bot_one_to_one.py`` for the schema change and the
     # backfill that picked each workspace's oldest bot for pre-existing rows.
     # Live-chat routing scopes every assignment to this bot so an operator on
@@ -1036,13 +1036,13 @@ class Operator(Base):
     max_concurrent_chats = Column(Integer, default=5, server_default="5", nullable=False)
     notification_preferences = Column(JSONB, nullable=True)
 
-    # Linked-identity fields — populated when an operator was created via an
+    # Linked-identity fields. Populated when an operator was created via an
     # invite the invitee accepted while authenticated as a Client.
     # ``linked_client_id`` points at that underlying Client identity, so the
     # auth resolver can grant operator capabilities to a caller presenting the
     # Client's ``X-API-Key`` together with the workspace's ``X-Workspace-Id``.
     # NULL for legacy operators (created with their own password via
-    # ``POST /operators/create``) — they authenticate via ``X-Operator-Key``
+    # ``POST /operators/create``). They authenticate via ``X-Operator-Key``
     # and continue to work unchanged.
     linked_client_id = Column(
         Integer,
@@ -1080,17 +1080,17 @@ class OperatorInvite(Base):
 
     Lifecycle
     ---------
-    * **pending** — created by an owner or admin, email sent, token unused.
-    * **accepted** — invitee authenticated (as a new or existing Client) and
+    * **pending**. Created by an owner or admin, email sent, token unused.
+    * **accepted**. Invitee authenticated (as a new or existing Client) and
       accepted the invite; a linked Operator row was created in the target
       workspace.
-    * **revoked** — owner or admin cancelled the invite before acceptance.
-    * **expired** — ``expires_at`` passed with no acceptance. A sweep task or
+    * **revoked**. Owner or admin cancelled the invite before acceptance.
+    * **expired**. ``expires_at`` passed with no acceptance. A sweep task or
       lazy check flips the status.
 
     Security
     --------
-    Only ``token_hash`` (SHA-256 of the raw invite token) is stored — the
+    Only ``token_hash`` (SHA-256 of the raw invite token) is stored, the
     plaintext token appears exactly once in the invite email link. Timing-safe
     equality is used at lookup so token verification doesn't leak length via
     string comparison shortcuts.
@@ -1100,7 +1100,7 @@ class OperatorInvite(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    # Workspace being invited to — the owner's client_id also IS the workspace ID.
+    # Workspace being invited to, the owner's client_id also IS the workspace ID.
     client_id = Column(
         Integer,
         ForeignKey("clients.id", ondelete="CASCADE"),
@@ -1110,7 +1110,7 @@ class OperatorInvite(Base):
 
     # Bot the invitee will operate. Operators are strictly bot-scoped
     # (``Operator.bot_id`` is NOT NULL), so acceptance MUST know which bot to
-    # bind the new Operator to — the invite carries that binding end to end.
+    # bind the new Operator to, the invite carries that binding end to end.
     # Seat limits are enforced per-bot; the invite modal, create/accept service
     # paths, and the invite list (filtered by bot in the UI) all key off this.
     # ``ON DELETE CASCADE`` mirrors ``operators.bot_id``: deleting a bot voids
@@ -1122,7 +1122,7 @@ class OperatorInvite(Base):
         index=True,
     )
 
-    # Target email — always stored lowercased. Uniqueness of pending invites is
+    # Target email. Always stored lowercased. Uniqueness of pending invites is
     # enforced by the partial index below.
     email = Column(String, nullable=False, index=True)
 
@@ -1137,7 +1137,7 @@ class OperatorInvite(Base):
     # SHA-256 hex digest of the raw invite token. 64 chars → String(64).
     token_hash = Column(String(64), unique=True, nullable=False, index=True)
 
-    # Lifecycle enum — validated at the application layer since the set of
+    # Lifecycle enum. Validated at the application layer since the set of
     # valid states may grow (e.g. ``resent``, ``forwarded``) and inline enums
     # are painful to migrate. Server-default keeps DB inserts consistent.
     status = Column(
@@ -1149,7 +1149,7 @@ class OperatorInvite(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    # Audit — who invited whom, when it resolved.
+    # Audit, who invited whom, when it resolved.
     invited_by_client_id = Column(
         Integer,
         ForeignKey("clients.id", ondelete="SET NULL"),
@@ -1174,7 +1174,7 @@ class OperatorInvite(Base):
         nullable=True,
     )
 
-    # Delivery tracking — timestamp of the most recent send + how many resends.
+    # Delivery tracking. Timestamp of the most recent send + how many resends.
     # Rate-limits the resend endpoint.
     sent_at = Column(DateTime(timezone=True), nullable=True)
     resend_count = Column(Integer, default=0, server_default="0", nullable=False)
@@ -1207,7 +1207,7 @@ class ChatMessage(Base):
     feedback = Column(Integer, nullable=True)
     # True on a bot turn that could NOT be answered from the knowledge base
     # (the "no-info pivot": relevance gate fired on an on-scope question, or
-    # retrieval returned nothing). Powers the Knowledge-gaps analytics — each
+    # retrieval returned nothing). Powers the Knowledge-gaps analytics. Each
     # flagged bot message is paired with its preceding user question. Indexed
     # because the analytics query filters on it.
     is_unanswered = Column(Boolean, default=False, server_default="false", nullable=False, index=True)
@@ -1232,7 +1232,7 @@ class ChatMessage(Base):
         # Hot path: every chat turn loads recent history for a session
         # (``WHERE session_id = ? ORDER BY created_at DESC LIMIT n``) and all
         # per-session analytics join on session_id. Without this the query
-        # sequentially scans the whole (fastest-growing) table — confirmed on
+        # sequentially scans the whole (fastest-growing) table. Confirmed on
         # prod via EXPLAIN and re-measured at 588× faster on 1.1M rows.
         # Composite (session_id, created_at DESC) serves both the filter and
         # the sort from the index. See migration e1f2a3b4c5d6.
@@ -1294,7 +1294,7 @@ class LiveChatQueueEntry(Base):
     Persisted (not just in-memory) so the queue survives API restarts and
     Redis flushes. Position is computed at insert time from
     ``COUNT(*) WHERE bot_id = X AND dequeued_at IS NULL``; we don't try to
-    keep positions densely packed — dequeue_reason marks exits and a daily
+    keep positions densely packed. Dequeue_reason marks exits and a daily
     cron prunes resolved entries.
     """
 
@@ -1345,7 +1345,7 @@ class CannedResponse(Base):
 
 
 class Plan(Base):
-    """Pricing plan tier — fully configurable from the super admin panel."""
+    """Pricing plan tier. Fully configurable from the super admin panel."""
 
     __tablename__ = "plans"
 
@@ -1354,8 +1354,8 @@ class Plan(Base):
     slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "professional"
     description = Column(Text, nullable=True)
 
-    # Pricing (stored in *minor units* of the configured currency — paise for
-    # INR, cents for USD — to avoid floating-point issues). The historical
+    # Pricing (stored in *minor units* of the configured currency (paise for
+    # INR, cents for USD) to avoid floating-point issues). The historical
     # column name ``*_cents`` is retained for compatibility; treat it as
     # "minor units of ``currency`` field" in new code.
     pricing_model = Column(
@@ -1366,7 +1366,7 @@ class Plan(Base):
     annual_price_cents = Column(Integer, default=0, server_default="0", nullable=False)  # total annual price
     # DERIVED, never authored. Every writer (super-admin plan CRUD,
     # scripts/seed_plans.py) computes this from the two INR prices above via
-    # ``core.pricing.annual_saving_percent``, and NO read path serves it — the
+    # ``core.pricing.annual_saving_percent``, and NO read path serves it, the
     # plan payloads derive the percent from the prices they are already
     # returning. It is kept in sync so the table does not contradict the API,
     # but it is not a source of truth, and the stale ``30`` defaults below
@@ -1374,17 +1374,17 @@ class Plan(Base):
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
 
     # Trial. Default 7 = the Standard-only free-trial length; seed_plans sets
-    # trial_days per tier (Standard 7, all others 0 — trials are Standard-only).
+    # trial_days per tier (Standard 7, all others 0. Trials are Standard-only).
     trial_days = Column(Integer, default=7, server_default="7", nullable=False)
 
-    # Usage limits — JSONB allows flexible addition of new limit types without migrations
+    # Usage limits. JSONB allows flexible addition of new limit types without migrations
     limits = Column(
         JSONB,
         nullable=False,
         server_default='{"ai_messages": 250, "url_scans": 50, "live_chat_messages": 0, "email_summaries": 0, "email_notifications": 0, "knowledge_pages": 50, "knowledge_characters": 2500, "storage_mb": 5, "chat_history_days": 7}',
     )
 
-    # Feature flags — which features are available on this plan
+    # Feature flags, which features are available on this plan
     features = Column(
         JSONB,
         nullable=False,
@@ -1407,15 +1407,15 @@ class Plan(Base):
     razorpay_plan_id_annual = Column(String, nullable=True)
 
     # Razorpay plan IDs for the USD (international) rail. Separate Razorpay
-    # plans priced in USD — a plan's currency is fixed at creation, so the INR
+    # plans priced in USD, a plan's currency is fixed at creation, so the INR
     # ids above cannot serve a USD charge. NULL means the USD rail is not
     # configured for this tier and USD checkout must fail loudly rather than
     # silently charging INR. Per-environment (test vs live), like the INR ids.
     razorpay_plan_id_monthly_usd = Column(String, nullable=True)
     razorpay_plan_id_annual_usd = Column(String, nullable=True)
 
-    # Fixed USD headline pricing (cents). Independent of the INR columns —
-    # set deliberately, NEVER converted live. Shown to non-Indian visitors.
+    # Fixed USD headline pricing (cents). Independent of the INR columns.
+    # Set deliberately, NEVER converted live. Shown to non-Indian visitors.
     # NULL → caller falls back to a DISPLAY_USD_TO_INR conversion for legacy
     # rows that predate these columns. See ``app.core.pricing.display_price``
     # and ADR D2/D3 in the billing plan.
@@ -1453,7 +1453,7 @@ class Plan(Base):
 
 
 class Promotion(Base):
-    """A time-boxed acquisition campaign — e.g. "sign up this month, 3 months free".
+    """A time-boxed acquisition campaign. E.g. "sign up this month, 3 months free".
 
     Config lives in a row (not code) so a super admin can launch, pause, and
     expire an offer without a deploy. ``is_active`` is the pause switch; the
@@ -1461,7 +1461,7 @@ class Promotion(Base):
     are granted at 100% off via a deferred Razorpay ``start_at`` (the first real
     charge lands ``free_cycles`` months after the mandate is authorised).
 
-    Entitlements always follow the subscription's ``plan_id`` — the promo only
+    Entitlements always follow the subscription's ``plan_id``, the promo only
     defers *billing*, never access.
     """
 
@@ -1473,7 +1473,7 @@ class Promotion(Base):
     code = Column(String, unique=True, index=True, nullable=True)
     name = Column(String, nullable=False)
 
-    # The pause switch — flip to false to stop new redemptions instantly,
+    # The pause switch. Flip to false to stop new redemptions instantly,
     # without deleting the campaign or touching subscriptions already on it.
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
@@ -1509,7 +1509,7 @@ class Promotion(Base):
 
 
 class Subscription(Base):
-    """Links a Client to a Plan — tracks billing state and payment provider details."""
+    """Links a Client to a Plan. Tracks billing state and payment provider details."""
 
     __tablename__ = "subscriptions"
 
@@ -1532,7 +1532,7 @@ class Subscription(Base):
     current_period_start = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
     # The billing period (by ``current_period_end``) the plan's monthly credits
-    # were last granted for. Makes the renewal grant idempotent per period —
+    # were last granted for. Makes the renewal grant idempotent per period.
     # ``subscription.charged`` / ``activated`` grant at most once per distinct
     # period regardless of event timing, ordering, or replays (remediation H4).
     last_granted_period_end = Column(DateTime(timezone=True), nullable=True)
@@ -1569,7 +1569,7 @@ class Subscription(Base):
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
     cancel_reason = Column(Text, nullable=True)
-    # Reversible customer INTENT to churn at period end — not a gateway fact.
+    # Reversible customer INTENT to churn at period end, not a gateway fact.
     # ``/subscriptions/cancel`` sets it and touches nothing at Razorpay, so the
     # customer can change their mind for free right up until the sweep below
     # runs. Cleared by ``/subscriptions/resume`` while the mandate is still live.
@@ -1583,7 +1583,7 @@ class Subscription(Base):
     # ``/resume`` when the gateway reports a mandate we believed was live.
     gateway_cancel_executed_at = Column(DateTime(timezone=True), nullable=True)
 
-    # The Razorpay plan actually billed against — a discounted plan when a
+    # The Razorpay plan actually billed against, a discounted plan when a
     # referral code applied, else identical to the base plan's razorpay id.
     # Entitlements always follow plan_id (the base plan). NULL for legacy rows
     # that predate the discount engine.
@@ -1594,7 +1594,7 @@ class Subscription(Base):
     # still follow ``plan_id``; the promo only defers the first charge. SET NULL
     # on promotion delete so billing history survives a campaign cleanup.
     promotion_id = Column(Integer, ForeignKey("promotions.id", ondelete="SET NULL"), nullable=True)
-    # The moment the free period ends and the first real charge lands — mirrors
+    # The moment the free period ends and the first real charge lands. Mirrors
     # the Razorpay subscription ``start_at``. NULL for non-promo subscriptions.
     promo_free_until = Column(DateTime(timezone=True), nullable=True)
     # Idempotency log for promo reminder emails (keys e.g. ``pre_charge``),
@@ -1611,7 +1611,7 @@ class Subscription(Base):
     # subscription in a plan-change" event from a fresh first-time signup.
     prev_razorpay_subscription_id = Column(String, nullable=True)
 
-    # Scheduled plan change — populated when a paid→paid downgrade is queued
+    # Scheduled plan change. Populated when a paid→paid downgrade is queued
     # for cutover at the end of the current billing cycle. The cron + the
     # gateway's ``subscription.completed`` webhook both check these columns;
     # whichever fires first promotes the change and clears the trio.
@@ -1621,7 +1621,7 @@ class Subscription(Base):
     # Proration value (plan-currency cents) for unused time on the previous
     # plan. Applied as a credit-ledger ``topup`` once the new subscription's
     # ``activated`` webhook confirms payment cleared. Zero means no pending
-    # credit — never NULL so arithmetic stays simple.
+    # credit, never NULL so arithmetic stays simple.
     upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
 
     # Finding D: idempotency marker for an in-flight paid→paid upgrade checkout.
@@ -1634,12 +1634,12 @@ class Subscription(Base):
 
     # Razorpay id of the SEPARATE per-seat add-on subscription. Kept distinct
     # from razorpay_subscription_id because Razorpay quantity multiplies the
-    # whole plan amount — seats must be their own sub (P0-3).
+    # whole plan amount. Seats must be their own sub (P0-3).
     seat_addon_subscription_id = Column(String, nullable=True)
     seat_addon_quantity = Column(Integer, nullable=False, server_default="0")
     # Finding A: extra seats DESIRED on a first purchase, awaiting mandate
     # authorization. Entitlement (operator_quantity) is NOT granted until the
-    # seat add-on's ``activated`` webhook confirms the mandate — otherwise seats
+    # seat add-on's ``activated`` webhook confirms the mandate. Otherwise seats
     # run free before Razorpay ever charges. NULL = nothing pending. Distinct
     # from seat_addon_quantity (the AUTHORIZED/billed count).
     seat_addon_pending_quantity = Column(Integer, nullable=True)
@@ -1673,7 +1673,7 @@ class Subscription(Base):
         ),
         # Per-bot shape: at most one active subscription per (client, bot).
         # Allows a single client to hold many bot-scoped subscriptions
-        # concurrently — one per bot they pay for.
+        # concurrently, one per bot they pay for.
         Index(
             "ix_subscriptions_client_bot_active",
             "client_id",
@@ -1687,7 +1687,7 @@ class Subscription(Base):
 
 
 class UsageRecord(Base):
-    """Monthly usage tracking per client — reset at the start of each billing period."""
+    """Monthly usage tracking per client. Reset at the start of each billing period."""
 
     __tablename__ = "usage_records"
 
@@ -1734,7 +1734,7 @@ class UsageRecord(Base):
 
 
 class Invoice(Base):
-    """Payment history — synced from Razorpay via webhooks."""
+    """Payment history. Synced from Razorpay via webhooks."""
 
     __tablename__ = "invoices"
 
@@ -1770,7 +1770,7 @@ class Invoice(Base):
     # Description for line items (e.g. "Starter Plan - Monthly" or "Overage: 500 messages")
     description = Column(Text, nullable=True)
 
-    # What this charge was FOR — drives refund/dispute clawback routing (P0-1):
+    # What this charge was FOR. Drives refund/dispute clawback routing (P0-1):
     #   plan_charge     → funded a plan_grant (claw that grant)
     #   topup           → funded a topup grant (claw that grant)
     #   seat            → operator seat add-on; funded NO credit grant
@@ -1782,10 +1782,10 @@ class Invoice(Base):
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # ── Invoicing v2: legal tax-document fields (nullable — rows created
+    # ── Invoicing v2: legal tax-document fields (nullable. Rows created
     # before v2, or while INVOICING_V2_ENABLED is off, stay 'legacy' and are
     # excluded from GST exports; never retro-taxed). Finalized documents are
-    # IMMUTABLE — corrections are credit notes, never edits.
+    # IMMUTABLE. Corrections are credit notes, never edits.
     # 20 chars (> the 16-char Rule 46 minimum) leaves headroom for a longer
     # prefix or a 7-digit serial without a hard ceiling once numbers are issued.
     invoice_number = Column(String(20), unique=True, index=True, nullable=True)
@@ -1814,10 +1814,10 @@ class Invoice(Base):
     # ``amount_cents``/``taxable_value_minor`` are already the reportable
     # figures.
     #
-    # ``inr_amount_minor`` is Razorpay's ``base_amount`` verbatim — the paise
-    # it actually converted and settles on — so the document ties to the
+    # ``inr_amount_minor`` is Razorpay's ``base_amount`` verbatim (the paise
+    # it actually converted and settles on) so the document ties to the
     # settlement and the FIRC exactly. The rate is stored alongside it (INR per
-    # one foreign unit, x1e6, integer — never a float on a statutory record)
+    # one foreign unit, x1e6, integer, never a float on a statutory record)
     # purely so the arithmetic is reproducible on the face of the invoice.
     inr_amount_minor = Column(BigInteger, nullable=True)
     inr_taxable_value_minor = Column(BigInteger, nullable=True)
@@ -1827,7 +1827,7 @@ class Invoice(Base):
     line_items = Column(JSONB, nullable=True)
     credit_note_of_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     # Razorpay's own invoice entity for this charge (payment.invoice_id from
-    # the subscription.charged payload) — payment evidence, not the tax doc.
+    # the subscription.charged payload). Payment evidence, not the tax doc.
     razorpay_invoice_id = Column(String, index=True, nullable=True)
     # Last time the document email was sent to the buyer. The PDF sweep only
     # auto-emails when NULL, so an admin "regenerate PDF" can never re-email
@@ -1837,7 +1837,7 @@ class Invoice(Base):
     # RETURNED; this is stamped before the attempt so overlapping sweeps can't
     # double-send, and a stale claim (crashed worker) is re-swept after 1h.
     email_claimed_at = Column(DateTime(timezone=True), nullable=True)
-    # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
+    # E-invoicing (IRP). Unused until the ₹5cr B2B threshold applies.
     irn = Column(String, nullable=True)
     signed_qr = Column(Text, nullable=True)
 
@@ -1845,17 +1845,17 @@ class Invoice(Base):
     subscription = relationship("Subscription", back_populates="invoices")
 
 
-# Finding L: once an invoice is numbered it IS a legal document — its tax and
+# Finding L: once an invoice is numbered it IS a legal document, its tax and
 # identity columns must never change. Immutability was previously convention-only
 # (finalize simply refused to re-run), so any later code path could still mutate a
 # frozen row and only arithmetic-inconsistent tampering would be caught by
 # reconciliation. This DB-session guard rejects mutation of every frozen column on
 # a numbered invoice, allowing ONLY delivery/lifecycle fields (PDF/email/e-invoice
-# registration/payment status). The finalize transition itself — invoice_number
-# going NULL→value in the same UPDATE — is allowed.
+# registration/payment status). The finalize transition itself (invoice_number
+# going NULL→value in the same UPDATE) is allowed.
 _INVOICE_FROZEN_EXEMPT = frozenset(
     # refunded_minor accompanies the ``status`` transition (partially_refunded /
-    # refunded) — a post-issuance lifecycle field, not a frozen tax/amount column.
+    # refunded), a post-issuance lifecycle field, not a frozen tax/amount column.
     # ``kind`` is clawback-routing metadata, not part of the legal document; the
     # charged handler stamps withheld_charge AFTER the invoice is finalized
     # (the withhold decision happens later in the same handler).
@@ -1878,13 +1878,13 @@ _INVOICE_FROZEN_EXEMPT = frozenset(
 def _reject_frozen_invoice_mutation(mapper, connection, target):  # noqa: ANN001
     state = sqlalchemy.inspect(target)
     # If invoice_number is being assigned in THIS update, it's the finalize
-    # transition (finalize writes the number + all tax columns together) — allow
+    # transition (finalize writes the number + all tax columns together). Allow
     # it. Enforcement only applies once a row is numbered and the number is NOT
     # changing (i.e. a later edit to an already-finalized document).
     if state.attrs.invoice_number.history.has_changes():
         return
     if target.invoice_number is None:
-        return  # never finalized (legacy row) — freely mutable
+        return  # never finalized (legacy row). Freely mutable
     changed = [
         col.key
         for col in mapper.column_attrs
@@ -1903,11 +1903,11 @@ class InvoiceCounter(Base):
     One row per (financial_year, prefix); the finalize service increments
     ``last_serial`` under ``SELECT … FOR UPDATE`` so concurrent webhooks get
     consecutive numbers and abandoned payments burn none (serials are only
-    allocated at finalize time — a Rule 46 audit requirement).
+    allocated at finalize time, a Rule 46 audit requirement).
 
     ``updated_at`` uses SQLAlchemy ``onupdate`` (app-side), so the Phase 2
     allocator must mutate ``last_serial`` through the ORM for the timestamp to
-    stay honest — a raw ``UPDATE`` would not bump it.
+    stay honest, a raw ``UPDATE`` would not bump it.
     """
 
     __tablename__ = "invoice_counters"
@@ -1919,7 +1919,7 @@ class InvoiceCounter(Base):
 
 
 class PaymentMethod(Base):
-    """A saved payment instrument — a DISPLAY MIRROR of Razorpay's token list.
+    """A saved payment instrument, a DISPLAY MIRROR of Razorpay's token list.
 
     Razorpay is the source of truth (``GET /v1/customers/{id}/tokens``); this
     table exists so the app and the super-admin console can render an
@@ -1928,7 +1928,7 @@ class PaymentMethod(Base):
 
     RBI card-on-file rules permit a merchant to retain ONLY the last four
     digits, the network, and issuer metadata. Cardholder name, BIN/IIN and
-    **expiry** must not be stored after 1 Oct 2022 — hence no expiry columns
+    **expiry** must not be stored after 1 Oct 2022. Hence no expiry columns
     here. Anything richer has to be fetched live and discarded; if you find
     yourself adding a column for it, that is the bug.
     """
@@ -1949,7 +1949,7 @@ class PaymentMethod(Base):
 
     # Provider references
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
-    # Provenance only — which gateway customer this token came from. Not
+    # Provenance only, which gateway customer this token came from. Not
     # indexed: reads go via client_id or token id, both already indexed.
     razorpay_customer_id = Column(String, nullable=True)
 
@@ -1986,11 +1986,11 @@ class CreditLedger(Base):
     # row created before the per-bot rollout, plus any deductions made
     # against legacy-pooled bots after rollout).
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
-    # REPORTING ONLY — deliberately *not* a second scope key. ``bot_id`` above
+    # REPORTING ONLY. Deliberately *not* a second scope key. ``bot_id`` above
     # answers "which ledger does this row live in?"; this answers "which bot
     # spent it?". The two diverge whenever credits are pooled: a pooled
     # account's deductions all land in the client pool (``bot_id IS NULL``),
-    # so without this column per-bot spend is simply not recoverable — and it
+    # so without this column per-bot spend is simply not recoverable, and it
     # cannot be backfilled after the fact, which is why the column exists
     # before the first pooled account does.
     #
@@ -2006,7 +2006,7 @@ class CreditLedger(Base):
     delta = Column(Integer, nullable=False)
     # The DB column is the native PG ENUM ``credit_reason``. The model MUST
     # declare it as such: with a plain String, a multi-row flush (a deduction
-    # spanning two grants at a FIFO boundary — see credit_service.
+    # spanning two grants at a FIFO boundary. See credit_service.
     # check_and_deduct) goes through SQLAlchemy's insertmanyvalues path, which
     # binds the params as typed VARCHAR and Postgres rejects the enum insert
     # with DatatypeMismatch; the page TX then rolls back and every retry hits
@@ -2102,7 +2102,7 @@ class ProcessedWebhook(Base):
 
     __tablename__ = "processed_webhooks"
     # Second dedup key (M-2): the HMAC covers only the BODY, the event id is a
-    # header — a replayed signed body with a fresh id passes both checks
+    # header, a replayed signed body with a fresh id passes both checks
     # without this. Partial-unique (NULLs exempt) for legacy rows.
     __table_args__ = (
         Index(
@@ -2238,7 +2238,7 @@ class ImpersonationToken(Base):
 #
 # v1 ships the referral-code mechanic, attribution, and analytics dashboards
 # only. The money layer (commission %, customer discount %, payouts) is
-# deferred to v2 — see ``platform/docs/affiliate-program.md`` for details
+# deferred to v2. See ``platform/docs/affiliate-program.md`` for details
 # and the additive migration path. None of the columns here carry money;
 # v2 will ADD columns to these same tables without rewriting existing data.
 
@@ -2248,7 +2248,7 @@ class Affiliate(Base):
 
     The presence of an active (``deactivated_at IS NULL``) row is the
     single source of truth for ``Client.is_affiliate``. Total active
-    affiliates are capped at 5 by the service layer — there is no DB-level
+    affiliates are capped at 5 by the service layer. There is no DB-level
     enforcement of this because raising the cap should not require a
     migration.
     """
@@ -2270,7 +2270,7 @@ class Affiliate(Base):
     max_active_codes = Column(Integer, nullable=False, default=10, server_default="10")
     # Commission % stored in basis points (1 bps = 0.01%). 2500 = 25.00%.
     # Default 0 = no commission; super-admin sets explicitly when ready to
-    # pay out. Range enforced at the DB layer (0–10000 = 0–100%).
+    # pay out. Range enforced at the DB layer (0 to 10000 = 0 to 100%).
     commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     deactivated_at = Column(DateTime(timezone=True), nullable=True)
@@ -2360,7 +2360,7 @@ class ReferralCode(Base):
 class ReferralClick(Base):
     """Append-only click log for ``/?ref=CODE`` visits.
 
-    Stores hashed IP and UA only — never raw values. The hash salt rotates
+    Stores hashed IP and UA only, never raw values. The hash salt rotates
     daily inside the service layer so cross-day correlation requires
     out-of-band knowledge.
     """
@@ -2402,7 +2402,7 @@ class AffiliateInvite(Base):
     token_hash = Column(Text, nullable=False, unique=True, index=True)
     max_active_codes = Column(Integer, nullable=False, default=10, server_default="10")
     # Commission pool (bps) the super-admin set at invite time. Carried here so
-    # the accept paths grant the affiliate the intended pool — without it an
+    # the accept paths grant the affiliate the intended pool, without it an
     # invited affiliate landed at 0% and could create no earning code (NV4).
     commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
     invited_by = Column(
@@ -2446,11 +2446,11 @@ class DiscountedPlanCache(Base):
     discount_bps = Column(Integer, nullable=False)  # e.g. 1500 = 15 %
     # Rail this cached plan bills on. Part of the dedup key: a Razorpay plan's
     # currency is fixed at creation, so the INR and USD discounted plans for the
-    # same base/cycle/discount are different objects and must not share a row —
-    # sharing one would bill an international customer in rupees.
+    # same base/cycle/discount are different objects and must not share a row.
+    # Sharing one would bill an international customer in rupees.
     currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     razorpay_plan_id = Column(String, nullable=False)
-    # Minor units in ``currency`` — paise for INR, cents for USD. The column
+    # Minor units in ``currency``. Paise for INR, cents for USD. The column
     # name predates the USD rail.
     amount_paise = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -2474,7 +2474,7 @@ class ReferralConversion(Base):
     """Snapshot of commission/discount terms when a referral converts to paid.
 
     Editing a referral code's percentages later must not retroactively change
-    what already-converted customers earn the affiliate — snapshotting at
+    what already-converted customers earn the affiliate. Snapshotting at
     subscribe time decouples live code edits from historical payouts.
     """
 
@@ -2498,7 +2498,7 @@ class ReconciliationRun(Base):
 
     ``report`` holds the structured deltas so the superadmin surface can show
     the latest run; the cron also ERROR-logs any delta for Sentry. Report
-    data, not money — rows are prunable.
+    data, not money. Rows are prunable.
     """
 
     __tablename__ = "reconciliation_runs"
@@ -2526,7 +2526,7 @@ class BillingFunnelEvent(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     # checkout_abandoned (customer closed the sheet) | payment_failed (gateway decline)
     event = Column(String(24), nullable=False)
-    # plan | topup | seat | resume — which purchase surface opened the sheet
+    # plan | topup | seat | resume, which purchase surface opened the sheet
     surface = Column(String(12), nullable=False)
     meta = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
@@ -2565,7 +2565,7 @@ class PlatformFeedback(Base):
     area = Column(
         String(20), nullable=True, index=True
     )  # billing | bots | knowledge | live_chat | dashboard | widget | other
-    severity = Column(String(10), nullable=True)  # low | medium | high | critical — bug-only
+    severity = Column(String(10), nullable=True)  # low | medium | high | critical. Bug-only
     context = Column(JSONB, nullable=True)  # {page_url, app_version, plan_tier, user_agent}
     attachments = Column(JSONB, nullable=True)  # [{url, name?, content_type?}]
 
@@ -2604,7 +2604,7 @@ class OperatorPushSubscription(Base):
     A DB-level CHECK constraint enforces that exactly one of the two FKs is
     populated; both branches are pruned on the same ``410 Gone`` rule.
 
-    One subscriber can have many rows — one per browser/device they've
+    One subscriber can have many rows, one per browser/device they've
     granted permission on (laptop + work desktop + phone). The fan-out at
     handoff time sends to every row for every eligible recipient; first
     accept wins, the rest get a tagged follow-up that updates the on-device
@@ -2696,17 +2696,17 @@ class Notification(Base):
     per-operator notifications (e.g. "you were @mentioned") and is NULL for
     the three workspace-wide types currently in use:
 
-      * ``plan_purchased``           — billing webhook activated a paid plan
-      * ``bot_created``              — a new bot was created in the workspace
-      * ``offline_message_received`` — visitor submitted the offline form
-      * ``handoff_request``          — visitor pressed "Talk to a human"
+      * ``plan_purchased``           (billing webhook activated a paid plan
+      * ``bot_created``) a new bot was created in the workspace
+      * ``offline_message_received`` (visitor submitted the offline form
+      * ``handoff_request``) visitor pressed "Talk to a human"
         (also drives the in-app banner; persisted so a missed handoff still
         shows up in the bell when the operator returns to the dashboard)
 
     ``data`` is a free-form JSON blob carrying type-specific payload (bot_id,
     plan name, message preview, session_id, etc.). ``link`` is an optional
     in-app route to navigate to on click. Both are validated in the service
-    layer, not at the DB level — schema-on-read keeps adding new types cheap.
+    layer, not at the DB level. Schema-on-read keeps adding new types cheap.
     """
 
     __tablename__ = "notifications"
@@ -2756,12 +2756,12 @@ class Event(Base):
     questions ("any upcoming webinars?") to a plain SQL query against this
     table instead of the RAG vector search, which eliminates the class of
     bug where the LLM would either miss upcoming events or label past dates
-    as upcoming — see rag_service ``_build_date_hints`` regression history.
+    as upcoming. See rag_service ``_build_date_hints`` regression history.
 
     ``(bot_id, source_url, title)`` is the natural identity used for
     idempotent upserts across re-crawls: the same event on the same page
     updates ``last_seen_at`` instead of creating a duplicate.
-    ``last_seen_at`` doubles as the pruning signal — an event whose source
+    ``last_seen_at`` doubles as the pruning signal, an event whose source
     page stopped mentioning it for more than the retention window is
     assumed removed by the customer and is deleted by
     ``task_prune_stale_events``.
@@ -2784,7 +2784,7 @@ class Event(Base):
     ends_at = Column(DateTime(timezone=True), nullable=True)
     url = Column(String, nullable=True)
     location = Column(String, nullable=True)
-    # Which crawled page this event was extracted from — used both as part
+    # Which crawled page this event was extracted from. Used both as part
     # of the dedup key and to give the LLM a link when answering.
     source_url = Column(String, nullable=False)
     # Optional link back to the exact Document row the extractor read; kept
@@ -2812,8 +2812,8 @@ class Event(Base):
 
 
 class EmailSuppression(Base):
-    """Permanent per-bot unsubscribe/bounce list. Scoped by ``bot_id`` —
-    unsubscribing from one customer's follow-ups must never suppress that
+    """Permanent per-bot unsubscribe/bounce list. Scoped by ``bot_id``.
+    Unsubscribing from one customer's follow-ups must never suppress that
     address for a different, unrelated customer's bot. Checked by Gate 3
     before any manual follow-up send. Once added, a row is never removed
     by application code."""

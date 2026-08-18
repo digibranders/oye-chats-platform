@@ -2,7 +2,7 @@
 
 `check_urls_alive` (recrawl-diff) and `discover_via_links` fetch caller/stored
 URLs server-side. They must refuse non-public targets and must not blindly
-follow a redirect to an internal address — the same guard the sitemap path got.
+follow a redirect to an internal address, the same guard the sitemap path got.
 """
 
 import asyncio

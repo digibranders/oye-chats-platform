@@ -1,4 +1,4 @@
-"""Review batch D — finding O3 (get_balance must not count expired-but-unswept
+"""Review batch D. Finding O3 (get_balance must not count expired-but-unswept
 top-ups) and O1 (expire_old_topups locks before reading consumption)."""
 
 import os
@@ -32,7 +32,7 @@ def test_get_balance_excludes_expired_unswept_topup(db):
     )
     db.flush()
 
-    # Spendable balance must be 0 — it matches what the FIFO allocator can spend,
+    # Spendable balance must be 0, it matches what the FIFO allocator can spend,
     # not the raw delta sum (which still includes the expired grant until swept).
     assert credit_service.get_balance(db, client.id) == 0
     with pytest.raises(credit_service.InsufficientCredits):

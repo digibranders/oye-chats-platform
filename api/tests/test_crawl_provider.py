@@ -77,7 +77,7 @@ async def test_no_sitemap_no_links_falls_back_to_spider_link_crawl(monkeypatch):
         return [u]  # url_discovery guarantees the seed even with no sitemap
 
     async def no_links(u, *, max_urls, timeout):
-        return [u]  # SPA / no crawlable anchors — only the seed comes back
+        return [u]  # SPA / no crawlable anchors. Only the seed comes back
 
     async def fake_spider(url, **kw):
         return {
@@ -125,7 +125,7 @@ async def test_no_sitemap_no_links_spider_fails_then_jina(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_link_discovery_failure_falls_back_to_spider(monkeypatch):
-    """A link-scan that raises must not abort the crawl — it degrades to the
+    """A link-scan that raises must not abort the crawl, it degrades to the
     Spider recursive crawl, same as an empty scan."""
 
     async def only_seed(u, *, max_urls, timeout):

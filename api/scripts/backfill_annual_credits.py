@@ -9,7 +9,7 @@ of what they paid for (e.g. Standard annual: 6,000 credits instead of the
 
 This script finds every currently active/past_due annual subscription, works
 out how short its current-period plan grant is, and tops it up by EXACTLY the
-shortfall — never a full ``grant_for_subscription`` call, which would grant a
+shortfall, never a full ``grant_for_subscription`` call, which would grant a
 fresh 72,000 and double-credit the customer.
 
 Idempotency: every grant this script writes is tagged with ``MARKER`` in the
@@ -120,7 +120,7 @@ def _collect_candidates(session: Session) -> list[dict[str, Any]]:
 
         if sub.current_period_start is None:
             logger.warning(
-                "backfill_annual_credits: subscription %s has no current_period_start — "
+                "backfill_annual_credits: subscription %s has no current_period_start. "
                 "skipping (can't bound the current period safely)",
                 sub.id,
             )
@@ -154,7 +154,7 @@ def _collect_candidates(session: Session) -> list[dict[str, Any]]:
 def run_backfill(session: Session, *, execute: bool) -> dict[int, int]:
     """Compute (and, when ``execute=True``, grant) shortfalls for annual subs.
 
-    Returns ``{subscription_id: credits_granted}`` — only for subscriptions
+    Returns ``{subscription_id: credits_granted}``. Only for subscriptions
     that had a positive, not-yet-backfilled shortfall. In dry-run mode
     (``execute=False``) nothing is written to the session; the returned dict
     still reports what WOULD be granted.
@@ -230,7 +230,7 @@ def main() -> int:
         else:
             session.rollback()
             print("-" * 72)
-            print("Dry-run — no changes written. Re-run with --execute to commit.")
+            print("Dry-run, no changes written. Re-run with --execute to commit.")
 
     return 0
 

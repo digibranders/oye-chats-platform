@@ -1,4 +1,4 @@
-"""GSTIN validation — structure + mod-36 checksum.
+"""GSTIN validation. Structure + mod-36 checksum.
 
 Pure functions, no I/O. Validates the seller profile's GSTIN today, and will
 validate customer GSTINs captured for B2B tax invoices in later invoicing
@@ -11,7 +11,7 @@ import re
 
 _GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-# GST state codes 01–38 plus 97 (Other Territory).
+# GST state codes 01 to 38 plus 97 (Other Territory).
 VALID_STATE_CODES = frozenset({f"{i:02d}" for i in range(1, 39)} | {"97"})
 
 # GST state code → State name (Rule 46 requires the State NAME for the place of

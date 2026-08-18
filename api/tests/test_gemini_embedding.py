@@ -181,7 +181,7 @@ def test_retries_then_raises_on_5xx(monkeypatch):
 def test_first_batch_exception_cancels_not_yet_started_futures(monkeypatch):
     """AR-38: before this fix, ThreadPoolExecutor.__exit__ on one batch's
     exception blocked-until-complete (not cancel) on every other submitted
-    future — with a single worker, that meant every OTHER queued batch still
+    future, with a single worker, that meant every OTHER queued batch still
     ran to completion (consuming billed Gemini quota and wall-clock) for a
     result about to be discarded, since embed_texts is guaranteed to raise
     once the first exception surfaces. With cancellation, queued-but-not-
@@ -204,5 +204,5 @@ def test_first_batch_exception_cancels_not_yet_started_futures(monkeypatch):
         ge.embed_texts(["0", "1", "2", "3", "4"], _client=_client(handler))
 
     # Only the first (already-running) batch should have reached the
-    # handler — the other 4 were cancelled while still PENDING.
+    # handler, the other 4 were cancelled while still PENDING.
     assert calls["n"] == 1

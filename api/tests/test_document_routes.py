@@ -1,4 +1,4 @@
-"""Tests for app.api.document_routes — document management endpoints."""
+"""Tests for app.api.document_routes. Document management endpoints."""
 
 from contextlib import contextmanager
 from io import BytesIO
@@ -26,7 +26,7 @@ def _build_app(auth_override=None):
     app.include_router(router)
     if auth_override:
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
-    # See test_bot_routes — gate semantics live in test_trial_enforcement;
+    # See test_bot_routes. Gate semantics live in test_trial_enforcement;
     # bypassing here keeps these tests focused on document-route logic.
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
     # Email-verification gate is covered in test_verified_email_gate; bypass it

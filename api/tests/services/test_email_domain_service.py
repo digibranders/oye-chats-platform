@@ -32,14 +32,14 @@ def test_subdomain_is_reduced_to_the_registrable_domain():
 
 
 def test_platform_hosted_domains_keep_the_customer_label():
-    """acme.myshopify.com must not collapse onto the platform — that key is
+    """acme.myshopify.com must not collapse onto the platform. That key is
     shared across every tenant."""
     assert extract_company_domain("bob@acme.myshopify.com") == "acme.myshopify.com"
 
 
 def test_icann_suffix_alone_is_not_a_company():
-    """Nobody is reachable at co.uk. A PLATFORM apex is different — Squarespace
-    has staff — so that case is covered in test_domain_normalizer."""
+    """Nobody is reachable at co.uk. A PLATFORM apex is different (Squarespace
+    has staff) so that case is covered in test_domain_normalizer."""
     assert extract_company_domain("bob@co.uk") is None
     assert extract_company_domain("bob@com.co") is None
 

@@ -2,7 +2,7 @@
 
 Regression guard: a full re-crawl that discovers fewer pages than are stored
 (e.g. the sitemap was briefly unreachable and the crawl fell back to a shallower
-link/recursive pass) must not delete pages that still resolve — it must verify
+link/recursive pass) must not delete pages that still resolve, it must verify
 liveness first via check_urls_alive.
 """
 

@@ -1,6 +1,6 @@
 """Tests for app.services.runtime_config typed getters.
 
-Focused on get_embed_concurrency — the runtime-tunable embed fan-out knob
+Focused on get_embed_concurrency, the runtime-tunable embed fan-out knob
 (super-admin Models & RAG card → pricing_config: embed.concurrency).
 """
 
@@ -33,7 +33,7 @@ def test_embed_concurrency_override(monkeypatch):
 
 
 def test_embed_concurrency_override_string(monkeypatch):
-    # pricing_config values are JSON — a numeric string must still coerce.
+    # pricing_config values are JSON, a numeric string must still coerce.
     _stub_get(monkeypatch, "24")
     assert runtime_config.get_embed_concurrency() == 24
 
@@ -49,7 +49,7 @@ def test_embed_concurrency_clamped_low(monkeypatch):
 
 
 def test_embed_concurrency_bad_value_falls_back(monkeypatch):
-    # A corrupt DB row must never crash embedding — fall back to the env default.
+    # A corrupt DB row must never crash embedding. Fall back to the env default.
     _stub_get(monkeypatch, "not-a-number")
     assert runtime_config.get_embed_concurrency() == EMBED_CONCURRENCY
 
@@ -60,7 +60,7 @@ def test_embed_concurrency_bad_value_falls_back(monkeypatch):
 def test_chunk_overlap_clamped_below_chunk_size(monkeypatch):
     """The write-time cross-validator (superadmin_routes_v2.patch_model_config)
     is the primary defense, but this getter is the last line of defense
-    against any invalid combo already persisted — RecursiveCharacterTextSplitter
+    against any invalid combo already persisted. RecursiveCharacterTextSplitter
     raises an uncaught ValueError on overlap >= size, crashing all ingestion."""
 
     def fake_get(key, default=None):

@@ -43,7 +43,7 @@ def test_clearing_field_unlocks_it():
 
 
 def test_clearing_with_none_unlocks_it():
-    """The admin app sends ``null`` for a cleared field — treated as empty."""
+    """The admin app sends ``null`` for a cleared field. Treated as empty."""
     bot = _bot(company_name="Acme Corporation", overrides=["company_name"])
     _reconcile_manual_overrides(bot, {"company_name": None})
     assert bot.manual_field_overrides == []

@@ -7,7 +7,7 @@ import BotAvatar from './BotAvatar';
  * Layout matches a bot message row: [BotAvatar] [pill with three dots]
  *
  * Props:
- *   settings — bot settings (bot_logo, avatar_type)
+ *   settings. Bot settings (bot_logo, avatar_type)
  */
 
 const TypingIndicator = ({ settings }) => {

@@ -9,7 +9,7 @@ import { parseSettings, toSettingsPayload } from './advanced.config';
  *
  * A review mutated both parses to `=== true` AND deleted
  * `company_lookup_enabled` from the save payload, and all 166 tests stayed
- * green — `features/agents/advanced/` had no test file at all. That is the
+ * green. `features/agents/advanced/` had no test file at all. That is the
  * dangerous direction: the Advanced tab renders every switch OFF, the customer
  * edits an unrelated setting and hits Save, and the PATCH writes
  * `false, false`. A paying customer silently loses both paid enrichments and
@@ -23,8 +23,8 @@ vi.mock('../../../context/UpgradeModalContext', () => ({
 describe('advanced.config parsing of the enrichment toggles', () => {
   it('reads an ABSENT field as OFF, matching the column default', () => {
     /* `=== true`, not `!== false`. Both columns default OFF server-side, so an
-       older API build or a partial payload must read as "switched off" —
-       enrichment stays off until the customer explicitly opts in. */
+       older API build or a partial payload must read as "switched off".
+       Enrichment stays off until the customer explicitly opts in. */
     const draft = parseSettings({});
 
     expect(draft.emailVerificationEnabled).toBe(false);
@@ -81,7 +81,7 @@ describe('LeadEnrichmentSection', () => {
 
   it('states the company-lookup charge as a CONDITION, not a flat price', () => {
     /* Most visitors resolve to a consumer ISP and cost nothing. A bare
-       "10 credits" reads as 10 per visitor — which is what it would have been
+       "10 credits" reads as 10 per visitor, which is what it would have been
        before the charge moved behind a successful identification. */
     render(<LeadEnrichmentSection {...base} />);
 

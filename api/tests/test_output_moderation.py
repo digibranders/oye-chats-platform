@@ -49,7 +49,7 @@ class TestCheckGeneratedAnswerSafety:
 
     def test_fails_open_when_moderation_check_itself_errors(self):
         """check_visitor_safety already fails open (returns True, None) on
-        any internal error — this wrapper must not add a new failure mode
+        any internal error. This wrapper must not add a new failure mode
         on top of that fail-open contract."""
         with patch("app.services.rag_service.check_visitor_safety", return_value=(True, None)):
             is_safe, category = check_generated_answer_safety(

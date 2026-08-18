@@ -1,6 +1,6 @@
 """Unit tests for the provider-agnostic discount resolver.
 
-All tests are offline — no database, no Razorpay calls.
+All tests are offline, no database, no Razorpay calls.
 The resolver's job is purely: given a client and session, return
 (discount_bps, audit_meta) based on the client's attached referral code.
 """
@@ -53,7 +53,7 @@ def test_active_code_with_discount_returns_bps_and_meta():
     assert meta["referral_code"] == "PARTNER15"
     assert meta["discount_bps"] == "1500"
     assert meta["affiliate_commission_bps"] == "500"
-    assert meta["affiliate_id"] == "7"  # N6 — snapshot affiliate for payout attribution
+    assert meta["affiliate_id"] == "7"  # N6. Snapshot affiliate for payout attribution
 
 
 def test_inactive_code_returns_zero():

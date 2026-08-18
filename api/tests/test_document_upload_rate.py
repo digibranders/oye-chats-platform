@@ -2,8 +2,8 @@
 
 This replaced a five-bucket word-tier table. That model needed its four
 EXCLUSIVE boundaries restated in the customer-facing table in
-``app/src/features/workspace/UsagePage.tsx``, which stated them INCLUSIVELY —
-"Up to 100 words → 5 credits" — so every bounded boundary advertised one price
+``app/src/features/workspace/UsagePage.tsx``, which stated them INCLUSIVELY
+("Up to 100 words → 5 credits") so every bounded boundary advertised one price
 and charged the next bucket up, 3x at 100 words. Two representations of the
 same pricing drifted because neither was pinned.
 
@@ -34,7 +34,7 @@ def _clean_pricing_cache():
     """The pricing cache is process-global with a 60s TTL.
 
     Tests here both depend on the shipped defaults and write overrides, so the
-    cache is dropped on both sides of every one of them — otherwise an override
+    cache is dropped on both sides of every one of them. Otherwise an override
     outlives its test and prices the next one.
     """
     invalidate_pricing_cache()
@@ -55,7 +55,7 @@ def _override(db, key: str, value: object) -> None:
         (0, 1, "an empty doc still pays the per-file minimum"),
         (1, 1, "a one-word doc is one credit, not a fraction of one"),
         (249, 1, "still inside the first block"),
-        (250, 1, "a whole block exactly — no rounding up onto a second credit"),
+        (250, 1, "a whole block exactly, no rounding up onto a second credit"),
         (251, 2, "one word into the second block costs the whole block"),
         (500, 2, "two whole blocks"),
         (501, 3, "and one word past two blocks is three"),

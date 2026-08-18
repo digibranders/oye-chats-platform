@@ -48,7 +48,7 @@ async def test_fetch_urls_falls_back_to_jina(monkeypatch):
 @pytest.mark.asyncio
 async def test_fetch_urls_partial_primary_retries_only_missing_on_fallback(monkeypatch):
     """A primary that drops some pages must retry ONLY the missing URLs on the
-    fallback and merge, preserving input order — not re-fetch the whole list and
+    fallback and merge, preserving input order, not re-fetch the whole list and
     not silently lose the dropped pages."""
     monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
     monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("spider", "jina"))
@@ -160,7 +160,7 @@ async def test_jina_primary_runs_jina_first(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_jina_primary_empty_results_fall_back_to_spider(monkeypatch):
-    """Jina fails soft (drops pages, never raises) — zero results for a
+    """Jina fails soft (drops pages, never raises). Zero results for a
     non-empty list must trigger the Spider fallback."""
     monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
 

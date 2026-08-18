@@ -1,5 +1,5 @@
 """Verify path creates the first-charge invoice when subscription.charged can't
-reach the box (local dev / webhook lag) — the INV-8 gap fix."""
+reach the box (local dev / webhook lag), the INV-8 gap fix."""
 
 import os
 from datetime import UTC, datetime

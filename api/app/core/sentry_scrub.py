@@ -3,7 +3,7 @@
 ``send_default_pii=False`` is set at both ``sentry_sdk.init`` call sites, and it
 does most of the work: it suppresses ``user.ip_address`` and the ``REMOTE_ADDR``
 env block, and it turns on the SDK's header scrubber. But that scrubber works
-off a fixed list — ``sentry_sdk.integrations._wsgi_common.SENSITIVE_ENV_KEYS`` —
+off a fixed list. ``sentry_sdk.integrations._wsgi_common.SENSITIVE_ENV_KEYS``,
 which knows about ``x-forwarded-for``, ``x-real-ip``, ``cookie``, ``set-cookie``,
 ``authorization`` and ``x-api-key``, and nothing else. Two gaps follow from that:
 
@@ -11,7 +11,7 @@ VISITOR IP
     Nginx rewrites ``X-Forwarded-For`` to the Cloudflare edge address, so the
     header the SDK scrubs is the one with no visitor in it.
     ``chat_routes._parse_request_context`` reads ``CF-Connecting-IP`` *first*
-    for exactly that reason — and ``CF-Connecting-IP`` is not on the SDK's list.
+    for exactly that reason, and ``CF-Connecting-IP`` is not on the SDK's list.
     ``SentryAsgiMiddleware`` attaches the full header dict to every event, so
     the real address rode out on ordinary traffic: ``core.metrics
     .forward_to_sentry_if_alertable`` fires ``capture_message`` from inside the
@@ -29,11 +29,11 @@ CREDENTIALS
     stripped: it ships in the public embed snippet on the customer's own website
     and is the fastest way to tell which agent an error came from.
 
-Headers are dropped, not replaced with a marker — the same call the Langfuse fix
+Headers are dropped, not replaced with a marker, the same call the Langfuse fix
 made in d041a7a. A field whose only value is a constant is not a diagnostic, and
 the SDK's own substitute (``AnnotatedValue.removed_because_over_size_limit``) is
 both a constant and a lie about why it went. Everything else in the request
-context — method, URL, path, ``user-agent``, ``x-bot-key``, ``referer`` — stays,
+context (method, URL, path, ``user-agent``, ``x-bot-key``, ``referer``) stays,
 because stripping an address is the goal and gutting the context so nobody can
 debug a 500 is not.
 
@@ -41,9 +41,9 @@ WHY A HOOK AND NOT THE CALL SITES
     The header dict is assembled by the SDK's own ASGI middleware, not by any
     line of code in this repository, so there is no call site to patch. A
     ``before_send`` hook is also the only spelling that covers event types that
-    do not exist yet: it runs on errors, on ``capture_message``, and — wired
+    do not exist yet: it runs on errors, on ``capture_message``, and (wired
     separately as ``before_send_transaction``, because Sentry does not route
-    transactions through ``before_send`` — on performance events, which carry
+    transactions through ``before_send``) on performance events, which carry
     the identical ``request`` block because the ASGI middleware registers its
     event processor on the isolation scope, where it sees every event kind.
 
@@ -51,10 +51,10 @@ WHAT THIS HOOK DOES NOT COVER
     Breadcrumbs and log-record messages. A regex that hunts IP-shaped tokens
     through free text over-redacts (a version string reads as an IPv4 address)
     and under-redacts (any format nobody anticipated), which buys assurance
-    rather than privacy. Those leaks are closed where the string is built —
-    see the PRIVACY notes in ``chat_routes._resolve_and_update_location``,
+    rather than privacy. Those leaks are closed where the string is built.
+    See the PRIVACY notes in ``chat_routes._resolve_and_update_location``,
     ``ip_intel_service.fetch_ip_intel``, ``lead_routes.send_followup_email``
-    and ``email_service._email_failure_tags`` — and kept from crossing between
+    and ``email_service._email_failure_tags``, and kept from crossing between
     unrelated requests by the per-task scope fork in ``core.thread_pool``.
 """
 
@@ -67,7 +67,7 @@ from typing import Any
 # names, and :func:`scrub_event` lowercases again before matching so a
 # non-conforming server cannot slip one through on casing alone.
 #
-# ``cf-connecting-ip`` is the one that actually fires here — it is what
+# ``cf-connecting-ip`` is the one that actually fires here, it is what
 # Cloudflare sets and what ``chat_routes`` trusts. The rest are the other
 # vendors' spellings of the same thing, listed so that swapping CDN or adding
 # a load balancer does not silently reopen this.
@@ -81,7 +81,7 @@ VISITOR_IP_HEADERS = frozenset(
         "x-client-ip",
         "x-cluster-client-ip",
         "x-original-forwarded-for",
-        # RFC 7239's ``Forwarded: for=<addr>`` — the standardised form of
+        # RFC 7239's ``Forwarded: for=<addr>``, the standardised form of
         # X-Forwarded-For, and the one the SDK's list predates.
         "forwarded",
     }
@@ -111,7 +111,7 @@ def _strip_request_headers(event: dict[str, Any]) -> None:
         return
     headers = request.get("headers")
     # Not always a dict: the SDK substitutes an ``AnnotatedValue`` when a
-    # payload is trimmed for size. Nothing to strip in that case — the value is
+    # payload is trimmed for size. Nothing to strip in that case, the value is
     # already gone.
     if not isinstance(headers, dict):
         return
@@ -125,7 +125,7 @@ def scrub_event(event: dict[str, Any] | None, hint: dict[str, Any] | None = None
     Never raises and never returns ``None`` for an event it was given: a hook
     that throws makes the SDK discard the event outright, so a bug in here would
     take error reporting down with it. If the scrub itself fails, the whole
-    ``request`` block is dropped rather than sent unscrubbed — fail closed on
+    ``request`` block is dropped rather than sent unscrubbed. Fail closed on
     the part that holds the address, and keep the stack trace, tags and
     breadcrumbs that make the event worth having.
 

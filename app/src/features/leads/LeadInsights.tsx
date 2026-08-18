@@ -9,8 +9,8 @@
  *     presence is the signal; absent → the section is omitted.
  *   • Behavioural signals - `detail.behavioral.visit_count` (return visits) plus
  *     a plain-language engagement tier derived from `detail.behavioral_score`
- *     (0–20, scored by `behavioral_service.py`). The raw score is intentionally
- *     NOT shown as a number: it already feeds the headline 0–100 qualification
+ *     (0 to 20, scored by `behavioral_service.py`). The raw score is intentionally
+ *     NOT shown as a number: it already feeds the headline 0 to 100 qualification
  *     score, so a second numeric scale in the same drawer competes with that
  *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
@@ -291,7 +291,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
   );
 }
 
-/** Map the raw 0–20 engagement score to a plain-language tier + badge tone. */
+/** Map the raw 0 to 20 engagement score to a plain-language tier + badge tone. */
 function engagementTier(score: number): { label: string; tone: 'success' | 'info' | 'neutral' } {
   if (score >= 15) return { label: 'High engagement', tone: 'success' };
   if (score >= 8) return { label: 'Medium engagement', tone: 'info' };

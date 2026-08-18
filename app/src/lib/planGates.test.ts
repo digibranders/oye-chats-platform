@@ -1,7 +1,7 @@
 /**
  * These gates decide what a paying customer can see. The server has its own
  * copy (`plan_entitlements_service._paid_tier_includes`) and it is the
- * authority — every case here is written against ITS two rules, not against
+ * authority. Every case here is written against ITS two rules, not against
  * whatever the UI happened to do.
  */
 import { describe, expect, it } from 'vitest';
@@ -34,7 +34,7 @@ describe('the standard ladder', () => {
 describe('the seeded Enterprise tier', () => {
   /* `enterprise` is a SEEDED ladder tier (`seed_plans.py`), not a bespoke deal.
      Registering it in SEEDED_PLAN_SLUGS revokes rule 2 for it, so every ladder
-     must name it explicitly — that pairing is the whole point of these cases.
+     must name it explicitly. That pairing is the whole point of these cases.
      The backend learned this the hard way in 594383d: adding the slug to
      `_SEEDED_PLAN_SLUGS` alone silently revoked Visitor Intelligence. */
   it('is registered as a seeded tier, not read as bespoke', () => {

@@ -12,11 +12,11 @@ class ChatRequest(BaseModel):
     # Constrained to the opaque-identifier charset rather than a bare bounded
     # string because an accepted value becomes a ``chat_sessions`` primary key
     # (``ensure_chat_session`` inserts on miss), a Redis cache key fragment,
-    # and a log field. All three formats this platform has ever minted —
-    # ``<uuid4>``, ``session_<uuid4>``, ``sess-<b36>-<b36>`` — satisfy it.
+    # and a log field. All three formats this platform has ever minted
+    # (``<uuid4>``, ``session_<uuid4>``, ``sess-<b36>-<b36>``) satisfy it.
     session_id: SessionId | None = None
     # BR-02: set when ``question`` is the visitor's tap on an active
-    # qualification CTA pill, naming which dimension it answers — lets the
+    # qualification CTA pill, naming which dimension it answers. Lets the
     # backend score the answer deterministically from the rubric instead of
     # re-interpreting it as free text. Untrusted input: the backend only
     # trusts this when the exact text also matches one of that dimension's

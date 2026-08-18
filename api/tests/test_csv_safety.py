@@ -2,7 +2,7 @@
 
 Unit tests only, and deliberately DB-free: this escape is the last thing
 standing between a visitor-typed string and code execution on a customer's
-laptop, so it must be exercised on every run — not only on runs that happen to
+laptop, so it must be exercised on every run, not only on runs that happen to
 have Postgres reachable. The route-level tests that prove each export actually
 *calls* it live next to those routes (``test_reporting_rollup.py`` for
 ``/analytics/by-bot.csv``, ``test_lead_routes.py`` for ``/leads/export``).
@@ -37,7 +37,7 @@ def test_csv_safe_neutralises_every_formula_trigger(payload: str, why: str) -> N
     # the cell as literal text rather than as an expression.
     assert escaped == f"'{payload}", why
     assert not escaped.startswith(CSV_FORMULA_PREFIXES), why
-    # Nothing is silently dropped — the value stays fully recoverable.
+    # Nothing is silently dropped, the value stays fully recoverable.
     assert escaped[1:] == payload, why
 
 
@@ -56,7 +56,7 @@ def test_csv_safe_covers_the_whole_owasp_trigger_list() -> None:
     ["Acme Support", 'Acme, Inc. "Main"', "", "Café ☕", "2026 Bot", "priya@infosys.com"],
 )
 def test_csv_safe_leaves_an_ordinary_value_alone(value: str) -> None:
-    """The escape is targeted — commas and quotes are the writer's job, not its.
+    """The escape is targeted. Commas and quotes are the writer's job, not its.
 
     ``priya@infosys.com`` is the case worth naming: the trigger is a *leading*
     ``@``, so an ordinary email address must survive untouched or every lead
@@ -71,7 +71,7 @@ def test_csv_safe_tolerates_a_missing_value() -> None:
 
 
 def test_csv_safe_escapes_only_the_leading_position() -> None:
-    """A trigger further into the string is inert — Excel only looks at cell start."""
+    """A trigger further into the string is inert. Excel only looks at cell start."""
     assert csv_safe("Budget is =1+1 per seat") == "Budget is =1+1 per seat"
 
 
@@ -94,7 +94,7 @@ def test_csv_safe_does_not_double_escape_an_already_quoted_value() -> None:
 
 
 def test_csv_safe_row_escapes_every_string_it_is_given() -> None:
-    """No cell is exempt — including ones no caller anticipated.
+    """No cell is exempt, including ones no caller anticipated.
 
     The point of the funnel: it does not know or care which column is which, so
     a column appended to an export cannot miss the escape by omission.
@@ -110,7 +110,7 @@ def test_csv_safe_row_leaves_numbers_numeric() -> None:
     """Ints and floats must survive as numbers, not become text.
 
     Escaping them would prefix a quote and turn the column into strings in the
-    recipient's sheet, breaking every SUM and sort built on the export — which
+    recipient's sheet, breaking every SUM and sort built on the export, which
     is why this cannot be a plain ``[csv_safe(v) for v in row]``.
     """
     row = csv_safe_row(["Acme", 0, 42, 3.5, True])
@@ -125,7 +125,7 @@ def test_csv_safe_row_renders_a_missing_value_like_csv_safe_does() -> None:
     The two helpers used to disagree: ``csv_safe(None)`` returned ``""`` while
     ``csv_safe_row([None])`` returned ``[None]``. Every export still looked
     right, but only because ``csv.writer`` happens to render ``None`` as an
-    empty field — a property of that consumer, not of this function. The first
+    empty field, a property of that consumer, not of this function. The first
     caller to build a row for anything else (an xlsx sheet, a JSON preview, a
     ``join``) would have found a literal "None" sitting in a cell.
     """

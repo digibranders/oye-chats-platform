@@ -6,9 +6,9 @@ Before this fix, ``check_urls_alive`` (recrawl-diff liveness check) opened a
 directly: ``validate_public_url`` resolved DNS once to check the host was
 public, then aiohttp's own connector performed a *second*, independent DNS
 resolution when actually connecting. An attacker-controlled DNS server can
-answer differently between those two lookups — a public IP the moment
+answer differently between those two lookups, a public IP the moment
 ``validate_public_url`` asks, then a private/cloud-metadata address
-(127.0.0.1, 169.254.169.254) microseconds later when aiohttp connects — and
+(127.0.0.1, 169.254.169.254) microseconds later when aiohttp connects, and
 reach an internal address despite the URL having "passed" validation.
 
 ``app.core.ssrf.probe_url_alive`` closes this window the same way
@@ -27,7 +27,7 @@ from app.services.url_discovery import check_urls_alive
 
 
 class _FakeSession:
-    """Stand-in for the outer ``aiohttp.ClientSession`` — ``probe_url_alive``
+    """Stand-in for the outer ``aiohttp.ClientSession``. ``probe_url_alive``
     only reads ``.headers``/``.timeout`` off it (to build the short-lived
     pinned inner session), exactly like ``fetch_text_safely`` does."""
 
@@ -42,7 +42,7 @@ class TestProbeUrlAliveBlocksRebinding:
         PUBLIC address the first time DNS is asked (validation lookup) and a
         PRIVATE/cloud-metadata address the second time (what a raw
         validate-then-connect implementation would then connect to). The
-        pinned probe must never open a connection — it must come back
+        pinned probe must never open a connection, it must come back
         not-alive instead.
         """
         answers = iter(
@@ -86,11 +86,11 @@ class TestProbeUrlAliveBlocksRebinding:
 
     async def test_check_urls_alive_reports_rebinding_target_as_not_alive(self, monkeypatch):
         """End-to-end through the public ``check_urls_alive`` entry point
-        used by the recrawl-diff endpoint — a URL whose validation-time and
+        used by the recrawl-diff endpoint, a URL whose validation-time and
         connect-time DNS answers disagree (public → private) must come back
         ``False``, not silently probed against the private address.
 
-        (No canary patch on ``aiohttp.ClientSession.__init__`` here —
+        (No canary patch on ``aiohttp.ClientSession.__init__`` here.
         ``check_urls_alive`` legitimately constructs one outer session to
         carry headers/timeout config; the no-real-connection guarantee for
         the *pinned* inner session is asserted directly against
@@ -117,7 +117,7 @@ class TestProbeUrlAliveBlocksRebinding:
 class TestProbeUrlAliveHappyPath:
     async def test_normal_public_url_probes_alive_through_pinned_connection(self, monkeypatch):
         """A normal URL that resolves consistently and answers 200 to HEAD
-        must probe alive — end-to-end through the real pinned
+        must probe alive. End-to-end through the real pinned
         TCPConnector/resolver wiring against a local aiohttp test server
         (bypassing the public-IP requirement purely because the test server
         is on loopback; public-vs-private classification itself is covered
@@ -146,7 +146,7 @@ class TestProbeUrlAliveHappyPath:
             await server.close()
 
     async def test_gone_url_probes_not_alive(self, monkeypatch):
-        """404/410 responses are a confirmed-gone signal, not just "unreachable" —
+        """404/410 responses are a confirmed-gone signal, not just "unreachable",
         the pinned probe must preserve this distinction from the pre-fix
         liveness policy."""
         from aiohttp import web

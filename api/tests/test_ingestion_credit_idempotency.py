@@ -1,8 +1,8 @@
 """Finding H (ingestion wiring): an ARQ retry of a crawl job must not re-charge
 pages it already billed. batch_web_ingestion stamps a per-(job, url) idempotency
-key on each page deduction, so re-running the same crawl_job_id — even in
+key on each page deduction, so re-running the same crawl_job_id (even in
 force_reingest mode (which bypasses the content-dedup that would otherwise make a
-re-run free) — charges each URL exactly once.
+re-run free)) charges each URL exactly once.
 """
 
 import os

@@ -3,8 +3,8 @@
 Detects the orphan-reset corruption (negative ``plan_grant`` rows with
 ``grant_id = NULL``) that the original ``reset_monthly_plan_credits``
 implementation produced. Those orphan rows are invisible to
-``get_balance_breakdown`` — which only counts negatives via their
-``grant_id`` — so prior-month unused credits silently rolled into the new
+``get_balance_breakdown`` (which only counts negatives via their
+``grant_id``) so prior-month unused credits silently rolled into the new
 month's bucket.
 
 The bug itself is fixed in ``app/services/credit_service.py`` so new
@@ -75,12 +75,12 @@ def audit_and_repair(repair: bool) -> int:
             )
 
             if not orphans:
-                print("  no orphan negative plan_grant rows — needs manual review")
+                print("  no orphan negative plan_grant rows. Needs manual review")
                 still_broken += 1
                 continue
 
             if not repair:
-                print(f"  {len(orphans)} orphan reset row(s) — re-run with --repair to fix")
+                print(f"  {len(orphans)} orphan reset row(s). Re-run with --repair to fix")
                 still_broken += 1
                 continue
 

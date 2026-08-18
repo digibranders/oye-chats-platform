@@ -1,6 +1,6 @@
 """Razorpay billing integration.
 
-Razorpay is the primary billing provider for OyeChats — Indian customers,
+Razorpay is the primary billing provider for OyeChats. Indian customers,
 INR pricing, UPI Autopay for recurring mandates. This module mirrors the
 shape expected by the routes layer
 based on ``Subscription.payment_provider``.
@@ -9,13 +9,13 @@ Conventions:
 
 * All amounts are stored and passed to Razorpay in **paise** (the minor unit
   of INR). Plan rows store paise in ``monthly_price_cents`` despite the legacy
-  column name — see ``models.Plan.currency``.
+  column name. See ``models.Plan.currency``.
 * Webhook signatures are verified against the **raw** request body using the
   webhook secret. Razorpay explicitly warns: ``"Do not parse or cast the
   webhook request body"``. Routes therefore pass ``await request.body()``
   straight in.
 * The Razorpay Python SDK (``razorpay==2.x``) is imported lazily so that the
-  rest of the API still boots when keys aren't configured — useful for local
+  rest of the API still boots when keys aren't configured, useful for local
   dev and for the test suite.
 * Idempotency uses ``ProcessedWebhook`` keyed on the ``x-razorpay-event-id``
   HTTP header.
@@ -95,7 +95,7 @@ RAZORPAY_HTTP_TIMEOUT = (
 # ₹1.00 is Razorpay's own minimum; combined with the 50% discount cap this
 # makes a near-free plan unreachable from any code configuration.
 MIN_DISCOUNTED_PLAN_PAISE = 100
-# Same floor for the USD rail, in cents — Razorpay's international minimum.
+# Same floor for the USD rail, in cents. Razorpay's international minimum.
 MIN_DISCOUNTED_PLAN_CENTS_USD = 50
 
 
@@ -106,7 +106,7 @@ class IntlPaymentsDisabled(Exception):
     handlers convert those into "please try again" 502s, but this is a policy
     refusal, not a gateway fault. It propagates to the app-level handler in
     ``app/core/middleware.py``, which maps it to the same 409
-    ``intl_usd_pending`` contract the checkout quote already renders — so
+    ``intl_usd_pending`` contract the checkout quote already renders, so
     ``/change-plan``, ``/resume`` and ``/seats`` can no longer mint a USD
     mandate with the kill switch off (P1-2/F8), and the customer gets the
     contact-sales card instead of an opaque error. In webhook/cron contexts
@@ -119,8 +119,8 @@ class PlanNotCheckoutable(Exception):
     """A gateway mandate was requested for a tier this environment cannot charge.
 
     Raised when the plan carries no Razorpay plan id for the resolved rail and
-    cycle. A tier in that state is deliberately still LISTED — a contact-sales
-    tier needs no gateway plan id to appear on the pricing page — so the refusal
+    cycle. A tier in that state is deliberately still LISTED (a contact-sales
+    tier needs no gateway plan id to appear on the pricing page) so the refusal
     has to happen at the charge, and it has to say the same thing the quote
     already says.
 
@@ -132,7 +132,7 @@ class PlanNotCheckoutable(Exception):
     handlers would call a policy refusal a gateway fault and 502. It propagates
     to the app-level handler in ``app/core/middleware.py``, which maps it to the
     409 contact-sales contract ``/subscriptions/checkout/quote`` renders for the
-    same plan — so the quote and the checkout button agree.
+    same plan, so the quote and the checkout button agree.
 
     ``str(exc)`` is the customer-facing sentence; the operator instruction lives
     in ``ops_detail`` and is logged, never returned.
@@ -158,13 +158,13 @@ class SubscriptionActivationConflict(Exception):
 
     Raised on the two paths that can observe that state:
 
-    * **Mint time** — ``/change-plan`` or ``/checkout`` is called again while the
+    * **Mint time**. ``/change-plan`` or ``/checkout`` is called again while the
       in-flight mandate has already been paid. This is the reported prod
       sequence, and it is not a double-click: the plan card never updated after
       payment, so the customer waited (44 seconds, for client 8) and clicked
       Select again. Handing them a fresh checkout is what charged the month
       twice.
-    * **Activation time** — a second mandate did get minted and its row collides
+    * **Activation time**, a second mandate did get minted and its row collides
       with ``ix_subscriptions_client_legacy_active`` /
       ``ix_subscriptions_client_bot_active``. That ``IntegrityError`` reached the
       customer as a raw 500, mid-checkout, right after their money moved.
@@ -172,11 +172,11 @@ class SubscriptionActivationConflict(Exception):
     Following :class:`PlanNotCheckoutable`: deliberately not a
     ``RazorpayBillingError`` (those are gateway faults and 502; this is local
     state), ``str(exc)`` is the customer-facing sentence, and the operator
-    detail lives in ``ops_detail`` — logged, never returned.
+    detail lives in ``ops_detail``. Logged, never returned.
 
     The message is written for someone who has just paid and been told "no". It
     leads with the money being safe, and its most important clause is that they
-    must not pay again — because the alternative reading ("payment failed") sends
+    must not pay again. Because the alternative reading ("payment failed") sends
     them for a third attempt or to support.
     """
 
@@ -199,11 +199,11 @@ class SubscriptionActivationConflict(Exception):
                 f"{client_id}: it collided with {constraint}, so another ACTIVE subscription already holds "
                 "that scope. The customer has paid. Check whether two mandates were minted for this client "
                 "(scripts/audit_duplicate_gateway_subscriptions.py), cancel and refund the surplus one, and "
-                "let the webhook redeliver — the reconcile idempotency key was not burned."
+                "let the webhook redeliver, the reconcile idempotency key was not burned."
             )
         else:
             # The mint-time half of the same conflict: raised BEFORE any second
-            # mandate exists, which is the cheap place to be right — nothing has
+            # mandate exists, which is the cheap place to be right, nothing has
             # been created that anyone has to refund.
             self.ops_detail = (
                 f"Refused to mint a replacement mandate for client {client_id}: the in-flight checkout "
@@ -213,7 +213,7 @@ class SubscriptionActivationConflict(Exception):
             )
         plan_clause = f"Your {plan_name} payment" if plan_name else "Your payment"
         super().__init__(
-            f"{plan_clause} went through — we're activating your plan now. "
+            f"{plan_clause} went through. We're activating your plan now. "
             "You don't need to pay again; this usually takes under a minute."
         )
 
@@ -234,7 +234,7 @@ def active_subscription_conflict(exc: Exception) -> str | None:
     "we're finishing up" message would hide a real bug behind reassurance.
 
     Reads psycopg's structured ``diag.constraint_name`` first and only falls
-    back to substring-matching the message — the same "ask for the structured
+    back to substring-matching the message, the same "ask for the structured
     fact, don't parse prose" rule as ``_gateway_sub_is_terminal`` (F8).
     """
     orig = getattr(exc, "orig", None)
@@ -272,13 +272,13 @@ class WebhookOutOfOrder(RazorpayBillingError):
 
     Razorpay fires ``subscription.charged`` and ``subscription.activated``
     near-simultaneously on the first payment, and ``charged`` can win the
-    race — arriving before the activation handler has linked the
+    race. Arriving before the activation handler has linked the
     ``razorpay_subscription_id``. Ack-dropping that event (the old behaviour)
     permanently lost the period's invoice: Razorpay never retries a 2xx.
 
     Raising instead routes the event through the standard failure path: the
     transaction (including the idempotency row) rolls back, the raw event is
-    dead-lettered, and the route returns 5xx so Razorpay redelivers — by which
+    dead-lettered, and the route returns 5xx so Razorpay redelivers, by which
     time activation has landed and the retry processes cleanly. Verified in
     prod 2026-07-02 (client 11's first live charge lost its invoice this way).
     """
@@ -290,7 +290,7 @@ class RazorpayTransientError(RazorpayBillingError):
     top-up.
 
     Swallowing this (the old behaviour) acked the event as "ignored" and burned
-    the idempotency row, permanently losing a paid top-up — customer charged,
+    the idempotency row, permanently losing a paid top-up. Customer charged,
     zero credits, never reprocessed. Raising routes it through the standard
     failure path (rollback + dead-letter + 5xx) so Razorpay redelivers; the
     Invoice/credit idempotency makes the eventual success a no-op (finding C).
@@ -315,7 +315,7 @@ class _TimeoutSession(requests.Session):
     every verb, since ``.get()``/``.post()`` all funnel through it.
     """
 
-    def request(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+    def request(self, *args, **kwargs):  # noqa: ANN002  ANN003, ANN201
         kwargs.setdefault("timeout", RAZORPAY_HTTP_TIMEOUT)
         return super().request(*args, **kwargs)
 
@@ -347,17 +347,17 @@ def create_topup_order(
 ) -> dict[str, Any]:
     """Create a Razorpay Order for a one-time top-up purchase.
 
-    Returns the payload the admin frontend needs to open Razorpay Checkout —
+    Returns the payload the admin frontend needs to open Razorpay Checkout,
     including the order id, key id (public, safe to expose), and the pack
     metadata it should display in the modal.
 
     The pack must come from ``pricing_config.topup_packs`` and carry an INR
-    price under ``inr`` (rupees, major unit — NOT paise; we convert here so the
+    price under ``inr`` (rupees, major unit. NOT paise; we convert here so the
     config table stays human-readable). ``amount`` is accepted as a legacy
-    alias. Any ``usd`` on the pack is DISPLAY ONLY — Razorpay charges INR, so we
+    alias. Any ``usd`` on the pack is DISPLAY ONLY. Razorpay charges INR, so we
     must never bill the USD figure.
 
-    Top-ups intentionally do NOT honour referral discounts — that incentive
+    Top-ups intentionally do NOT honour referral discounts. That incentive
     fires only on subscription checkout. See subscription_routes.create_checkout.
     """
     amount_inr_major = pack.get("inr") if pack.get("inr") is not None else pack.get("amount")
@@ -389,7 +389,7 @@ def create_topup_order(
     }
     # The modal advertises USD prices to non-INR buyers while Razorpay charges
     # INR. Carry the display price into notes so the invoice line can name the
-    # pack the customer chose ("$249 pack") — GST documents must state values in
+    # pack the customer chose ("$249 pack"). GST documents must state values in
     # INR, so the USD figure stays descriptive only. Fall back to the pack's
     # ``usd`` when no explicit display_amount is configured.
     display_amount = pack.get("display_amount")
@@ -415,7 +415,7 @@ def create_topup_order(
                 "currency": currency,
                 "receipt": receipt,
                 "notes": notes,
-                # Avoid partial payments — credits must be granted on a single
+                # Avoid partial payments. Credits must be granted on a single
                 # captured payment, not after partial settlement.
                 "payment_capture": 1,
             }
@@ -521,14 +521,14 @@ def create_subscription(
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
     The Razorpay plan_id is sourced from ``plan.razorpay_plan_id_monthly`` /
-    ``razorpay_plan_id_annual`` — these must be configured in the super admin
+    ``razorpay_plan_id_annual``. These must be configured in the super admin
     once the plan is created in the Razorpay dashboard.
 
     ``total_count`` defaults to a cycle-appropriate value so subscriptions
     run for ~10 years and effectively last until the customer cancels.
     Razorpay caps ``total_count`` at 100 for annual plans and 120 for
     monthly plans, so we pick per cycle: monthly=120 (10 years), annual=100
-    (~100 years — well beyond any realistic SaaS lifetime). Callers can
+    (~100 years. Well beyond any realistic SaaS lifetime). Callers can
     still override with an explicit ``total_count``.
 
     Returns the Checkout payload: subscription_id, key_id, plan + customer
@@ -544,8 +544,8 @@ def create_subscription(
       * an explicit ``int`` (including ``0``) → use that value verbatim,
         bypassing auto-resolution (e.g. to force full price).
 
-    ``start_at`` (Unix seconds) defers the FIRST billing cycle. Omitted — the
-    default — Razorpay starts the subscription at authorization and captures
+    ``start_at`` (Unix seconds) defers the FIRST billing cycle. Omitted (the
+    default) Razorpay starts the subscription at authorization and captures
     cycle 1 immediately, which is correct for a first purchase. It is NOT
     correct when the customer has already paid through a date: ``/subscriptions
     /resume`` on an already-cancelled mandate passes the old subscription's
@@ -554,20 +554,20 @@ def create_subscription(
     full cycle for days the customer already owns. The launch-promo free period
     uses the same mechanism: checkout passes ``now + free_cycles`` months so the
     mandate is authorised today and the first full-price invoice lands at
-    ``start_at`` — Razorpay's native "free trial on a subscription" primitive,
+    ``start_at``. Razorpay's native "free trial on a subscription" primitive,
     which self-reverts to full price with no further intervention.
     """
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
 
-    # Which rail this customer is charged on. Resolved from the client here —
-    # not passed in by the caller — for the same reason ``discount_bps`` is:
+    # Which rail this customer is charged on. Resolved from the client here
+    # (not passed in by the caller) for the same reason ``discount_bps`` is:
     # EVERY subscription path (first checkout, change-plan, upgrade, downgrade
     # cutover, per-bot) flows through this function, so resolving centrally is
     # what guarantees none of them can silently mint an INR mandate for an
     # international customer.
     currency = charge_currency(getattr(client, "billing_country", None))
-    # The intl kill switch is enforced HERE — not only at the /checkout route —
+    # The intl kill switch is enforced HERE (not only at the /checkout route)
     # because every subscription path flows through this function (P1-2/F8).
     # Read via the config module (not the from-import) so ops/tests can flip it
     # without a process restart being the only truth. Test clients are exempt:
@@ -595,7 +595,7 @@ def create_subscription(
     elif not razorpay_plan_id:
         # An unwired tier is listed on purpose (plan_service.plan_checkout_is_wired)
         # and quoted as contact-sales; this is the charge-path half of that
-        # contract. The ops instruction is logged, not returned — see
+        # contract. The ops instruction is logged, not returned. See
         # PlanNotCheckoutable.
         refusal = PlanNotCheckoutable(plan_name=plan.name, billing_cycle=billing_cycle, currency=currency)
         logger.error("checkout refused for client %s: %s", client.id, refusal.ops_detail)
@@ -603,7 +603,7 @@ def create_subscription(
 
     # Auto-resolve the customer's standing referral discount when the caller
     # didn't pass one explicitly. Centralising it here is what guarantees the
-    # discount follows the customer across ALL future payments — every
+    # discount follows the customer across ALL future payments. Every
     # subscription path (first checkout, change-plan, upgrade, downgrade
     # cutover, per-bot) flows through here, so none can silently drop it.
     if discount_bps is None:
@@ -631,14 +631,14 @@ def create_subscription(
     }
     if extra_notes:
         # Caller-supplied notes carry transition metadata (e.g.
-        # ``prev_razorpay_subscription_id``). String-coerce defensively —
+        # ``prev_razorpay_subscription_id``). String-coerce defensively.
         # Razorpay rejects non-string note values.
         for key, value in extra_notes.items():
             if value is None:
                 continue
             notes[str(key)] = str(value)
 
-    # Base subscription is always quantity 1 — the flat plan price already
+    # Base subscription is always quantity 1, the flat plan price already
     # covers the bundled included seats. Extra seats are billed on a SEPARATE
     # add-on subscription via create_seat_addon_subscription, because Razorpay
     # quantity multiplies the WHOLE plan amount (₹4,599×2 = ₹9,198, not ₹4,599+₹499).
@@ -651,7 +651,7 @@ def create_subscription(
         "quantity": quantity,
         "notes": notes,
     }
-    # Only send ``start_at`` when it is genuinely in the future — Razorpay
+    # Only send ``start_at`` when it is genuinely in the future. Razorpay
     # rejects a past timestamp, and a caller passing "now" means "start now",
     # which is exactly the default behaviour of omitting the field.
     if start_at is not None and start_at > int(datetime.now(UTC).timestamp()):
@@ -690,7 +690,7 @@ def create_subscription(
             "email": client.email or "",
         },
         "theme": {"color": "#6366f1"},
-        # The plan actually billed — may differ from plan.razorpay_plan_id_*
+        # The plan actually billed. May differ from plan.razorpay_plan_id_*
         # when a discount was applied. The route stores this on
         # Subscription.razorpay_billing_plan_id for audit.
         "billing_plan_id": razorpay_plan_id,
@@ -712,7 +712,7 @@ def rebuild_upgrade_checkout(
     required_notes: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Rebuild the Checkout payload for an EXISTING (in-flight) Razorpay
-    subscription — used to return a pending upgrade's checkout on a double-submit
+    subscription. Used to return a pending upgrade's checkout on a double-submit
     instead of minting a second subscription (finding D).
 
     Fetches the subscription to recover its ``short_url`` (Razorpay's hosted
@@ -727,7 +727,7 @@ def rebuild_upgrade_checkout(
     the one that needs it: the agent a mandate will create lives ONLY in the
     gateway notes while the checkout is in flight, so two same-plan purchases of
     two different agents are indistinguishable without reading them. A mismatch
-    is treated exactly like the rail mismatch below — not reusable, so the
+    is treated exactly like the rail mismatch below, not reusable, so the
     caller supersedes it and mints the right one. Compared with a missing key
     read as "", which is how :func:`per_bot_checkout_identity` renders an absent
     field, so an added or removed website is a difference either way round.
@@ -739,11 +739,11 @@ def rebuild_upgrade_checkout(
         raise RazorpayBillingError("Could not reload your pending upgrade. Please try again.") from exc
     status = str(sub.get("status") or "").lower()
     if status not in _AUTHORIZABLE_SUB_STATES:
-        logger.info("Pending upgrade sub %s is '%s' — not reusable; caller will re-mint", subscription_id, status)
+        logger.info("Pending upgrade sub %s is '%s', not reusable; caller will re-mint", subscription_id, status)
         return None
     # Rail check (Wave 4 review P1-2): the pending sub must bill the SAME
     # Razorpay plan the caller is asking for. The upgrade-pending key stores
-    # only the local plan id, not the cycle — without this, a customer who
+    # only the local plan id, not the cycle, without this, a customer who
     # abandoned an ANNUAL upgrade checkout and later asked for MONTHLY was
     # handed the still-authorizable annual sub captioned "(monthly)" and
     # charged the annual price on authorization. A mismatch is treated like a
@@ -751,7 +751,7 @@ def rebuild_upgrade_checkout(
     expected_plan_id = _plan_id_for_rail(plan, billing_cycle, charge_currency(getattr(client, "billing_country", None)))
     if expected_plan_id and sub.get("plan_id") and sub.get("plan_id") != expected_plan_id:
         logger.info(
-            "Pending upgrade sub %s bills plan %s but %s (%s) was requested — not reusable; caller will re-mint",
+            "Pending upgrade sub %s bills plan %s but %s (%s) was requested, not reusable; caller will re-mint",
             subscription_id,
             sub.get("plan_id"),
             expected_plan_id,
@@ -765,7 +765,7 @@ def rebuild_upgrade_checkout(
         )
         if mismatched:
             logger.info(
-                "Pending checkout %s describes a different purchase (notes differ on %s) — not reusable; "
+                "Pending checkout %s describes a different purchase (notes differ on %s), not reusable; "
                 "caller will supersede and re-mint",
                 subscription_id,
                 ", ".join(mismatched),
@@ -790,7 +790,7 @@ def checkout_already_paid(razorpay_subscription_id: str) -> bool:
     ``status`` alone cannot answer this, and that is the whole reason this
     function exists. In the reported prod sequence the ``payment.authorized``
     webhook arrived BEFORE ``/subscriptions/verify-razorpay-subscription`` read
-    the subscription — and that read still said ``created``. Razorpay's status
+    the subscription, and that read still said ``created``. Razorpay's status
     lags its own money by seconds to minutes, so a mandate can be
     ``created``-and-paid, which is indistinguishable from ``created``-and-
     abandoned by state alone. ``paid_count`` is the fact that does not lag: it
@@ -801,7 +801,7 @@ def checkout_already_paid(razorpay_subscription_id: str) -> bool:
     treating that as an abandoned checkout is what handed them a second
     chargeable subscription.
 
-    Raises ``RazorpayBillingError`` if the gateway cannot be read — never guess.
+    Raises ``RazorpayBillingError`` if the gateway cannot be read, never guess.
     Guessing "not paid" here is precisely how the month gets charged twice.
     """
     try:
@@ -821,31 +821,31 @@ def checkout_already_paid(razorpay_subscription_id: str) -> bool:
 def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:
     """Retire an in-flight checkout before a replacement mandate is minted.
 
-    The counterpart to :func:`rebuild_upgrade_checkout`: that one is for a retry
-    the marker can serve, this one for every retry it cannot — a different plan,
-    cycle, rail or bot scope, and equally a same-key retry whose pending mandate
-    is no longer authorizable. Minting the replacement while the old mandate is
-    still authorizable is the exact double-charge shape that hit prod client 18
-    — both mandates authorised, both charged one cycle, ₹11,998 for one month.
+     The counterpart to :func:`rebuild_upgrade_checkout`: that one is for a retry
+     the marker can serve, this one for every retry it cannot, a different plan,
+     cycle, rail or bot scope, and equally a same-key retry whose pending mandate
+     is no longer authorizable. Minting the replacement while the old mandate is
+     still authorizable is the exact double-charge shape that hit prod client 18
+    , both mandates authorised, both charged one cycle, ₹11,998 for one month.
 
-    Three states matter, and the caller branches on the returned one:
+     Three states matter, and the caller branches on the returned one:
 
-    * ``created`` / ``authenticated`` / ``pending`` — the checkout is still
-      payable (or authorised but not yet charged), so it is cancelled here and
-      can never bill.
-    * ``active`` — the customer already authorised AND paid it. Cancelling that
-      from a checkout path would silently kill a live, charged subscription
-      behind the customer's back; the activation handler's sibling sweep owns
-      that transition. We leave it alone and report, and the caller refuses to
-      mint beside it.
-    * terminal (``cancelled`` / ``completed`` / ``expired``) — nothing to do;
-      the caller is free to mint.
+     * ``created`` / ``authenticated`` / ``pending``, the checkout is still
+       payable (or authorised but not yet charged), so it is cancelled here and
+       can never bill.
+     * ``active``, the customer already authorised AND paid it. Cancelling that
+       from a checkout path would silently kill a live, charged subscription
+       behind the customer's back; the activation handler's sibling sweep owns
+       that transition. We leave it alone and report, and the caller refuses to
+       mint beside it.
+     * terminal (``cancelled`` / ``completed`` / ``expired``), nothing to do;
+       the caller is free to mint.
 
-    Raises ``RazorpayBillingError`` if the gateway can't be read or the cancel
-    fails, so the caller refuses rather than minting a sibling against a mandate
-    whose state it never confirmed (same doctrine as ``rebuild_upgrade_checkout``).
+     Raises ``RazorpayBillingError`` if the gateway can't be read or the cancel
+     fails, so the caller refuses rather than minting a sibling against a mandate
+     whose state it never confirmed (same doctrine as ``rebuild_upgrade_checkout``).
 
-    Returns the gateway status observed, for logging.
+     Returns the gateway status observed, for logging.
     """
     try:
         sub = _get_razorpay().subscription.fetch(razorpay_subscription_id)
@@ -856,7 +856,7 @@ def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:
     status = str(sub.get("status") or "").lower()
     if status not in _AUTHORIZABLE_SUB_STATES:
         logger.info(
-            "Superseded checkout %s is '%s' — nothing to cancel (only the activation path may retire it)",
+            "Superseded checkout %s is '%s', nothing to cancel (only the activation path may retire it)",
             razorpay_subscription_id,
             status,
         )
@@ -886,13 +886,13 @@ def resolve_discounted_plan(
     inserts it into the cache, and returns the new plan_id.
 
     Razorpay Offers have no create API, so recurring discounts are modelled
-    as discounted plans — a lower plan amount recurs automatically every
+    as discounted plans, a lower plan amount recurs automatically every
     cycle with no per-cycle coupon redemption required.
 
     ``currency`` selects the rail: the discount is computed off that rail's
     base price (``*_price_usd_cents`` for USD) and the minted plan carries that
     currency. It is part of the cache key because a Razorpay plan's currency is
-    fixed at creation — reusing an INR plan for a USD customer would debit
+    fixed at creation. Reusing an INR plan for a USD customer would debit
     rupees against a dollar quote.
 
     Discount math: discounted = base - floor(base × bps / 10000).
@@ -900,7 +900,7 @@ def resolve_discounted_plan(
     major unit) is in the customer's favour.
     """
     if not (0 < discount_bps < 10000):
-        raise ValueError(f"discount_bps must be 1–9999, got {discount_bps}")
+        raise ValueError(f"discount_bps must be 1 to 9999, got {discount_bps}")
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
     if currency not in ("INR", "USD"):
@@ -973,7 +973,7 @@ def resolve_discounted_plan(
         raise RazorpayBillingError("Could not create the discounted plan. Please try again.") from exc
 
     if cached is not None:
-        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps,
+        # Refresh the stale row in place, the UNIQUE (base_plan_id, cycle, bps,
         # currency) constraint means we can't insert a second row for the same key.
         cached.razorpay_plan_id = plan["id"]
         cached.amount_paise = discounted_paise
@@ -1029,7 +1029,7 @@ def create_seat_addon_subscription(
     Must be a distinct subscription from the main plan. Razorpay `quantity`
     multiplies the entire plan amount, which would make the main plan wrong
     (e.g. ₹949×2 instead of ₹949+₹449). The Extra-Seat plan's amount IS the
-    per-seat price (₹449 — ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
+    per-seat price (₹449. ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
     ``price × extra_seats`` is exactly right here.
 
     Seats follow the customer's rail: an international client bills against the
@@ -1040,7 +1040,7 @@ def create_seat_addon_subscription(
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
 
     currency = charge_currency(getattr(client, "billing_country", None))
-    # Same service-layer kill switch as ``create_subscription`` (P1-2/F8) —
+    # Same service-layer kill switch as ``create_subscription`` (P1-2/F8),
     # the /seats route reaches here directly, bypassing the checkout gate.
     if currency == "USD" and not config.INTL_PAYMENTS_ENABLED and client.id not in CHECKOUT_TEST_CLIENT_IDS:
         raise IntlPaymentsDisabled(f"client {client.id} resolves to the USD seat rail but INTL_PAYMENTS_ENABLED is off")
@@ -1089,7 +1089,7 @@ def _seat_checkout_payload(
 ) -> dict[str, Any]:
     """Checkout payload for a seat add-on subscription. Reused when re-opening an
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
-    round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
+    round-trip just to rebuild it, the JS SDK only needs subscription_id + key.
     ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
     path can email the customer a re-authorization link.
 
@@ -1104,7 +1104,7 @@ def _seat_checkout_payload(
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
-        "description": f"{extra_seats} extra seat(s) — {seat_display}/seat/month",
+        "description": f"{extra_seats} extra seat(s) - {seat_display}/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",
@@ -1123,14 +1123,14 @@ def edit_seat_addon_quantity(
     NEVER touched here (P0-3).
 
     Returns the Razorpay Checkout payload ONLY on a customer-initiated first
-    purchase (``require_authorization=True``, the default) — the seat
+    purchase (``require_authorization=True``, the default), the seat
     subscription is created in ``created`` state and charges nothing until the
     customer authorizes the mandate, so entitlement must wait for the seat
     ``activated`` webhook (finding A). The desired count is stashed in
     ``seat_addon_pending_quantity`` and ``seat_addon_quantity`` stays 0 until
     then. Returns ``None`` when no authorization step is needed: an edit on an
     already-authorized add-on, a reduction/cancel, or the SYSTEM seat-carry at a
-    plan cutover (``require_authorization=False``) — there the seats were already
+    plan cutover (``require_authorization=False``). There the seats were already
     authorized on the prior subscription, so they activate immediately.
     """
     extra_seats = max(int(extra_seats), 0)
@@ -1148,12 +1148,12 @@ def edit_seat_addon_quantity(
         if require_authorization:
             # Customer first purchase → mandate not yet authorized. Stash the
             # desired count as PENDING and return the checkout. Do NOT set
-            # seat_addon_quantity/operator_quantity — the activation webhook does.
+            # seat_addon_quantity/operator_quantity, the activation webhook does.
             sub.seat_addon_pending_quantity = extra_seats
             session.flush()
             return addon
         # System carry across a plan cutover. The carried seats move onto a NEW
-        # Razorpay seat sub minted in ``created`` state — a fresh UPI mandate that
+        # Razorpay seat sub minted in ``created`` state, a fresh UPI mandate that
         # does NOT charge until re-authorized. We therefore MUST NOT grant
         # entitlement here: bumping operator_quantity would hand the customer free,
         # unbilled seats indefinitely (a revenue leak). We keep only the billed
@@ -1175,7 +1175,7 @@ def edit_seat_addon_quantity(
     # never-authorized first purchase ALSO has seat_addon_subscription_id set
     # (the sub sits in ``created`` state and never charges). If we fell through
     # to the "edit + entitle" path below, a customer who dismissed the checkout
-    # and retried would get entitled seats with no mandate and no charge — the
+    # and retried would get entitled seats with no mandate and no charge, the
     # exact free-seats bug. So while a purchase is still pending authorization,
     # keep re-authorizing: update the created sub's quantity if it changed,
     # re-stash pending, and return the checkout again. Never entitle here.
@@ -1244,7 +1244,7 @@ def cancel_seat_addon_by_id(seat_addon_subscription_id: str) -> None:
     """Cancel a seat add-on subscription at the gateway by its raw id.
 
     Unlike :func:`cancel_seat_addon`, this takes no local ``Subscription`` and
-    touches no local row — it exists for the reconciliation sweep
+    touches no local row, it exists for the reconciliation sweep
     (:func:`seat_addon_reports.reconcile_orphaned_seat_addons`), which cancels
     orphans that may have NO local owner at all (e.g. an add-on minted by an
     activation whose transaction later rolled back). The caller is responsible
@@ -1272,7 +1272,7 @@ def iter_gateway_subscriptions(
 ) -> Iterator[dict[str, Any]]:
     """Yield every subscription Razorpay knows about, newest page first.
 
-    The gateway — not our DB — is the only complete view: a mandate minted
+    The gateway (not our DB) is the only complete view: a mandate minted
     seconds ago, or one whose activation webhook never landed, exists there and
     nowhere else. That is exactly the state a duplicate is in while it is still
     dangerous, so every reconciliation sweep starts here.
@@ -1292,7 +1292,7 @@ def iter_gateway_subscriptions(
             return
         skip += page_size
     logger.error(
-        "%s hit the max_pages=%d cap — some subscriptions were NOT scanned. Increase the cap or investigate volume.",
+        "%s hit the max_pages=%d cap. Some subscriptions were NOT scanned. Increase the cap or investigate volume.",
         caller,
         max_pages,
     )
@@ -1301,8 +1301,8 @@ def iter_gateway_subscriptions(
 def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
     """Yield every operator-seat add-on subscription known to Razorpay.
 
-    Pages through the Razorpay subscriptions list and filters to add-on rows —
-    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
+    Pages through the Razorpay subscriptions list and filters to add-on rows.
+    Identified by ``notes.purpose == "seat_addon"`` and, defensively, the
     Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
     whose local owner is gone.
     """
@@ -1314,7 +1314,7 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
             continue
         item_plan_id = item.get("plan_id")
         # Both rails (F3): the USD seat plan is just as much a seat add-on
-        # as the INR one — filtering to the INR id alone hid every USD seat
+        # as the INR one. Filtering to the INR id alone hid every USD seat
         # mandate from orphan reconciliation, leaving an orphaned $5/seat
         # debit with no sweep coverage.
         seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
@@ -1332,7 +1332,7 @@ def per_bot_checkout_identity(
 ) -> dict[str, str]:
     """Which bot a per-bot mandate would materialise, as Razorpay notes.
 
-    The bot row does not exist while its checkout is in flight — ``POST
+    The bot row does not exist while its checkout is in flight. ``POST
     /bots/checkout`` deliberately creates nothing until the mandate is paid, so
     a dismissed checkout leaves no orphan rows. These notes ARE the bot's
     identity for the whole in-flight window; :func:`_create_bot_from_notes`
@@ -1342,7 +1342,7 @@ def per_bot_checkout_identity(
     function rather than a literal inside the mint below. ``clients.
     pending_checkout_bot_id`` cannot hold this identity (there is no id yet), so
     a retry that changed the agent's name or website would otherwise be reused
-    as if it were the same purchase — handing the customer a mandate that
+    as if it were the same purchase. Handing the customer a mandate that
     creates the OTHER agent, pointed at the other website, with the other
     domain allowlist. Minting and comparing from one source is what keeps the
     two from drifting.
@@ -1356,7 +1356,7 @@ def per_bot_checkout_identity(
         "purpose": "per_bot_subscription",
         "bot_name": bot_name,
         "bot_website": bot_website or "",
-        # Razorpay note values must be strings — pack as a JSON-encoded list so
+        # Razorpay note values must be strings. Pack as a JSON-encoded list so
         # the webhook handler can round-trip back to a Python list. Order is
         # the caller's, and both sides of a comparison come from the same
         # normalisation, so the encoded form is stable.
@@ -1385,7 +1385,7 @@ def create_per_bot_subscription(
     cancelling sibling subscriptions; create a Bot row from the carried
     fields after the mandate authenticates).
 
-    No trial — bot #2+ charges immediately. The customer is already a
+    No trial. Bot #2+ charges immediately. The customer is already a
     paying account, so a second trial would be free credits we don't
     want to grant.
     """
@@ -1426,12 +1426,12 @@ def create_bot_resubscription(
     Unlike :func:`create_per_bot_subscription` (which mints a NEW bot on
     activation), this carries the existing ``bot_id`` so
     :func:`_handle_subscription_activated` reattaches the new subscription to
-    that bot and reactivates its previously-deactivated knowledge — the bot
+    that bot and reactivates its previously-deactivated knowledge, the bot
     keeps its ``bot_key`` / embed and its old knowledge comes back. Used when a
     downgraded (Free) bot, or a first Free bot, moves to a paid plan from the
     per-agent billing view.
 
-    No trial — the bot is returning to paid, not starting fresh.
+    No trial, the bot is returning to paid, not starting fresh.
     """
     extra_notes: dict[str, str] = {
         "purpose": "revive_bot",
@@ -1481,7 +1481,7 @@ def _gateway_sub_is_terminal(razorpay_subscription_id: str | None) -> bool:
     """Authoritative post-failure check: is the subscription ACTUALLY terminal?
 
     F8: the cancel error paths used to sniff English substrings out of the SDK
-    exception ("not cancellable", "cancelled status") — the SDK discards
+    exception ("not cancellable", "cancelled status"), the SDK discards
     Razorpay's structured error code, and a rewording of the description would
     silently turn every already-terminal cancel into a raised 502 (or, worse,
     a substring coincidence would swallow a real failure). Instead of parsing
@@ -1505,7 +1505,7 @@ def cancel_subscription_by_id(razorpay_subscription_id: str, *, at_period_end: b
     id from. This one exists for in-flight replacement checkouts: they live only
     as ``upgrade_pending_subscription_id`` on the row they would have replaced,
     and an unauthorised one left behind is authorizable indefinitely at
-    Razorpay — so a customer could revive billing weeks after cancelling by
+    Razorpay, so a customer could revive billing weeks after cancelling by
     clicking a stale checkout link.
 
     Terminal-state rejections are swallowed for the same reason as the sibling:
@@ -1522,7 +1522,7 @@ def cancel_subscription_by_id(razorpay_subscription_id: str, *, at_period_end: b
     except Exception as exc:
         if _gateway_sub_is_terminal(razorpay_subscription_id):
             logger.warning(
-                "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
+                "Razorpay subscription %s is already in a terminal state. Skipping cancel: %s",
                 razorpay_subscription_id,
                 exc,
             )
@@ -1537,7 +1537,7 @@ def is_subscription_live(razorpay_subscription_id: str) -> bool:
     Used by ``/subscriptions/resume`` before it clears ``cancel_at_period_end``.
     The local ``gateway_cancel_executed_at`` marker says whether *we* issued a
     cancel, but the customer could also have cancelled from Razorpay's own
-    emails, or a sweep could have half-completed — and clearing the flag
+    emails, or a sweep could have half-completed, and clearing the flag
     against a dead mandate tells the customer their plan will keep renewing
     when it will silently lapse instead. That is precisely the class of lie
     BL-3 exists to prevent, so we ask the gateway rather than assume.
@@ -1547,7 +1547,7 @@ def is_subscription_live(razorpay_subscription_id: str) -> bool:
 
     Raises:
         RazorpayBillingError: the fetch failed. Callers must surface this
-            rather than guessing — a network blip is not evidence of anything.
+            rather than guessing, a network blip is not evidence of anything.
     """
     rzp = _get_razorpay()
     try:
@@ -1561,7 +1561,7 @@ def is_subscription_live(razorpay_subscription_id: str) -> bool:
 
     status = (entity.get("status") or "").lower()
     # ``ended_at`` / ``cancel_at_cycle_end`` are set the moment a cancel is
-    # scheduled, while ``status`` stays "active" until the cycle actually ends —
+    # scheduled, while ``status`` stays "active" until the cycle actually ends,
     # so status alone would report a cancel-at-cycle-end mandate as live.
     if entity.get("cancel_at_cycle_end"):
         return False
@@ -1572,12 +1572,12 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
     """Cancel a Razorpay subscription at period end (default) or immediately.
 
     Razorpay's parameter is ``cancel_at_cycle_end`` (1 = at end, 0 = now).
-    Local DB state is updated by the webhook handler — we don't double-write
+    Local DB state is updated by the webhook handler. We don't double-write
     here.
     """
     if not subscription.razorpay_subscription_id:
         logger.warning(
-            "cancel_subscription called for subscription %s without razorpay id — skipping",
+            "cancel_subscription called for subscription %s without razorpay id. Skipping",
             subscription.id,
         )
         return
@@ -1590,12 +1590,12 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
         )
     except Exception as exc:
         # Razorpay rejects cancels on already-terminal subscriptions. The
-        # desired outcome — "stop charging the customer" — is already achieved
+        # desired outcome ("stop charging the customer") is already achieved
         # in that case, so verify terminality AUTHORITATIVELY (status fetch,
-        # not error-message prose — F8) and no-op.
+        # not error-message prose. F8) and no-op.
         if _gateway_sub_is_terminal(subscription.razorpay_subscription_id):
             logger.warning(
-                "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
+                "Razorpay subscription %s is already in a terminal state. Skipping cancel: %s",
                 subscription.razorpay_subscription_id,
                 exc,
             )
@@ -1625,7 +1625,7 @@ def derive_operator_quantity(plan: Plan | None, seat_addon_quantity: int | None)
     """
     included = int((plan.included_operator_seats if plan else 1) or 1)
     if included < 0:
-        return -1  # UNLIMITED — paid add-on seats are meaningless on top of it.
+        return -1  # UNLIMITED. Paid add-on seats are meaningless on top of it.
     return included + int(seat_addon_quantity or 0)
 
 
@@ -1676,12 +1676,12 @@ def refund_payment(payment_id: str, amount: int | None = None) -> dict[str, Any]
     """Issue a refund against a captured Razorpay payment.
 
     ``amount`` is the refund amount in **paise** (the minor unit of INR). When
-    ``None`` the full captured amount is refunded — Razorpay treats an omitted
+    ``None`` the full captured amount is refunded. Razorpay treats an omitted
     ``amount`` as a full refund.
 
     Razorpay fires ``refund.created`` / ``refund.processed`` webhooks after this
     call; :func:`_handle_refund_created` claws the granted credits back from the
-    same ledger scope. This helper only initiates the gateway refund — local
+    same ledger scope. This helper only initiates the gateway refund. Local
     ``Invoice.status`` bookkeeping is the caller's responsibility (the webhook
     path also reconciles it), mirroring how :func:`cancel_subscription` leaves
     DB state to the webhook handler.
@@ -1720,7 +1720,7 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
     """Verify the X-Razorpay-Signature header against the raw payload.
 
     Uses the SDK's utility (which is just ``hmac.new(secret, payload,
-    sha256).hexdigest()`` under the hood — kept as SDK call so we follow
+    sha256).hexdigest()`` under the hood. Kept as SDK call so we follow
     upstream changes if the algorithm ever evolves).
 
     ``RAZORPAY_WEBHOOK_SECRET`` must be set; we fail-closed if missing.
@@ -1747,22 +1747,22 @@ def _record_or_skip_event(session: Session, event_id: str | None, payload_digest
     that could grant credits twice or create duplicate subscriptions.
 
     Concurrency note: the previous ``SELECT`` + ``INSERT`` pattern had a race
-    window — two workers handling the same Razorpay retry (very common on
+    window, two workers handling the same Razorpay retry (very common on
     5xx / connection-reset) could both pass the ``SELECT``, both flush, and
-    only ``COMMIT`` would catch the duplicate via the unique constraint —
+    only ``COMMIT`` would catch the duplicate via the unique constraint,
     by which point both had already granted credits / written ledger rows /
     sent confirmation emails. We now use an atomic
     ``INSERT … ON CONFLICT DO NOTHING`` and key off ``rowcount``: the worker
     whose insert won proceeds, the loser sees ``rowcount == 0`` and bails.
-    Postgres-only — every deployment is Postgres + pgvector.
+    Postgres-only. Every deployment is Postgres + pgvector.
     """
     if not event_id:
-        logger.warning("Razorpay webhook missing x-razorpay-event-id — rejecting to prevent duplicate processing")
+        logger.warning("Razorpay webhook missing x-razorpay-event-id. Rejecting to prevent duplicate processing")
         return False
     from sqlalchemy.dialects.postgresql import insert
 
     # M-2: dedup on BOTH keys. The HMAC covers only the body; the event id is
-    # a header — a replayed signed body with a FRESH header id passes the
+    # a header, a replayed signed body with a FRESH header id passes the
     # signature and the event-id dedup, and would double-process (double
     # grants, duplicate invoices). Distinct real events never share an exact
     # body (unique payment/subscription ids + timestamps inside), so a digest
@@ -1786,13 +1786,13 @@ def _release_idempotency_key(session: Session, event_id: str | None) -> None:
     The idempotency row exists to stop a redelivery re-granting credits or
     re-creating a subscription. A handler that refuses BEFORE any of that has a
     row recording work it never did: the key is burned, so the same event can
-    never be reprocessed — not by a redelivery, not by a superadmin replay, and
-    not by ``reconcile_subscription_from_razorpay`` — and unsticking the
+    never be reprocessed (not by a redelivery, not by a superadmin replay, and
+    not by ``reconcile_subscription_from_razorpay``) and unsticking the
     customer after a fix ships means deleting a row in production by hand.
 
     Releasing it is safe precisely because nothing was persisted: a later
     reprocess starts from the same clean state the first attempt did. It is also
-    not a retry loop — the caller still ACKs (returns rather than raising), so
+    not a retry loop, the caller still ACKs (returns rather than raising), so
     the provider is told the delivery succeeded and stops redelivering. What the
     release buys is a DELIBERATE second attempt after a code or data fix.
 
@@ -1831,7 +1831,7 @@ def _dead_letter_pooled_scope_refusal(
     """Record a refused (but already CHARGED) activation for manual reconciliation.
 
     Written in its OWN session so it survives whatever the caller's transaction
-    does — the same reason ``webhook_billing_routes._dead_letter`` opens one.
+    does, the same reason ``webhook_billing_routes._dead_letter`` opens one.
     Reuses ``failed_webhooks`` rather than inventing a table so the row shows up
     in the superadmin dead-letter list that ops already watches.
 
@@ -1843,7 +1843,7 @@ def _dead_letter_pooled_scope_refusal(
       accumulating duplicates. The provider's event id is carried in ``headers``.
     * ``signature`` is NULL: this row is synthesised from the parsed entity, not
       captured from a signed request body, so the superadmin *replay* button
-      cannot re-verify it and will refuse. That is honest — replaying would only
+      cannot re-verify it and will refuse. That is honest. Replaying would only
       re-run a refusal that is deterministic in the notes and the plan row. The
       recovery path is the released idempotency key: once the mandate is moved
       to account scope (or the plan corrected), reconcile/redelivery
@@ -1867,11 +1867,11 @@ def _dead_letter_pooled_scope_refusal(
         context=context,
         body={"subscription": sub_entity},
         error=(
-            "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
+            "MANUAL RECONCILIATION REQUIRED (replay will not help. This row has no signed "
             f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
             f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
             f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
-            "balance, so it must be billed with bot_id NULL — no local subscription was "
+            "balance, so it must be billed with bot_id NULL, no local subscription was "
             "created and no credits were granted. The customer HAS been charged: cancel "
             "this mandate and re-sell at account level, or re-scope it, then re-run "
             "reconciliation (the idempotency key was released, so the event can be "
@@ -1890,14 +1890,14 @@ def _dead_letter_synthetic(
 ) -> None:
     """Write one ``failed_webhooks`` row for an ACKed event that needs a human.
 
-    Shared by every handler that decides an event can never succeed on retry but
-    still moved (or may have moved) money. ``dedup_key`` is a synthetic event id
-    — ``<kind>:<subject>`` — so however many doors hit the same refusal, ops sees
-    ONE open task rather than an accumulating pile.
+     Shared by every handler that decides an event can never succeed on retry but
+     still moved (or may have moved) money. ``dedup_key`` is a synthetic event id
+    . ``<kind>:<subject>``, so however many doors hit the same refusal, ops sees
+     ONE open task rather than an accumulating pile.
 
-    Runs in its OWN session so the row survives whatever the caller's transaction
-    does, and swallows its own failures: a dead-letter write must never turn an
-    ACK into a 5xx that burns the provider's retry window.
+     Runs in its OWN session so the row survives whatever the caller's transaction
+     does, and swallows its own failures: a dead-letter write must never turn an
+     ACK into a 5xx that burns the provider's retry window.
     """
     from app.db.session import get_session
 
@@ -1925,7 +1925,7 @@ def _dead_letter_synthetic(
                     # NULL on purpose: this row is synthesised from the parsed
                     # entity, not captured from a signed request body, so the
                     # superadmin replay button cannot re-verify it and will
-                    # refuse. That is honest — see the callers for the real
+                    # refuse. That is honest. See the callers for the real
                     # recovery path.
                     signature=None,
                     headers=context,
@@ -1940,7 +1940,7 @@ def _dead_letter_synthetic(
             session.commit()
     except Exception:
         logger.critical(
-            "Failed to dead-letter %s (%s) — the event is now recorded ONLY in the ERROR log above: %s",
+            "Failed to dead-letter %s (%s), the event is now recorded ONLY in the ERROR log above: %s",
             dedup_key,
             event_type,
             context,
@@ -1952,7 +1952,7 @@ def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str,
     """Emit a payment-history invoice for a seat add-on charge (finding A).
 
     Seat revenue must be documented for GST/reconciliation just like a plan
-    charge — but it grants NO credits. Idempotent on the Razorpay payment id;
+    charge, but it grants NO credits. Idempotent on the Razorpay payment id;
     routed through ``finalize_invoice_safely`` so it becomes a numbered GST tax
     invoice when invoicing v2 is on, and so a finalize failure never blocks the
     webhook.
@@ -1990,7 +1990,7 @@ def _handle_seat_addon_event(
     seat_sub_id = sub_entity.get("id")
     local = session.scalars(select(Subscription).where(Subscription.seat_addon_subscription_id == seat_sub_id)).first()
     if local is None:
-        logger.info("Seat add-on event %s for unknown seat sub %s — acknowledged", event_name, seat_sub_id)
+        logger.info("Seat add-on event %s for unknown seat sub %s. Acknowledged", event_name, seat_sub_id)
         return f"Seat add-on event {event_name} (no local sub)"
 
     if event_name in ("subscription.activated", "subscription.charged"):
@@ -2006,7 +2006,7 @@ def _handle_seat_addon_event(
             _record_seat_invoice(session, local, payload)
 
     elif event_name in ("subscription.cancelled", "subscription.completed"):
-        # Terminal — the add-on is gone. Drop to the plan's included seats.
+        # Terminal, the add-on is gone. Drop to the plan's included seats.
         local.seat_addon_quantity = 0
         local.seat_addon_pending_quantity = None
         local.operator_quantity = derive_operator_quantity(local.plan, 0)
@@ -2055,7 +2055,7 @@ def handle_webhook_event(
     # Seat add-on subscriptions (RAZORPAY_SEAT_PLAN_ID) are billed on their own
     # Razorpay subscription, stamped ``notes.purpose == "seat_addon"``. Their
     # lifecycle events (activated/charged/cancelled/...) must be ACKnowledged so
-    # Razorpay stops retrying, but they carry NO plan entitlement — routing them
+    # Razorpay stops retrying, but they carry NO plan entitlement. Routing them
     # through the plan handlers would grant monthly plan credits for a seat
     # charge (P0-3). Record the event (idempotency already ran above) and return
     # before dispatch.
@@ -2064,7 +2064,7 @@ def handle_webhook_event(
         sub_notes = sub_entity.get("notes") or {}
         if (sub_notes.get("purpose") or "").lower() == "seat_addon":
             # Seat add-ons carry NO plan entitlement (routing them through the
-            # plan handlers would grant monthly plan credits for a seat charge —
+            # plan handlers would grant monthly plan credits for a seat charge.
             # P0-3), but they DO gate seat entitlement and must invoice seat
             # revenue (finding A), so they get their own handler rather than an
             # ack-drop.
@@ -2090,17 +2090,17 @@ def handle_webhook_event(
         "payment.captured": _handle_payment_captured,
         "payment.failed": _handle_payment_failed,
         "order.paid": _handle_payment_captured,  # alias path for top-ups
-        # Refunds — the credit CLAWBACK runs on whichever event arrives first
+        # Refunds, the credit CLAWBACK runs on whichever event arrives first
         # (``refund.created`` fires at initiation, so the customer can't spend
         # during settlement), but the Section 34 CREDIT NOTE is only issued on
-        # ``refund.processed`` — a bank refund can still FAIL after creation,
+        # ``refund.processed``, a bank refund can still FAIL after creation,
         # and a legal document for a refund that never happened is a GST audit
         # defect that cannot be quietly deleted.
         "refund.created": _handle_refund_created,
         "refund.processed": _handle_refund_processed,
         "refund.failed": _handle_refund_failed,
-        # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
-        # that's when we claw the credits back. ``created`` / ``won`` only move
+        # Disputes / chargebacks. Razorpay withdraws the funds on ``lost``.
+        # That's when we claw the credits back. ``created`` / ``won`` only move
         # the invoice's dispute status (H6).
         "payment.dispute.created": _handle_dispute_created,
         "payment.dispute.lost": _handle_dispute_lost,
@@ -2115,7 +2115,7 @@ def handle_webhook_event(
     if handler is _handle_subscription_activated:
         # The only handler that can refuse an ALREADY-CHARGED activation without
         # persisting anything. It needs the event id so it can release the
-        # idempotency key it would otherwise burn on work it never did — see
+        # idempotency key it would otherwise burn on work it never did. See
         # ``_release_idempotency_key``. Passed explicitly rather than widening
         # every handler's signature or smuggling it through a context var.
         return handler(session, payload, event_id=event_id)
@@ -2138,7 +2138,7 @@ def _capture_paid_at(pay: dict[str, Any] | None) -> datetime:
     """The true capture instant of a Razorpay payment (finding G).
 
     Razorpay stamps epoch-seconds ``created_at`` on the payment entity. Dating the
-    invoice from this — not from webhook-processing ``now()`` — keeps a payment
+    invoice from this (not from webhook-processing ``now()``) keeps a payment
     captured just before a month/FY boundary in the correct GSTR period even when
     the webhook is processed after the boundary. Falls back to ``now()`` when the
     timestamp is missing or unparseable.
@@ -2156,7 +2156,7 @@ def _base_amount_minor(pay: dict[str, Any] | None) -> int | None:
     """Razorpay's realised INR conversion of a non-INR payment, in paise.
 
     On a non-INR payment Razorpay returns ``base_amount`` (paise) and
-    ``base_currency`` (INR) alongside ``amount``/``currency`` — the amount it
+    ``base_currency`` (INR) alongside ``amount``/``currency``, the amount it
     converted at the processing bank's rate on the payment date, and the figure
     it settles on. That rate is what Rule 34(2) asks for on a service supplied
     in foreign currency, so we capture it AT CAPTURE TIME: it is unavailable
@@ -2165,7 +2165,7 @@ def _base_amount_minor(pay: dict[str, Any] | None) -> int | None:
 
     ``None`` for an INR payment (where the field is absent by design and the
     charge amount is already the reportable one), and for any payload whose
-    ``base_currency`` is not INR — a base currency we do not report in is not
+    ``base_currency`` is not INR, a base currency we do not report in is not
     something to silently treat as rupees.
     """
     if not pay:
@@ -2249,16 +2249,16 @@ def reconcile_subscription_from_razorpay(
     BEFORE the idempotency key is recorded. A first verify call can race ahead
     of Razorpay's mandate authorisation and see a non-billable state
     (``created``/``pending``/``halted``); recording the key there would burn it,
-    and a later verify — once the mandate is ``authenticated``/``active`` —
+    and a later verify (once the mandate is ``authenticated``/``active``)
     would short-circuit on the already-recorded key and never materialise the
     row. On localhost (no webhook to fall back on) that permanently strands the
     customer on their old plan after a successful payment. So we only record the
-    key once we've confirmed a billable state and are about to grant — that
+    key once we've confirmed a billable state and are about to grant. That
     keeps the grant-once guarantee while letting an early call retry.
 
     Returns the local ``Subscription`` if reconcile succeeded (now or
     previously), or ``None`` if Razorpay reports the subscription in a
-    non-billable state we shouldn't materialise yet — let a later call (or the
+    non-billable state we shouldn't materialise yet. Let a later call (or the
     webhook) handle those.
     """
     rzp = _get_razorpay()
@@ -2276,13 +2276,13 @@ def reconcile_subscription_from_razorpay(
         # Non-billable yet. Return WITHOUT recording the idempotency key so a
         # later verify (once the mandate clears) can retry and materialise.
         logger.info(
-            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert (key not burned)",
+            "Razorpay subscription %s in non-billable state '%s'. Deferring local upsert (key not burned)",
             razorpay_subscription_id,
             status,
         )
         return None
 
-    # L2 — defense-in-depth ownership check. The Razorpay HMAC already gates the
+    # L2. Defense-in-depth ownership check. The Razorpay HMAC already gates the
     # verify endpoint, but an authenticated caller passing someone else's
     # ``razorpay_subscription_id`` must not be able to upsert a row owned by the
     # ``notes.oyechats_client_id`` it carries. When the caller's identity is
@@ -2301,7 +2301,7 @@ def reconcile_subscription_from_razorpay(
             )
             raise RazorpayBillingError("Subscription does not belong to the requesting client.")
 
-    # Billable + owned — NOW gate the grant. If the webhook or a concurrent
+    # Billable + owned. NOW gate the grant. If the webhook or a concurrent
     # verify already materialised it, this is a no-op re-query (grant-once).
     synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
     if not _record_or_skip_event(session, synthetic_event_id):
@@ -2314,7 +2314,7 @@ def reconcile_subscription_from_razorpay(
     synthetic_payload = {"subscription": {"entity": sub_entity}}
     # Hand the synthetic key down so a refusal inside the handler can release it
     # (``_release_idempotency_key``). Without that, one refused reconcile would
-    # permanently close the verify door on this mandate — the customer's own
+    # permanently close the verify door on this mandate, the customer's own
     # retry, and every ops re-run, would short-circuit as "already processed".
     _handle_subscription_activated(session, synthetic_payload, event_id=synthetic_event_id)
     return _resolve_local_subscription(session, razorpay_subscription_id)
@@ -2337,19 +2337,19 @@ def reconcile_topup_from_razorpay(
     Idempotency is twofold: a synthetic ``reconcile:topup:<order_id>`` event in
     ``processed_webhooks`` collapses concurrent verify calls, and
     :func:`_handle_payment_captured` itself early-returns when the payment's
-    Invoice already exists — so this and the real webhook can never double-grant.
+    Invoice already exists, so this and the real webhook can never double-grant.
 
     Returns ``True`` when this call performed (or attempted) the grant, ``False``
     when another path already handled it or the payment isn't a captured top-up.
 
     ORDERING (important, P1-5): the synthetic idempotency key is recorded only
-    AFTER confirming a billable state — the same contract
+    AFTER confirming a billable state, the same contract
     :func:`reconcile_subscription_from_razorpay` documents. Checkout's success
     handler can fire while the payment is still ``authorized``
     (``payment_capture=1`` captures asynchronously); burning the key on that
     early call made every later verify short-circuit as "already handled" while
     no credits were ever granted, leaving the (possibly dropped) webhook as the
-    only remaining path — exactly the scenario this reconcile exists to cover.
+    only remaining path, exactly the scenario this reconcile exists to cover.
     The ``return False`` paths below therefore burn nothing.
     """
     rzp = _get_razorpay()
@@ -2380,12 +2380,12 @@ def reconcile_topup_from_razorpay(
             )
             raise RazorpayBillingError("Top-up does not belong to the requesting client.")
 
-    # Only a genuinely captured payment grants credits — an authorized-but-not-
+    # Only a genuinely captured payment grants credits, an authorized-but-not-
     # captured payment must wait for capture and retry (key NOT burned above).
     if (payment or {}).get("status") != "captured":
         return False
 
-    # Billable state confirmed — NOW record the synthetic event. Concurrent
+    # Billable state confirmed. NOW record the synthetic event. Concurrent
     # verify calls (and the real webhook's own event id + invoice idempotency)
     # collapse here: the atomic insert admits exactly one processor.
     synthetic_event_id = f"reconcile:topup:{razorpay_order_id}"
@@ -2416,7 +2416,7 @@ def _create_bot_from_subscription_notes(
     (post-payment) so a dismissed checkout leaves no orphan row.
 
     ``subscription`` may be ``None`` when the caller hasn't inserted the
-    subscription row yet — the FK back is set later via
+    subscription row yet, the FK back is set later via
     ``bot.subscription_id = sub.id`` once the sub is flushed. This
     chicken-and-egg ordering is intentional: a per-bot subscription
     inserted with ``bot_id=NULL`` would collide with the legacy partial
@@ -2424,10 +2424,10 @@ def _create_bot_from_subscription_notes(
 
     Notes contract (set by :func:`create_per_bot_subscription`):
 
-    * ``bot_name`` — required
-    * ``bot_website`` — optional
-    * ``bot_allowed_domains`` — optional JSON-encoded list
-    * ``bot_domain_check_enabled`` — "1" or "0"
+    * ``bot_name`` (required
+    * ``bot_website``) optional
+    * ``bot_allowed_domains`` (optional JSON-encoded list
+    * ``bot_domain_check_enabled``) "1" or "0"
     """
     import json as _json
     import uuid as _uuid
@@ -2469,7 +2469,7 @@ def _emit_plan_purchased_notification(session: Session, client_id: int, plan_id:
     """Best-effort: drop a ``plan_purchased`` row into the in-app bell.
 
     Wrapped in a broad try/except so a notification failure can never break
-    subscription activation — the bell is a UX nicety, the activation is
+    subscription activation, the bell is a UX nicety, the activation is
     the business-critical path.
     """
     try:
@@ -2499,7 +2499,7 @@ def _grant_subscription_period(
 ) -> bool:
     """Reset + grant the plan's monthly credits for ``period_end``, once.
 
-    Thin delegate to :func:`credit_service.grant_subscription_period_once` — the
+    Thin delegate to :func:`credit_service.grant_subscription_period_once`, the
     shared, per-scope + per-period-idempotent helper also used by the renewal
     cron (BL-5 / NB-8). Behaviour is unchanged: idempotent on
     ``last_granted_period_end == period_end`` (remediation H4), reset + grant
@@ -2512,14 +2512,14 @@ def _grant_subscription_period(
 def _entity_future_start(sub_entity: dict[str, Any]) -> datetime | None:
     """The subscription's billing start, iff it lies in the future.
 
-    ``start_at`` is authoritative — it is the very field the deferred-start
+    ``start_at`` is authoritative, it is the very field the deferred-start
     reactivation path sends when minting a replacement mandate, and it is
     populated on ``created``/``authenticated`` entities. ``current_start`` is
     only a fallback: Razorpay leaves it null until the first charge, so keying
     futurity on it alone silently classifies every real deferred-start
     authentication as "immediate" and the replacement row never materialises.
     ``charge_at`` is deliberately NOT consulted: on a live subscription it is
-    the *next renewal* — always in the future — and would misclassify every
+    the *next renewal* (always in the future) and would misclassify every
     ordinary activation as deferred.
     """
     raw_start = sub_entity.get("start_at") or sub_entity.get("current_start")
@@ -2533,8 +2533,8 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
     """Insert the ReferralConversion carried in the checkout notes, once ever.
 
     Checkout parks the attribution snapshot (code / affiliate / bps, frozen at
-    subscribe time) in the subscription notes; THIS records it — at
-    ``subscription.charged``, i.e. actual money — so an abandoned checkout can
+    subscribe time) in the subscription notes; THIS records it, at
+    ``subscription.charged``, i.e. actual money, so an abandoned checkout can
     never accrue the affiliate a conversion. Fires on every cycle; the
     unique-per-client constraint makes everything after the first payment a
     no-op. Best-effort: a malformed note must never fail the payment handler.
@@ -2551,14 +2551,14 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
             "customer_discount_bps": int(notes.get("oyechats_ref_discount_bps") or 0),
         }
     except (TypeError, ValueError):
-        logger.warning("Unparseable referral snapshot in notes for client %s: %r — skipping", client_id, notes)
+        logger.warning("Unparseable referral snapshot in notes for client %s: %r. Skipping", client_id, notes)
         return
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.db.models import ReferralConversion
 
-    # SAVEPOINT-guarded: ON CONFLICT only suppresses the unique constraint —
+    # SAVEPOINT-guarded: ON CONFLICT only suppresses the unique constraint,
     # a dangling snapshot (affiliates/codes are hard-deletable; SET NULL fixes
     # rows but not ids frozen in gateway notes) raises an FK IntegrityError
     # that would poison the surrounding transaction and dead-letter the
@@ -2574,7 +2574,7 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
             )
     except Exception:
         logger.warning(
-            "Referral conversion insert failed for client %s (stale snapshot %r) — skipping; "
+            "Referral conversion insert failed for client %s (stale snapshot %r). Skipping; "
             "the payment handler must not fail on attribution bookkeeping.",
             client_id,
             values,
@@ -2583,7 +2583,7 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
 
 
 def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
-    """Mandate authorised, billing not started — two deferred-start cases meet here.
+    """Mandate authorised, billing not started, two deferred-start cases meet here.
 
     A subscription minted with a future ``start_at`` sits in ``authenticated``
     and fires nothing else until its first charge (verified live against
@@ -2591,7 +2591,7 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
     Two flows deliberately create that shape, with OPPOSITE grant semantics:
 
     * **Launch promo** (``notes.oyechats_promotion_id``): the free period IS the
-      product — the customer must get the plan's entitlements today even though
+      product, the customer must get the plan's entitlements today even though
       the first invoice only lands at ``start_at``. Delegates to the activation
       handler, whose promo branch grants the first free month keyed on the
       free-period boundary; the real ``activated``/``charged`` at ``start_at``
@@ -2611,7 +2611,7 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
 
     notes = sub_entity.get("notes") or {}
     if _promotion_id_from_notes(notes) is None and _entity_future_start(sub_entity) is None:
-        return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start — awaiting activated)"
+        return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start. Awaiting activated)"
 
     return _handle_subscription_activated(session, payload)
 
@@ -2647,7 +2647,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     # decisions below depend on. Two mandates authorising at once (the webhook
     # for one, the verify-reconcile for the other) each ran the sibling sweep
     # against a snapshot that did not yet contain the other's row, both inserted,
-    # and the loser hit ``ix_subscriptions_client_legacy_active`` — surfacing to
+    # and the loser hit ``ix_subscriptions_client_legacy_active``. Surfacing to
     # a paying customer as a raw 500 mid-checkout. Taking the same
     # transaction-scoped advisory lock the money ROUTES take makes the second
     # activation wait, see the committed row, and retire it through the sweep.
@@ -2668,15 +2668,15 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     quantity = int(sub_entity.get("quantity") or 1)
     customer_id = sub_entity.get("customer_id")
 
-    # A subscription minted with a future ``start_at`` — the reactivation path,
+    # A subscription minted with a future ``start_at``, the reactivation path,
     # where the customer has already paid through ``start_at`` on the mandate
     # this one replaces. The mandate authorises NOW but does not bill until the
     # old period runs out, so entitlement must not cut over yet: the predecessor
     # keeps serving (and keeps its credits) until then. Two things change below:
     # the predecessor is cancelled at-cycle-end rather than immediately, and no
-    # credits are granted here — the ``subscription.charged`` at ``start_at``
+    # credits are granted here, the ``subscription.charged`` at ``start_at``
     # does that, exactly like a normal renewal. Futurity comes from ``start_at``
-    # (``current_start`` is null on a not-yet-charged entity — see
+    # (``current_start`` is null on a not-yet-charged entity. See
     # ``_entity_future_start``); for an ordinary post-charge ``activated``,
     # ``start_at`` is already in the past, so this stays False.
     starts_in_future = _entity_future_start(sub_entity) is not None
@@ -2684,7 +2684,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     if local is None:
         if client_id is None or plan_id is None:
             logger.warning(
-                "Razorpay subscription.activated for %s missing client/plan in notes — cannot create local row",
+                "Razorpay subscription.activated for %s missing client/plan in notes. Cannot create local row",
                 razorpay_sub_id,
             )
             return "missing notes; cannot create subscription"
@@ -2695,8 +2695,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # one active subscription per bot concurrently.
         is_per_bot = (notes.get("purpose") or "").lower() == "per_bot_subscription"
 
-        # ``oyechats_bot_id`` marks a subscription that funds an EXISTING bot —
-        # set by ``/subscriptions/resume`` when the row it is replacing is
+        # ``oyechats_bot_id`` marks a subscription that funds an EXISTING bot.
+        # Set by ``/subscriptions/resume`` when the row it is replacing is
         # per-bot. Without it the sweep below would look for the account row
         # (``bot_id IS NULL``), never retire the per-bot one, and the customer
         # would be left holding two live mandates with the "won't renew" banner
@@ -2708,7 +2708,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 resume_bot_id = int(raw_resume_bot_id)
             except (TypeError, ValueError):
                 logger.warning(
-                    "Razorpay subscription %s carries an unparseable oyechats_bot_id %r — treating as account-level",
+                    "Razorpay subscription %s carries an unparseable oyechats_bot_id %r. Treating as account-level",
                     razorpay_sub_id,
                     raw_resume_bot_id,
                 )
@@ -2719,7 +2719,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # validated here as defense-in-depth (the checkout route already scoped
         # it); an unowned/garbled bot_id demotes to account-level rather than
         # trusting the note. Folded into ``resume_bot_id`` so the scope-filtered
-        # sweep and the bot re-link below are shared with the resume path — the
+        # sweep and the bot re-link below are shared with the resume path, the
         # only revive-specific extra is reactivating the bot's deactivated
         # knowledge once the row lands.
         is_revive = (notes.get("purpose") or "").lower() == "revive_bot"
@@ -2737,7 +2737,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 resume_bot_id = candidate
             else:
                 logger.warning(
-                    "revive_bot activation for %s: bot_id %s not owned by client %s — treating as account-level",
+                    "revive_bot activation for %s: bot_id %s not owned by client %s. Treating as account-level",
                     razorpay_sub_id,
                     notes.get("bot_id"),
                     client_id,
@@ -2750,9 +2750,9 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # ── The sink guard: a POOLED plan may never land on a BOT-SCOPED row ──
         #
-        # Every route that can attach a plan to a subscription — per-bot
+        # Every route that can attach a plan to a subscription (per-bot
         # checkout, change-plan revive, resume, the upgrade/downgrade cutovers,
-        # the promotion cron — ends here, at the single INSERT below. Guarding
+        # the promotion cron) ends here, at the single INSERT below. Guarding
         # the mint sites one by one drifts; this is the one place that cannot be
         # bypassed, including by a per-bot mandate created BEFORE the route
         # guards shipped and only authorised afterwards.
@@ -2762,18 +2762,18 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # scoping it to one bot's isolated ledger funds that agent and silently
         # starves every other one the tier entitles.
         #
-        # Failure mode — the money is ALREADY taken by the time this webhook
+        # Failure mode, the money is ALREADY taken by the time this webhook
         # arrives, so the choice is which bad outcome to take:
         #
         # * NOT raising. A raise dead-letters and 5xxs (see
-        #   ``webhook_billing_routes``), which asks Razorpay to redeliver — but
+        #   ``webhook_billing_routes``), which asks Razorpay to redeliver, but
         #   the refusal is deterministic in the notes + plan row, so every retry
         #   re-fails identically: the whole retry window burns, N duplicate
         #   dead-letters accumulate, and the outcome is the same as ACKing, only
         #   noisier. Retries fix transient faults, and this is not one.
-        # * NOT demoting to account scope (``funded_bot_id = None``). Tempting —
-        #   a pooled plan on ``bot_id IS NULL`` is exactly what the customer
-        #   bought — but the sibling sweep below would then cancel the client's
+        # * NOT demoting to account scope (``funded_bot_id = None``). Tempting
+        #   (a pooled plan on ``bot_id IS NULL`` is exactly what the customer
+        #   bought) but the sibling sweep below would then cancel the client's
         #   EXISTING account subscription and irreversibly cancel its mandate at
         #   Razorpay, destroying a subscription the customer never asked to
         #   touch. Silently doing that on a webhook is worse than not guarding.
@@ -2783,7 +2783,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # unrecoverable shapes in this handler (missing notes, unparseable
         # ``oyechats_bot_id``).
         #
-        # An ERROR log is not enough on its own, though — the customer has been
+        # An ERROR log is not enough on its own, though, the customer has been
         # CHARGED and, before this, the only durable artifact of that was a
         # Sentry event: no Subscription, no Invoice, and the idempotency key
         # already burned so the activation could never be reprocessed. Two
@@ -2797,18 +2797,18 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         #    no double-grant to protect against, and keeping it burned is what
         #    forces a production row deletion before the mandate can ever be
         #    reprocessed. This does not create a retry loop: we still ACK, so the
-        #    provider stops redelivering — the release only enables a deliberate
+        #    provider stops redelivering, the release only enables a deliberate
         #    reprocess (verify-reconcile, or a redelivery) after the mandate is
         #    re-scoped or the plan corrected.
         if mints_new_bot or resume_bot_id is not None:
-            # ``plan_id`` is non-NULL here — the missing-notes return above.
+            # ``plan_id`` is non-NULL here, the missing-notes return above.
             candidate_plan = session.get(Plan, plan_id)
             if candidate_plan is not None and plan_entitlements_service.plan_grants_unlimited_bots(candidate_plan):
                 refused_bot = "new" if mints_new_bot else resume_bot_id
                 logger.error(
                     "REFUSING bot-scoped activation of pooled plan %s (id=%s) on Razorpay subscription %s "
                     "(client %s, bot %s): this plan grants unlimited agents and sells one POOLED credit "
-                    "balance, so it must be billed with bot_id NULL. The customer HAS been charged — "
+                    "balance, so it must be billed with bot_id NULL. The customer HAS been charged. "
                     "cancel this mandate and re-sell the plan at account level, or move the payment over "
                     "manually. No local subscription was created; recorded in failed_webhooks.",
                     candidate_plan.slug,
@@ -2831,7 +2831,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 return "pooled plan on a bot-scoped activation; subscription NOT created"
 
         # Launch-promo sub: ``starts_in_future`` is True for its whole free
-        # window, but the semantics are the OPPOSITE of the resume cutover —
+        # window, but the semantics are the OPPOSITE of the resume cutover,
         # the customer owns no prior paid period to carry, and the plan's
         # entitlements must start NOW (the free period IS the product). The
         # promo therefore skips the period/marker carry below and takes the
@@ -2854,12 +2854,12 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # per-bot resume/revive, that bot's own row. For a revive the bot's
             # active set is normally empty (it lapsed), but a downgrade re-auth
             # GRACE row (``past_due``, no gateway mandate) may hold the unique
-            # index slot — the sweep retires it, which is exactly the cleanup
+            # index slot, the sweep retires it, which is exactly the cleanup
             # contract ``transition_service.promote_scheduled_change`` documents.
             #
             # ``trial_expired`` is included alongside the active-set because a
             # customer who lets their trial lapse and *then* subscribes must
-            # have the old trial row canceled here — otherwise
+            # have the old trial row canceled here. Otherwise
             # ``task_delete_expired_trial_data`` (which filters purely on
             # ``status == 'trial_expired' AND data_retention_until < now``)
             # will hard-delete the paying customer's workspace when the 15-day
@@ -2882,11 +2882,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             )
             carried_extra_seats = 0
             # (old_row, seat_addon_id) pairs whose Razorpay mandates must be
-            # cancelled — but only AFTER every fail-prone local write below has
+            # cancelled, but only AFTER every fail-prone local write below has
             # committed. Finding I: cancelling at the gateway inline (as this used
             # to) is irreversible, so if a later statement rolled back we'd strand
             # a mandate cancelled at Razorpay while its local row stayed active.
-            # We do the LOCAL flip here (needed before the new-sub INSERT — the
+            # We do the LOCAL flip here (needed before the new-sub INSERT, the
             # partial unique index allows only one active client-level sub) and
             # defer the gateway cancels to the end of the handler, mirroring how
             # the seat-carry below is already ordered "last, after every fail-prone
@@ -2902,7 +2902,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     old.seat_addon_subscription_id = None
                     old.seat_addon_quantity = 0
                 elif old.seat_addon_pending_quantity:
-                    # No live add-on, but seats are parked as pending — the
+                    # No live add-on, but seats are parked as pending, the
                     # deferred cancellation sweep cancelled the add-on mandate
                     # and stashed the count so a reactivation could restore it.
                     # Carry it the same way; ``edit_seat_addon_quantity`` below
@@ -2917,7 +2917,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     # this the replacement would open a brand-new period today,
                     # ``_grant_subscription_period`` would wipe the unused
                     # allowance they already own, and the "resets on" date would
-                    # jump backwards — the exact loss the deferred start exists
+                    # jump backwards, the exact loss the deferred start exists
                     # to avoid.
                     #
                     # A PROMO sub also starts in the future but must NOT inherit
@@ -2925,7 +2925,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     # carried period makes the renewal cron chase the promo row
                     # daily once the old period lapses, and a carried grant
                     # marker within the 4-day period-key tolerance would no-op
-                    # the promo's own month-1 grant — the free window opens a
+                    # the promo's own month-1 grant, the free window opens a
                     # fresh entitlement, it continues nothing.
                     carried_period_start = carried_period_start or old.current_period_start
                     carried_period_end = carried_period_end or old.current_period_end
@@ -2958,7 +2958,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # The bot this subscription funds: a freshly-minted one (per-bot), the
         # existing bot being resumed or revived, or NULL (account-level).
-        # Non-NULL here has already cleared the pooled-plan sink guard above —
+        # Non-NULL here has already cleared the pooled-plan sink guard above,
         # which runs before the sweep and the bot INSERT precisely so refusing
         # commits nothing.
         funded_bot_id = new_bot.id if new_bot is not None else resume_bot_id
@@ -2966,8 +2966,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # Close the per-bot downgrade re-auth seam. A per-bot downgrade's grace
         # row (transition_service.promote_scheduled_change) is bot-scoped, but a
         # plain re-auth lands in THIS account-level branch with funded_bot_id
-        # None, so the ``bot_id IS NULL`` sibling sweep above never cancels it —
-        # leaving an orphaned past_due grace row (and, once downgrade re-auth
+        # None, so the ``bot_id IS NULL`` sibling sweep above never cancels it.
+        # Leaving an orphaned past_due grace row (and, once downgrade re-auth
         # revives in place, a collision on the (client_id, bot_id) unique index).
         # Prefer the bot this activation funds; otherwise recover it via the
         # prev-mandate link the grace row and this activation share, then cancel
@@ -3003,8 +3003,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # Carrying the predecessor's grant marker is what makes the deferred
             # start safe: ``grant_subscription_period_once`` is monotonic on it,
             # so nothing re-grants (or resets) for a period already paid and
-            # granted, and the ``subscription.charged`` at ``start_at`` — which
-            # carries a strictly later period end — grants exactly once, on time.
+            # granted, and the ``subscription.charged`` at ``start_at`` (which
+            # carries a strictly later period end) grants exactly once, on time.
             last_granted_period_end=carried_grant_marker,
             payment_provider="razorpay",
             razorpay_subscription_id=razorpay_sub_id,
@@ -3013,7 +3013,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # Launch-promo linkage. ``promotion_id`` comes from the checkout
             # notes; ``promo_free_until`` mirrors the Razorpay ``start_at`` (the
             # deferred first-charge moment) and drives the pre-charge reminder
-            # email. Both NULL for ordinary (non-promo) subscriptions — gated on
+            # email. Both NULL for ordinary (non-promo) subscriptions. Gated on
             # ``is_promo`` because Razorpay populates ``start_at`` on EVERY
             # subscription (the resume cutover deliberately sends a future one),
             # so mirroring it unconditionally would stamp a bogus free window on
@@ -3030,8 +3030,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # The first-checkout H1 marker points at an in-flight authorizable sub;
         # this activation consumes it, so clear it (a stale marker would make a
-        # later /checkout or /change-plan try to reuse — or worse, CANCEL as
-        # superseded — an already-activated subscription).
+        # later /checkout or /change-plan try to reuse (or worse, CANCEL as
+        # superseded) an already-activated subscription).
         client_row = session.get(Client, client_id)
         if client_row is not None and client_row.pending_checkout_subscription_id == razorpay_sub_id:
             from app.services import pending_checkout_service
@@ -3041,7 +3041,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         if funded_bot_id is not None:
             # Bot-scoped activation (per-bot new bot, resume, or revive-in-place).
             # Back-link the bot to the freshly inserted subscription so the bot
-            # row knows which sub funds it — left on the superseded row,
+            # row knows which sub funds it. Left on the superseded row,
             # ``Bot.subscription_id`` would name a canceled subscription and
             # every lookup that walks that FK would read the customer as
             # unfunded. Uses ``post_update`` on the Bot.subscription
@@ -3054,8 +3054,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # Bot-scoped grant + early return: new per-bot purchase or an immediate
         # revive ONLY. A per-bot RESUME (deferred or immediate) must NOT take
         # this branch: the deferred one falls through to the future-start arm
-        # (grants nothing, carries the old period), and the IMMEDIATE one — a
-        # mandate already dead with no paid time left — falls through so
+        # (grants nothing, carries the old period), and the IMMEDIATE one (a
+        # mandate already dead with no paid time left) falls through so
         # ``apply_pending_proration`` re-grants the rollover snapshot the route
         # parked in ``upgrade_credit_pending_cents`` and the deferred
         # gateway-cancel loop still runs; early-returning here would let the
@@ -3112,7 +3112,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # Finding F: capture the customer's ACTUAL unused plan credits BEFORE the
         # reset below zeroes them, so the pending rollover (snapshotted at click
-        # time) is clamped to what's really left — not re-granted in full after
+        # time) is clamped to what's really left, not re-granted in full after
         # they've spent some between click and authorization. Scoped to the new
         # sub's ledger scope, matching where the reset and re-grant land.
         live_remaining_before_reset = transition_service.remaining_plan_credits(
@@ -3122,19 +3122,19 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # Finding N: a UPI ``activated`` can land BEFORE the first charge with no
         # ``current_end``. Granting then without advancing the period marker means
         # the first ``subscription.charged`` (which DOES carry current_end) grants
-        # a SECOND time for the same period — refunding the customer's first-cycle
+        # a SECOND time for the same period. Refunding the customer's first-cycle
         # consumption. Derive the first period end from current_start + the plan
         # interval (which equals the current_end Razorpay will send on that first
         # charge) so the marker advances now and the charged correctly no-ops.
         if starts_in_future and not is_promo:
-            # Nothing to grant yet — this mandate has not billed anything. The
+            # Nothing to grant yet. This mandate has not billed anything. The
             # customer is still inside the period they already paid for, whose
             # credits are already in the ledger and must be left exactly where
             # they are. Granting here would run ``reset_monthly_plan_credits``
             # first and destroy that balance. The ``subscription.charged`` at
             # ``start_at`` grants the new period, like any other renewal.
             logger.info(
-                "Razorpay subscription %s activated with a future start (%s) — carrying the "
+                "Razorpay subscription %s activated with a future start (%s). Carrying the "
                 "previous period and deferring the credit grant to its first charge",
                 razorpay_sub_id,
                 current_period_start.isoformat() if current_period_start else "?",
@@ -3143,7 +3143,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # Finding N: a UPI ``activated`` can land BEFORE the first charge with no
             # ``current_end``. Granting then without advancing the period marker means
             # the first ``subscription.charged`` (which DOES carry current_end) grants
-            # a SECOND time for the same period — refunding the customer's first-cycle
+            # a SECOND time for the same period. Refunding the customer's first-cycle
             # consumption. Derive the first period end from current_start + the plan
             # interval (which equals the current_end Razorpay will send on that first
             # charge) so the marker advances now and the charged correctly no-ops.
@@ -3162,7 +3162,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 grant_period_end = current_free_period_end(local.promo_free_until)
             _grant_subscription_period(session, local, grant_period_end)
 
-        # Apply any pending upgrade proration as a top-up credit. Idempotent —
+        # Apply any pending upgrade proration as a top-up credit. Idempotent,
         # the old sub's column is zeroed the first time this runs, so webhook
         # replays don't double-credit. A deferred start never resets anything,
         # so the resume path leaves the pending amount at zero and this call
@@ -3171,12 +3171,12 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             session, local, prev_rzp_sub_id, live_remaining=live_remaining_before_reset
         )
 
-        # Carry the operator-seat add-on across the cutover — done LAST, after
+        # Carry the operator-seat add-on across the cutover. Done LAST, after
         # every fail-prone DB write above, because ``edit_seat_addon_quantity``
         # mints a REAL Razorpay subscription. If it ran earlier (before the
         # grant/proration writes) and a later write raised, the transaction
         # would roll back the local pointer while leaving the add-on live at
-        # the gateway — a fresh orphan of exactly the kind this cutover exists
+        # the gateway, a fresh orphan of exactly the kind this cutover exists
         # to prevent. Placed here, the only thing after it is the best-effort
         # notification (which never raises), so a rollback can no longer strand
         # a just-minted add-on. ``carried_extra_seats`` comes from the
@@ -3193,8 +3193,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 # The carried seats move to a NEW seat add-on sub with a NEW UPI
                 # mandate that must be re-authorized before it charges (finding A).
                 # Gate entitlement (require_authorization=True stashes the pending
-                # count + returns the checkout) — activating uncharged seats here
-                # would be free, unbilled seats — and email the customer the hosted
+                # count + returns the checkout) (activating uncharged seats here
+                # would be free, unbilled seats) and email the customer the hosted
                 # re-auth link so their seats aren't silently suspended with no
                 # path back. A failed email never rolls back the activation.
                 seat_checkout = edit_seat_addon_quantity(
@@ -3217,7 +3217,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             except Exception:
                 logger.error(
                     "Failed to re-create seat add-on (%d seats) on new subscription "
-                    "%s (client %s) after a plan cutover — the customer's purchased "
+                    "%s (client %s) after a plan cutover, the customer's purchased "
                     "seats were not carried over. Needs manual reconciliation.",
                     total_carried_seats,
                     razorpay_sub_id,
@@ -3225,8 +3225,8 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     exc_info=True,
                 )
 
-        # Finding I: NOW — after every fail-prone local write above (new-sub
-        # INSERT, grant, proration, seat carry) — retire the superseded mandate(s)
+        # Finding I: NOW (after every fail-prone local write above (new-sub
+        # INSERT, grant, proration, seat carry)) retire the superseded mandate(s)
         # at the gateway. Placed here so a rollback of any of those can never leave
         # a mandate cancelled at Razorpay while its local row is active. The local
         # rows are already flipped to ``canceled``; if a gateway cancel fails the
@@ -3240,14 +3240,14 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     # predecessor's period ends, so kill that mandate at cycle
                     # end rather than now. Cancelling immediately would void the
                     # remainder the customer already paid for at the gateway too
-                    # — and there is nothing to protect against, because the
+                    # , and there is nothing to protect against, because the
                     # replacement cannot charge before the old one stops.
                     cancel_subscription(old, at_period_end=starts_in_future)
                 except Exception:
                     old.cancel_reason = "gateway_cancel_failed_mandate_live"
                     logger.error(
                         "Gateway-cancel FAILED for superseded subscription %s at activation of %s "
-                        "(client %s) — the old UPI mandate is STILL LIVE at Razorpay and will keep "
+                        "(client %s), the old UPI mandate is STILL LIVE at Razorpay and will keep "
                         "debiting the customer. cancel_reason=gateway_cancel_failed_mandate_live for "
                         "reconciliation.",
                         old.razorpay_subscription_id,
@@ -3261,7 +3261,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 except Exception:
                     logger.error(
                         "Seat add-on cancel FAILED for superseded subscription %s (seat add-on %s, "
-                        "client %s) at activation of %s — the old seat add-on mandate is STILL LIVE "
+                        "client %s) at activation of %s, the old seat add-on mandate is STILL LIVE "
                         "at Razorpay. Needs manual reconciliation.",
                         old.razorpay_subscription_id,
                         seat_addon_id,
@@ -3290,7 +3290,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
     # A subscription already flipped canceled/expired (by us or by Razorpay)
     # must never be silently resurrected by a stray/out-of-order/redelivered
-    # activated event — this branch is also reached via the ``subscription.
+    # activated event. This branch is also reached via the ``subscription.
     # resumed`` alias, and Razorpay-native pause/resume only ever moves a LOCAL
     # row through "past_due" (see subscription.paused -> _handle_subscription_
     # halted), never through "canceled"/"expired". A customer who explicitly
@@ -3299,16 +3299,16 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     # as a "local is None" activation, not this branch).
     if local.status in ("canceled", "expired"):
         logger.warning(
-            "subscription.activated/resumed for %s ignored — local subscription %s "
+            "subscription.activated/resumed for %s ignored. Local subscription %s "
             "(client %s) is already %s; refusing to resurrect it",
             razorpay_sub_id,
             local.id,
             local.client_id,
             local.status,
         )
-        return f"Subscription {razorpay_sub_id} is {local.status} — activation ignored"
+        return f"Subscription {razorpay_sub_id} is {local.status}. Activation ignored"
 
-    # Existing local row — update fields and ensure first-month credits exist.
+    # Existing local row. Update fields and ensure first-month credits exist.
     # Card rescued out of dunning: drop the anchor AND the cadence markers so a
     # future failure starts a fresh grace window and a fresh email sequence
     # instead of inheriting this one.
@@ -3321,7 +3321,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         local.current_period_end = current_period_end
     if customer_id and not local.razorpay_customer_id:
         local.razorpay_customer_id = customer_id
-    # ``quantity`` is the MAIN plan's Razorpay quantity (always 1 — seats bill on
+    # ``quantity`` is the MAIN plan's Razorpay quantity (always 1. Seats bill on
     # a separate add-on sub, P0-3). Since finding A makes operator_quantity the
     # authoritative seat-entitlement mirror maintained by the seat webhooks,
     # writing the bare main-plan quantity here would clobber a seat-holder down to
@@ -3353,7 +3353,7 @@ def _ensure_subscription_charge_invoice(
     Idempotent on ``payment_id`` (unique-indexed) so it is safe to call from
     BOTH the ``subscription.charged`` webhook and the synchronous verify path
     that stands in for webhooks the box can't receive (local dev, webhook lag).
-    Whichever runs first creates the row; the other finds it and no-ops — no
+    Whichever runs first creates the row; the other finds it and no-ops, no
     duplicate invoice. Returns the invoice (new or existing), or ``None`` when
     there is no payment id.
     """
@@ -3370,24 +3370,24 @@ def _ensure_subscription_charge_invoice(
         currency=str(currency or "INR").lower(),
         status="paid",
         razorpay_payment_id=payment_id,
-        # Razorpay's own invoice entity for this cycle — payment evidence
+        # Razorpay's own invoice entity for this cycle. Payment evidence
         # linking our document to theirs, not the tax doc.
         razorpay_invoice_id=razorpay_invoice_id,
         period_start=period_start,
         period_end=period_end,
         kind="plan_charge",  # clawback routing (P0-1): this charge funds a plan_grant
-        description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
+        description=(f"{local.plan.name if local.plan else 'Plan'} - {local.billing_cycle}"),
         # Finding G: date from the real capture instant so the FY serial + doc
         # date land in the correct GST period at a month/FY boundary.
         paid_at=paid_at or datetime.now(UTC),
-        # Razorpay's realised INR conversion — only present on a non-INR
+        # Razorpay's realised INR conversion. Only present on a non-INR
         # charge, and the only thing that lets an export be finalized.
         inr_amount_minor=inr_amount_minor,
     )
     session.add(invoice)
     session.flush()
     # Enrich into a numbered GST tax invoice when invoicing v2 is on (no-op
-    # otherwise — leaves the legacy payment-history row). The _safely wrapper
+    # otherwise. Leaves the legacy payment-history row). The _safely wrapper
     # savepoints any finalize failure so shadow-mode invoicing never blocks the
     # money path.
     invoice_service.finalize_invoice_safely(session, invoice)
@@ -3402,7 +3402,7 @@ def record_verified_subscription_charge(
     The ``subscription.charged`` webhook is the canonical invoice creator, but
     it can't reach a local dev box and may lag in prod. The verify endpoint has
     the captured ``razorpay_payment_id`` in hand, so we fetch the payment and
-    create the invoice synchronously — idempotent on the payment id, so the
+    create the invoice synchronously. Idempotent on the payment id, so the
     eventual webhook never duplicates it. Never raises into the caller: a
     failure here must not fail checkout verification.
     """
@@ -3410,7 +3410,7 @@ def record_verified_subscription_charge(
         return None
     try:
         pay = _get_razorpay().payment.fetch(razorpay_payment_id)
-    except Exception:  # noqa: BLE001 — best-effort; the webhook remains the canonical path
+    except Exception:  # noqa: BLE001  Best-effort; the webhook remains the canonical path
         logger.exception("verify: could not fetch payment %s for first-charge invoice", razorpay_payment_id)
         return None
     if str(pay.get("status") or "").lower() != "captured":
@@ -3436,7 +3436,7 @@ def record_verified_subscription_charge(
 def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> str:
     """Recurring payment captured. Reset + grant the new month's credits.
 
-    Razorpay fires this on every successful cycle — including the very first
+    Razorpay fires this on every successful cycle, including the very first
     one immediately after activation. We avoid double-granting by checking
     whether the subscription's ``current_period_start`` is roughly the same
     as the period reported on this event, in which case the
@@ -3452,10 +3452,10 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     if local is None:
         # First-charge race: ``charged`` can arrive before ``activated`` links
         # the razorpay id. Raise (never ack) so the event is dead-lettered and
-        # Razorpay redelivers once activation has landed — otherwise the
+        # Razorpay redelivers once activation has landed. Otherwise the
         # period's invoice is silently lost forever. A genuinely foreign sub id
         # exhausts Razorpay's retries and stays visible in failed_webhooks.
-        logger.warning("subscription.charged for unknown razorpay_subscription_id %s — will retry", razorpay_sub_id)
+        logger.warning("subscription.charged for unknown razorpay_subscription_id %s. Will retry", razorpay_sub_id)
         raise WebhookOutOfOrder(
             f"subscription.charged arrived before {razorpay_sub_id} was linked locally; retry after activation"
         )
@@ -3469,13 +3469,13 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
 
     # First real payment on an attributed signup → record the referral
     # conversion from the snapshot checkout parked in the notes (Wave 1.4).
-    # Unique-per-client, so every later cycle and replay is a no-op — and an
+    # Unique-per-client, so every later cycle and replay is a no-op, and an
     # abandoned checkout (this event never fires) accrues nothing.
     _record_referral_conversion_from_notes(session, local.client_id, sub_entity.get("notes") or {})
 
     # Record the invoice if a payment entity was included. Flushed so its id can
     # link the period grant for precise refund clawback (C2 / NV5).
-    # ``period_invoice`` must be bound even when no payment entity arrived —
+    # ``period_invoice`` must be bound even when no payment entity arrived,
     # the withheld-charge stamp branches below reference it unconditionally,
     # and an unbound name there would NameError AFTER the irreversible gateway
     # cancel in the backstop branch, rolling back the local bookkeeping into a
@@ -3498,7 +3498,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         period_invoice_id = period_invoice.id if period_invoice else None
 
     # A subscription already canceled/expired locally must not be silently
-    # resurrected by a charged event for it — out-of-order/redelivered
+    # resurrected by a charged event for it. Out-of-order/redelivered
     # webhooks, or a charge that was already in flight at Razorpay the moment
     # the customer cancelled, can land here after the fact. Razorpay still
     # captured real money (the invoice above records it for reconciliation
@@ -3507,24 +3507,24 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     if local.status in ("canceled", "expired"):
         logger.warning(
             "subscription.charged for %s (client %s) arrived after local subscription "
-            "%s was already %s — invoice recorded for reconciliation, but NOT granting "
+            "%s was already %s. Invoice recorded for reconciliation, but NOT granting "
             "credits or reactivating.",
             razorpay_sub_id,
             local.client_id,
             local.id,
             local.status,
         )
-        # This charge funded NO credits — mark it so a later refund of it (the
+        # This charge funded NO credits. Mark it so a later refund of it (the
         # prescribed ops action) claws nothing instead of guessing at a grant.
         _mark_withheld_charge(session, period_invoice)
         session.flush()
-        return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
+        return f"Subscription {razorpay_sub_id} charged after cancellation. Invoice recorded, not reactivated"
 
     # Backstop for the deferred-cancellation model. ``/subscriptions/cancel``
     # leaves the mandate live so the customer can reactivate for free, and
     # ``task_execute_pending_cancellations`` issues the real cancel a couple of
     # days before period end. If that cron was down long enough, Razorpay
-    # renewed a subscription the customer had already cancelled — which is
+    # renewed a subscription the customer had already cancelled, which is
     # exactly the charge the deferral trades against, so it must be caught here
     # and bounded at ONE cycle. Cancel immediately (there is nothing left to
     # protect: the period they paid for has just rolled over), withhold the
@@ -3542,7 +3542,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             # (``current_period_end`` is still the elapsed one) and tries again.
             logger.error(
                 "Emergency gateway cancel FAILED for %s (client %s) after it renewed past a "
-                "pending cancellation — the mandate is STILL LIVE and will debit again next "
+                "pending cancellation, the mandate is STILL LIVE and will debit again next "
                 "cycle. Left active so the sweep retries; needs manual cancellation at Razorpay "
                 "if it keeps failing.",
                 razorpay_sub_id,
@@ -3550,11 +3550,11 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 exc_info=True,
             )
             session.flush()
-            return f"Subscription {razorpay_sub_id} renewed past a pending cancellation — cancel FAILED, will retry"
+            return f"Subscription {razorpay_sub_id} renewed past a pending cancellation. Cancel FAILED, will retry"
 
         # The operator-seat add-on is a SEPARATE Razorpay mandate and must be
-        # retired here too, exactly as ``execute_gateway_cancellation`` does —
-        # this backstop is the last code that ever sees this row (the status
+        # retired here too, exactly as ``execute_gateway_cancellation`` does.
+        # This backstop is the last code that ever sees this row (the status
         # flip below removes it from the sweep's match set), so skipping the
         # add-on would leave a live per-seat mandate debiting the customer
         # monthly with no retry path. Park the count as pending so a later
@@ -3567,7 +3567,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 cancel_seat_addon(session, local)
             except Exception:
                 logger.error(
-                    "Seat add-on cancel FAILED for %s (client %s) during the charged backstop — "
+                    "Seat add-on cancel FAILED for %s (client %s) during the charged backstop. "
                     "the seat mandate is STILL LIVE at Razorpay and will keep debiting. Leaving "
                     "the row active and unstamped so the sweep retries.",
                     razorpay_sub_id,
@@ -3576,7 +3576,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 )
                 session.flush()
                 return (
-                    f"Subscription {razorpay_sub_id} renewed past a pending cancellation — "
+                    f"Subscription {razorpay_sub_id} renewed past a pending cancellation. "
                     "seat add-on cancel FAILED, will retry"
                 )
             if wanted_seats > 0:
@@ -3590,15 +3590,15 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         session.flush()
         logger.error(
             "subscription.charged for %s (client %s) renewed a subscription that was cancelled "
-            "for period end — the pending-cancellation sweep did not run in time. Invoice "
+            "for period end, the pending-cancellation sweep did not run in time. Invoice "
             "recorded and credits WITHHELD; this charge needs refunding.",
             razorpay_sub_id,
             local.client_id,
         )
-        return f"Subscription {razorpay_sub_id} renewed past a pending cancellation — cancelled, refund required"
+        return f"Subscription {razorpay_sub_id} renewed past a pending cancellation. Cancelled, refund required"
 
     # Grant this period's credits at most once, keyed on the period end marker
-    # (replaces the old fragile 24h time-window heuristic — H4). The activation
+    # (replaces the old fragile 24h time-window heuristic. H4). The activation
     # grant set the marker for the first period, so the first charged event for
     # that period is a no-op; each later renewal advances to a new period.
     if _grant_subscription_period(session, local, new_period_end, invoice_id=period_invoice_id):
@@ -3614,7 +3614,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.current_period_end = new_period_end
     # A successful charge is the NORMAL rescue out of dunning (the activated
     # path only covers a re-authorised mandate), so the episode must be reset
-    # here too — otherwise the next failure inherits stale markers and the
+    # here too. Otherwise the next failure inherits stale markers and the
     # customer is suspended without a single email.
     if local.status == "past_due":
         _clear_dunning_state(local)
@@ -3626,17 +3626,17 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
 def _promote_scheduled_if_pending(session: Session, local: Subscription) -> str | None:
     """Promote a queued scheduled downgrade if the row carries one.
 
-    Shared by both ``subscription.completed`` and ``subscription.cancelled``
-    so the two cutover paths can't drift. Under a ``cancel_at_cycle_end``
-    mandate (which is how a scheduled paid downgrade is set up) Razorpay fires
-    ``subscription.cancelled`` at the cutover — NOT ``subscription.completed``
-    — so the cancelled handler MUST run this before its terminal cancel or the
-    queued downgrade is lost (BL-1).
+     Shared by both ``subscription.completed`` and ``subscription.cancelled``
+     so the two cutover paths can't drift. Under a ``cancel_at_cycle_end``
+     mandate (which is how a scheduled paid downgrade is set up) Razorpay fires
+     ``subscription.cancelled`` at the cutover. NOT ``subscription.completed``
+    , so the cancelled handler MUST run this before its terminal cancel or the
+     queued downgrade is lost (BL-1).
 
-    Returns a status message when a promotion happened, or ``None`` when there
-    was nothing to promote (no queued change, or already promoted). Delegates
-    to ``transition_service.promote_scheduled_change``, which is idempotent
-    and also notifies the customer of the re-auth link (NB-3).
+     Returns a status message when a promotion happened, or ``None`` when there
+     was nothing to promote (no queued change, or already promoted). Delegates
+     to ``transition_service.promote_scheduled_change``, which is idempotent
+     and also notifies the customer of the re-auth link (NB-3).
     """
     if not local.scheduled_plan_id:
         return None
@@ -3646,7 +3646,7 @@ def _promote_scheduled_if_pending(session: Session, local: Subscription) -> str 
     new_payload = transition_service.promote_scheduled_change(session, local)
     session.flush()
     if new_payload is None:
-        # Race or stale state (e.g. scheduled plan vanished) — the promotion
+        # Race or stale state (e.g. scheduled plan vanished), the promotion
         # helper already cleared the trio. Let the caller apply its terminal
         # status.
         return None
@@ -3673,7 +3673,7 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     local.canceled_at = datetime.now(UTC)
     # A Razorpay-originated cancellation (customer cancelled via their UPI app
     # or Razorpay's emails/dashboard) must retire the seat add-on mandate too
-    # (F4) — every other cancellation path does, and without this the per-seat
+    # (F4). Every other cancellation path does, and without this the per-seat
     # mandate kept debiting a customer who had cancelled their plan. Same
     # park-as-pending semantics as execute_gateway_cancellation; a failure is
     # logged for reconciliation but must not fail the plan cancel bookkeeping.
@@ -3686,7 +3686,7 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
         except Exception:
             logger.error(
                 "Seat add-on cancel FAILED for %s (client %s) during a Razorpay-originated "
-                "cancellation — the seat mandate is STILL LIVE at Razorpay and will keep "
+                "cancellation, the seat mandate is STILL LIVE at Razorpay and will keep "
                 "debiting until the orphan sweep or manual reconciliation catches it.",
                 sub_entity.get("id"),
                 local.client_id,
@@ -3709,7 +3709,7 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
 
 
 def _handle_subscription_completed(session: Session, payload: dict[str, Any]) -> str:
-    """Razorpay subscription completed — final invoice debited, no more cycles.
+    """Razorpay subscription completed. Final invoice debited, no more cycles.
 
     Two paths from here:
 
@@ -3752,7 +3752,7 @@ def _clear_dunning_state(local: Subscription) -> None:
     marker on the new episode and is silently sent NOTHING before being
     expired on day 7.
 
-    Idempotent and safe to call on any status — a row that was never past due
+    Idempotent and safe to call on any status, a row that was never past due
     simply has nothing to clear.
     """
     local.past_due_since = None
@@ -3781,14 +3781,14 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     """Reverse the FIRST period's activation grant if its charge never paid (#2).
 
     A UPI ``subscription.activated`` grants the first period's credits BEFORE the
-    first debit. If that debit then fails — ``subscription.pending`` /
-    ``subscription.halted`` with no successful ``subscription.charged`` — the
+    first debit. If that debit then fails. ``subscription.pending`` /
+    ``subscription.halted`` with no successful ``subscription.charged``, the
     customer would keep a full period of credits they never paid for.
 
     The activation grant is the ONLY grant that precedes its payment: every later
     period grants atomically WITH ``subscription.charged`` (renewals never
     pre-grant). So "this subscription has zero paid invoices" cleanly identifies
-    an unpaid activation grant, without any fragile period-timestamp matching —
+    an unpaid activation grant, without any fragile period-timestamp matching,
     a later-cycle failure has ≥1 paid invoice and never pre-granted, so it is
     correctly left alone.
 
@@ -3827,7 +3827,7 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     # its absence means the activation grant was never paid. Scoped to this sub
     # so a client's other (per-bot) subscriptions can't mask an unpaid first
     # charge. Seat add-on invoices are excluded (F5): they stamp the main sub's
-    # id but pay for seats, not the plan — a successfully-charged seat mandate
+    # id but pay for seats, not the plan, a successfully-charged seat mandate
     # must not mask a failed first plan debit and let the customer keep a full
     # unpaid period of credits (the exact leak this revoke exists to close).
     has_paid_charge = (
@@ -3837,7 +3837,7 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
                 Invoice.subscription_id == local.id,
                 Invoice.status == "paid",
                 # is_distinct_from: legacy rows (kind IS NULL) must still count
-                # as plan charges — a plain != would exclude them too.
+                # as plan charges, a plain != would exclude them too.
                 Invoice.kind.is_distinct_from("seat"),
             )
             .limit(1)
@@ -3851,7 +3851,7 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
     local.last_granted_period_end = start
     logger.info(
-        "Revoked unpaid activation grant for subscription %s (client %s, bot %s) — "
+        "Revoked unpaid activation grant for subscription %s (client %s, bot %s). "
         "first charge never paid; rolled marker back to period start for a clean re-grant on retry",
         local.razorpay_subscription_id,
         local.client_id,
@@ -3889,7 +3889,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
 
 
 def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
-    """Is this payment a subscription cycle charge — decidable with no gateway call?
+    """Is this payment a subscription cycle charge. Decidable with no gateway call?
 
     Razorpay raises an Invoice for every subscription charge and stamps its id on
     the payment; our top-ups are bare Orders created by ``create_topup_order``
@@ -3897,7 +3897,7 @@ def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
     is proof this is not a top-up, available from the webhook body alone.
 
     That matters because the classification used to happen only AFTER an
-    ``order.fetch`` that fails for subscription orders — turning every single
+    ``order.fetch`` that fails for subscription orders. Turning every single
     subscription payment into a 500 on the webhook endpoint.
     """
     if not pay_entity:
@@ -3908,7 +3908,7 @@ def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
 def _is_permanent_gateway_failure(exc: BaseException) -> bool:
     """Will retrying this Razorpay read EVER succeed?
 
-    The SDK maps HTTP 4xx to ``BadRequestError`` — a malformed or unknown id,
+    The SDK maps HTTP 4xx to ``BadRequestError``, a malformed or unknown id,
     which no redelivery can fix. ``ServerError``/``GatewayError``, timeouts and
     transport faults are the opposite: they say nothing about the resource, only
     about this attempt, and must keep forcing a retry.
@@ -3919,7 +3919,7 @@ def _is_permanent_gateway_failure(exc: BaseException) -> bool:
     """
     try:
         from razorpay.errors import BadRequestError
-    except Exception:  # pragma: no cover — razorpay is a hard dependency
+    except Exception:  # pragma: no cover. Razorpay is a hard dependency
         return False
     return isinstance(exc, BadRequestError)
 
@@ -3942,7 +3942,7 @@ def _dead_letter_unclassifiable_payment(
         context=context,
         body={"payment": pay_entity or {}},
         error=(
-            "MANUAL REVIEW REQUIRED (replay will not help — this row has no signed body, and the "
+            "MANUAL REVIEW REQUIRED (replay will not help. This row has no signed body, and the "
             f"order fetch fails permanently). Razorpay payment {payment_id} references order "
             f"{order_id}, which cannot be fetched with these keys ({exc!r}), so we could not tell "
             "whether it was a credits top-up. The event was ACKed rather than 5xx-looped, because "
@@ -3953,7 +3953,7 @@ def _dead_letter_unclassifiable_payment(
 
 
 def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
-    """Top-up payment captured — grant top-up credits and record the invoice.
+    """Top-up payment captured. Grant top-up credits and record the invoice.
 
     Also the ``order.paid`` handler. Subscription-cycle payments are handled by
     ``subscription.charged``; we detect a top-up by ``notes.purpose == 'topup'``
@@ -3963,13 +3963,13 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     the difference between an ACK and a webhook outage:
 
     1. notes already on the payment / order entity in the payload;
-    2. ``_is_subscription_payment`` — an ``invoice_id`` proves it is a cycle
+    2. ``_is_subscription_payment``, an ``invoice_id`` proves it is a cycle
        charge, no gateway call needed;
     3. an order entity present in the payload with empty notes is authoritative;
     4. only then, fetch the order.
 
     Step 2 used to be missing, so a subscription payment fell through to the
-    fetch, the fetch failed, and the whole webhook 500ed — on every subscription
+    fetch, the fetch failed, and the whole webhook 500ed, on every subscription
     payment, for every customer.
     """
     pay_entity = _extract_payment_entity(payload)
@@ -3982,7 +3982,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
 
     # Classify BEFORE reaching for the gateway. A subscription cycle payment is
     # not a top-up and never can be, and its order is not fetchable with these
-    # keys — so the fetch below failed, raised ``RazorpayTransientError``, and
+    # keys, so the fetch below failed, raised ``RazorpayTransientError``, and
     # 500ed the webhook endpoint on EVERY subscription payment. Razorpay retries
     # failed webhooks hard and disables endpoints that keep failing, so that
     # storm could have taken billing webhooks down for every customer.
@@ -3991,7 +3991,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
 
     # Same idea one step further out: when the ORDER entity is already in the
     # payload (the ``order.paid`` shape), its notes are authoritative. Empty
-    # notes there mean "not a top-up" — not "unknown" — and re-fetching the same
+    # notes there mean "not a top-up" (not "unknown") and re-fetching the same
     # order could only return the same answer.
     if not notes and order_entity is not None:
         return "payment ignored (order carries no topup notes)"
@@ -3999,7 +3999,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     # A ``payment.captured`` webhook carries only the PAYMENT entity, but top-up
     # metadata lives on the ORDER's notes. When the order entity isn't in the
     # payload (the common payment.captured shape), fetch the order so a top-up
-    # can be granted from payment.captured alone — not only from order.paid (H5).
+    # can be granted from payment.captured alone, not only from order.paid (H5).
     order_id_for_notes = (pay_entity or {}).get("order_id")
     if not notes and order_id_for_notes:
         try:
@@ -4009,11 +4009,11 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             if _is_permanent_gateway_failure(exc):
                 # A 4xx means this order id will never resolve for these keys, so
                 # no retry can change the answer and 5xx-ing would only burn
-                # Razorpay's whole retry window against a wall. ACK — but leave a
+                # Razorpay's whole retry window against a wall. ACK, but leave a
                 # durable, actionable record, because we are acking a payment we
                 # could not classify.
                 logger.error(
-                    "order.fetch for %s failed permanently (%s) — acking payment %s unclassified; "
+                    "order.fetch for %s failed permanently (%s). Acking payment %s unclassified; "
                     "recorded in failed_webhooks for manual review",
                     order_id_for_notes,
                     exc,
@@ -4053,7 +4053,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
         )
         if existing_inv:
-            # ANY existing invoice means this payment was already processed —
+            # ANY existing invoice means this payment was already processed,
             # including one since refunded. Falling through on a non-"paid"
             # status (e.g. an order.paid alias redelivered after a refund) hit
             # the unique razorpay_payment_id index at flush, dead-lettered, and
@@ -4064,8 +4064,8 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
 
     # Defense-in-depth (NV2): the credits to grant come from server-set order
     # notes, but the money actually captured comes from Razorpay. Reconcile the
-    # two before granting so a future order-create bug — or any path that lets
-    # notes drift from the charged amount — can never mint credits the customer
+    # two before granting so a future order-create bug (or any path that lets
+    # notes drift from the charged amount) can never mint credits the customer
     # didn't pay for. ``CHECKOUT_TEST_CLIENT_IDS`` orders are deliberately
     # charged ₹1 (100 paise) while their notes carry the real pack price, so we
     # exempt exactly that documented override and nothing else.
@@ -4083,7 +4083,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     # Notes may carry ``bot_id`` for per-bot top-ups (set by
     # ``create_topup_order(bot_id=...)``). Default to None → client pool.
     # Resolved before the invoice insert so the invoice records the ledger
-    # scope this payment credited (remediation C2 — drives refund clawback).
+    # scope this payment credited (remediation C2. Drives refund clawback).
     target_bot_id_raw = notes.get("bot_id")
     target_bot_id: int | None = None
     if target_bot_id_raw is not None:
@@ -4094,12 +4094,12 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
 
     # Describe the SUPPLY, not the marketing SKU. The pack used to be labelled
     # with its display price ("$49 pack"), which landed a USD figure on an INR
-    # tax invoice charging ₹3,999 — a number that is neither the taxable value,
+    # tax invoice charging ₹3,999, a number that is neither the taxable value,
     # nor the total, nor the currency of supply. On a Rule 46 document that
     # invites exactly one question in an audit or a dispute: what was supplied,
     # and for how much? The amount column already carries the price, so the
     # credit quantity is the whole description.
-    topup_description = f"Credits top-up — {credits:,} credits"
+    topup_description = f"Credits top-up - {credits:,} credits"
 
     invoice = Invoice(
         client_id=client_id,
@@ -4205,7 +4205,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     the moment the refund is initiated; processed fires when the bank settles
     it. We claw back on the FIRST event so the customer can't keep using credits
     during the settlement window, and dedupe on the refund id so the second
-    event never claws again — even if a fresh grant arrived in between (N2).
+    event never claws again, even if a fresh grant arrived in between (N2).
     """
     refund_entity = (payload.get("refund") or {}).get("entity") or {}
     if not refund_entity:
@@ -4222,10 +4222,10 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     # Without this, a grant that lands between the two events would be clawed a
     # second time (remediation N2). First event to arrive claws; the rest no-op.
     refund_id = refund_entity.get("id")
-    # A refund with no id can't be deduped — reject rather than process it
+    # A refund with no id can't be deduped. Reject rather than process it
     # un-deduped (which would let refund.created + refund.processed double-claw).
     if not refund_id:
-        logger.warning("refund event missing id for payment %s — rejecting", payment_id)
+        logger.warning("refund event missing id for payment %s. Rejecting", payment_id)
         return "refund missing id"
     if not _record_or_skip_event(session, f"refund:{refund_id}"):
         return f"Refund {refund_id} already clawed back"
@@ -4246,7 +4246,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     if reasons is None:
         clawed, entry_id = 0, None
         logger.info(
-            "Refund of %s invoice %s (kind=%s) — no credit grant to reverse by design",
+            "Refund of %s invoice %s (kind=%s), no credit grant to reverse by design",
             refund_entity.get("id"),
             inv.id,
             inv.kind,
@@ -4268,12 +4268,12 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
 
     # Razorpay refunds may be partial; keep the full/partial distinction so the
     # billing UI can render the right copy. The Section 34 credit note is NOT
-    # issued here — refund.created only means "initiated", and a bank refund
+    # issued here. Refund.created only means "initiated", and a bank refund
     # can still fail; the note is issued by _handle_refund_processed once the
     # settlement actually clears.
     #
     # Finding #5: compare the CUMULATIVE refunded amount to the charge, not just
-    # this event's amount — otherwise an invoice fully refunded via several
+    # this event's amount. Otherwise an invoice fully refunded via several
     # partial refunds stays "partially_refunded" forever. Each refund event is
     # deduped on its refund id above, so accumulating here counts each exactly
     # once.
@@ -4293,7 +4293,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
 
 
 def _handle_refund_processed(session: Session, payload: dict[str, Any]) -> str:
-    """Refund SETTLED — run the clawback path (a no-op when ``refund.created``
+    """Refund SETTLED, run the clawback path (a no-op when ``refund.created``
     already clawed, via the ``refund:{id}`` dedup) and then issue the Section 34
     credit note. Issuing only on settlement means a bank-failed refund can never
     leave behind a legal document for money that was never returned (the CN's
@@ -4310,7 +4310,7 @@ def _handle_refund_processed(session: Session, payload: dict[str, Any]) -> str:
     inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
     if inv is None:
         return result
-    # Savepoint-isolated: a note failure must never undo the clawback — a
+    # Savepoint-isolated: a note failure must never undo the clawback, a
     # missed note surfaces in reconciliation and is re-issuable from admin.
     note = invoice_service.create_credit_note_safely(session, inv, refund_minor, provider_ref=refund_id)
     if note is not None:
@@ -4319,7 +4319,7 @@ def _handle_refund_processed(session: Session, payload: dict[str, Any]) -> str:
 
 
 def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
-    """A previously-initiated refund FAILED at the gateway — restore the credits
+    """A previously-initiated refund FAILED at the gateway. Restore the credits
     we clawed on ``refund.created`` (remediation N1).
 
     Deduped on ``refund_failed:<id>`` so a replay can't over-restore. Matches the
@@ -4353,7 +4353,7 @@ def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
     failed_minor = int(refund_entity.get("amount") or 0)
     if failed_minor > 0:
         inv.refunded_minor = max(0, int(inv.refunded_minor or 0) - failed_minor)
-    # Recompute status from what actually stands — a different, still-valid
+    # Recompute status from what actually stands, a different, still-valid
     # partial refund must keep its "partially_refunded" label.
     charge_minor = int(inv.amount_cents or 0)
     if inv.status in ("refunded", "partially_refunded"):
@@ -4380,14 +4380,14 @@ def _invoice_for_payment(session: Session, payment_id: str) -> Invoice | None:
 
 
 def _mark_withheld_charge(session: Session, invoice: Invoice | None) -> None:
-    """Stamp ``kind='withheld_charge'`` — but only on an invoice that funded
+    """Stamp ``kind='withheld_charge'``, but only on an invoice that funded
     no credit grant.
 
     ``_ensure_subscription_charge_invoice`` can return a PRE-EXISTING row
     (e.g. the verify path's first-charge invoice, already ``plan_charge`` with
     a linked grant) when a charged webhook is delayed past a cancellation.
     Re-labelling that row would permanently disable its refund clawback while
-    a real, possibly unconsumed grant hangs off it — so the stamp applies only
+    a real, possibly unconsumed grant hangs off it, so the stamp applies only
     when no positive ledger row references the invoice.
     """
     if invoice is None:
@@ -4405,7 +4405,7 @@ def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
     """Which grant type a refund/chargeback of ``inv`` should reverse.
 
     ``None`` means the charge funded NO credit grant (seat add-ons,
-    withheld-credit charges after cancellation) — claw nothing. Deriving this
+    withheld-credit charges after cancellation). Claw nothing. Deriving this
     from ``subscription_id`` presence was P0-1: seat and withheld invoices
     carry a subscription_id, so refunding one fell through to the
     most-recent-grant fallback and wiped an unrelated plan allowance.
@@ -4441,7 +4441,7 @@ def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
 
 
 def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
-    """Dispute lost — Razorpay has withdrawn the funds, so reverse the credits
+    """Dispute lost. Razorpay has withdrawn the funds, so reverse the credits
     the payment granted, from the SAME ledger scope and grant type a refund
     would use (C2). Deduped on the dispute id so a replay (or created→lost
     sequence) can't double-claw."""
@@ -4459,12 +4459,12 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
     charge_minor = int(inv.amount_cents or 0)
     dispute_minor = int(dispute.get("amount") or charge_minor)
     # Same kind-based routing as refunds (P0-1): a lost dispute on a seat or
-    # withheld charge reverses nothing — those charges funded no grant.
+    # withheld charge reverses nothing. Those charges funded no grant.
     reasons = _clawback_reasons_for(inv)
     if reasons is None:
         clawed = 0
         logger.info(
-            "Dispute %s lost on %s invoice %s (kind=%s) — no credit grant to reverse by design",
+            "Dispute %s lost on %s invoice %s (kind=%s), no credit grant to reverse by design",
             dispute_id,
             inv.kind,
             inv.id,
@@ -4490,12 +4490,12 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
     else:
         # No dispute id → no idempotency key → no note. Reconciliation catches
         # the dispute_lost invoice without a linked credit note.
-        logger.warning("dispute.lost without id on invoice %s — credit note skipped for reconciliation", inv.id)
+        logger.warning("dispute.lost without id on invoice %s. Credit note skipped for reconciliation", inv.id)
     return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
 
 
 def _handle_dispute_won(session: Session, payload: dict[str, Any]) -> str:
-    """Dispute won — funds retained. We never clawed (clawback is on ``lost``),
+    """Dispute won. Funds retained. We never clawed (clawback is on ``lost``),
     so just clear the dispute flag."""
     dispute = _extract_dispute_entity(payload)
     payment_id = dispute.get("payment_id")

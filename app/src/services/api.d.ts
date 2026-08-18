@@ -73,8 +73,8 @@ export function discoverCrawlUrls(url: string, botId?: number): Promise<CrawlDis
 export function getDocuments(botId?: number): Promise<KnowledgeSource[]>;
 export function getDocumentPages(source: string, botId?: number): Promise<SourcePagesResult>;
 export function deleteDocument(documentName: string, botId?: number): Promise<Record<string, unknown>>;
-/** Whether this bot's knowledge was deactivated by a plan lapse to Free —
- * drives the "re-crawl / re-upload to reactivate" banner on the Knowledge page.
+/** Whether this bot's knowledge was deactivated by a plan lapse to Free.
+ * Drives the "re-crawl / re-upload to reactivate" banner on the Knowledge page.
  * Backed by `GET /documents/knowledge-state`. */
 export function getKnowledgeState(botId?: number): Promise<KnowledgeState>;
 
@@ -204,13 +204,13 @@ export interface JourneySummary {
   handoff_requested: number;
   offline_message_sent: number;
   /** Sessions with a journey but no conversion event AND no post-chat
-   *  page — the honest drop-off count. Prefer this over deriving
+   *  page, the honest drop-off count. Prefer this over deriving
    *  drop-off by subtraction; subtraction double-counts sessions that
    *  both converted AND kept browsing. Optional for backward compat
    *  with older API builds. */
   sessions_no_activity?: number;
   /** Sessions with a journey that fired NO conversion event but DID
-   *  visit at least one post-chat page — "kept browsing, no outcome".
+   *  visit at least one post-chat page. "kept browsing, no outcome".
    *  The right-hand outcome column needs this bucket to reconcile with
    *  `sessions_with_journey`: conversions + this + `sessions_no_activity`
    *  partition every journey exactly once. Optional for backward compat
@@ -276,7 +276,7 @@ export interface JourneyPreChatSequencesResponse {
   sessions_with_pre_chat: number;
   sequences: Array<{
     sequence: string[];
-    /** Top post-chat continuation for THIS pre-chat pattern —
+    /** Top post-chat continuation for THIS pre-chat pattern,
      *  the ordered pages visitors most commonly took after opening
      *  chat. Empty array when no session with this pre-pattern had
      *  any post-chat activity. Drives the per-row post-chain that

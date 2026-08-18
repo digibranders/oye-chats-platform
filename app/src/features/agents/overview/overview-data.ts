@@ -17,7 +17,7 @@ export interface AgentStats {
   readonly totalConversations: number;
   readonly totalMessages: number;
   readonly activeUsers: number;
-  /** Percentage of rated answers marked helpful, 0–100. */
+  /** Percentage of rated answers marked helpful, 0 to 100. */
   readonly successRate: number;
   readonly resolutionRate: number | null;
   readonly averageRating: number | null;

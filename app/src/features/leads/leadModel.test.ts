@@ -7,7 +7,7 @@ import { companyDisplay, filterLeads, formatLocation } from './leadModel';
  * `"IP: <addr>"` stamp written before geolocation resolves).
  *
  * A visitor's IP address is personal data under GDPR/DPDP, so it must never
- * be rendered in the dashboard. These tests pin the stripping rules — the
+ * be rendered in the dashboard. These tests pin the stripping rules, the
  * Leads table was previously printing the stored string verbatim, putting
  * raw IPv6 addresses on screen.
  */
@@ -32,7 +32,7 @@ describe('formatLocation', () => {
 
   it('treats the raw pre-geolocation stamp as unknown', () => {
     // "IP: x" is written by the request handler before the background
-    // resolver replaces it. It carries no geography — showing it would be
+    // resolver replaces it. It carries no geography. Showing it would be
     // strictly worse than saying nothing.
     expect(formatLocation('IP: 103.21.244.12')).toBe('Unknown');
   });
@@ -64,8 +64,8 @@ describe('formatLocation', () => {
 
 describe('companyDisplay', () => {
   /* `company` is the raw email domain and always present; `company_name` is
-     the Professional-gated resolved identity and frequently absent —
-     resolution can fail, be switched off per agent, or still be in flight.
+     the Professional-gated resolved identity and frequently absent.
+     Resolution can fail, be switched off per agent, or still be in flight.
      The resolved name must APPEND to the domain, never replace it: rendering
      only `company_name` would blank the company row for every lead on a lower
      plan, a regression against behaviour that predates the feature. */

@@ -1,4 +1,4 @@
-"""GET /subscriptions/payment-recovery — drives the app-wide past-due banner.
+"""GET /subscriptions/payment-recovery. Drives the app-wide past-due banner.
 
 Read-only by construction: it resolves Razorpay's EXISTING hosted page and must
 never mint a second mandate, which would double-charge a customer whose
@@ -161,7 +161,7 @@ def test_terminal_gateway_state_reports_not_recoverable(db):
 
 def test_agent_scope_falls_back_to_the_account_subscription(db):
     """The banner is app-wide. An agent with no subscription of its own must
-    still surface the ACCOUNT's past-due state — otherwise selecting an agent
+    still surface the ACCOUNT's past-due state. Otherwise selecting an agent
     in the switcher silently hides the warning (same class of bug as F1)."""
     from app.api import subscription_routes
     from app.services import dunning_service

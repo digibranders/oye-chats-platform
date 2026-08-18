@@ -1,15 +1,15 @@
 """``POST /bots/checkout`` must not mint a second chargeable mandate on retry.
 
 The last uncovered double-charge path. Two prod incidents drove the account-level
-fixes — client 19 paid ₹11,998 for one month of Enterprise, client 8 authorised
+fixes. Client 19 paid ₹11,998 for one month of Enterprise, client 8 authorised
 two Professional mandates 44 seconds apart and got 20,000 credits instead of
-10,000 — and both were fixed on ``/subscriptions/checkout``, ``/change-plan``
+10,000, and both were fixed on ``/subscriptions/checkout``, ``/change-plan``
 Branch 3, ``execute_paid_upgrade`` and ``/resume``. This route was left minting
 straight through: no lock, no marker consulted, no in-flight mandate retired.
 
 It could not have been caught by the live testing that found the others.
 Enterprise has ``limits.bots = -1``, which this route refuses outright, so the
-tier being exercised in prod never reaches it. Every *other* paid tier does —
+tier being exercised in prod never reaches it. Every *other* paid tier does,
 it is the upsell a growing customer hits repeatedly.
 
 Two things make this path different from the account-level twin, and both are
@@ -18,7 +18,7 @@ pinned below:
 * **The agent does not exist yet.** The bot row is deliberately not created
   until the mandate is paid, so ``clients.pending_checkout_bot_id`` has no id to
   hold. Which agent a mandate would create lives only in its Razorpay notes, so
-  that is what the reuse decision compares — otherwise a retry that renamed the
+  that is what the reuse decision compares. Otherwise a retry that renamed the
   agent would be handed back a mandate that creates the *other* one, pointed at
   the other website.
 * **A failed supersede-cancel is not fatal here.** This path has never cancelled
@@ -161,7 +161,7 @@ def test_a_resubmit_reuses_the_in_flight_mandate(db, monkeypatch):
 
 def test_the_abandoned_checkout_is_now_tracked(db, monkeypatch):
     """The leak half. Nothing recorded a per-agent checkout before, so nothing
-    could supersede or cancel one — an abandoned mandate stayed authorizable at
+    could supersede or cancel one, an abandoned mandate stayed authorizable at
     Razorpay indefinitely and still charged if the customer reopened it."""
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-botidem-leak")
@@ -174,7 +174,7 @@ def test_the_abandoned_checkout_is_now_tracked(db, monkeypatch):
     assert client.pending_checkout_subscription_id == "sub_botidem_leak"
     assert client.pending_checkout_plan_id == plan.id
     assert client.pending_checkout_at is not None
-    # Scoped to a bot that does not exist yet — NOT account-level (NULL), which
+    # Scoped to a bot that does not exist yet. NOT account-level (NULL), which
     # would let the account routes hand this mandate back for a plan purchase.
     assert client.pending_checkout_bot_id == pending_checkout_service.NEW_BOT_SCOPE
 
@@ -210,7 +210,7 @@ def test_a_paid_mandate_still_reading_created_is_refused_not_reopened(db, monkey
     assert res.status_code == 409, res.text
     assert res.json()["detail"]["payment_captured"] is True
     assert not mint.called
-    # Refused outright — not rebuilt into a payment sheet, not cancelled.
+    # Refused outright, not rebuilt into a payment sheet, not cancelled.
     assert not rebuild.called
     assert not cancel.called
     db.refresh(client)
@@ -225,7 +225,7 @@ def _pending_notes_for(name: str, website: str | None) -> dict[str, str]:
     """The notes an in-flight mandate for this agent actually carries.
 
     Built through the route's own domain derivation and the real identity
-    helper, so the fixture cannot drift from what the route would mint — and,
+    helper, so the fixture cannot drift from what the route would mint, and,
     more importantly, so the tests below drive the REAL comparison rather than a
     stubbed answer to it.
     """
@@ -291,7 +291,7 @@ def test_the_same_agent_resubmitted_reuses_the_real_mandate(db, monkeypatch):
 
 def test_renaming_the_agent_supersedes_and_cancels(db, monkeypatch):
     """Two same-plan purchases of two DIFFERENT agents are identical on every
-    column of the marker — same plan, same cycle, same rail, same scope. The
+    column of the marker, same plan, same cycle, same rail, same scope. The
     agent lives only in the gateway notes, so without reading them this request
     would be handed a mandate that creates the OTHER agent, at the other
     agent's website, with the other agent's domain allowlist.
@@ -318,7 +318,7 @@ def test_renaming_the_agent_supersedes_and_cancels(db, monkeypatch):
 
     assert res.status_code == 200, res.text
     assert mint.call_count == 1
-    # The abandoned mandate is dead at the gateway — it can never charge.
+    # The abandoned mandate is dead at the gateway, it can never charge.
     cancel.assert_called_once_with("sub_botidem_alpha")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_botidem_beta"
@@ -352,7 +352,7 @@ def test_a_different_plan_supersedes_and_cancels(db, monkeypatch):
 def test_an_account_level_marker_is_never_reused_for_an_agent_purchase(db, monkeypatch):
     """An account-level mandate activates into an account subscription, not an
     agent. Handing one back here would take the customer's money for an agent
-    and fund the account pool instead — the wrong-ledger hazard the bot scope
+    and fund the account pool instead, the wrong-ledger hazard the bot scope
     column exists to prevent."""
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-botidem-scope")
@@ -452,7 +452,7 @@ def test_a_failed_cancel_does_not_block_the_purchase(db, monkeypatch):
 
     A Razorpay 5xx while tidying up a handle they abandoned must not surface as
     a failed purchase. The mandate was read as unpaid moments earlier, so this
-    is not minting beside a mandate of unknown state — only beside one whose
+    is not minting beside a mandate of unknown state. Only beside one whose
     cancel did not land, which is exactly the pre-existing behaviour on a path
     that never cancelled anything. Refusing would newly break agent purchases
     that succeed today.
@@ -514,8 +514,8 @@ def test_the_account_routes_still_refuse_on_a_failed_cancel(db, monkeypatch):
 
 def test_a_mandate_that_went_active_midflight_blocks_the_mint(db, monkeypatch):
     """``paid_count`` and ``status`` can move apart for a moment. Whichever
-    notices first, nothing was cancelled — only the activation sweep may retire
-    a live mandate — so minting now would leave two CHARGED subscriptions."""
+    notices first, nothing was cancelled (only the activation sweep may retire
+    a live mandate) so minting now would leave two CHARGED subscriptions."""
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-botidem-active")
     pending_checkout_service.record(
@@ -611,7 +611,7 @@ def _minted_notes(*, bot_name: str, bot_website: str | None) -> dict[str, str]:
         (_minted_notes(bot_name="Beta", bot_website="https://alpha.com"), False),
         # A re-pointed agent.
         (_minted_notes(bot_name="Alpha", bot_website="https://beta.com"), False),
-        # The pending mandate carries no website, this request does — the
+        # The pending mandate carries no website, this request does, the
         # asymmetry a "compare only the keys present" check would miss.
         (_minted_notes(bot_name="Alpha", bot_website=None), False),
         # An ACCOUNT-level mandate: no per-bot purpose at all.
@@ -620,7 +620,7 @@ def _minted_notes(*, bot_name: str, bot_website: str | None) -> dict[str, str]:
 )
 def test_reuse_requires_the_notes_to_describe_the_same_agent(pending_notes, reusable):
     """``rebuild_upgrade_checkout`` answers "not reusable" for a mandate that
-    would create a different agent, exactly as it does for the wrong rail — so
+    would create a different agent, exactly as it does for the wrong rail, so
     the caller supersedes it and mints the right one."""
     required = rzp.per_bot_checkout_identity(
         bot_name="Alpha",
@@ -669,7 +669,7 @@ def test_concurrent_agent_purchases_serialise_on_the_billing_lock(pg_engine):
 
     The route holds ``lock_client_for_billing`` across read → decide → mint →
     write, so the second request cannot even READ the marker until the first has
-    COMMITTED it. Without the lock both observe an empty marker and both mint —
+    COMMITTED it. Without the lock both observe an empty marker and both mint,
     which is the bug itself, not a smaller version of it.
     """
     setup = Session(pg_engine)
@@ -709,7 +709,7 @@ def test_concurrent_agent_purchases_serialise_on_the_billing_lock(pg_engine):
 
     thread = threading.Thread(target=request_b, daemon=True)
     try:
-        # Request A: lock, see no marker, mint, record — not yet committed.
+        # Request A: lock, see no marker, mint, record, not yet committed.
         plan_service.lock_client_for_billing(session_a, client_id)
         row_a = session_a.get(Client, client_id)
         assert row_a.pending_checkout_subscription_id is None

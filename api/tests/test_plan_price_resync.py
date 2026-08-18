@@ -114,7 +114,7 @@ def test_update_plan_without_price_change_does_not_mint(db, monkeypatch):
     db.add(superadmin)
     db.flush()
 
-    # Change only the description — no price field touched.
+    # Change only the description, no price field touched.
     spr.update_plan(plan_id, spr.UpdatePlanRequest(description="new copy"), superadmin=superadmin)
     refreshed = db.get(Plan, plan_id)
     assert refreshed.razorpay_plan_id_monthly == "plan_KEEP"
@@ -122,7 +122,7 @@ def test_update_plan_without_price_change_does_not_mint(db, monkeypatch):
 
 def test_update_plan_price_to_zero_clears_id_without_500(db, monkeypatch):
     """Finding: setting a price to 0 (make a tier free) must not raise an
-    uncaught 500 — create_plan_for_price rejects a non-positive amount. Instead
+    uncaught 500. Create_plan_for_price rejects a non-positive amount. Instead
     the gateway id is cleared and the edit succeeds."""
     from app.api import superadmin_plan_routes as spr
 
@@ -197,7 +197,7 @@ def test_get_default_plan_ignores_deactivated_default(db, monkeypatch):
 
 # ── USD rail self-heal (P1-2/F2) ─────────────────────────────────────────────
 # The mint map covered only the INR price fields: a USD price edit changed the
-# quote while every new USD mandate kept debiting the old Razorpay plan —
+# quote while every new USD mandate kept debiting the old Razorpay plan,
 # exactly the displayed != charged failure the INR path was built to prevent.
 
 
@@ -295,7 +295,7 @@ def test_update_plan_usd_price_zero_clears_usd_id(db, monkeypatch):
 
 
 def test_update_plan_rejects_non_inr_plan_currency(db, monkeypatch):
-    """F7 — the dual-rail model stores INR in *_cents and USD in *_usd_cents;
+    """F7, the dual-rail model stores INR in *_cents and USD in *_usd_cents;
     a plan row whose own ``currency`` is not INR would make the INR mint path
     mislabel foreign minor units as paise. Refuse it outright."""
     from fastapi import HTTPException

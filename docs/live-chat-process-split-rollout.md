@@ -12,7 +12,9 @@
 
 Everything needed is already in the repo and inert: `WS_BACKPLANE_ENABLED`
 defaults to false, `oyechats-ws.service` is not installed, and nginx still sends
-`/ws/` to the API upstream. Nothing in production has changed yet.
+`/ws/` to the API on 127.0.0.1:8000 via its catch-all `location /`. Nothing in
+production has changed yet. Verified on the box after the merge of PR #348:
+backplane flag unset, `WEB_CONCURRENCY=1`, no WS unit, nothing on :8001.
 
 **Measured payoff**, split topology on a 2 vCPU / 4 GB box:
 
@@ -74,18 +76,57 @@ It is running but receiving no traffic: nginx still routes `/ws/` to the API.
 
 ### 3. Point nginx at it
 
-Add the upstream beside `oyechats_api` in the server config:
+**Read this before editing.** The repo's `api/nginx/oyechats-api.conf` and
+`oyechats-locations.conf` were never deployed — they describe an intended
+configuration, not the running one. Production serves from a single
+Certbot-managed file:
 
 ```
-upstream oyechats_ws { server 127.0.0.1:8001; }
+/etc/nginx/sites-available/oyechats-api      # symlinked from sites-enabled/oyechats-api (no .conf suffix)
 ```
 
-The `location /ws/` block already targets `oyechats_ws` in
-`nginx/oyechats-locations.conf`.
+It has **one** `location /` that proxies everything — `/ws/` included — to
+`127.0.0.1:8000`, and there is **no `upstream oyechats_api`**. So do not add an
+upstream or edit the snippet; add a `/ws/` location to the live file instead.
+
+Back up first, since this file is hand/Certbot-managed and not in git:
+
+```
+sudo cp /etc/nginx/sites-available/oyechats-api /root/oyechats-api.nginx.$(date +%F).bak
+```
+
+Add inside the `server { ... }` block that listens on 443:
+
+```
+location /ws/ {
+    proxy_pass http://127.0.0.1:8001;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+}
+```
+
+Placement within the block is free: nginx selects the longest matching prefix,
+so `/ws/` wins over `/` wherever it sits.
+
+The timeout is not cosmetic. The live `location /` uses `proxy_read_timeout
+300s`, which live chat survives today only because the app sends its own
+heartbeat every 30s (`_HEARTBEAT_INTERVAL`, `app/api/ws_routes.py`). 86400s
+removes that dependency rather than resting on it.
 
 ```
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+Reload by hand — the deploy workflow's reload is guarded on
+`/etc/nginx/sites-enabled/oyechats-api.conf`, a path that does not exist (the
+symlink carries no `.conf`), so deploys never reload nginx.
 
 **Sockets drop here.** Verify with a real widget that live chat reconnects and a
 message crosses in both directions before continuing.
@@ -130,7 +171,8 @@ Default sizing is already correct: gate 10 < pool 5 + 10.
 No migration, no data change. Two edits:
 
 ```
-# nginx: location /ws/  ->  proxy_pass http://oyechats_api;
+# nginx: delete the /ws/ location block, or restore /root/oyechats-api.nginx.<date>.bak
+#        (/ws/ then falls back to location / -> 127.0.0.1:8000, which carries the upgrade headers)
 sudo nginx -t && sudo systemctl reload nginx
 
 # oyechats-api.service

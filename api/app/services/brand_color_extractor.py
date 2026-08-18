@@ -1,21 +1,21 @@
 """Brand color extraction from a website's homepage HTML.
 
 The crawl providers (Spider, Jina) return page bodies as markdown, which
-strips CSS and inline styles — the only signal we ever had for a customer's
+strips CSS and inline styles, the only signal we ever had for a customer's
 palette. This module recovers it by fetching the seed URL's raw HTML once
 and pulling colors out of ``<style>`` blocks, inline ``style=""``
 attributes, ``<meta name="theme-color">``, and SVG fill/stroke attributes.
 
 Recognised color notations
 --------------------------
-* ``#RGB`` / ``#RRGGBB`` hex — the historic path.
-* ``rgb()`` / ``rgba()`` — both the legacy comma-separated form and the
+* ``#RGB`` / ``#RRGGBB`` hex, the historic path.
+* ``rgb()`` / ``rgba()``, both the legacy comma-separated form and the
   modern CSS Color Level 4 space-separated form with an optional
   ``/ alpha`` suffix. Percentage channels are supported.
-* ``hsl()`` / ``hsla()`` — same syntax variants. Hue accepts a bare number
+* ``hsl()`` / ``hsla()``, same syntax variants. Hue accepts a bare number
   (degrees) or an explicit ``deg`` / ``turn`` / ``rad`` / ``grad`` unit.
 
-Alpha is parsed but ignored — the caller wants a solid brand color to seed
+Alpha is parsed but ignored, the caller wants a solid brand color to seed
 the widget palette, not a translucent overlay. Every recognised notation is
 normalised to a lowercase ``#rrggbb`` string before being counted, so a
 site that mixes ``#0F172A`` in inline styles with ``rgb(15 23 42)`` in a
@@ -42,12 +42,12 @@ _MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MB is plenty for a marketing homepage
 _DEFAULT_TOP_N = 6
 
 # External stylesheet crawl budget. Marketing sites usually load their whole
-# palette from 1–2 first-party CSS bundles (globals, tailwind, design system);
+# palette from 1 to 2 first-party CSS bundles (globals, tailwind, design system);
 # anything past ~4 tends to be legal/tracking chrome. We cap tightly so a
 # misconfigured site with 50 stylesheets can't burn the crawl's time budget.
 _MAX_STYLESHEETS = 4
 _STYLESHEET_TIMEOUT_S = 5.0
-_MAX_STYLESHEET_BYTES = 512 * 1024  # 512 KB — bigger than any real hand-authored bundle
+_MAX_STYLESHEET_BYTES = 512 * 1024  # 512 KB. Bigger than any real hand-authored bundle
 
 # Match ``<link ...>`` tags with ``rel="stylesheet"`` in any attribute order,
 # capturing the ``href``. Case-insensitive. The regex is intentionally
@@ -61,7 +61,7 @@ _LINK_STYLESHEET_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Alternative attribute order — ``href`` before ``rel``. Kept separate so the
+# Alternative attribute order. ``href`` before ``rel``. Kept separate so the
 # combined match set is a union of both orderings without needing a bigger
 # regex with lookaheads on both sides.
 _LINK_STYLESHEET_HREF_FIRST_RE = re.compile(
@@ -82,7 +82,7 @@ _RGB_COLOR_RE = re.compile(
         (?P<r>[+\-]?\d+(?:\.\d+)?%?)\s*[,\s]\s*
         (?P<g>[+\-]?\d+(?:\.\d+)?%?)\s*[,\s]\s*
         (?P<b>[+\-]?\d+(?:\.\d+)?%?)
-        (?:\s*[,/]\s*[+\-]?\d+(?:\.\d+)?%?)?  # alpha — ignored
+        (?:\s*[,/]\s*[+\-]?\d+(?:\.\d+)?%?)?  # alpha. Ignored
         \s*\)""",
     re.VERBOSE,
 )
@@ -141,7 +141,7 @@ def _rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
 def _is_brandable(hex6: str) -> bool:
     """Keep colors with enough saturation and mid-range lightness.
 
-    Rejects pure white/black plus near-neutral greys — the ones that show up
+    Rejects pure white/black plus near-neutral greys, the ones that show up
     in every stylesheet regardless of brand identity.
     """
     r, g, b = _hex_to_rgb(hex6)
@@ -238,7 +238,7 @@ def _iter_hex_colors(html: str) -> Iterable[str]:
 
     Runs the hex, ``rgb()``, and ``hsl()`` matchers over the same document.
     The matchers overlap harmlessly (a ``#abc`` inside a ``style`` attribute
-    can't also parse as ``rgb(...)``), so we don't dedupe positions — the
+    can't also parse as ``rgb(...)``), so we don't dedupe positions, the
     downstream counter treats each occurrence as a separate vote for that
     color, which is exactly the ranking signal we want.
     """
@@ -385,7 +385,7 @@ async def fetch_recommended_colors(url: str, *, top_n: int = _DEFAULT_TOP_N) -> 
     Discovers up to :data:`_MAX_STYLESHEETS` ``<link rel="stylesheet">`` URLs
     from the fetched HTML, fetches them in parallel through the same client
     (so keep-alive and cookies are reused), then ranks colors across every
-    body found. Any per-URL failure is dropped silently — a broken CDN URL
+    body found. Any per-URL failure is dropped silently, a broken CDN URL
     should never fail the whole crawl.
 
     Best-effort throughout: an empty homepage, a network error, or a fully

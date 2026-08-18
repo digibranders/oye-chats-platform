@@ -1,17 +1,17 @@
 """Shared SSRF guard for every server-side fetch.
 
 Any code path that fetches a URL the *caller* (or crawled content) can influence
-— crawler sitemap discovery, iframe-preview HEAD checks, webhook delivery — must
+(crawler sitemap discovery, iframe-preview HEAD checks, webhook delivery) must
 validate the URL through :func:`validate_public_url` before connecting, and must
 not follow redirects to an unvalidated location.
 
 Audit references: F07 (sitemap SSRF), F11 (preview redirect SSRF), F24 (DNS
-rebinding — mitigated by re-validating every redirect hop), F25 (response-size
-DoS — :func:`fetch_text_safely` caps the body).
+rebinding (mitigated by re-validating every redirect hop), F25 (response-size
+DoS) :func:`fetch_text_safely` caps the body).
 
 AR-42: :func:`fetch_text_safely` used to only validate via
 :func:`validate_public_url`, then let aiohttp perform its own separate DNS
-resolution when actually connecting — a classic DNS-rebinding TOCTOU window
+resolution when actually connecting, a classic DNS-rebinding TOCTOU window
 (attacker DNS returns a public IP at validation time, then a private-range/
 169.254.169.254 address at connect time). Fixed by resolving once via
 :func:`_resolve_pinned_public_ip` and connecting to exactly that IP via a
@@ -49,7 +49,7 @@ def _tls() -> _ssl.SSLContext | bool:
     :class:`_PinnedResolver` reports the real hostname alongside the pinned
     address, so aiohttp still sends the correct SNI and still verifies the
     certificate against the name in the URL. The two mechanisms are
-    independent — pinning decides WHERE we connect, TLS decides WHETHER the
+    independent. Pinning decides WHERE we connect, TLS decides WHETHER the
     thing that answered is who the URL said it would be.
 
     Without it, an on-path attacker can substitute anything these helpers
@@ -58,7 +58,7 @@ def _tls() -> _ssl.SSLContext | bool:
     avatar. All of it is served back to the customer as their own content.
 
     ``SSRF_TLS_VERIFY_ENABLED`` exists because turning this on can only ever
-    *reduce* what we successfully fetch — a site with an expired or
+    *reduce* what we successfully fetch, a site with an expired or
     mismatched certificate now fails where it used to succeed. That failure
     is silent and per-customer (page discovery quietly falls back to a
     recursive crawl; the brand extras just yield nothing), so the flag is
@@ -73,7 +73,7 @@ def _log_if_tls_failure(url: str, exc: BaseException) -> None:
 
     Every fetch here collapses failure into ``None``/``True``, so a site that
     stopped working *because* verification was turned on is indistinguishable
-    from a timeout or a 500 — which is exactly the diagnosis someone will be
+    from a timeout or a 500, which is exactly the diagnosis someone will be
     doing when they reach for ``SSRF_TLS_VERIFY_ENABLED``. aiohttp wraps the
     error (``ClientConnectorCertificateError``), so the cause is checked too.
     """
@@ -148,7 +148,7 @@ def _resolve_pinned_public_ip(hostname: str) -> str | None:
 
     AR-42: without this, ``validate_public_url``'s resolution and the HTTP
     client's later, separate resolution at connect time could return
-    different addresses for the same hostname — an attacker-controlled DNS
+    different addresses for the same hostname, an attacker-controlled DNS
     server returns a public IP the millisecond this check runs, then a
     private-range/169.254.169.254 address for the actual connection
     microseconds later. Resolving once here and pinning the connection to
@@ -176,7 +176,7 @@ def _resolve_pinned_public_ip(hostname: str) -> str | None:
 class _PinnedResolver:
     """aiohttp resolver that always returns one pre-validated, pinned IP for
     a given hostname instead of performing a fresh DNS lookup at connect
-    time — the mechanism that actually closes the AR-42 TOCTOU window.
+    time, the mechanism that actually closes the AR-42 TOCTOU window.
     """
 
     def __init__(self, pins: dict[str, str]) -> None:
@@ -185,7 +185,7 @@ class _PinnedResolver:
     async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET) -> list[dict]:
         pinned_ip = self._pins.get(host)
         if pinned_ip is None:
-            # Should never happen — every hostname this resolver is asked
+            # Should never happen. Every hostname this resolver is asked
             # to resolve was pinned before the request was issued. Fail
             # closed rather than falling through to a real DNS lookup.
             raise OSError(f"No pinned IP for host {host!r}")
@@ -211,11 +211,11 @@ async def probe_url_alive(session, url: str) -> bool:
     host that actually gets connected to.
 
     AR-42: this is the pinned-DNS counterpart of :func:`fetch_text_safely`
-    for the ``check_urls_alive`` liveness-check path — previously the lone
+    for the ``check_urls_alive`` liveness-check path. Previously the lone
     holdout in this codebase that opened a *raw* ``aiohttp.ClientSession``
     and issued ``session.head()``/``session.get()`` directly. That let
     ``validate_public_url`` resolve DNS once, then aiohttp perform its own,
-    separate resolution when actually connecting — a DNS-rebinding TOCTOU
+    separate resolution when actually connecting, a DNS-rebinding TOCTOU
     window (attacker DNS answers public at validation time, then
     private-range/169.254.169.254 at connect time). Fixed the same way
     :func:`fetch_text_safely` was: resolve once via
@@ -224,7 +224,7 @@ async def probe_url_alive(session, url: str) -> bool:
 
     ``session`` is used only to inherit the caller's headers/timeout
     configuration; the actual HEAD/GET connections go through a short-lived
-    session bound to the pinned resolver — mirrors ``fetch_text_safely``.
+    session bound to the pinned resolver. Mirrors ``fetch_text_safely``.
 
     Liveness policy (unchanged from the pre-fix behavior of
     ``check_urls_alive``, preserved here so callers see no behavior change):
@@ -291,7 +291,7 @@ async def fetch_text_safely(
       bypass, F07/F11).
     - AR-42: connects to a pinned, pre-validated IP for each hop (via
       :class:`_PinnedResolver`) instead of letting aiohttp re-resolve the
-      hostname at connect time — closes the DNS-rebinding TOCTOU window
+      hostname at connect time. Closes the DNS-rebinding TOCTOU window
       (F24). ``session`` is used only to inherit the caller's headers/
       timeout configuration; the actual connection for each hop goes
       through a short-lived session bound to that hop's pinned resolver.
@@ -299,7 +299,7 @@ async def fetch_text_safely(
 
     Returns ``(status_code, text)`` for a final (non-redirect) response, or
     ``None`` if the URL is unsafe, too many redirects occur, or a transport
-    error is raised. Never raises — callers treat ``None`` as "skip".
+    error is raised. Never raises. Callers treat ``None`` as "skip".
     """
     import aiohttp
 
@@ -313,7 +313,7 @@ async def fetch_text_safely(
         hostname = urlparse(current).hostname
         try:
             pinned_ip = ipaddress.ip_address(hostname)
-            pinned_ip = str(pinned_ip)  # IP-literal host — already validated above
+            pinned_ip = str(pinned_ip)  # IP-literal host. Already validated above
         except ValueError:
             pinned_ip = _resolve_pinned_public_ip(hostname)
         if pinned_ip is None:
@@ -355,7 +355,7 @@ async def fetch_bytes_safely(
     """:func:`fetch_text_safely` for binary bodies, with one behavioural change.
 
     An oversized body is REJECTED, not truncated. Text can survive being cut
-    short; an image cannot — a truncated PNG is either undecodable or, worse,
+    short; an image cannot, a truncated PNG is either undecodable or, worse,
     decodes to something the caller then stores. Returning ``None`` means the
     caller skips it, which is the honest outcome.
 
@@ -363,7 +363,7 @@ async def fetch_bytes_safely(
     guards wrong: `follow_redirects=True` meant a customer site could 302 the
     crawl worker into the VPC, `validate_public_url` ran once on the
     pre-redirect URL only, and the size cap was applied to ``resp.content``
-    AFTER the whole body had been buffered — so a slow multi-gigabyte body was
+    AFTER the whole body had been buffered, so a slow multi-gigabyte body was
     unbounded in both memory and time.
     """
     import aiohttp
@@ -397,7 +397,7 @@ async def fetch_bytes_safely(
                     continue
 
                 # Reject early on a declared length, then enforce it again
-                # while streaming — Content-Length is a claim, not a promise.
+                # while streaming. Content-Length is a claim, not a promise.
                 declared = resp.headers.get("Content-Length")
                 if declared and declared.isdigit() and int(declared) > max_bytes:
                     return None

@@ -2,7 +2,7 @@
  * Tests for the bot markdown normaliser.
  *
  * Run with: `node --test src/services/botMarkdown.test.js`
- * (Node 18+ has a built-in test runner — no vitest/jest dep needed.)
+ * (Node 18+ has a built-in test runner, no vitest/jest dep needed.)
  */
 
 import test from 'node:test';
@@ -81,7 +81,7 @@ test('puts a trailing follow-up question on its own paragraph', () => {
 
 test('normalises em-dashes to a comma cadence', () => {
     assert.equal(
-        formatBotMarkdown('We offer SEO — including audits'),
+        formatBotMarkdown('We offer SEO, including audits'),
         'We offer SEO, including audits',
     );
 });

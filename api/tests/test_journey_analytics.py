@@ -87,7 +87,7 @@ class TestPathsToConversion:
                 {"path": "/c", "phase": "pre"},
                 {"path": "/c", "phase": "chat", "event": "meeting_booked"},
             ],
-            # Non-conversion session — should not appear in `paths`
+            # Non-conversion session. Should not appear in `paths`
             [
                 {"path": "/a", "phase": "pre"},
                 {"path": "/z", "phase": "post"},
@@ -136,7 +136,7 @@ class TestPostChatDestinations:
                 {"path": "/home", "phase": "chat", "event": "chat_opened"},
                 {"path": "/features", "phase": "post"},
             ],
-            # No post-chat activity — excluded from both aggregates
+            # No post-chat activity. Excluded from both aggregates
             [{"path": "/x", "phase": "pre"}],
         ]
         with patch.object(jas, "_fetch_journeys", return_value=journeys):
@@ -243,8 +243,8 @@ class TestTopPreChatSequences:
         assert top["post_sequence"] == ["/features", "/demo"]
         # Only 2 of the 3 sessions took the winning post-continuation;
         # the third had no post-chat activity at all. post_sessions must
-        # reflect the winning continuation's count, not the row total —
-        # otherwise the flow diagram labels post cards as if all 3
+        # reflect the winning continuation's count, not the row total.
+        # Otherwise the flow diagram labels post cards as if all 3
         # visitors went there.
         assert top["post_sessions"] == 2
 

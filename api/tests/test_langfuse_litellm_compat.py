@@ -2,7 +2,7 @@
 
 Background: LiteLLM's *built-in* ``"langfuse"`` success callback targets the
 Langfuse v2/v3 SDK surface (``langfuse.version.__version__``,
-``Langfuse(sdk_integration=...)``, ``Langfuse.trace()``) — all absent from the
+``Langfuse(sdk_integration=...)``, ``Langfuse.trace()``). All absent from the
 v4 SDK this project pins (``pyproject.toml``: ``langfuse>=4.0.0,<5.0.0``).
 Registering that callback throws ``AttributeError: module 'langfuse' has no
 attribute 'version'`` on every LLM call (observed in prod journal logs from a
@@ -10,13 +10,13 @@ process instance predating commit 393a15d, which removed the callback).
 
 Verified upstream as of litellm 1.91.0 (the newest release at the time of
 this check): the built-in callback still references the old v2/v3 API, so
-this is not a "some day litellm will catch up" situation — the callback must
+this is not a "some day litellm will catch up" situation, the callback must
 stay unregistered indefinitely, and tracing must keep going through the v4
 SDK directly (``app/core/langfuse_client.py``).
 
 These tests pin two things: (1) the app never re-registers the broken
 callback, and (2) our own v4-SDK wrapper actually works end-to-end against
-the real, currently-pinned langfuse + litellm versions — no mocking of the
+the real, currently-pinned langfuse + litellm versions, no mocking of the
 langfuse/litellm modules themselves, so a future dependency bump that
 reintroduces an incompatibility would fail here.
 """
@@ -27,7 +27,7 @@ import litellm
 def test_litellm_success_callback_never_registers_the_broken_langfuse_callback():
     """LiteLLM's built-in "langfuse" callback is incompatible with the pinned
     Langfuse v4 SDK (see module docstring). If this ever starts failing, don't
-    "fix" it by re-registering the callback — the incompatibility is real and
+    "fix" it by re-registering the callback, the incompatibility is real and
     still present in the newest litellm release as of this check."""
     callbacks = (litellm.success_callback or []) + (litellm.failure_callback or [])
     assert "langfuse" not in callbacks
@@ -48,7 +48,7 @@ def test_real_langfuse_v4_sdk_exposes_get_client():
 
 def test_langfuse_generation_wrapper_does_not_raise_against_real_sdk(monkeypatch):
     """End-to-end smoke test against the REAL langfuse + litellm packages
-    (network calls are expected to fail with fake keys — that must stay
+    (network calls are expected to fail with fake keys. That must stay
     silent/non-blocking, per langfuse_client.py's contract). This is the
     direct regression guard for AR-04: if a future langfuse/litellm version
     bump reintroduces an AttributeError-shaped incompatibility in this call
@@ -70,6 +70,6 @@ def test_langfuse_generation_wrapper_does_not_raise_against_real_sdk(monkeypatch
             },
         )()
         gen.record_litellm(fake_response)
-    # No exception reaching here is the assertion — langfuse_generation and
+    # No exception reaching here is the assertion. Langfuse_generation and
     # record_litellm must never raise, even against the real SDK with
     # invalid/unreachable credentials.

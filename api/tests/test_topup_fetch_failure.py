@@ -1,6 +1,6 @@
 """Finding C: when a payment.captured lacks order notes and order.fetch fails,
 the handler must RAISE (so the webhook rail dead-letters + retries) rather than
-ack it as "ignored" and burn the dedup row — which permanently loses a paid
+ack it as "ignored" and burn the dedup row, which permanently loses a paid
 top-up (customer charged, zero credits, never reprocessed).
 """
 
@@ -29,8 +29,8 @@ def test_order_fetch_failure_raises_transient():
 
 
 def test_order_fetch_success_not_topup_is_ignored():
-    """A genuine non-topup (order fetched, purpose absent) is still ack'd — not
-    raised — so we don't retry forever on unrelated payments."""
+    """A genuine non-topup (order fetched, purpose absent) is still ack'd (not
+    raised) so we don't retry forever on unrelated payments."""
     payload = _payment_captured_without_notes()
     rzp = MagicMock()
     rzp.order.fetch.return_value = {"notes": {"purpose": "something_else"}}

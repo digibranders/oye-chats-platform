@@ -66,7 +66,7 @@ def get_qualification_funnel(
             )
 
             # Compute the "start of window" cutoff once so it's in scope for
-            # the meeting-booking count below as well — previously ``since``
+            # the meeting-booking count below as well. Previously ``since``
             # only existed inside the base_stmt narrowing block, and reading
             # it under the second ``if period != "all"`` triggered an
             # unbound-name diagnostic (safe at runtime because both blocks
@@ -250,7 +250,7 @@ def get_visitors_endpoint(
                 # that has resolved geography ("Mumbai, India | 1.2.3.4") has to
                 # land in the same bucket as one that has not yet ("IP:
                 # 1.2.3.4"). This is a dict key on the server and is never
-                # serialised — ``get_visitor_data`` hands back the raw column
+                # serialised. ``get_visitor_data`` hands back the raw column
                 # for exactly this. The value we RETURN is redacted below.
                 ip_part = raw_loc
                 if " | " in raw_loc:
@@ -361,8 +361,8 @@ def get_per_bot_rollup_endpoint(
 ):
     """Per-bot activity rollup for the account: credits, conversations, leads.
 
-    Built for the agency case — many client sites on one account, one shared
-    credit pool — so each bot's spend is read from the ledger's
+    Built for the agency case (many client sites on one account, one shared
+    credit pool) so each bot's spend is read from the ledger's
     ``attributed_bot_id`` and stays correct even when the deduction came out
     of the pool. Bots with no activity in the window are omitted.
     """
@@ -401,7 +401,7 @@ def get_per_bot_rollup_csv(
 ):
     """The ``/analytics/by-bot`` rollup as a downloadable CSV.
 
-    Same window and same auth as the JSON endpoint — an agency owner pulls one
+    Same window and same auth as the JSON endpoint, an agency owner pulls one
     file per reporting period and forwards it to the client it covers, so the
     filename carries the window (``oyechats-report-2026-07-14-to-2026-08-13.csv``)
     and the rows arrive in the same order the dashboard shows them.
@@ -476,7 +476,7 @@ _JOURNEY_PHASES = {"pre", "chat", "post"}
 # The Journeys tab does month-over-month reporting, so bounding by exact
 # calendar month (1st at 00:00 UTC through the last microsecond) is more
 # useful than rolling day windows. Legacy rolling values (``7d``/``30d``/
-# ``90d``) are no longer accepted here — reject at the edge with 422.
+# ``90d``) are no longer accepted here. Reject at the edge with 422.
 _JOURNEY_PERIOD_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _JOURNEY_MIN_YEAR = 2020
 
@@ -619,7 +619,7 @@ def get_journey_post_chat(
     limit: int = Query(10, ge=1, le=50),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Where visitors go after the chat closes — first hops + full sequences."""
+    """Where visitors go after the chat closes. First hops + full sequences."""
     try:
         from app.services.journey_analytics_service import post_chat_destinations
 

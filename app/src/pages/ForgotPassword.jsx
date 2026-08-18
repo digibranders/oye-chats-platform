@@ -91,7 +91,7 @@ export default function ForgotPassword() {
           transition={{ duration: 0.5 }}
           className="relative z-10 flex items-center"
         >
-          {/* White wordmark for the dark branding panel — the same asset Login
+          {/* White wordmark for the dark branding panel, the same asset Login
               and Register use. This page kept the older icon-plus-text lockup
               on an identical panel, so a customer resetting their password saw
               a different brand from the one they had just signed in against. */}

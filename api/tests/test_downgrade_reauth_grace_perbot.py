@@ -6,7 +6,7 @@ downgrade that row has ``bot_id IS NULL`` and the account-level sibling-cancel
 sweep in ``_handle_subscription_activated`` clears it at re-auth. For a PER-BOT
 downgrade the grace row is bot-scoped (``bot_id`` set), and a plain re-auth lands
 in that same account-level branch (no ``per_bot``/``revive`` purpose note) with
-``funded_bot_id`` None — so the ``bot_id IS NULL`` sweep never touches it and the
+``funded_bot_id`` None, so the ``bot_id IS NULL`` sweep never touches it and the
 grace row would linger orphaned.
 
 The activation handler recovers that bot-scoped grace row via the

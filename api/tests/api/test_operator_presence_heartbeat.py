@@ -2,7 +2,7 @@
 
 Presence carries a 60-second Redis TTL and used to be refreshed ONLY when the
 operator's client sent a ``{"type": "heartbeat"}`` message. Any client that did
-not send it — the mobile app, or a web client in a tab the browser throttled —
+not send it (the mobile app, or a web client in a tab the browser throttled)
 went invisible one minute after connecting, while its socket stayed open and its
 own UI still read "connected". Every handoff after that minute resolved to
 ``all_offline``, so visitors were shown the offline form with an operator
@@ -40,7 +40,7 @@ class _AsyncNoop:
 async def _run_beats(n: int):
     """Drive `_operator_presence_heartbeat` for exactly ``n`` beats.
 
-    Returns the websocket stub so callers can assert on the pings too — the
+    Returns the websocket stub so callers can assert on the pings too, the
     presence write must never come at the cost of the keep-alive.
     """
     ws = MagicMock()
@@ -81,7 +81,7 @@ class TestTheServerStampsPresenceItself:
 
     @pytest.mark.asyncio
     async def test_the_keep_alive_ping_still_goes_out(self, presence):
-        """Presence is added to the heartbeat, not swapped in for it — losing
+        """Presence is added to the heartbeat, not swapped in for it. Losing
         the ping would drop the connection this exists to keep."""
         ws = await _run_beats(3)
 
@@ -91,7 +91,7 @@ class TestTheServerStampsPresenceItself:
     async def test_last_seen_is_written_on_a_slower_cadence(self, presence):
         """`touch_last_seen` had ZERO callers, so `last_seen_at` was NULL for
         every operator and `is_online`'s Redis-outage fallback could never
-        return True. It is fed here — but less often than Redis, because it is
+        return True. It is fed here, but less often than Redis, because it is
         a write to the primary."""
         mark_online, touch = presence
 
@@ -116,7 +116,7 @@ class TestPresenceNeverBreaksTheSocket:
     @pytest.mark.asyncio
     async def test_a_redis_failure_does_not_stop_the_pings(self, presence):
         """This coroutine owns the keep-alive. If a presence write could kill
-        it, a Redis blip would take the CONNECTION down — strictly worse than
+        it, a Redis blip would take the CONNECTION down. Strictly worse than
         the stale-presence bug being fixed."""
         mark_online, _ = presence
         mark_online.side_effect = RuntimeError("redis down")
@@ -138,7 +138,7 @@ class TestPresenceNeverBreaksTheSocket:
 class TestTheOperatorSocketUsesIt:
     def test_the_operator_endpoint_wires_the_presence_heartbeat(self):
         """The plain `_heartbeat` only pings. An operator socket wired to it
-        would reintroduce the exact bug, silently — nothing else in the system
+        would reintroduce the exact bug, silently, nothing else in the system
         notices a missing presence stamp.
         """
         import inspect

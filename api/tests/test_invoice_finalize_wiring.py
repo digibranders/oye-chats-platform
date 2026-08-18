@@ -1,7 +1,7 @@
 """Webhook handlers finalize invoices when invoicing v2 is enabled (Phase 3).
 
 Verifies the wiring in ``_handle_subscription_charged`` and
-``_handle_payment_captured`` — that a real charge produces a numbered tax
+``_handle_payment_captured``. That a real charge produces a numbered tax
 invoice when the flag is on, and an untouched legacy row when it is off.
 """
 

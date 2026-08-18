@@ -1,4 +1,4 @@
-"""Offline message endpoints — messages left by visitors when no operator is available."""
+"""Offline message endpoints. Messages left by visitors when no operator is available."""
 
 import logging
 from datetime import UTC, datetime
@@ -43,12 +43,12 @@ router = APIRouter(prefix="/offline-messages", tags=["offline-messages"])
 
 
 class SubmitOfflineMessageRequest(BaseModel):
-    """Unauthenticated widget submission — the bot key is the only credential.
+    """Unauthenticated widget submission, the bot key is the only credential.
 
     ``reason`` and ``transcript`` were undeclared here while the widget has
     been sending both since the fallback-reason feature shipped. Pydantic's
     default is to ignore unknown keys, so on this path they were parsed and
-    dropped — the columns stayed null and the admin inbox showed no fallback
+    dropped, the columns stayed null and the admin inbox showed no fallback
     cause, while the WebSocket fallback (``submit_offline_form``) stored them
     correctly. Declaring them is the fix: same fields, same bounds, same
     behaviour on both paths.
@@ -85,11 +85,11 @@ class UpdateOfflineMessageRequest(BaseModel):
 async def submit_offline_message(request: Request, body: SubmitOfflineMessageRequest):
     """Submit an offline message (called by widget when no agent is available).
 
-    Unauthenticated by necessity — it is the out-of-hours form on a public
+    Unauthenticated by necessity, it is the out-of-hours form on a public
     widget, and the bot key it carries is public too. Every accepted submission
     fans out to real inboxes: one e-mail per configured team recipient, PLUS a
     confirmation to whatever address the CALLER typed. Ungated that is an
-    e-mail amplifier — a script with a bot key lifted from any customer's page
+    e-mail amplifier, a script with a bot key lifted from any customer's page
     could bury that customer's team in mail and, because the confirmation goes
     to an attacker-chosen recipient, use our sending domain to spray a third
     party. The per-IP ceiling here is well above what a human filling in a form
@@ -121,7 +121,7 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
         email_on_offline = getattr(bot, "email_on_offline", True)
         if not email_on_offline:
             logger.warning(
-                "Offline team-notification skipped — email_on_offline=False on bot %s",
+                "Offline team-notification skipped. Email_on_offline=False on bot %s",
                 bot.id,
             )
         else:
@@ -129,10 +129,10 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
             if not recipients:
                 # This was silently no-op before. If the bot has no
                 # notification_email or notification_emails["offline_message"]
-                # configured, the team literally cannot be notified — log
+                # configured, the team literally cannot be notified. Log
                 # loudly so ops sees it in the first failure case.
                 logger.warning(
-                    "Offline team-notification not dispatched — bot %s has no notification recipients "
+                    "Offline team-notification not dispatched. Bot %s has no notification recipients "
                     "(check bot.notification_emails['offline_message'] or bot.notification_email)",
                     bot.id,
                 )
@@ -168,11 +168,11 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
             )
         else:
             logger.warning(
-                "Visitor confirmation email skipped — email_visitor_confirmation=False on bot %s",
+                "Visitor confirmation email skipped. Email_visitor_confirmation=False on bot %s",
                 bot.id,
             )
 
-        # PRIVACY — ``body.email`` is the visitor's, straight off the offline
+        # PRIVACY. ``body.email`` is the visitor's, straight off the offline
         # form, and this INFO record becomes a Sentry breadcrumb. The message id
         # is the join key to the stored row; the domain is all the log needs.
         logger.info(f"Offline message saved: {msg.id} from {redact_email(body.email)} for bot {bot.id}")
@@ -188,7 +188,7 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
     # ``manager.operator_connections``. A fresh ``manager`` in another process has
     # an always-empty socket table, so iterating it here notified nobody whenever
     # the submission landed on a process that happened to hold no operator
-    # sockets — and the Web Push fan-out below does not cover the gap, because it
+    # sockets, and the Web Push fan-out below does not cover the gap, because it
     # deliberately skips operators "currently on WS" using that same Redis
     # presence, which correctly reports them online. Both channels stayed silent
     # and the notification was lost outright.
@@ -275,7 +275,7 @@ def list_offline_messages(
     """List offline messages for the authenticated client / operator.
 
     Client / workspace-owner sessions see every bot in the workspace.
-    Operator sessions are one-to-one with a bot — they see messages for that
+    Operator sessions are one-to-one with a bot. They see messages for that
     bot only, and the operator's ``bot_id`` overrides any ``bot_id`` query
     parameter so a modified request can't peek at a sibling bot's inbox.
     """
@@ -296,7 +296,7 @@ def list_offline_messages(
             bot_ids = [operator_bot_id]
             bot_id = operator_bot_id
         elif auth["type"] == "client" and (acting_as or "").lower() == "operator":
-            # Self-operator path — owner added themselves as operator in their
+            # Self-operator path. Owner added themselves as operator in their
             # own workspace and the switcher pill is in "operator" mode. Look
             # up their self-operator row and scope to its bot.
             from app.db.models import Operator as _Op

@@ -2,7 +2,7 @@
 
 The operator-seat add-on (P0-3) is a SEPARATE Razorpay subscription from the
 main plan. Every path that ends or supersedes the parent is *supposed* to
-cancel it too — ``subscription_routes.cancel_subscription``,
+cancel it too. ``subscription_routes.cancel_subscription``,
 ``razorpay_service._handle_subscription_activated`` (cutover), and
 ``transition_service.promote_scheduled_change`` (scheduled downgrade). But
 each does the gateway cancel best-effort and only logs on failure, and the
@@ -73,7 +73,7 @@ def find_orphaned_seat_addons(session: Session) -> list[dict[str, Any]]:
 
     An add-on is an orphan when it is still billing at the gateway but the
     local subscription that owned it is ``canceled``/``expired`` (or no local
-    row references it at all — the rolled-back-activation case).
+    row references it at all, the rolled-back-activation case).
     """
     live_owned = _live_owned_addon_ids(session)
     orphans: list[dict[str, Any]] = []
@@ -97,7 +97,7 @@ def find_orphaned_seat_addons(session: Session) -> list[dict[str, Any]]:
 
 
 def reconcile_orphaned_seat_addons(session: Session, *, cancel: bool = True) -> dict[str, Any]:
-    """Find — and, by default, cancel — orphaned seat add-ons at the gateway.
+    """Find (and, by default, cancel) orphaned seat add-ons at the gateway.
 
     Cancelling an orphan is unambiguously safe: by construction no live local
     subscription owns it. On a successful cancel any stale local pointer is
@@ -116,7 +116,7 @@ def reconcile_orphaned_seat_addons(session: Session, *, cancel: bool = True) -> 
             except Exception:
                 failed.append(gateway_id)
                 logger.exception(
-                    "Orphaned seat add-on %s could not be cancelled at Razorpay — the mandate "
+                    "Orphaned seat add-on %s could not be cancelled at Razorpay, the mandate "
                     "is STILL LIVE and billing. Needs manual reconciliation.",
                     gateway_id,
                 )

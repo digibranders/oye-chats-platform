@@ -3,31 +3,31 @@ import { Users, Clock, MessageSquare } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 
 /**
- * QueueWaitingScreen — shown when the visitor is in the live chat queue
+ * QueueWaitingScreen. Shown when the visitor is in the live chat queue
  * waiting for an operator to free up.
  *
  * UX principle: the wait state must show progress, not silence. We rotate
  * through three messaging variants over the wait window so the visitor knows
  * something is happening. At the timeout we offer them a choice rather than
- * forcing a fallback — visitors who really need live help keep waiting,
+ * forcing a fallback. Visitors who really need live help keep waiting,
  * impatient visitors self-serve to the form.
  *
  * Visual states by elapsed time (against ``timeoutSeconds``, default 20s):
- *   0–25%  : "Connecting you with our team..." 🔍
- *   25–50% : "Our team is busy — you're in the queue" ⏳
- *   50–80% : "This is taking longer than usual..." ⌛
- *   80–100%: Choice card — [Keep waiting] [Leave a message]
+ *   0 to 25%  : "Connecting you with our team..." 🔍
+ *   25 to 50% : "Our team is busy. You're in the queue" ⏳
+ *   50 to 80% : "This is taking longer than usual..." ⌛
+ *   80 to 100%: Choice card. [Keep waiting] [Leave a message]
  *
  * Props:
  *   - position           : 1-indexed queue position from backend (display only)
- *   - etaSeconds         : estimated wait time (display only — UI doesn't trust
+ *   - etaSeconds         : estimated wait time (display only. UI doesn't trust
  *                          this for timing decisions, only timeoutSeconds drives
  *                          the actual countdown)
  *   - timeoutSeconds     : how long until the auto-fallback CTA appears.
  *                          Sourced from bot.live_chat_queue_timeout_seconds.
  *   - primaryColor       : brand color for accents
  *   - onLeaveMessage     : called when visitor clicks "leave a message"
- *   - onKeepWaiting      : optional — called when visitor clicks "keep waiting"
+ *   - onKeepWaiting      : optional. Called when visitor clicks "keep waiting"
  *                          (currently no-op; queue continues automatically)
  */
 const QueueWaitingScreen = ({
@@ -54,7 +54,7 @@ const QueueWaitingScreen = ({
         return () => clearInterval(interval);
     }, []);
 
-    // Progressive messaging — content depends on elapsed time as a fraction
+    // Progressive messaging. Content depends on elapsed time as a fraction
     // of the configured timeout. Independent of the absolute number so longer
     // timeouts still cycle through all three messages.
     const progress = Math.min(1, elapsed / timeoutSeconds);
@@ -62,7 +62,7 @@ const QueueWaitingScreen = ({
     if (progress < 0.25) {
         status = { icon: Users, text: 'Connecting you with our team...', accent: primaryColor };
     } else if (progress < 0.5) {
-        status = { icon: Clock, text: 'Our team is busy — you’re in the queue', accent: '#F59E0B' };
+        status = { icon: Clock, text: 'Our team is busy. You’re in the queue', accent: '#F59E0B' };
     } else {
         status = { icon: Clock, text: 'This is taking a little longer than usual...', accent: '#EF4444' };
     }
@@ -114,7 +114,7 @@ const QueueWaitingScreen = ({
                 </div>
             </div>
 
-            {/* Progress bar — slow fill over the timeout window. Resets when
+            {/* Progress bar. Slow fill over the timeout window. Resets when
                 visitor opts to keep waiting (visible signal that they made
                 a choice). */}
             <div className="px-4 py-3">
@@ -129,7 +129,7 @@ const QueueWaitingScreen = ({
                 </div>
             </div>
 
-            {/* Auto-fallback choice — appears once we're 80% through the
+            {/* Auto-fallback choice. Appears once we're 80% through the
                 timeout window. Visitor can opt to keep waiting or jump to
                 the offline form. Choosing nothing waits indefinitely from
                 this point (no hard cutoff). */}

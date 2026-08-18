@@ -2,7 +2,7 @@
 
 The resolution engine (`company_profile_service`, `company_markup`,
 `domain_normalizer`, the cross-tenant `company_profile` cache) shipped in
-Phase A with 869 lines of tests and three review rounds — and nothing called
+Phase A with 869 lines of tests and three review rounds, and nothing called
 it. `grep resolve_company app/` returned only its own file. These tests cover
 the wiring: the gates, the metering, and what actually lands on the lead.
 
@@ -90,7 +90,7 @@ def test_a_resolved_company_lands_on_the_lead(db):
 
 def test_the_raw_domain_is_never_overwritten(db):
     """`company` is free and always available. A resolution failure must
-    degrade to "infosys.com", not to nothing — and existing consumers (leads
+    degrade to "infosys.com", not to nothing, and existing consumers (leads
     list, CSV export, webhooks) read that column."""
     _lead(db, 71, "s-pb71")
     with _gates_open(db):
@@ -170,7 +170,7 @@ def test_an_unpaid_resolution_is_withheld(db):
     ],
 )
 def test_each_gate_stops_the_crawl_entirely(db, gate, value):
-    """Off must mean no crawl, not merely no charge — otherwise a disabled
+    """Off must mean no crawl, not merely no charge. Otherwise a disabled
     feature still spends OyeChats' own Spider/Jina quota per lead."""
     _lead(db, 75 if "visitor" in gate else 76, "s-pb-gate" + gate[-6:])
     from app.services import credit_service
@@ -197,7 +197,7 @@ def test_a_missing_domain_or_bot_is_a_no_op(db, domain, bot_id):
 
     Written with ALL THREE GATES OPEN. The first version left them unpatched,
     so the real gates denied the call and `resolver.call_count == 0` held
-    whether or not the guard existed — a review showed deleting the guard it
+    whether or not the guard existed, a review showed deleting the guard it
     names left the test green. It asserted nothing.
     """
     with _gates_open(db) as (resolver, charge):
@@ -225,7 +225,7 @@ class TestTheWiringItself:
     """The call site, not just the callee.
 
     Every test above invokes `_resolve_lead_company` directly, so DELETING the
-    call to it from `_enrich_lead_in_background` left all 3715 tests green — a
+    call to it from `_enrich_lead_in_background` left all 3715 tests green, a
     review proved it. That is exactly the defect this whole commit exists to
     fix: Phase A shipped a resolver with no caller. Shipping the caller with
     no test on the call site is the same defect one level up.
@@ -276,8 +276,8 @@ def test_the_super_admin_kill_switch_stops_the_crawl(db):
     """The THIRD gate, which `test_each_gate_stops_the_crawl_entirely` omitted.
 
     Removing `feature_on` from the pre-crawl condition left the whole suite
-    green. Nothing is billed either way — `_charge_for_enrichment` re-checks
-    it — but the lever's entire purpose is to stop the SPEND during a vendor
+    green. Nothing is billed either way (`_charge_for_enrichment` re-checks
+    it) but the lever's entire purpose is to stop the SPEND during a vendor
     outage or a cost spike, and the crawl is the spend.
     """
     from app.services import credit_service
@@ -300,8 +300,8 @@ def test_the_super_admin_kill_switch_stops_the_crawl(db):
 class TestItGoesToTheDurableQueue:
     """Where the work RUNS, which is the part that protects other customers.
 
-    `/chat/lead-capture` is authenticated by the widget's bot key — public,
-    embedded in customer pages — and the resolution charges only for an ANSWER,
+    `/chat/lead-capture` is authenticated by the widget's bot key (public,
+    embedded in customer pages) and the resolution charges only for an ANSWER,
     so an unresolvable domain costs the caller nothing. Run as a tail call on
     the `max_workers=3` pool, fresh session ids with random domains bought
     unlimited crawls at ~70s of a worker each, against a pool shared
@@ -322,7 +322,7 @@ class TestItGoesToTheDurableQueue:
             chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
 
         # `_job_id` is deterministic per (session, domain) so ARQ collapses the
-        # two posts the widget makes for one visitor — see
+        # two posts the widget makes for one visitor. See
         # `TestTheQueueDedupesToo` in test_enrichment_money_path_e2e.py.
         enqueue.assert_called_once_with(
             "task_resolve_lead_company",
@@ -331,7 +331,7 @@ class TestItGoesToTheDurableQueue:
             5,
             _job_id="resolve-company:s-q:infosys.com",
         )
-        assert pool.call_count == 0, "queued AND run in-process — the work would happen twice"
+        assert pool.call_count == 0, "queued AND run in-process, the work would happen twice"
 
     def test_it_falls_back_to_the_pool_when_the_worker_is_down(self):
         """A single-process deployment must still resolve companies."""
@@ -371,7 +371,7 @@ class TestItGoesToTheDurableQueue:
         in its CLASS BODY, so merely importing the module raises without one.
         A developer machine has it in `.env` and CI does not, which made this
         test pass everywhere it was written and fail the moment it ran on the
-        runner. Parsing is all that happens — no connection is opened — so a
+        runner. Parsing is all that happens (no connection is opened) so a
         placeholder DSN is enough, and setting it through monkeypatch keeps it
         out of every other test's environment.
         """

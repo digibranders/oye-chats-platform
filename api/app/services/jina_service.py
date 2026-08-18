@@ -1,4 +1,4 @@
-"""Jina Reader crawl fallback — fetch URLs as markdown via https://r.jina.ai/<url>.
+"""Jina Reader crawl fallback. Fetch URLs as markdown via https://r.jina.ai/<url>.
 
 PAYG, off-box, markdown-native. Returns the SAME payload shape as
 ``spider_service`` so it drops in behind ``crawl_provider``:
@@ -8,7 +8,7 @@ PAYG, off-box, markdown-native. Returns the SAME payload shape as
      "discovered_total": int,
      "queue_remaining": int}
 
-Single-page by design — multi-page coverage is provided by ``url_discovery``
+Single-page by design. Multi-page coverage is provided by ``url_discovery``
 (browser-free) upstream. Jina renders JS server-side, so ``use_js`` is accepted
 only for signature parity with the Spider provider.
 """
@@ -30,9 +30,9 @@ _TIMEOUT = 60.0
 # Called once per page as it finishes: ``(url, ok)``. Mirrors spider_service so
 # the crawl fallback reports live progress the same way the primary does.
 PageProgressCallback = Callable[[str, bool], None]
-# Full page dict per successful page, as it lands — mirrors spider_service so
-# streaming ingestion works identically on the fallback path. Async (AR-23) —
-# see spider_service.py's PageResultCallback docstring for why.
+# Full page dict per successful page, as it lands. Mirrors spider_service so
+# streaming ingestion works identically on the fallback path. Async (AR-23).
+# See spider_service.py's PageResultCallback docstring for why.
 PageResultCallback = Callable[[dict], Awaitable[None]]
 
 
@@ -59,15 +59,15 @@ async def _fetch_one(client: httpx.AsyncClient, url: str, sem: asyncio.Semaphore
 async def fetch_urls(
     urls: list[str],
     *,
-    use_js: bool = False,  # noqa: ARG001 — parity with spider_service; Jina renders JS server-side
+    use_js: bool = False,  # noqa: ARG001  Parity with spider_service; Jina renders JS server-side
     client_id: int | None = None,
     on_page: PageProgressCallback | None = None,
     on_result: PageResultCallback | None = None,
     _client: httpx.AsyncClient | None = None,
 ) -> dict:
     """Fetch an explicit, ordered URL list as markdown. Preserves order; drops
-    failures. ``on_page(url, ok)`` — if given — fires per completed page for live
-    progress; ``on_result(page)`` — if given — fires with the full page dict per
+    failures. ``on_page(url, ok)`` (if given) fires per completed page for live
+    progress; ``on_result(page)`` (if given) fires with the full page dict per
     successful page (streaming ingestion). Broken callbacks are swallowed so
     they can't abort the fetch."""
     if not urls:

@@ -2,7 +2,7 @@
 
 AR-12: the only automated hallucination defense before this module was CRAG
 relevance gating (``relevance_gate.py``), which screens retrieved chunks
-*before* generation — nothing checked the generated answer itself for
+*before* generation, nothing checked the generated answer itself for
 fabricated claims. The one narrow exception was
 ``_drop_hallucinated_media_card`` (rag_service.py), scoped to media-card
 sentinels, not prose. This module closes that gap for prose claims: an LLM
@@ -15,13 +15,13 @@ the answer has already streamed to the visitor (mirroring
 ``rag.metric`` line via the same safety-net-metric hook already used
 elsewhere in this codebase. Blocking or rewriting a live answer on a
 groundedness-gate verdict would trade a real (but bounded) hallucination risk
-for a new one — a false-positive-triggered rewrite/refusal on a good answer —
+for a new one (a false-positive-triggered rewrite/refusal on a good answer)
 without the retry/regeneration infrastructure to do that safely. Detection
 first; correction is a separate, larger effort (see AI_ENGINEERING_REVIEW.md
 Eval Gap Report).
 
 Feature flag: ``GROUNDEDNESS_CHECK_ENABLED`` (default: true)
-Sample rate:  ``GROUNDEDNESS_CHECK_SAMPLE_RATE`` (default: 1.0 — check every
+Sample rate:  ``GROUNDEDNESS_CHECK_SAMPLE_RATE`` (default: 1.0. Check every
               turn; lower to control gate-tier LLM cost at scale)
 Model:        resolved per-call via ``runtime_config.get_gate_model()``,
               same cheap tier as the relevance gate
@@ -55,7 +55,7 @@ _GROUNDEDNESS_LLM_TIMEOUT_S = float(os.getenv("GROUNDEDNESS_LLM_TIMEOUT_S", "3.0
 
 
 def _gate_model() -> str:
-    """Resolve the gate model at call time via ``runtime_config`` — same
+    """Resolve the gate model at call time via ``runtime_config``, same
     cheap tier the relevance gate uses, not the expensive primary model."""
     return runtime_config.get_gate_model()
 
@@ -95,9 +95,9 @@ Assistant's answer:
 Rate groundedness on a scale from 0.0 to 1.0:
 - 1.0: every specific factual claim in the answer (names, numbers, dates, prices, features) is directly supported by the source chunks
 - 0.5: the answer is mostly supported but includes at least one detail not found in the chunks
-- 0.0: the answer contains specific factual claims (e.g. a name, price, or statistic) that are NOT in the source chunks at all — fabricated
+- 0.0: the answer contains specific factual claims (e.g. a name, price, or statistic) that are NOT in the source chunks at all. Fabricated
 
-General positioning statements, brand voice, or vague reassurances are not factual claims — only judge specific, checkable claims (names, numbers, dates, prices, certifications, features).
+General positioning statements, brand voice, or vague reassurances are not factual claims. Only judge specific, checkable claims (names, numbers, dates, prices, certifications, features).
 
 Respond with ONLY a JSON object in this exact format: {{"score": 0.7}}
 No explanation, no other text."""
@@ -116,7 +116,7 @@ def check_groundedness(
     -------
     tuple[bool, float]
         (is_grounded, score). Fails open (is_grounded=True, score=1.0) on any
-        error — a slow/flaky judge call must never be mistaken for a real
+        error, a slow/flaky judge call must never be mistaken for a real
         hallucination, and this check is observability-only regardless (see
         module docstring), so failing open costs nothing but a missed metric
         point, never a broken user-facing response.
@@ -136,7 +136,7 @@ def check_groundedness(
                 # `gemini-2.5-flash` (the default GATE_MODEL) is a reasoning
                 # model: it spends output tokens thinking before it emits any
                 # text. At `max_tokens=20` the entire budget went to reasoning
-                # and the content came back EMPTY — measured against the live
+                # and the content came back EMPTY. Measured against the live
                 # API: 17 completion tokens, `reasoning_tokens=17`,
                 # `text_tokens=0`. The call SUCCEEDS, so nothing raised; the
                 # empty string then failed JSON parsing and this gate fell
@@ -146,7 +146,7 @@ def check_groundedness(
                 #
                 # A gate is a cheap classification and wants no reasoning at
                 # all. Disabling it returns `{"score":1}` in FIVE tokens
-                # against 116 for the thinking path — correct AND ~23x cheaper
+                # against 116 for the thinking path. Correct AND ~23x cheaper
                 # than the version that was silently returning nothing.
                 # `litellm.drop_params = True` (main.py) drops this param for a
                 # GATE_MODEL that does not support it, so retuning the model
@@ -163,7 +163,7 @@ def check_groundedness(
         score = float(data.get("score", 1.0))
         score = max(0.0, min(1.0, score))  # clamp to [0, 1]
     except Exception as exc:
-        # Timeout, rate limit, JSON parse error, network — all fail open.
+        # Timeout, rate limit, JSON parse error, network. All fail open.
         logger.warning("Groundedness gate failed (non-blocking, fail-open): %s", exc)
         return True, 1.0
 

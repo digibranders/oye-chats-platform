@@ -1,4 +1,4 @@
-"""Currency routing for /geo and /checkout/quote — geo-split billing model.
+"""Currency routing for /geo and /checkout/quote. Geo-split billing model.
 
 Indian buyers (country == "IN") see and pay INR; everyone else sees USD. The
 confirmed ``billing_country`` (from the checkout country-confirmation step)
@@ -7,7 +7,7 @@ USD, and vice-versa (FEMA-safe).
 
 Real-Postgres route tests via the shared ``db`` fixture (conftest). They build
 the app inline, override client auth, and patch ``get_session`` /
-``resolve_country`` — mirroring tests/test_billing_bl2_bl4.py. Skips without
+``resolve_country``. Mirroring tests/test_billing_bl2_bl4.py. Skips without
 DB_URL.
 """
 
@@ -38,7 +38,7 @@ def _bare_request() -> Request:
     """A header-less GET Request, for calling the charge gate directly.
 
     The gate reads geo only through ``subscription_routes.resolve_country``,
-    which these tests monkeypatch — this just satisfies its signature with a
+    which these tests monkeypatch. This just satisfies its signature with a
     real object instead of ``None``.
     """
     return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
@@ -260,7 +260,7 @@ def test_checkout_quote_confirmed_country_overrides_ip(db, monkeypatch):
     client = _make_client(db, email="quote-override@e.com")
     plan = _make_plan(db, slug="starter-ov", monthly_price_cents=179900, monthly_price_usd_cents=1900)
     db.commit()
-    # IP mis-detects as US, but the buyer confirms IN — INR must win (FEMA-safe).
+    # IP mis-detects as US, but the buyer confirms IN. INR must win (FEMA-safe).
     monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
 
     api = _api(db, client)
@@ -274,7 +274,7 @@ def test_checkout_quote_confirmed_country_overrides_ip(db, monkeypatch):
 
 
 def test_checkout_quote_never_advertises_zero_dollar_checkout(db, monkeypatch):
-    """F6 — a wired USD Razorpay plan id with a NULL/0 *_usd_cents column must
+    """F6, a wired USD Razorpay plan id with a NULL/0 *_usd_cents column must
     NOT produce amount_display '$0' with checkout_supported=true: the immutable
     gateway plan bills its real amount. An unpriced USD tier is intl-pending."""
     from app.api import subscription_routes
@@ -333,7 +333,7 @@ def test_domestic_quote_without_an_inr_plan_id_offers_contact_sales(db, monkeypa
     """The INR branch owes the buyer the same honesty as the USD one.
 
     ``razorpay_service.create_subscription`` rejects a missing INR plan id with
-    a ValueError that ``/subscriptions/checkout`` renders verbatim as a 400 — an
+    a ValueError that ``/subscriptions/checkout`` renders verbatim as a 400, an
     internal "create the plan in the Razorpay dashboard" instruction shown to a
     customer who just clicked Subscribe on a quoted price. Quote the CTA instead.
     """
@@ -352,7 +352,7 @@ def test_domestic_quote_without_an_inr_plan_id_offers_contact_sales(db, monkeypa
     body = res.json()
     assert res.status_code == 200, res.text
     assert body["currency"] == "INR"
-    assert body["amount_display"] == "₹1,799"  # still quoted — only the CTA changes
+    assert body["amount_display"] == "₹1,799"  # still quoted. Only the CTA changes
     assert body["checkout_supported"] is False
     assert body["reason"] == "inr_plan_unconfigured"
     assert body["contact_sales"] == "developer@oyechats.com"

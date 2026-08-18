@@ -1,4 +1,4 @@
-"""Phase 5 — findings D and F.
+"""Phase 5. Findings D and F.
 
 D: a sequential double-submit of a paid→paid upgrade must reuse the in-flight
    checkout, not mint a second Razorpay subscription (double first-cycle charge).
@@ -35,8 +35,8 @@ def _setup(db, credits=0):
 @pytest.fixture(autouse=True)
 def _pending_mandate_is_unpaid(monkeypatch):
     """``execute_paid_upgrade`` now asks the gateway whether the in-flight
-    replacement mandate has already been PAID before it reuses or re-mints —
-    re-minting over a paid one is how a month gets charged twice. Unpaid is the
+    replacement mandate has already been PAID before it reuses or re-mints.
+    Re-minting over a paid one is how a month gets charged twice. Unpaid is the
     right default for these tests; the paid case is covered in
     test_change_plan_checkout_idempotency."""
     monkeypatch.setattr("app.services.razorpay_service.checkout_already_paid", lambda *a, **k: False)

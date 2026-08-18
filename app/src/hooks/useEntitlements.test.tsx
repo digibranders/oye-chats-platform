@@ -75,7 +75,7 @@ beforeEach(() => {
   setEntitlements();
 });
 
-describe('useEntitlements — passthrough fields', () => {
+describe('useEntitlements. Passthrough fields', () => {
   it('forwards loading, error and refresh from the context', () => {
     const refresh = vi.fn();
     const error = new Error('boom');
@@ -91,7 +91,7 @@ describe('useEntitlements — passthrough fields', () => {
   });
 });
 
-describe('useEntitlements — isFree', () => {
+describe('useEntitlements. IsFree', () => {
   it('is false for a paid plan', () => {
     const { result } = renderHook(() => useEntitlements());
     expect(result.current.isFree).toBe(false);
@@ -110,7 +110,7 @@ describe('useEntitlements — isFree', () => {
   });
 });
 
-describe('useEntitlements — hasFeature', () => {
+describe('useEntitlements. HasFeature', () => {
   it('reflects boolean flags directly', () => {
     const { result } = renderHook(() => useEntitlements());
     expect(result.current.hasFeature('live_chat')).toBe(true);
@@ -137,7 +137,7 @@ describe('useEntitlements — hasFeature', () => {
   });
 });
 
-describe('useEntitlements — limitFor', () => {
+describe('useEntitlements. LimitFor', () => {
   it('returns the configured numeric ceiling', () => {
     const { result } = renderHook(() => useEntitlements());
     expect(result.current.limitFor('bots')).toBe(3);
@@ -159,7 +159,7 @@ describe('useEntitlements — limitFor', () => {
   });
 });
 
-describe('useEntitlements — withinLimit', () => {
+describe('useEntitlements. WithinLimit', () => {
   it('is true below the limit and false at or above it', () => {
     const { result } = renderHook(() => useEntitlements()); // bots limit = 3
     expect(result.current.withinLimit('bots', 2)).toBe(true);
@@ -182,7 +182,7 @@ describe('useEntitlements — withinLimit', () => {
   });
 });
 
-describe('useEntitlements — remaining', () => {
+describe('useEntitlements. Remaining', () => {
   it('counts down to the ceiling and floors at zero', () => {
     const { result } = renderHook(() => useEntitlements()); // bots limit = 3
     expect(result.current.remaining('bots', 0)).toBe(3);

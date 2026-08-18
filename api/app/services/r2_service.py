@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Content types safe to store (and later serve) verbatim on a chat attachment.
 # Anything NOT on this allowlist is stored as ``application/octet-stream`` so a
 # scriptable payload (SVG/HTML/JS/XML) can never be served inline from the app
-# origin as its declared type — the root of the stored-XSS vector (NB-1).
+# origin as its declared type, the root of the stored-XSS vector (NB-1).
 _SAFE_CHAT_FILE_CONTENT_TYPES = frozenset(
     {
         "image/png",
@@ -66,7 +66,7 @@ def _safe_chat_file_content_type(content_type: str | None) -> str:
 
 
 # Object-key extension taken from a caller-supplied file name. The name is
-# never used as a path — the key is ``<prefix>/<uuid4>.<ext>`` — but the
+# never used as a path, the key is ``<prefix>/<uuid4>.<ext>``, but the
 # extension was previously spliced in verbatim, so a name like
 # ``report.tar.gz/../../x`` produced a key containing separators and traversal
 # segments, and an extension could be arbitrarily long.
@@ -97,7 +97,7 @@ class UnsupportedImage(ValueError):
 MAX_DECODED_PIXELS = 40_000_000
 
 # Verified against what Pillow can actually decode AND what the pipeline can
-# use. SVG is absent because Pillow cannot open it at all — every SVG upload
+# use. SVG is absent because Pillow cannot open it at all. Every SVG upload
 # 500'd for as long as the feature existed, while the UI advertised it.
 ALLOWED_IMAGE_FORMATS = frozenset({"PNG", "JPEG", "WEBP", "GIF", "BMP"})
 
@@ -108,7 +108,7 @@ def _strict_decode_limits():
     decode, then put them back exactly as they were.
 
     Both are module-level globals on a shared library, so their value at any
-    moment is whatever the last writer left — and a writer we do not control
+    moment is whatever the last writer left, and a writer we do not control
     already exists: importing ``weasyprint`` (the invoice-PDF renderer) sets
     ``ImageFile.LOAD_TRUNCATED_IMAGES = True`` at import time, process-wide,
     for its own rendering needs. Any process that has rendered an invoice
@@ -116,7 +116,7 @@ def _strict_decode_limits():
     file into a half-decoded image with the rest filled in.
 
     Today the API imports weasyprint only lazily, so the running API process
-    happens not to be affected — but "happens not to be" is not a security
+    happens not to be affected, but "happens not to be" is not a security
     boundary. It held only because a `from weasyprint import HTML` sits inside
     a function rather than at module scope, and it broke the test suite the
     moment everything was imported into one process.
@@ -143,7 +143,7 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     Returns bytes of the processed PNG.
 
     THIS is the security boundary for logo uploads, not the route's
-    content-type check — that header is client-supplied and forgeable. What
+    content-type check. That header is client-supplied and forgeable. What
     arrives here is arbitrary attacker-chosen bytes from an authenticated
     customer, so the format is established by DECODING, and the decode itself
     is bounded against a compression bomb.
@@ -151,7 +151,7 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     with _strict_decode_limits():
         try:
             img = Image.open(io.BytesIO(file_data))
-            # `open` is lazy — it reads the header and returns. Verifying the
+            # `open` is lazy, it reads the header and returns. Verifying the
             # format here would be checking a claim the file makes about itself
             # before anything has actually been decoded, so the real decode below
             # is what proves it.
@@ -208,18 +208,18 @@ def _build_public_url(key: str) -> str:
     Build a public URL for the object.
 
     Cloudflare R2's S3 endpoint (`{account}.r2.cloudflarestorage.com`) is
-    **private** — anonymous GETs are rejected with `InvalidArgument /
+    **private**. Anonymous GETs are rejected with `InvalidArgument /
     Authorization`. Public reads have to go through a bound custom domain
     (e.g. `cdn.oyechats.com`) or the bucket's `r2.dev` URL. Set
     `R2_PUBLIC_BASE_URL` to that domain and we use it first.
 
     Legacy fallback below builds Backblaze B2 "friendly URLs" when the
-    endpoint matches that provider's pattern — dead code on R2 but kept so
+    endpoint matches that provider's pattern. Dead code on R2 but kept so
     older buckets keep working if `R2_ENDPOINT` still points at Backblaze.
 
     Last-resort fallback returns the S3-style path URL; it only loads if
     the bucket has been made publicly readable via that endpoint, which on
-    R2 it never is — so callers should treat that fallback as broken and
+    R2 it never is, so callers should treat that fallback as broken and
     configure `R2_PUBLIC_BASE_URL`.
     """
     if R2_PUBLIC_BASE_URL:
@@ -271,7 +271,7 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
     The caller uploads via PUT to the returned URL (no auth headers needed).
     expires: seconds until the URL expires (default 5 minutes).
 
-    NOTE: a presigned PUT signs only the Content-Type header — it cannot bound
+    NOTE: a presigned PUT signs only the Content-Type header, it cannot bound
     the uploaded body size. Prefer :func:`generate_presigned_post` for
     untrusted/browser uploads where a size ceiling must be enforced.
     """
@@ -362,7 +362,7 @@ def upload_to_r2(file_data, filename, content_type):
         # Upload the file
         s3_client.put_object(Bucket=R2_BUCKET_NAME, Key=unique_filename, Body=processed_data, ContentType="image/png")
 
-        # Return the key — the backend will construct full URLs via signed/public URL helpers.
+        # Return the key, the backend will construct full URLs via signed/public URL helpers.
         return unique_filename
 
     except ClientError as e:
@@ -377,7 +377,7 @@ def upload_to_r2(file_data, filename, content_type):
         raise Exception(error_msg) from e
 
 
-# Backwards-compatibility alias — older imports may still call `upload_to_b2`.
+# Backwards-compatibility alias. Older imports may still call `upload_to_b2`.
 upload_to_b2 = upload_to_r2
 
 
@@ -385,7 +385,7 @@ def upload_invoice_pdf(pdf_bytes: bytes, key: str) -> str:
     """Upload a rendered invoice PDF and return its public URL.
 
     The key must already carry its unguessable capability token (see
-    ``worker.tasks._invoice_pdf_key``) — sequential serials alone would make
+    ``worker.tasks._invoice_pdf_key``). Sequential serials alone would make
     customer invoices enumerable on the public CDN domain.
     """
     try:

@@ -1,7 +1,7 @@
 """Auto-recrawl must take the per-client crawl lock before fetch+ingest.
 
 Without a lock, a scheduled auto-recrawl can run concurrently with an
-interactive crawl (or another recrawl) for the same client — both write
+interactive crawl (or another recrawl) for the same client, both write
 through ``batch_web_ingestion`` for the same bot/URLs at once, producing
 duplicate chunks that permanently degrade retrieval (there is no unique
 index on ``Document`` to catch it at the DB layer).
@@ -11,8 +11,8 @@ index on ``Document`` to catch it at the DB layer).
 1. Try to take the same per-client lock the interactive crawl path uses
    (``acquire_crawl_lock`` / ``release_crawl_lock`` in
    ``app.services.crawler_service``), keyed on ``client_id``.
-2. If the lock is already held, skip this cycle entirely — no fetch, no
-   ingest — and leave ``next_recrawl_at`` untouched so the next hourly
+2. If the lock is already held, skip this cycle entirely (no fetch, no
+   ingest) and leave ``next_recrawl_at`` untouched so the next hourly
    sweep retries once the lock frees, instead of parking the bot for a
    full 7-day interval.
 3. Always release the lock in a ``finally``, even when ingestion raises,
@@ -105,7 +105,7 @@ def test_lock_held_skips_without_ingest_or_reschedule(db, monkeypatch):
     assert ingest_calls == []
 
     db.refresh(bot)
-    # Schedule must be left untouched — NOT jumped 7 days out — so the next
+    # Schedule must be left untouched (NOT jumped 7 days out) so the next
     # hourly sweep retries this bot once the lock frees.
     assert bot.next_recrawl_at == original_next
 
@@ -167,7 +167,7 @@ def test_lock_released_on_ingest_failure(db, monkeypatch):
 
     monkeypatch.setattr(recrawl_service, "batch_web_ingestion", _boom)
 
-    # recrawl_bot's contract is "never raises" — the ingest failure is caught
+    # recrawl_bot's contract is "never raises", the ingest failure is caught
     # internally and tallied into the summary.
     result = asyncio.run(recrawl_service.recrawl_bot(bot.id))
 
@@ -222,7 +222,7 @@ def test_preemption_yields_to_interactive_crawl(db, monkeypatch):
     result = asyncio.run(recrawl_service.recrawl_bot(bot.id))
 
     assert result == {"status": "preempted", "reason": "interactive_crawl"}
-    assert ingest_calls == []  # yielded before ingest — no duplicate chunks
+    assert ingest_calls == []  # yielded before ingest, no duplicate chunks
     assert cleared == [bot.client_id]  # cleared once, right after acquire
     # Lock released with the ownership token so the waiting interactive crawl acquires.
     assert released == [(bot.client_id, "recrawl:tok-preempt")]

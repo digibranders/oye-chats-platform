@@ -184,7 +184,7 @@ def test_local_active_with_dead_gateway_sub_is_a_delta(db):
 
 def test_authenticated_deferred_sub_is_live_not_a_zombie(db):
     # A promo/deferred-start sub sits in `authenticated` at the gateway with an
-    # ACTIVE local row — that is the designed state, not a delta.
+    # ACTIVE local row. That is the designed state, not a delta.
     client = _client(db)
     plan = _plan(db)
     db.add(
@@ -227,7 +227,7 @@ def test_fetch_failure_is_reported_not_raised(db):
         fetch_captured_payments=_boom,
         fetch_gateway_subscriptions=lambda: [],
     )
-    # A fetch failure is a monitoring gap, not a crash — reported as its own
+    # A fetch failure is a monitoring gap, not a crash. Reported as its own
     # delta so silence still means "nothing is wrong".
     assert "payments_fetch_failed" in report["deltas"]
     assert report["delta_count"] >= 1
@@ -235,7 +235,7 @@ def test_fetch_failure_is_reported_not_raised(db):
 
 def test_unattributed_payment_is_a_soft_delta_not_an_alert(db):
     # A ₹1 smoke-test charge or dashboard payment link carries no oyechats_*
-    # notes — reported for visibility, but never allowed to poison the ERROR
+    # notes. Reported for visibility, but never allowed to poison the ERROR
     # alert with false accusations.
     _client(db)
     report = _run(db, payments=[{"id": "pay_recon_foreign", "status": "captured", "amount": 100, "notes": {}}])
@@ -245,7 +245,7 @@ def test_unattributed_payment_is_a_soft_delta_not_an_alert(db):
 
 def test_seat_addon_subscription_is_known_locally(db):
     # Seat add-ons are real gateway subscriptions stored in
-    # seat_addon_subscription_id — they must NOT flag as unknown (that was a
+    # seat_addon_subscription_id. They must NOT flag as unknown (that was a
     # guaranteed daily false positive per seated customer).
     client = _client(db)
     plan = _plan(db)

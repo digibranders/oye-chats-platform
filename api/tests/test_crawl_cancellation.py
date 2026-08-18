@@ -1,7 +1,7 @@
 """Responsive crawl cancellation.
 
 Before this fix `CrawlCancelled` was defined and caught but never raised, so a
-Stop click only flipped the UI label — the crawl ran to natural completion. Now
+Stop click only flipped the UI label, the crawl ran to natural completion. Now
 the providers raise `CrawlCancelled` at each page/wave checkpoint (short-circuiting
 not-yet-started fetches), and it propagates through `crawl_provider` WITHOUT
 triggering a fallback re-crawl. These tests lock that behavior in.
@@ -21,7 +21,7 @@ from app.services.crawler_service import (
 
 
 def test_cancel_flag_lifecycle_clears():
-    """A cancel flag must be clearable — otherwise it persists (TTL ~27min) and
+    """A cancel flag must be clearable. Otherwise it persists (TTL ~27min) and
     every subsequent crawl self-aborts at the provider pre-flight check. The
     crawl-start endpoint calls clear_cancellation for exactly this reason.
     """
@@ -66,7 +66,7 @@ def test_spider_crawl_website_preflight_cancel_raises(monkeypatch):
 
 def test_spider_fetch_urls_midflight_shortcircuits(monkeypatch):
     """A cancel after start skips every not-yet-started fetch and raises with
-    the pages scraped so far — it does NOT fetch the rest of the batch."""
+    the pages scraped so far, it does NOT fetch the rest of the batch."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "k")
     monkeypatch.setattr(spider_service, "is_cancellation_requested", _counter_cancel())
     scraped = {"n": 0}

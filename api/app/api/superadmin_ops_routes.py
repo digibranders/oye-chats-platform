@@ -72,8 +72,8 @@ router = APIRouter(prefix="/superadmin", tags=["superadmin-ops"])
 # ── Invoices ─────────────────────────────────────────────────────────────────
 
 
-# NOTE: ``GET /superadmin/invoices`` used to live here. It was unreachable —
-# superadmin_routes_v2 registers the same path on the same prefix and main.py
+# NOTE: ``GET /superadmin/invoices`` used to live here. It was unreachable.
+# Superadmin_routes_v2 registers the same path on the same prefix and main.py
 # includes that router FIRST, so this handler never matched and its ``?status=``
 # filter silently no-opped against v2's paginated response. Removed rather than
 # renamed: v2's version is the one the console calls and the one that
@@ -84,7 +84,7 @@ def _apply_mark_paid(inv: Invoice) -> None:
     """Mark an invoice paid without violating the immutability guard.
 
     ``paid_at`` is a frozen column once an invoice is numbered (models.py
-    ``_INVOICE_FROZEN_EXEMPT``) — and rightly so: a numbered document's supply
+    ``_INVOICE_FROZEN_EXEMPT``), and rightly so: a numbered document's supply
     date is what its FY serial and GSTR period were derived from, so moving it
     would silently misfile the document. A numbered invoice is by definition
     already paid (it is created from a captured charge), so manual
@@ -415,10 +415,10 @@ _RETAINED_STATUSES = ("active", "trialing", "past_due")
 def revenue_cohorts(_admin: Client = Depends(get_superadmin)):
     """Signup-month cohorts with retention and lifetime value.
 
-    * ``cohort``    — signup month (``YYYY-MM``).
-    * ``signups``   — clients whose account was created that month.
-    * ``retained``  — of those, how many still hold an active subscription.
-    * ``ltv_cents`` — total USD-normalised value of *paid* invoices from that
+    * ``cohort``   . Signup month (``YYYY-MM``).
+    * ``signups``  . Clients whose account was created that month.
+    * ``retained`` . Of those, how many still hold an active subscription.
+    * ``ltv_cents``. Total USD-normalised value of *paid* invoices from that
       cohort's clients (cumulative, not per-period).
     """
     with get_session() as session:
@@ -474,7 +474,7 @@ _TIMESERIES_METRICS = ("revenue", "messages", "signups")
 @router.get("/stats/timeseries")
 def stats_timeseries(
     # Allow-listed in the handler against ``_TIMESERIES_METRICS`` (400 with the
-    # permitted set). Bounded here so an unknown value is short — not rejected
+    # permitted set). Bounded here so an unknown value is short, not rejected
     # twice, under two different status codes.
     metric: str = Query(default="revenue", max_length=32),
     days: int = Query(default=30, ge=1, le=365),
@@ -484,10 +484,10 @@ def stats_timeseries(
 
     Replaces the dashboard's previously-synthetic sparklines with real data.
 
-    * ``metric=revenue``  — paid-invoice value per day, **USD cents** (by paid_at,
+    * ``metric=revenue`` . Paid-invoice value per day, **USD cents** (by paid_at,
       falling back to created_at), normalised via ``_to_usd_cents``.
-    * ``metric=messages`` — chat messages created per day.
-    * ``metric=signups``  — client accounts created per day.
+    * ``metric=messages``. Chat messages created per day.
+    * ``metric=signups`` . Client accounts created per day.
 
     Returns a gap-filled list ``[{date: "YYYY-MM-DD", value: int}]`` covering
     every day in the window (missing days are 0) so charts render continuously.
@@ -572,15 +572,15 @@ def command_center(_admin: Client = Depends(get_superadmin)):
     (month/year boundaries) and currency normalisation stay authoritative rather
     than being re-derived from sampled time-series on the client:
 
-    * ``operator_transfers``     — chat sessions ever escalated to a human operator.
-    * ``bant_qualified_leads``   — sessions whose BANT tier reached mql/sal/sql.
-    * ``chats_total``            — all chat sessions on the platform.
-    * ``revenue_*_month_cents``  — paid-invoice value (USD cents) for the last and
+    * ``operator_transfers``    . Chat sessions ever escalated to a human operator.
+    * ``bant_qualified_leads``  . Sessions whose BANT tier reached mql/sal/sql.
+    * ``chats_total``           . All chat sessions on the platform.
+    * ``revenue_*_month_cents`` . Paid-invoice value (USD cents) for the last and
       current calendar month, bucketed by ``coalesce(paid_at, created_at)``.
-    * ``growth_*_year_cents``    — the same, aggregated over last vs current year.
-    * ``signups_*_month``        — client accounts created last vs current month.
-    * ``feature_requests``       — open+resolved platform feature requests.
-    * ``booked_meetings``        — confirmed meeting bookings.
+    * ``growth_*_year_cents``   , the same, aggregated over last vs current year.
+    * ``signups_*_month``       . Client accounts created last vs current month.
+    * ``feature_requests``      . Open+resolved platform feature requests.
+    * ``booked_meetings``       . Confirmed meeting bookings.
 
     ``next_month`` revenue is intentionally omitted here: it is a forward
     projection equal to MRR, which the client already has from ``/revenue``.
@@ -629,8 +629,8 @@ def command_center(_admin: Client = Depends(get_superadmin)):
         )
 
         # Revenue is normalised to USD cents in Python (invoices may be INR or
-        # USD), so pull the raw rows for the widest window we need — last year to
-        # now — and bucket once. `paid_at` falls back to `created_at`.
+        # USD), so pull the raw rows for the widest window we need (last year to
+        # now) and bucket once. `paid_at` falls back to `created_at`.
         revenue_rows = session.execute(
             select(Invoice.amount_cents, Invoice.currency, Invoice.paid_at, Invoice.created_at).where(
                 Invoice.status == "paid",
@@ -678,13 +678,13 @@ def command_center(_admin: Client = Depends(get_superadmin)):
 
 
 def _mask_api_key(key: str | None) -> str:
-    """Mask a credential to its last 4 chars (``••••••1a2b``); ``—`` when absent.
+    """Mask a credential to its last 4 chars (``••••••1a2b``); ``-`` when absent.
 
-    Never returns the full key — only the trailing 4 characters are revealed so
+    Never returns the full key. Only the trailing 4 characters are revealed so
     an operator can disambiguate keys without the value leaking to the client.
     """
     if not key:
-        return "—"
+        return "-"
     return "••••••" + key[-4:]
 
 
@@ -924,8 +924,8 @@ def list_crawls(_admin: Client = Depends(get_superadmin)):
 def api_key_registry(_admin: Client = Depends(get_superadmin)):
     """Masked registry of client (``X-API-Key``) and operator keys.
 
-    Keys are never returned in full — only the trailing 4 characters are shown
-    (``••••••1a2b``); a missing operator key renders as ``—``.
+    Keys are never returned in full. Only the trailing 4 characters are shown
+    (``••••••1a2b``); a missing operator key renders as ``-``.
     """
     with get_session() as session:
         client_rows = session.execute(
@@ -978,11 +978,11 @@ def rotate_client_api_key(
 ):
     """Regenerate a client's ``api_key``, invalidating their current key.
 
-    SECURITY: this immediately invalidates the client's existing ``X-API-Key`` —
-    any embed / integration using the old key stops authenticating until updated
+    SECURITY: this immediately invalidates the client's existing ``X-API-Key``.
+    Any embed / integration using the old key stops authenticating until updated
     with the new value. The freshly generated key is NOT returned in the response
     body (only its masked form); retrieve the full value out-of-band if needed.
-    The new key is generated with ``uuid.uuid4().hex`` — the same generator used
+    The new key is generated with ``uuid.uuid4().hex``, the same generator used
     when a client is first created at registration.
     """
     _require_write(admin)
@@ -1153,7 +1153,7 @@ def list_usage_records(
         }
 
         # The UsageRecord freezes plan_id + limits at period-creation time and is
-        # never resynced when the subscription changes — so it goes stale after an
+        # never resynced when the subscription changes, so it goes stale after an
         # upgrade/downgrade. For the super-admin view, report each client's LIVE
         # account plan (highest-tier active/trialing/past_due subscription, the
         # same rule entitlements use) and that plan's limits, keeping the *used*
@@ -1415,7 +1415,7 @@ def test_webhook_registration(
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# P2 — Tier 3
+# P2. Tier 3
 # ════════════════════════════════════════════════════════════════════════════
 
 
@@ -1447,7 +1447,7 @@ def list_payment_methods(
     UPI handles are MASKED. A VPA is routinely the customer's mobile number or
     their name (``9876543210@ybl``), so returning it verbatim from a
     cross-tenant endpoint would spread personal data far wider than the support
-    task needs — a DPDP concern rather than an RBI one. The bank suffix is
+    task needs, a DPDP concern rather than an RBI one. The bank suffix is
     enough to answer "which UPI app is this?"; nobody triaging a payment needs
     the identifier itself.
     """
@@ -1474,7 +1474,7 @@ def list_payment_methods(
                 "type": m.type,
                 "last4": m.last4,
                 # RBI card-on-file permits last4 + network + issuer and nothing
-                # more — expiry and cardholder name must not be stored, so they
+                # more. Expiry and cardholder name must not be stored, so they
                 # are not available to serialize.
                 "network": m.network,
                 "issuer": m.issuer,
@@ -1624,7 +1624,7 @@ def list_failed_webhooks(
 
     Newest first, capped at 500, filterable by ``status`` (pending|replayed|
     ignored). The raw signed payload, signature, and captured headers are never
-    returned — only the non-sensitive metadata needed to triage and replay.
+    returned. Only the non-sensitive metadata needed to triage and replay.
     """
     with get_session() as session:
         stmt = select(FailedWebhook).order_by(FailedWebhook.created_at.desc())
@@ -1707,7 +1707,7 @@ def replay_failed_webhook(
         except Exception as exc:
             # The raw exception is almost always a SQLAlchemy error whose str()
             # carries the failing statement, its bound parameters, and the
-            # constraint name — schema disclosure that does not become
+            # constraint name. Schema disclosure that does not become
             # acceptable just because the caller is a super-admin (this reaches
             # a browser, and from there any log or screenshot). The operator
             # gets a token to search journalctl with instead.
@@ -1826,7 +1826,7 @@ def list_referral_conversions(
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# P2 — Tier 4
+# P2. Tier 4
 # ════════════════════════════════════════════════════════════════════════════
 
 
@@ -1877,7 +1877,7 @@ def _mask_push_endpoint(endpoint: str | None) -> str:
     ~12 chars when the host can't be parsed.
     """
     if not endpoint:
-        return "—"
+        return "-"
     from urllib.parse import urlparse
 
     try:
@@ -1991,7 +1991,7 @@ _LLM_BREAKDOWN_DIMENSIONS = ("model", "client")
 @router.get("/llm/cost-breakdown")
 def llm_cost_breakdown(
     days: int = Query(default=30, ge=1, le=365),
-    # The two groupings the aggregation below implements — it branches on
+    # The two groupings the aggregation below implements, it branches on
     # ``by == "model"`` / ``by == "client"`` and had no rejection for
     # anything else, so an unknown value silently grouped by client.
     by: Literal["model", "client"] = Query(default="model"),
@@ -2003,7 +2003,7 @@ def llm_cost_breakdown(
     number of errored calls, ordered by ``cost_cents`` descending. For
     ``by=model`` the key and label are the model name; for ``by=client`` the key
     is the stringified client id and the label is the client name (NULL client →
-    ``"—"``). Client names are batch-loaded to avoid N+1.
+    ``"-"``). Client names are batch-loaded to avoid N+1.
     """
     if by not in _LLM_BREAKDOWN_DIMENSIONS:
         raise HTTPException(status_code=400, detail=f"by must be one of {_LLM_BREAKDOWN_DIMENSIONS}")
@@ -2050,7 +2050,7 @@ def llm_cost_breakdown(
                 key = str(row.key) if row.key is not None else None
                 label = labels.get(row.key) if row.key is not None else None
                 if not label:
-                    label = "—"
+                    label = "-"
             result.append(
                 {
                     "key": key,

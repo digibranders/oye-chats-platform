@@ -1,9 +1,9 @@
 /**
- * One click, one charge — the per-agent purchase half.
+ * One click, one charge, the per-agent purchase half.
  *
  * `submitting` disables both CTAs, but that is not a guard: two clicks
  * dispatched before React flushes the state update both reach the handler, and
- * each one calls `createBotCheckout` — which mints a Razorpay subscription
+ * each one calls `createBotCheckout`, which mints a Razorpay subscription
  * server-side. Two authorised mandates each charge a full cycle.
  *
  * `usePlanCheckout` got this latch for the account-level money path, but this
@@ -13,7 +13,7 @@
  * uses to buy an additional agent.
  *
  * Releasing matters as much as guarding: a customer who hits a recoverable
- * failure — gateway timeout, declined card, a dismissed Razorpay sheet — must
+ * failure (gateway timeout, declined card, a dismissed Razorpay sheet) must
  * be able to try again.
  */
 
@@ -143,7 +143,7 @@ describe('per-agent checkout re-entrancy', () => {
       fireEvent.click(payButton());
     });
 
-    // Closing the payment sheet is not an error — reopening it must work.
+    // Closing the payment sheet is not an error. Reopening it must work.
     expect(createBotCheckout).toHaveBeenCalledTimes(2);
   });
 

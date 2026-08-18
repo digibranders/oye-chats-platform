@@ -26,7 +26,7 @@ from app.db.models import (
 def _resolve_owner(bot_id=None, client_id=None):
     """
     During migration, endpoints may pass bot_id OR client_id.
-    Returns (bot_id, client_id) tuple — at least one will be set.
+    Returns (bot_id, client_id) tuple, at least one will be set.
     """
     return bot_id, client_id
 
@@ -39,7 +39,7 @@ def _resolve_owner(bot_id=None, client_id=None):
 def _get_session_for_bot(session, session_id: str, bot_id: int | None) -> ChatSession | None:
     """Look up a chat session by primary key and validate ownership.
 
-    ``id`` is the primary key on ``chat_sessions`` — there can only ever be one
+    ``id`` is the primary key on ``chat_sessions``. There can only ever be one
     row for a given ``session_id``. Earlier code filtered by ``bot_id`` in the
     ``WHERE`` clause, which silently turned ownership mismatches into PK
     collisions on subsequent INSERTs. The fix is to look up by ``id`` only and
@@ -47,7 +47,7 @@ def _get_session_for_bot(session, session_id: str, bot_id: int | None) -> ChatSe
 
     Returns ``None`` when no row exists (caller may then INSERT). Raises
     ``SessionOwnershipError`` when a row exists but doesn't belong to
-    ``bot_id`` — covers two cases:
+    ``bot_id``. Covers two cases:
 
     * ``chat_session.bot_id is None`` (legacy / pre-multi-bot data). We do not
       auto-claim these at runtime; the Alembic backfill migration handles
@@ -77,7 +77,7 @@ def ensure_chat_session(
 ) -> ChatSession:
     """Get-or-create a chat session, returning the row.
 
-    * Looks up by primary key only — ``id`` uniquely identifies a session.
+    * Looks up by primary key only. ``id`` uniquely identifies a session.
     * If the row exists and belongs to ``bot_id``, updates ``last_active_at``
       (plus optional ``location`` / ``device``) and returns it.
     * If the row exists but ``bot_id`` doesn't match, raises
@@ -190,7 +190,7 @@ def add_chat_message(
     """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
 
     ``media_card`` / ``media_secondary`` persist the parsed media-card payload
-    so the widget can re-render video/document cards on refresh — see
+    so the widget can re-render video/document cards on refresh. See
     ``ChatMessage.media_card`` for the shape. Both stay ``None`` for user
     turns and for bot answers that don't emit a card.
     """
@@ -250,7 +250,7 @@ def create_or_update_lead_info(
     ``utm_params`` and ``visitor_journey`` are optional snapshots of the
     parent chat_session's attribution data. Caller is responsible for
     only passing them when the owning client's plan includes the Lead
-    Source Attribution feature — this function does not re-check the
+    Source Attribution feature. This function does not re-check the
     entitlement, it only persists what it's given.
 
     The snapshots follow "first non-empty wins": once attribution is
@@ -269,7 +269,7 @@ def create_or_update_lead_info(
             existing.phone = phone
         if company is not None:
             existing.company = company
-        # Only backfill attribution — never overwrite an existing snapshot
+        # Only backfill attribution, never overwrite an existing snapshot
         # so a later capture doesn't clobber first-touch data.
         if utm_params and not existing.utm_params:
             existing.utm_params = utm_params
@@ -311,7 +311,7 @@ def _owner_filter(model, bot_id=None, client_id=None):
     to validate bot ownership beforehand.
 
     When ``model`` carries an ``is_active`` flag (``Document`` does), the clause
-    also excludes deactivated chunks — knowledge a bot keeps but no longer
+    also excludes deactivated chunks. Knowledge a bot keeps but no longer
     answers from after its plan lapsed to Free (see ``knowledge_state_service``).
     Every retrieval / listing path routes through here, so the active-only rule
     is enforced in one place. Dedup (``is_document_processed``) applies its own
@@ -320,7 +320,7 @@ def _owner_filter(model, bot_id=None, client_id=None):
     Raises:
         ValueError: when both ``bot_id`` and ``client_id`` are missing/falsy.
             Falling through silently would return ``model.client_id IS NULL``
-            which matches legacy pre-migration chunks — a cross-tenant leak
+            which matches legacy pre-migration chunks, a cross-tenant leak
             path waiting for a caller bug. Tenant scope must fail loudly.
     """
     from sqlalchemy import and_
@@ -347,8 +347,8 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
     ``page_count`` is the number of distinct pages/files under the source (for a
     website, one per crawled URL; for an uploaded file, always 1). ``chunk_count``
     is the total embedded chunks under the source. ``doc_page_count`` is the real
-    page count of an uploaded file — read from the ``total_pages`` metadata stamped
-    at extraction (PDF: page count; DOCX/TXT: 1) — and is ``None`` for websites and
+    page count of an uploaded file. Read from the ``total_pages`` metadata stamped
+    at extraction (PDF: page count; DOCX/TXT: 1), and is ``None`` for websites and
     for legacy rows ingested before that metadata existed. ``duration_seconds`` is
     how long the most recent crawl of this source took (None for uploads / pre-timing
     crawls). The UI shows "N pages" for websites and uploaded documents alike.
@@ -490,7 +490,7 @@ def count_knowledge_state(session, bot_id: int = None, client_id: int = None) ->
     """Active vs deactivated chunk counts for a bot.
 
     Drives the "re-crawl to reactivate on Free" banner. Deliberately does NOT
-    use ``_owner_filter`` (which now excludes inactive chunks) — this needs to
+    use ``_owner_filter`` (which now excludes inactive chunks). This needs to
     see BOTH states. ``inactive > 0`` means a plan lapse deactivated knowledge,
     which is what distinguishes a downgraded bot from a brand-new empty one.
     """
@@ -518,7 +518,7 @@ def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None
     """Return every stored chunk for a bot, ordered by document name and id.
 
     Only called by CAG-lite when ``count_documents_for_bot`` is below the
-    threshold — avoids loading thousands of chunks for large KBs.
+    threshold. Avoids loading thousands of chunks for large KBs.
     """
     stmt = (
         select(Document).where(_owner_filter(Document, bot_id, client_id)).order_by(Document.document_name, Document.id)
@@ -530,7 +530,7 @@ def get_content_sample_for_bot(session, bot_id: int = None, client_id: int = Non
     """Return a text sample from a bot's already-ingested documents.
 
     Concatenates the first document chunks (ordered by name/id) up to
-    ``max_chars`` — enough context for on-demand brand-tone classification
+    ``max_chars``. Enough context for on-demand brand-tone classification
     without loading the whole knowledge base. Returns ``""`` when the bot has no
     documents (caller treats that as "nothing crawled yet").
     """
@@ -560,14 +560,14 @@ def get_bot_media_urls(
 ) -> list[dict]:
     """Return the distinct ``media_urls`` JSONB payloads across a bot's KB.
 
-    Powers the bot-wide "AVAILABLE MEDIA" catalog in the RAG pipeline —
+    Powers the bot-wide "AVAILABLE MEDIA" catalog in the RAG pipeline,
     so the LLM sees every video/file present anywhere in the knowledge
     base, not just the URLs that happened to ride with the top-K
     retrieved chunks. Without this, a topical mismatch between the
     retrieved chunks and the user's question (e.g. retrieval returns
     shell-less chunks for a busybox question because pypdf grouped them
     on the same page) starves the model of the right video option and
-    forces it to emit whichever URL is available — a wrong-topic card.
+    forces it to emit whichever URL is available, a wrong-topic card.
 
     ``SELECT DISTINCT metadata_info->'media_urls'`` folds every chunk of
     a given page into one row (all chunks of a page share the same
@@ -619,14 +619,14 @@ def insert_documents(
 ):
     """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
 
-    ``chunks``, ``embeddings`` and ``metadatas`` MUST be the same length —
+    ``chunks``, ``embeddings`` and ``metadatas`` MUST be the same length,
     a partial embedding failure that returns fewer vectors than chunks would
     otherwise silently truncate (paid embeddings discarded, no error).
 
     ``source`` tags each row as ``"upload"`` or ``"crawl"`` (M7) so the
     documents quota counts uploaded files without sniffing ``document_name``.
 
-    ``source_char_count`` — cleaned pre-chunk length of the SOURCE, replicated
+    ``source_char_count``. Cleaned pre-chunk length of the SOURCE, replicated
     onto every chunk row so ``knowledge_quota_service`` can decrement the
     per-client counter on delete without re-running extraction. ``None`` for
     callers that predate this column; downstream drift-recompute treats NULL
@@ -712,7 +712,7 @@ def is_document_processed(
     """Check if an ACTIVE document with the given hash already exists.
 
     Scoped to ``is_active`` so a Free re-crawl / re-upload after a downgrade
-    (which deactivated the old chunks) is NOT skipped as a duplicate — it
+    (which deactivated the old chunks) is NOT skipped as a duplicate, it
     rebuilds fresh active knowledge. A later re-upgrade reactivates the old
     chunks; any resulting overlap is harmless.
     """
@@ -753,7 +753,7 @@ def search_similar_documents(
 
     ``max_distance`` is **cosine** distance (the ``<=>`` operator). The sole
     embedding provider is Google ``gemini-embedding-001`` (768-dim,
-    Matryoshka-truncated, client-side L2-normalized — see
+    Matryoshka-truncated, client-side L2-normalized. See
     ``gemini_embedding.py``; AR-37, replacing the stale BAAI/bge-base-en-v1.5 +
     OpenAI text-embedding-3-small pair this docstring used to describe), so
     cosine distance equals L2 rank ordering and is the correct metric here.
@@ -775,16 +775,16 @@ def search_similar_documents(
     else:
         emb_str = str(query_embedding)
 
-    # Execute raw SQL — bypasses pgvector Python type processor entirely.
+    # Execute raw SQL. Bypasses pgvector Python type processor entirely.
     # Use separate static SQL strings (never interpolate into SQL text).
     # ``<=>`` is pgvector's cosine distance operator (0 = identical, 2 = opposite).
     #
     # AR-21: when both bot_id and client_id are available, AND both into the
-    # WHERE clause — defense-in-depth matching the `_owner_filter` pattern
+    # WHERE clause. Defense-in-depth matching the `_owner_filter` pattern
     # search_keyword_documents (and every other owner-scoped query in this
     # module) already applies. Not currently exploitable (bot_id and client_id
     # are both derived from the same authenticated Bot row on every existing
-    # call path), but this is the single hottest query path in the system —
+    # call path), but this is the single hottest query path in the system,
     # a future caller passing an attacker-influenced bot_id with a fixed
     # client_id would otherwise have no second gate.
     params = {"emb": emb_str, "max_dist": max_distance, "k": k}
@@ -845,7 +845,7 @@ def search_similar_documents(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Analytics — Support both bot_id and client_id (aggregate across all bots)
+# Analytics. Support both bot_id and client_id (aggregate across all bots)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -963,7 +963,7 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
 
 
 def get_ratings_summary(session, client_id: int = None, bot_id: int = None):
-    """Fetch post-chat visitor rating summary (avg, total, distribution by 1–5 stars)."""
+    """Fetch post-chat visitor rating summary (avg, total, distribution by 1 to 5 stars)."""
     sf = _session_owner_filter(bot_id, client_id)
 
     rows = session.execute(
@@ -1263,7 +1263,7 @@ def save_platform_feedback(
 ) -> PlatformFeedback:
     """Persist a classified feedback entry from an admin dashboard user.
 
-    ``severity`` is bug-only — it is dropped unless ``type_`` is ``"bug"``. When
+    ``severity`` is bug-only, it is dropped unless ``type_`` is ``"bug"``. When
     ``attachments`` are provided, the first URL is mirrored into the legacy
     ``attachment_url`` column for back-compat with the single-attachment readers.
     """
@@ -1379,7 +1379,7 @@ def get_visitor_data(
 
     ``created_after`` is the plan retention cutoff (see
     ``plan_entitlements_service.get_chat_history_retention_days``). When
-    supplied, chats older than that timestamp are excluded — a Free customer
+    supplied, chats older than that timestamp are excluded, a Free customer
     with 7-day retention only sees the last week even if the DB holds a full
     trial's worth of transcripts. Pass ``None`` (default) to disable the
     filter for unlimited-history plans or non-admin callers.
@@ -1423,7 +1423,7 @@ def get_visitor_data(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Structured events (Tier 2 — SQL-backed answers to date-sensitive questions)
+# Structured events (Tier 2. SQL-backed answers to date-sensitive questions)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1510,7 +1510,7 @@ def prune_stale_events(session, *, retention_days: int) -> int:
 
     Two paths get deleted:
       * ``last_seen_at`` older than ``retention_days`` (customer removed
-        the event from their site — a re-crawl would have refreshed it).
+        the event from their site, a re-crawl would have refreshed it).
       * ``starts_at`` further than ``retention_days`` in the past
         (aged-out row we no longer care to keep for answering).
 
@@ -1526,7 +1526,7 @@ def prune_stale_events(session, *, retention_days: int) -> int:
     return int(result.rowcount or 0)
 
 
-# Avatar provenance — see `Bot.bot_logo_source`.
+# Avatar provenance. See `Bot.bot_logo_source`.
 AVATAR_SOURCE_MANUAL = "manual"
 AVATAR_SOURCE_DERIVED = "derived"
 

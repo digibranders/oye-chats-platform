@@ -27,7 +27,7 @@ def _reloaded_config(monkeypatch, **env):
 # ── WEBHOOK_RETRY_ON_ERROR ────────────────────────────────────────────────────
 #
 # Gates the C1 fix: when on, a webhook whose processing raises returns 5xx (so
-# Razorpay retries — safe because of event-id idempotency) and the raw event is
+# Razorpay retries. Safe because of event-id idempotency) and the raw event is
 # dead-lettered. Default ON: the legacy "return 200 on error" behaviour silently
 # drops paid events, so the corrected behaviour is the desired default; the flag
 # exists only as an emergency rollback switch.

@@ -17,7 +17,7 @@ promo / resume / revive activation paths (merge 54ba298):
    future, but sweeping a trialing/comped account row must not carry its
    ``current_period_end`` (the renewal cron would chase the promo row daily) or
    its ``last_granted_period_end`` (within the 4-day period-key tolerance it
-   no-ops the promo's month-1 grant — zero credits for the whole free window).
+   no-ops the promo's month-1 grant. Zero credits for the whole free window).
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ def test_immediate_per_bot_resume_applies_pending_proration(db):
     db.add(old_sub)
     db.flush()
 
-    # The bot's ledger still holds the old plan's unused credits — the live
+    # The bot's ledger still holds the old plan's unused credits, the live
     # figure ``apply_pending_proration`` clamps the snapshot against.
     credit_service.grant_subscription_period_once(db, old_sub, old_period_end)
     db.flush()
@@ -239,7 +239,7 @@ def test_promo_activation_does_not_inherit_swept_sibling_period_or_marker(db):
                     "oyechats_promotion_id": str(promo.id),
                     "billing_cycle": "monthly",
                 },
-                # Deferred first charge — no current period exists yet.
+                # Deferred first charge, no current period exists yet.
                 "start_at": int(promo_start_at.timestamp()),
                 "quantity": 1,
                 "customer_id": "cust_mergeregr_promo",
@@ -258,7 +258,7 @@ def test_promo_activation_does_not_inherit_swept_sibling_period_or_marker(db):
     assert promo_sub.promotion_id == promo.id
     assert promo_sub.promo_free_until is not None
 
-    # The month-1 grant must land, keyed on the free-month boundary — NOT
+    # The month-1 grant must land, keyed on the free-month boundary. NOT
     # no-opped by the comped row's carried marker via the 4-day tolerance.
     assert promo_sub.last_granted_period_end is not None
     assert promo_sub.last_granted_period_end <= promo_sub.promo_free_until

@@ -1,6 +1,6 @@
 """ARQ retry behavior for email tasks (audit F13).
 
-ARQ only re-runs a job when it raises ``arq.worker.Retry`` (or is cancelled) —
+ARQ only re-runs a job when it raises ``arq.worker.Retry`` (or is cancelled),
 a plain exception is logged and the job is marked permanently failed. The email
 tasks previously raised ``RuntimeError`` on a Brevo failure, so a transient 5xx
 dropped an OTP / trial-lifecycle / invoice email with no retry. They must raise

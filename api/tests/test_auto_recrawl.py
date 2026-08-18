@@ -1,15 +1,15 @@
-"""Auto-recrawl — service, worker tasks, and API endpoints (steve branch).
+"""Auto-recrawl. Service, worker tasks, and API endpoints (steve branch).
 
 The feature shipped without tests; these are the characterization + contract
 tests it should have carried. Coverage map:
 
-* recrawl_service — URL loading (source discriminator), status classification,
+* recrawl_service. URL loading (source discriminator), status classification,
   summary persistence (next_recrawl_at MUST advance or the sweep re-matches
   hourly), and the rolling-history cap.
-* worker tasks — the hourly sweep enqueues exactly the due/enabled/active
+* worker tasks, the hourly sweep enqueues exactly the due/enabled/active
   bots with an hour-bucketed dedup job id; the per-bot task force-disables
   the toggle when the plan lost the entitlement between sweep and execution.
-* API — tenant isolation, the 403 feature_locked upsell, and the toggle
+* API. Tenant isolation, the 403 feature_locked upsell, and the toggle
   contract (on stamps now+7d, off clears the schedule but keeps history).
 """
 
@@ -88,7 +88,7 @@ def test_classify_status_covers_all_outcomes():
 
 
 def test_compute_next_recrawl_at_is_seven_days(monkeypatch):
-    """Weekly cadence still holds when jitter is disabled — the +7d contract
+    """Weekly cadence still holds when jitter is disabled, the +7d contract
     is what the sweep query relies on. Disable jitter via the module var so
     this test stays deterministic without seeding ``random``."""
     monkeypatch.setattr(recrawl_service, "RECRAWL_JITTER_HOURS", 0.0)
@@ -102,7 +102,7 @@ def test_compute_next_recrawl_at_applies_jitter_within_configured_window(monkeyp
     import random as _random
 
     monkeypatch.setattr(recrawl_service, "RECRAWL_JITTER_HOURS", 24.0)
-    _random.seed(1234)  # module-level `random` — same reference recrawl_service uses
+    _random.seed(1234)  # module-level `random`, same reference recrawl_service uses
     now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
     result = recrawl_service.compute_next_recrawl_at(now)
     delta = result - now
@@ -122,7 +122,7 @@ def test_compute_next_recrawl_at_disperses_a_cohort(monkeypatch):
     now = datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
     schedule = [recrawl_service.compute_next_recrawl_at(now) for _ in range(10)]
     assert len(set(schedule)) == 10  # every bot got a distinct timestamp
-    # And the spread is meaningful — first-to-last > 1 hour, so a sweep
+    # And the spread is meaningful. First-to-last > 1 hour, so a sweep
     # tick catches at most a handful of them, not the entire cohort.
     assert max(schedule) - min(schedule) > timedelta(hours=1)
 
@@ -143,7 +143,7 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
 
     async def _fake_fetch(urls, **kw):
-        # /ok comes back with content; /broken is silently missing — the
+        # /ok comes back with content; /broken is silently missing, the
         # provider-shape for a per-URL fetch failure.
         return {"results": [{"url": "https://a.test/ok", "text": "fresh content"}]}
 
@@ -180,11 +180,11 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
 
 def test_recrawl_bot_reports_accurate_changed_count_when_every_page_changed(db, monkeypatch):
     """Prior to the fix, ``recrawl_service`` fell back to ``changed_pages = 1``
-    whenever any chunks landed — because the paid-crawl path leans on
+    whenever any chunks landed. Because the paid-crawl path leans on
     ``pages_charged`` for the count and ``cost_per_page`` is 0 on auto-recrawl,
     that fallback was the only signal. If a customer redesigned their whole
     site and 5 pages all changed, the summary reported ``1 changed, 4
-    unchanged`` — a 4-page lie.
+    unchanged``, a 4-page lie.
 
     ``batch_web_ingestion`` now returns an accurate ``pages_changed``; the
     stub below mimics the "all 5 fetched pages actually changed" case and
@@ -295,7 +295,7 @@ def test_recrawl_bot_empty_still_advances_schedule(db, monkeypatch):
 def test_recrawl_history_is_capped_newest_first(db, monkeypatch):
     c = _mk_client(db, "rc-hist@test.example")
     bot = _mk_bot(db, c.id, "bot-rc-hist", recrawl_enabled=True)
-    # Pre-fill the window to the cap — the next run must evict the oldest.
+    # Pre-fill the window to the cap, the next run must evict the oldest.
     bot.recrawl_history = [
         {"ran_at": f"2026-01-{i + 1:02d}T00:00:00+00:00", "status": "success"}
         for i in range(recrawl_service._MAX_HISTORY_ENTRIES)
@@ -303,7 +303,7 @@ def test_recrawl_history_is_capped_newest_first(db, monkeypatch):
     db.commit()
     monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
 
-    asyncio.run(recrawl_service.recrawl_bot(bot.id))  # empty run — still recorded
+    asyncio.run(recrawl_service.recrawl_bot(bot.id))  # empty run. Still recorded
 
     db.refresh(bot)
     assert len(bot.recrawl_history) == recrawl_service._MAX_HISTORY_ENTRIES
@@ -353,7 +353,7 @@ def test_sweep_enqueues_only_due_enabled_active_bots(db, monkeypatch):
 
 
 def test_sweep_caps_enqueues_per_tick_and_picks_oldest_first(db, monkeypatch):
-    """B — the per-hour cap. Ten bots come due in the same tick; with the
+    """B, the per-hour cap. Ten bots come due in the same tick; with the
     module-level ``_SWEEP_HOURLY_CAP`` at 3 the sweep enqueues exactly 3,
     and they are the three whose ``next_recrawl_at`` is oldest (fairness).
     The other seven stay past-due and get picked up on subsequent hourly
@@ -368,7 +368,7 @@ def test_sweep_caps_enqueues_per_tick_and_picks_oldest_first(db, monkeypatch):
     now = datetime.now(UTC)
     # Ten due bots, each with a distinct next_recrawl_at 1..10 minutes ago.
     # Enumerated in reverse so the oldest-due (10 min ago) is created last
-    # — proves the ordering comes from the SQL, not from insertion order.
+    # . Proves the ordering comes from the SQL, not from insertion order.
     bots = []
     for offset_min in range(1, 11):
         b = _mk_bot(
@@ -525,7 +525,7 @@ def test_patch_toggle_contract(db, monkeypatch):
     body = off.json()
     assert body["enabled"] is False
     assert body["next_recrawl_at"] is None
-    # History and last-run fields survive a disable — the card keeps
+    # History and last-run fields survive a disable, the card keeps
     # showing "Last checked" even while the feature is off.
     assert body["last_recrawl_status"] == "success"
     assert body["recrawl_history"] == [{"ran_at": "2026-07-01T00:00:00+00:00", "status": "success"}]

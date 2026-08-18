@@ -1,28 +1,28 @@
-"""Operator presence tracking — Redis-backed heartbeat with DB fallback.
+"""Operator presence tracking. Redis-backed heartbeat with DB fallback.
 
 The presence layer answers two questions for the rest of the live-chat stack:
 
-1. *Is operator X currently reachable?* — used by the routing service to filter
+1. *Is operator X currently reachable?*. Used by the routing service to filter
    candidates, by the availability resolver to compute states like
    ``all_offline``, and by the admin Support page to render the live status pill.
 
-2. *Which operators in workspace Y are reachable?* — used by the routing service
+2. *Which operators in workspace Y are reachable?*. Used by the routing service
    to pick the best candidate and by the availability resolver to short-circuit
    to ``no_operators`` / ``all_offline`` without scanning capacity.
 
 **Why Redis, not Postgres.** Heartbeats fire every 30s from every connected
 operator WebSocket. With 50 connected operators that's 100 writes per minute to
-the heartbeat column — pointless I/O on the primary DB. Redis with a 60s TTL
+the heartbeat column. Pointless I/O on the primary DB. Redis with a 60s TTL
 solves the same problem at constant cost and gives us O(1) lookups.
 
 **Why also Postgres.** Two reasons. (1) The existing ``Operator.last_seen_at``
-column is the analytics-friendly source of truth — we keep it for "last seen 3h
+column is the analytics-friendly source of truth. We keep it for "last seen 3h
 ago" admin UX. (2) If Redis is down we still want live chat to work in degraded
-mode — ``is_online(...)`` falls back to ``last_seen_at`` within a generous
+mode. ``is_online(...)`` falls back to ``last_seen_at`` within a generous
 window so a Redis blip doesn't take live chat offline.
 
 **Failure mode.** Every method in this module is best-effort. A Redis outage
-must NOT crash the WebSocket handler — it must silently degrade to "treat the
+must NOT crash the WebSocket handler, it must silently degrade to "treat the
 operator as online if their connection is still open" (handled by callers
 checking ``ConnectionManager.operator_connections`` as a secondary signal).
 """
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-# Heartbeat key lives for 60s — operator must refresh every ≤30s to stay online.
+# Heartbeat key lives for 60s. Operator must refresh every ≤30s to stay online.
 # Two missed heartbeats (60s gap) and they fall off the online roster.
 PRESENCE_TTL_SECONDS = 60
 
@@ -72,16 +72,16 @@ def _workspace_set_key(client_id: int) -> str:
 
 
 def mark_online(operator_id: int, client_id: int) -> None:
-    """Stamp this operator as online — call on every heartbeat.
+    """Stamp this operator as online. Call on every heartbeat.
 
     Writes both the per-operator TTL key and the workspace set membership.
     The workspace set membership has no TTL on its own (Redis sets don't
-    support per-member TTL) — the periodic ``prune_stale_members`` task and
+    support per-member TTL), the periodic ``prune_stale_members`` task and
     the explicit ``mark_offline`` call keep it consistent.
     """
     client = get_redis()
     if client is None:
-        # Redis unavailable — DB fallback fires inside is_online().
+        # Redis unavailable. DB fallback fires inside is_online().
         return
     try:
         # SETEX sets value + TTL atomically. The value is a sentinel timestamp
@@ -89,7 +89,7 @@ def mark_online(operator_id: int, client_id: int) -> None:
         client.setex(_online_key(operator_id), PRESENCE_TTL_SECONDS, datetime.now(UTC).isoformat())
         client.sadd(_workspace_set_key(client_id), str(operator_id))
     except Exception:
-        # Heartbeat failures are silent — the WebSocket connection itself
+        # Heartbeat failures are silent, the WebSocket connection itself
         # already indicates the operator is reachable.
         logger.debug("Presence mark_online failed for operator=%s", operator_id, exc_info=True)
 
@@ -123,13 +123,13 @@ def is_online(operator_id: int, *, db_session: Session | None = None) -> bool:
         try:
             if redis_client.exists(_online_key(operator_id)):
                 return True
-            # Key absent — operator went offline cleanly OR Redis just doesn't
+            # Key absent. Operator went offline cleanly OR Redis just doesn't
             # have it cached. Fall through to DB check rather than trusting
             # absence as proof of offline.
         except Exception:
             logger.debug("Presence is_online Redis check failed", exc_info=True)
 
-    # Redis says "not present" — verify against DB. If Operator.last_seen_at
+    # Redis says "not present". Verify against DB. If Operator.last_seen_at
     # is recent enough, treat as online. This handles the cold-start case
     # where Redis is fresh but the operator's heartbeat hasn't fired yet.
     if db_session is None:
@@ -149,7 +149,7 @@ def is_online(operator_id: int, *, db_session: Session | None = None) -> bool:
 def _db_fallback_online_ids(client_id: int) -> set[int]:
     """Workspace online-set from the DB when Redis is unavailable.
 
-    Reads the ``Operator.is_online`` column — the online flag that IS maintained
+    Reads the ``Operator.is_online`` column, the online flag that IS maintained
     in the DB (set True on WS connect in ws_routes, cleared on disconnect and by
     ``_fix_stale_online_flags``). ``last_seen_at`` is deliberately NOT used: it
     is never written, so a fallback keyed on it always returned empty and left
@@ -197,7 +197,7 @@ def get_online_operator_ids(client_id: int) -> set[int]:
 
         online = {op_id for op_id, exists in zip(candidate_ids, results, strict=True) if exists}
 
-        # Clean up stale set members — they had TTL expire but weren't srem'd.
+        # Clean up stale set members. They had TTL expire but weren't srem'd.
         # This is the self-healing path so the set doesn't grow unbounded.
         stale = set(candidate_ids) - online
         if stale:
@@ -218,7 +218,7 @@ def get_online_operators_with_capacity(client_id: int, db_session: Session) -> l
     """
     online_ids = get_online_operator_ids(client_id)
     if not online_ids:
-        # Redis miss or genuine zero — fall through to a DB-driven candidate
+        # Redis miss or genuine zero. Fall through to a DB-driven candidate
         # list. Slower but correct when Redis is down.
         rows = (
             db_session.execute(
@@ -250,7 +250,7 @@ def get_online_operators_with_capacity(client_id: int, db_session: Session) -> l
     if not candidates:
         return []
 
-    # Count active chats per candidate in one query — avoids N+1.
+    # Count active chats per candidate in one query. Avoids N+1.
     active_counts: dict[int, int] = dict(
         db_session.execute(
             select(ChatSession.assigned_operator_id, func.count(ChatSession.id))
@@ -281,7 +281,7 @@ def get_active_chat_count(operator_id: int, db_session: Session) -> int:
 
 
 def touch_last_seen(operator_id: int, db_session: Session) -> None:
-    """Update ``Operator.last_seen_at`` in DB — best-effort, never raises.
+    """Update ``Operator.last_seen_at`` in DB. Best-effort, never raises.
 
     Called less frequently than Redis heartbeats (every ~5 heartbeats / 2-3
     minutes) so we don't hammer Postgres while still keeping a DB-side trail

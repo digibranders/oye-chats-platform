@@ -38,7 +38,7 @@ export function QualificationSection({
   const { hasFeature } = useEntitlements();
   // BANT/MEDDIC scoring is a Standard+ feature. Free and Starter both have
   // `bant: false`, so the whole configuration surface (framework picker,
-  // threshold summary, scoring-model editor) is locked at that tier — a
+  // threshold summary, scoring-model editor) is locked at that tier, a
   // switcher that can't actually run scoring against real chats reads as
   // broken. The RAG pipeline skips scoring server-side too
   // (rag_service.py → is_bant_enabled_for_bot), so this UI gate matches

@@ -1,15 +1,15 @@
-"""Google OAuth 2.0 routes — one button, three personas.
+"""Google OAuth 2.0 routes, one button, three personas.
 
 Two endpoints:
 
-* ``GET /auth/google/login``    — issues a signed state cookie and
+* ``GET /auth/google/login``   . Issues a signed state cookie and
   302-redirects to Google's consent screen.
-* ``GET /auth/google/callback`` — Google's redirect target. Validates the
+* ``GET /auth/google/callback``. Google's redirect target. Validates the
   state cookie, exchanges the auth code for a verified profile, then
   either signs in (existing account) or signs up (new account) and
   redirects to the admin app with the ``api_key`` in the URL fragment.
 
-The flow is identical for the login and signup buttons — the backend
+The flow is identical for the login and signup buttons, the backend
 decides which action to take based on whether the (provider, subject) or
 the email already exists. The ``mode`` carried in the state cookie is
 telemetry only.
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/google", tags=["oauth"])
 
 # Short-lived, HttpOnly cookie that carries the signed state token across the
-# Google round-trip. The cookie is the second half of the CSRF pair — the
+# Google round-trip. The cookie is the second half of the CSRF pair, the
 # attacker would need to control both the user's browser cookie jar AND the
 # ``state`` URL parameter Google sends back to forge a callback.
 STATE_COOKIE_NAME = "oyechats_oauth_state"
@@ -72,7 +72,7 @@ ERROR_REDIRECT_URL = OAUTH_SUCCESS_REDIRECT_URL
 
 # Custom URL scheme the mobile app registers (see mobile-app/app.json
 # "scheme": "oyechats"). Mirrors ERROR_REDIRECT_URL / OAUTH_SUCCESS_REDIRECT_URL
-# but for the mobile client — chosen via the ``cl`` field on the signed state
+# but for the mobile client. Chosen via the ``cl`` field on the signed state
 # token (set by ``/login?client=mobile``) since Google's round trip carries no
 # other signal of which surface started the flow.
 MOBILE_REDIRECT_URL = "oyechats://auth/callback"
@@ -84,8 +84,8 @@ MOBILE_REDIRECT_URL = "oyechats://auth/callback"
 def _error_redirect(code: str, *, next_path: str | None = None, client_target: str = "web") -> RedirectResponse:
     """Redirect back to the frontend with a machine-readable error code.
 
-    ``code`` is a short string the frontend maps to a friendly message —
-    keeping it server-coded means we can change the user-facing copy
+    ``code`` is a short string the frontend maps to a friendly message.
+    Keeping it server-coded means we can change the user-facing copy
     without redeploying the API.
     """
     params = {"error": code}
@@ -147,9 +147,9 @@ def google_login(
 
     Issues the state cookie and 302-redirects to Google's consent screen.
     ``next`` is an optional relative path to land on after success (e.g.
-    ``/billing``). ``mode`` is telemetry only — backend behaviour is the
+    ``/billing``). ``mode`` is telemetry only. Backend behaviour is the
     same for login and signup. ``client`` is ``"web"`` (default) or
-    ``"mobile"`` — the mobile app passes ``client=mobile`` so the callback
+    ``"mobile"``, the mobile app passes ``client=mobile`` so the callback
     redirects into the app's ``oyechats://`` scheme instead of the admin
     web app once Google sends the user back.
     """
@@ -160,12 +160,12 @@ def google_login(
         )
 
     next_path = _safe_next_path(next)
-    # ``mode`` and ``client`` are allow-listed by the signature — anything
+    # ``mode`` and ``client`` are allow-listed by the signature. Anything
     # else is a 422 rather than being silently coerced to the default, so a
     # caller never gets a flow different from the one they asked for.
     client_target = client
 
-    # Campaign/affiliate codes from the register page ride the SIGNED state —
+    # Campaign/affiliate codes from the register page ride the SIGNED state,
     # the full-page Google round trip would otherwise lose them, which is
     # exactly how a promo-link signup via "Continue with Google" ended up
     # with no promotion attributed.
@@ -187,7 +187,7 @@ def google_login(
         ) from exc
 
     resp = RedirectResponse(authorize_url, status_code=status.HTTP_302_FOUND)
-    # SameSite=Lax is correct here — Google's redirect back to us is a
+    # SameSite=Lax is correct here. Google's redirect back to us is a
     # top-level GET navigation, which Lax cookies travel on. Strict would
     # drop the cookie on Google's redirect and break the flow.
     resp.set_cookie(
@@ -268,11 +268,11 @@ def google_callback(
     except _DuplicatePasswordAccount:
         # An existing password account has the same email but the user
         # has never linked Google. We block auto-linking out of an
-        # abundance of caution — they should sign in with their password
+        # abundance of caution. They should sign in with their password
         # once and link from a dedicated UI surface later. (Future work.)
         # For now, send them to login with a code the UI can explain.
         return _error_redirect("oauth_email_has_password", next_path=next_path, client_target=client_target)
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception as exc:  # pragma: no cover. Defensive
         logger.exception("google_oauth_resolve_failed: %s", exc)
         return _error_redirect("oauth_internal_error", next_path=next_path, client_target=client_target)
 
@@ -280,7 +280,7 @@ def google_callback(
     # register page's password path does the same two stamps; without this,
     # a campaign-link signup that chose "Continue with Google" silently lost
     # its promotion/referral. Existing accounts are never re-attributed
-    # (first-touch), and both stamps are best-effort — attribution must
+    # (first-touch), and both stamps are best-effort. Attribution must
     # never break a successful sign-in.
     if is_new:
         promo_code = (state_payload.get("promo") or "").strip()
@@ -299,7 +299,7 @@ def google_callback(
 
                         attribute_signup_code(session, client.id, promo_code)
                     session.commit()
-            except Exception as attr_err:  # noqa: BLE001 — never block the sign-in
+            except Exception as attr_err:  # noqa: BLE001  never block the sign-in
                 logger.warning("google_oauth_attribution_failed client=%s: %s", client.id, attr_err)
 
     return _success_redirect(
@@ -353,7 +353,7 @@ def google_id_token_login(request: Request, payload: IdTokenRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this email already exists and uses a password. Please sign in with your password.",
         ) from exc
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception as exc:  # pragma: no cover. Defensive
         logger.exception("google_oauth_resolve_failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.") from exc
 
@@ -375,12 +375,12 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
 
     Lookup order:
 
-    1. ``oauth_accounts`` row matching ``(provider, provider_user_id)`` —
+    1. ``oauth_accounts`` row matching ``(provider, provider_user_id)``,
        the canonical "returning OAuth user" path. Always wins.
-    2. ``clients`` row with the same email AND no password set — that's
+    2. ``clients`` row with the same email AND no password set. That's
        a Client that signed up via OAuth on a different provider (future
        providers) or had their password forcibly cleared. Safe to link.
-    3. ``clients`` row with the same email AND a password — refuse to
+    3. ``clients`` row with the same email AND a password. Refuse to
        auto-link and raise ``_DuplicatePasswordAccount``. The user must
        sign in with their password first, then explicitly link Google
        from a future "Linked Accounts" UI.
@@ -400,7 +400,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
             client = session.execute(select(Client).where(Client.id == link.client_id)).scalars().first()
             if client:
                 link.last_login_at = now
-                # Refresh provider-side display info — users update their
+                # Refresh provider-side display info. Users update their
                 # Google avatar/name independently of our DB.
                 link.email = profile.email
                 link.picture_url = profile.picture
@@ -409,7 +409,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
                 session.expunge(client)
                 logger.info("google_oauth_login_returning client_id=%s", client.id)
                 return client, False
-            # Orphan link row — the Client was deleted but the OAuth row
+            # Orphan link row, the Client was deleted but the OAuth row
             # survived. Treat as new signup; this is rare enough that we
             # accept the wasted row.
             logger.warning("google_oauth_orphan_link link_id=%s", link.id)
@@ -466,14 +466,14 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
         session.add(link)
 
         # Assign the default plan (mirrors the password-signup path).
-        # Failure here must not block signup — the client row is the
+        # Failure here must not block signup, the client row is the
         # important part; the plan can be retried.
         subscription = None
         try:
             from app.services.plan_service import assign_default_plan_to_client
 
             subscription = assign_default_plan_to_client(session, new_client.id)
-        except Exception as plan_err:  # pragma: no cover — best-effort
+        except Exception as plan_err:  # pragma: no cover. Best-effort
             logger.warning(
                 "google_oauth_plan_assignment_failed client_id=%s err=%s",
                 new_client.id,
@@ -500,7 +500,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
         client_name = new_client.name
         session.expunge(new_client)
 
-    # Welcome email — fire outside the DB transaction so a mail outage
+    # Welcome email. Fire outside the DB transaction so a mail outage
     # doesn't rollback the user. Only sent when the trial fields were
     # populated; otherwise we skip cleanly rather than send a half-filled
     # template.
@@ -515,7 +515,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
                 credits=trial_credits,
                 duration_days=trial_duration_days,
             )
-        except Exception as mail_err:  # pragma: no cover — best-effort
+        except Exception as mail_err:  # pragma: no cover. Best-effort
             logger.warning("google_oauth_welcome_email_failed client_id=%s err=%s", client_id, mail_err)
 
     logger.info("google_oauth_signup_new client_id=%s", client_id)
@@ -529,7 +529,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
 def google_oauth_status():
     """Tell the frontend whether the Google button should render.
 
-    Returning a single boolean keeps the frontend logic trivial — if the
+    Returning a single boolean keeps the frontend logic trivial. If the
     server hasn't been configured with credentials, the button hides
     itself rather than 503-ing on click.
     """

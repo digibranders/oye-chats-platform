@@ -50,7 +50,7 @@ export interface AffiliateProfile {
   id: number;
   /** How many codes the affiliate may keep active at once. */
   maxActiveCodes: number;
-  /** The affiliate's total commission pool, as a whole percent (0–100). */
+  /** The affiliate's total commission pool, as a whole percent (0 to 100). */
   commissionPct: number;
 }
 
@@ -262,7 +262,7 @@ export function validateSplit(
   return null;
 }
 
-/** Referral-code format rule mirrored from the backend (3–20 url-safe chars). */
+/** Referral-code format rule mirrored from the backend (3 to 20 url-safe chars). */
 const CODE_PATTERN = /^[A-Za-z0-9_-]{3,20}$/;
 
 /** Validate a referral code's format. Returns an error string, or null. */
@@ -270,7 +270,7 @@ export function validateCodeFormat(code: string): string | null {
   const trimmed = code.trim();
   if (!trimmed) return 'Enter a code.';
   if (!CODE_PATTERN.test(trimmed)) {
-    return 'Use 3–20 letters, numbers, hyphens or underscores.';
+    return 'Use 3 to 20 letters, numbers, hyphens or underscores.';
   }
   return null;
 }

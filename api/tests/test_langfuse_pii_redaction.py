@@ -14,7 +14,7 @@ exist at that point and ``output`` is empty):
 * the content tests feed real PII through and assert the span ``input`` comes
   out scrubbed and the redundant ``metadata["question"]`` copy is gone;
 * the routing tests swap in a marker redactor and assert both ``input`` and the
-  ``update(output=…)`` in the streaming ``finally`` pass through it — which is
+  ``update(output=…)`` in the streaming ``finally`` pass through it, which is
   what pins the output path that no answer text can reach from here.
 
 The redaction patterns themselves are covered by ``TestRedactPii`` in
@@ -179,7 +179,7 @@ def test_trace_metadata_no_longer_carries_the_question(monkeypatch, drive):
     for m in metadata:
         assert "question" not in m, f"the unredacted 'question' copy is back in a payload: {m!r}"
 
-    # The payload is still worth having — the non-PII fields survive.
+    # The payload is still worth having, the non-PII fields survive.
     assert any("bot_id" in m for m in metadata), "the fix stripped more than question"
     assert any("device" in m for m in metadata), "the fix stripped more than question"
 
@@ -199,7 +199,7 @@ def test_chain_span_input_routes_through_the_shared_redactor(monkeypatch, drive)
 
 def test_stream_output_routes_through_the_shared_redactor(monkeypatch):
     """The streaming ``finally`` update is the one field no answer text can
-    reach in this harness, so routing is all there is to assert here — the
+    reach in this harness, so routing is all there is to assert here, the
     non-streaming ``trace.update`` never runs at all, because ``_run_pipeline``
     raises first."""
     capture = _install_fakes(monkeypatch)

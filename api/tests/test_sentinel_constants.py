@@ -4,7 +4,7 @@ Before this, each sentinel token ([CTA:dim], [YOUTUBE_CARD:id],
 [LEAVE_MESSAGE_CARD], etc.) was typed as a literal string independently in
 the prompt prose AND in its extraction regex, 1000+ lines apart. A prompt
 reword of a sentinel prefix (even a stray space) would desync silently from
-its extractor regex — the LLM keeps faithfully emitting the (now-wrong)
+its extractor regex, the LLM keeps faithfully emitting the (now-wrong)
 token, but the stripper never fires, leaking the raw sentinel to the
 visitor. These tests pin two properties for each sentinel: (1) the shared
 constant is what the extraction regex is built from (a synthetic answer
@@ -62,7 +62,7 @@ class TestRegexRoundTripsWithSharedConstant:
 
 class TestConstantsAppearInAssembledPrompt:
     """Proves the prompt prose actually USES the shared constant (not just a
-    coincidentally-matching literal) — the whole point of AR-34."""
+    coincidentally-matching literal), the whole point of AR-34."""
 
     def test_meeting_leave_message_and_media_constants_appear_in_system_prompt(self):
         """These sections (handoff/meeting/media-cards) are per-bot-config,
@@ -88,7 +88,7 @@ class TestConstantsAppearInAssembledPrompt:
 
     def test_cta_constants_appear_in_user_prompt(self):
         """CTA/CTA_Q instructions live inside qualification_section, which is
-        per-turn BANT state — moved to user_prompt by AR-27."""
+        per-turn BANT state. Moved to user_prompt by AR-27."""
         client = SimpleNamespace(name="TestCo")
         config = {
             "conversation_order": ["budget"],

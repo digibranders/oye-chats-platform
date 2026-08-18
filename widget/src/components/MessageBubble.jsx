@@ -10,20 +10,20 @@ import { isSmartLink, isSmartLinkClicked, markSmartLinkClicked } from '../servic
 
 // MediaCard (YouTube/downloadable-file cards) is lazy-loaded: it only renders on
 // completed bot replies that carry a media_card, so keeping it out of the Chat
-// chunk keeps the first-open payload lean — consistent with the other on-demand
+// chunk keeps the first-open payload lean. Consistent with the other on-demand
 // cards (HandoffForm, MeetingBooking) that ChatWindow lazy-imports. lazyWithRetry
 // + the ErrorBoundary at the render site keep a failed card load from taking the
-// whole message (and widget) down — it just renders the answer text without the card.
+// whole message (and widget) down, it just renders the answer text without the card.
 const MediaCard = lazyWithRetry(() => import('./MediaCard'));
 
 // Link rendering modes:
-//   1. Inline icon — link text is just an arrow glyph (↗, →, »). Used by the
+//   1. Inline icon. Link text is just an arrow glyph (↗, →, »). Used by the
 //      bot when listing services with per-service URLs: each service gets a
 //      tiny icon link beside its name (no underline, small, color-tinted).
-//   2. Pill CTA — link text matches one of the legacy "Explore services"
+//   2. Pill CTA. Link text matches one of the legacy "Explore services"
 //      phrases. Renders as a full pill button. Kept for backward compat with
 //      bots that still emit the v1 bottom-paragraph CTA.
-//   3. Plain link — everything else (contact pages, generic references).
+//   3. Plain link. Everything else (contact pages, generic references).
 
 const _CTA_PHRASES = /^(explore (all )?services|view (all )?services|see (all )?services|browse services)\b/i;
 
@@ -59,7 +59,7 @@ const SafeLink = ({ href, children, ...props }) => {
     // Smart links (admin keyword→page map). Handled before the icon/pill/plain
     // branches so a smart link always gets this behaviour regardless of its
     // label. Once the visitor clicks one, it stops rendering as a link for the
-    // rest of the conversation — the keyword shows as plain text on every later
+    // rest of the conversation, the keyword shows as plain text on every later
     // answer. Scoped to smart-link URLs only, so service ↗ links and generic
     // references the bot writes are untouched. Opens in a new tab (like other
     // plain links) so clicking never closes the chat window.
@@ -83,7 +83,7 @@ const SafeLink = ({ href, children, ...props }) => {
 
     // Same-tab navigation for the service icon/pill CTAs. The widget persists
     // isOpen + session_id to sessionStorage so the conversation continues after
-    // page navigation. (Plain links below open in a NEW tab instead — see there.)
+    // page navigation. (Plain links below open in a NEW tab instead. See there.)
     if (_isIconLink(text)) {
         return (
             <a
@@ -200,7 +200,7 @@ const MessageBubble = ({
     settings,
     onFeedback,
 }) => {
-    // Hover-revealed action toolbar state — local to each bot message so the
+    // Hover-revealed action toolbar state. Local to each bot message so the
     // copied-confirmation flash on one reply doesn't bleed into siblings.
     const [copied, setCopied] = useState(false);
     const copyTimerRef = useRef(null);
@@ -236,8 +236,8 @@ const MessageBubble = ({
     const handleFeedback = useCallback(
         (value) => {
             if (!onFeedback) return;
-            // Toggle off when the user clicks the already-active reaction —
-            // matches the ChatGPT pattern of "undo my thumbs up".
+            // Toggle off when the user clicks the already-active reaction.
+            // Matches the ChatGPT pattern of "undo my thumbs up".
             const next = msg.feedback === value ? null : value;
             onFeedback(msg.id, next);
         },
@@ -261,7 +261,7 @@ const MessageBubble = ({
         const { body, followUp } = hasCard
             ? _splitTrailingFollowUp(formattedText)
             : { body: formattedText, followUp: '' };
-        // AI message — avatar + plain text, NO bubble
+        // AI message. Avatar + plain text, NO bubble
         return (
             <div className="group flex items-start gap-2 w-full">
                 <div className="flex-shrink-0 mt-1">
@@ -284,8 +284,8 @@ const MessageBubble = ({
                         {/* Inline media card (YouTube video / downloadable file).
                             ``msg.media_card`` is populated by ChatWindow when the
                             stream's FINAL_METADATA carries a media_card object,
-                            so it only renders on completed replies — never
-                            mid-stream — and never on user turns. */}
+                            so it only renders on completed replies (never
+                            mid-stream) and never on user turns. */}
                         {hasCard && (
                             <ErrorBoundary label="MediaCard" fallback={null}>
                                 <Suspense fallback={null}>
@@ -344,7 +344,7 @@ const MessageBubble = ({
         );
     }
 
-    // User message — light blue bubble with dark text
+    // User message. Light blue bubble with dark text
     return (
         <div className="flex flex-col items-end">
             <div className="flex justify-end w-full">

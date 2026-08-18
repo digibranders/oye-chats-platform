@@ -7,13 +7,13 @@ the marketing site (oyechats.com/pricing).
 Prices are stored in minor units: ``*_cents`` is INR paise (``currency='INR'``),
 ``*_usd_cents`` is US cents (deliberate USD headline, not FX-converted).
 
-Razorpay plan IDs are intentionally NOT set here — they differ per environment
+Razorpay plan IDs are intentionally NOT set here. They differ per environment
 (test vs live) and are configured separately with ``set_razorpay_plan_ids.py``
 so no plan ID is hardcoded in the repo. The extra-seat add-on plan is likewise
 env-config (``RAZORPAY_SEAT_PLAN_ID``), not a plan row.
 
-``is_active`` is set on INSERT and NEVER on UPDATE. This file is the catalogue —
-prices, entitlements, ordering — not the listing lifecycle, and the two writes
+``is_active`` is set on INSERT and NEVER on UPDATE. This file is the catalogue
+(prices, entitlements, ordering) not the listing lifecycle, and the two writes
 answer different questions:
 
 * A row this run creates has no history to respect, so it is listed. Under the
@@ -21,7 +21,7 @@ answer different questions:
   tier stays on the pricing page and degrades to contact-sales rather than
   vanishing from ``GET /public/pricing-catalog`` (see
   ``plan_service.plan_checkout_is_wired``).
-* A row that already exists may have been deactivated ON PURPOSE — by migration
+* A row that already exists may have been deactivated ON PURPOSE, by migration
   ``f1a2b3c4d5e6``, by super-admin soft-delete, or by the plan editor. The seed
   cannot tell a deliberate deactivation from a stale one, so it does not touch
   the column at all. The blanket ``plan.is_active = True`` this replaces is
@@ -36,14 +36,14 @@ inserted if the slug is missing. Unknown slugs (custom tiers added by a super
 admin) are left untouched.
 
 ``annual_discount_percent`` is NOT in the matrix. It is derived from each tier's
-two INR prices via ``core.pricing.annual_saving_percent`` — the same helper every
-plan payload is served through — so the seed cannot store a headline the prices
+two INR prices via ``core.pricing.annual_saving_percent`` (the same helper every
+plan payload is served through) so the seed cannot store a headline the prices
 do not back. It was hand-maintained until now, and it drifted: Professional
 carried 22 for a 21.674% saving, which is what the marketing site advertised.
 
 Every INR amount in the matrix is checked against the RBI e-mandate AFA ceiling
 (``core.pricing.emandate_warning``, shared with the super-admin plan editor) in
-BOTH modes. A breach is printed loudly and blocks nothing — see
+BOTH modes. A breach is printed loudly and blocks nothing. See
 ``_print_emandate_warnings``.
 
 Usage:
@@ -67,7 +67,7 @@ from app.db.models import Plan
 from app.db.session import get_session
 from app.services.plan_service import plan_checkout_is_wired
 
-# ── Canonical matrix — single source of truth ──────────────────────────────
+# ── Canonical matrix. Single source of truth ──────────────────────────────
 # INR paise for *_cents; US cents for *_usd_cents. -1 in limits means unlimited.
 _PLANS: list[dict] = [
     {
@@ -92,7 +92,7 @@ _PLANS: list[dict] = [
             "leads": 15,
             "page_scraping": 20,
             "documents": 3,
-            "knowledge_characters": 2_500,  # ~500 words — tiny KB, real product try
+            "knowledge_characters": 2_500,  # ~500 words. Tiny KB, real product try
             "chat_history_days": 7,
             "max_crawl_depth": 2,
             "max_crawl_pages": 20,
@@ -134,7 +134,7 @@ _PLANS: list[dict] = [
             "leads": -1,
             "page_scraping": 500,
             "documents": 20,
-            "knowledge_characters": 50_000,  # ~10k words — small help center
+            "knowledge_characters": 50_000,  # ~10k words. Small help center
             "chat_history_days": 30,
             "max_crawl_depth": 3,
             "max_crawl_pages": -1,
@@ -157,7 +157,7 @@ _PLANS: list[dict] = [
     {
         "slug": "standard",
         "name": "Standard",
-        "description": "The lead-machine — grounded AI plus BANT qualification.",
+        "description": "The lead-machine. Grounded AI plus BANT qualification.",
         "credits_per_month": 2500,
         "monthly_price_cents": 119900,  # ₹1,199
         "annual_price_cents": 1150800,  # ₹11,508 (₹959/mo × 12)
@@ -175,8 +175,8 @@ _PLANS: list[dict] = [
             "operators": 2,
             "leads": -1,
             "page_scraping": 2000,
-            "documents": -1,  # unlimited — Standard trusts the char cap + credit gate
-            "knowledge_characters": 500_000,  # ~100k words — full product docs
+            "documents": -1,  # unlimited. Standard trusts the char cap + credit gate
+            "knowledge_characters": 500_000,  # ~100k words. Full product docs
             "chat_history_days": 90,
             "max_crawl_depth": 4,
             "max_crawl_pages": -1,
@@ -195,7 +195,7 @@ _PLANS: list[dict] = [
             "integrations": "all",
         },
         "marketing": {
-            "tagline": "The lead-machine — grounded AI plus BANT qualification.",
+            "tagline": "The lead-machine. Grounded AI plus BANT qualification.",
             "badge": "Most Popular",
         },
     },
@@ -257,7 +257,7 @@ _PLANS: list[dict] = [
         "is_default": False,
         "sort_order": 5,
         "limits": {
-            # Mirrors ``credits_per_month`` — every other rung does the same, and
+            # Mirrors ``credits_per_month``. Every other rung does the same, and
             # this copy is what ``/subscriptions/plans`` and the public pricing
             # catalog serialize as ``limits.credits``. Enterprise sells pooling
             # (unlimited agents/seats/domains on ONE pool), not a bigger
@@ -266,7 +266,7 @@ _PLANS: list[dict] = [
             "credits": 10000,
             # Unlimited bots is the whole point of this tier. Credits still
             # meter real cost (5 per page, 1 per 250 words), so uncapped
-            # ingestion is self-limiting — no separate knowledge cap needed.
+            # ingestion is self-limiting, no separate knowledge cap needed.
             "bots": -1,
             "operators": -1,
             "leads": -1,
@@ -318,7 +318,7 @@ _SCALAR_FIELDS = (
 def _would_be_wired(data: dict, plan: Plan | None) -> bool:
     """Whether the row this run leaves behind can take a self-serve checkout.
 
-    Gateway plan ids live on the existing row — this script never writes them —
+    Gateway plan ids live on the existing row (this script never writes them)
     so a brand-new paid row is by definition not yet wired. It becomes
     checkoutable when ``set_razorpay_plan_ids.py`` attaches this environment's
     ids. Reported only: it does NOT decide ``is_active``.
@@ -357,7 +357,7 @@ def _print_emandate_warnings(warnings: list[str]) -> None:
     Explicitly NOT a failure: the exit code stays 0 and the seed still writes.
     Pricing above the ceiling is a deliberate business decision (both annual
     tiers are already there), and a seed that refused to run because of one
-    would be unusable — the whole catalogue would be hostage to a pricing
+    would be unusable, the whole catalogue would be hostage to a pricing
     argument. The value is that the NEXT price change gets flagged before it
     ships, so this is sized to be unmissable in a wall of seed output instead.
     """
@@ -366,11 +366,11 @@ def _print_emandate_warnings(warnings: list[str]) -> None:
     plural = "" if len(warnings) == 1 else "s"
     ceiling = EMANDATE_AFA_CEILING_MINOR / 100
     print("\n" + "!" * 100)
-    print(f"RBI E-MANDATE CEILING — {len(warnings)} plan-cycle{plural} above ₹{ceiling:,.0f} in a single charge:\n")
+    print(f"RBI E-MANDATE CEILING - {len(warnings)} plan-cycle{plural} above ₹{ceiling:,.0f} in a single charge:\n")
     for warning in warnings:
         print(f"  {warning}")
     print(
-        "\nNot a blocker: the seed still ran and exits 0. What it costs is silent renewal — "
+        "\nNot a blocker: the seed still ran and exits 0. What it costs is silent renewal. "
         "each of those\ncharges needs the customer to complete Additional Factor of Authentication, "
         "every cycle. Price\nbelow the ceiling, bill those tiers monthly, or invoice them instead."
     )
@@ -396,7 +396,7 @@ def run(*, apply: bool) -> int:
             wired = _would_be_wired(data, plan)
             if not wired:
                 contact_sales_only.append(slug)
-            state = "self-serve" if wired else "CONTACT SALES — no Razorpay plan id"
+            state = "self-serve" if wired else "CONTACT SALES, no Razorpay plan id"
             print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
             ceiling_warnings.extend(_emandate_warnings(data))
 
@@ -412,7 +412,7 @@ def run(*, apply: bool) -> int:
             plan.currency = "INR"
             for field in _SCALAR_FIELDS:
                 setattr(plan, field, data[field])
-            # Derived, never authored — see the module docstring. Uses the same
+            # Derived, never authored. See the module docstring. Uses the same
             # helper every read route serves, so the row and the payload agree.
             plan.annual_discount_percent = annual_saving_percent(
                 data["monthly_price_cents"], data["annual_price_cents"]
@@ -421,9 +421,9 @@ def run(*, apply: bool) -> int:
         if contact_sales_only:
             print(
                 f"\nNot self-serve in this environment: {', '.join(contact_sales_only)}. "
-                "A tier without both INR Razorpay\nplan ids stays LISTED — the quote answers "
+                "A tier without both INR Razorpay\nplan ids stays LISTED, the quote answers "
                 "'inr_plan_unconfigured' with a contact-sales address and\ncheckout refuses in the "
-                "same shape — but nobody can buy it without leaving the site. Attach this\n"
+                "same shape, but nobody can buy it without leaving the site. Attach this\n"
                 "environment's ids with scripts/set_razorpay_plan_ids.py --apply to open self-serve "
                 "checkout."
             )
@@ -432,7 +432,7 @@ def run(*, apply: bool) -> int:
             session.commit()
             print("\nCommitted.")
         else:
-            print("\nDry-run — re-run with --apply to commit.")
+            print("\nDry-run. Re-run with --apply to commit.")
 
         # Last, so it is the block still on screen when the run ends.
         _print_emandate_warnings(ceiling_warnings)

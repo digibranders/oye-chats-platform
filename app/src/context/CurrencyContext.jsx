@@ -6,7 +6,7 @@ import { formatMoney } from '../lib/currency';
 const CurrencyContext = createContext(null);
 
 /**
- * The currency an ISO-2 billing country is actually CHARGED in — the JS mirror
+ * The currency an ISO-2 billing country is actually CHARGED in, the JS mirror
  * of the server's `charge_currency` (api/app/core/pricing.py).
  *
  * An unknown country (null/blank) is NOT a foreign one: every account that
@@ -30,7 +30,7 @@ function chargeCurrencyFor(country) {
  * `currency` is NOT unconditionally the charge currency: for a *detected* (IP
  * geo) foreign country /geo deliberately reports USD while the charge path
  * would confirm IN. That divergence is safe only because it can never become a
- * charge — the frontend never echoes a 'detected' country back as
+ * charge, the frontend never echoes a 'detected' country back as
  * billing_country (usePlanCheckout.ts) and the server 409s
  * billing_country_required rather than debiting on an IP signal.
  *
@@ -38,7 +38,7 @@ function chargeCurrencyFor(country) {
  * that WOULD be charged, because nothing downstream will catch a wrong guess:
  * the pre-resolve default and the fetch-failure fallback are both INR
  * (`chargeCurrencyFor(null)`), matching the server's charge_currency(None).
- * USD there was a live money bug — the top-up modal rendered $13/$50/$125
+ * USD there was a live money bug, the top-up modal rendered $13/$50/$125
  * while Razorpay debited ₹1,000/₹4,000/₹10,000.
  *
  * MUST wrap the AUTHENTICATED tree - /geo requires client auth.

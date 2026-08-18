@@ -87,7 +87,7 @@ def fetch_summary(days: int = 7, trace_limit: int = 25) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Langfuse daily metrics failed: %s", exc)
 
-            # Recent traces — most useful for "what just ran" debugging.
+            # Recent traces. Most useful for "what just ran" debugging.
             try:
                 r = client.get(
                     "/api/public/traces",

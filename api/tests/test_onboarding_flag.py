@@ -62,7 +62,7 @@ def test_registered_client_starts_unverified_and_onboarding_incomplete(db):
     # Force the dev-only auto-verify flag OFF so this asserts the real
     # (production) path: a fresh signup requires email verification. Registration
     # stamps ``is_verified = DEV_AUTO_VERIFY_EMAIL`` (auth_routes.register), which
-    # is truthy on local machines whose .env sets ``DEV_AUTO_VERIFY_EMAIL=true`` —
+    # is truthy on local machines whose .env sets ``DEV_AUTO_VERIFY_EMAIL=true``,
     # without this pin the assertion below is non-deterministic across dev envs.
     # The route imports the flag from ``app.config`` at call time, so patching the
     # module attribute is what the handler actually reads.
@@ -110,7 +110,7 @@ def test_auth_me_exposes_verification_and_onboarding_flags(db):
 
 
 def test_auth_me_operator_mirrors_owner_client_flags(db):
-    """The operator /auth/me branch has no flags of its own — it must resolve
+    """The operator /auth/me branch has no flags of its own, it must resolve
     ``is_verified`` / ``onboarding_complete`` from the owning client (the
     workspace they belong to), not fall back to the ``False`` defaults."""
     from app.api import auth, auth_routes
@@ -158,7 +158,7 @@ def test_auth_me_operator_mirrors_owner_client_flags(db):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["kind"] == "operator"
-    # Mirrors the owner client's values (True/True) — proving the branch
+    # Mirrors the owner client's values (True/True). Proving the branch
     # resolves from the owner rather than emitting the column defaults.
     assert body["is_verified"] is True
     assert body["onboarding_complete"] is True

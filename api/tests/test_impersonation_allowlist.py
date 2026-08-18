@@ -1,8 +1,8 @@
-"""The §6.1 impersonation allowlist — *which* writes a support session may make.
+"""The §6.1 impersonation allowlist - *which* writes a support session may make.
 
 ``tests/test_impersonation_auth.py`` covers the mechanism: how an
 ``X-Impersonation-Token`` resolves, and that the write guard is fail-closed.
-This file covers the **policy** that mechanism enforces — the concrete set of
+This file covers the **policy** that mechanism enforces, the concrete set of
 endpoints carrying ``@impersonation_writable``:
 
 * one representative marked endpoint per allowlist surface reaches its handler,
@@ -11,8 +11,8 @@ endpoints carrying ``@impersonation_writable``:
 * :func:`test_marked_endpoints_are_exactly_the_intended_allowlist` pins the
   whole-app set, so widening the blast radius takes a deliberate edit here.
 
-Every test drives the *real* auth dependencies — no ``dependency_overrides`` for
-auth — because the guard lives inside them and stubbing them out would test
+Every test drives the *real* auth dependencies (no ``dependency_overrides`` for
+auth) because the guard lives inside them and stubbing them out would test
 nothing.
 """
 
@@ -47,14 +47,14 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 # ── The allowlist itself ────────────────────────────────────────────────────
 #
 # THE list. Adding an entry here is the deliberate act that widens what a
-# super-admin can do inside a customer's Account — treat it like a permission
+# super-admin can do inside a customer's Account. Treat it like a permission
 # grant, not like bookkeeping. Each entry maps to a row of design §6.1.
 
 IMPERSONATION_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # AI Agent (Bot) config edits — name, greeting, tone, appearance/branding.
+        # AI Agent (Bot) config edits. Name, greeting, tone, appearance/branding.
         ("PATCH", "/bots/{bot_id}"),
-        # Canned-response CRUD — pure workspace content, reversible.
+        # Canned-response CRUD. Pure workspace content, reversible.
         ("POST", "/canned-responses"),
         ("PATCH", "/canned-responses/{response_id}"),
         ("DELETE", "/canned-responses/{response_id}"),
@@ -65,7 +65,7 @@ IMPERSONATION_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/operators/transfer/{session_id}"),
         # Department edits (NOT create/delete, NOT operator invites).
         ("PATCH", "/operators/departments/{department_id}"),
-        # Preview-mode test chat — owner-preview replies skip credit deduction.
+        # Preview-mode test chat. Owner-preview replies skip credit deduction.
         ("POST", "/chat"),
         ("POST", "/chat/stream"),
     }
@@ -122,7 +122,7 @@ def session_maker(db, monkeypatch):
 
     The resolvers in ``app.api.auth`` and each route module bound
     ``get_session`` into their own namespace at import, so patching the source
-    module would miss them — patch each namespace explicitly.
+    module would miss them. Patch each namespace explicitly.
     """
 
     def _patch(*modules) -> None:
@@ -149,7 +149,7 @@ def _impersonating(raw: str) -> dict[str, str]:
 
 class TestAllowlistedSurfacesAreWritable:
     def test_ai_agent_config_edit_is_permitted(self, db, session_maker):
-        """Surface 1 — AI Agent config (name, greeting, tone, appearance)."""
+        """Surface 1. AI Agent config (name, greeting, tone, appearance)."""
         session_maker(bot_routes)
         admin = _mk_admin(db, "allow-bot-admin@test.example")
         target = _mk_target(db, "allow-bot-target@test.example")
@@ -222,7 +222,7 @@ class TestAllowlistedSurfacesAreWritable:
         assert db.get(Bot, bot_id).allowed_domains == ["customer.example"]
 
     def test_canned_response_create_is_permitted(self, db, session_maker):
-        """Surface 2 — canned-response CRUD."""
+        """Surface 2. Canned-response CRUD."""
         session_maker(canned_response_routes)
         admin = _mk_admin(db, "allow-canned-admin@test.example")
         target = _mk_target(db, "allow-canned-target@test.example")
@@ -240,7 +240,7 @@ class TestAllowlistedSurfacesAreWritable:
         assert stored.title == "Refund policy"
 
     def test_conversation_status_change_is_permitted(self, db, session_maker, monkeypatch):
-        """Surface 3 — Conversation status changes / operator assignment.
+        """Surface 3. Conversation status changes / operator assignment.
 
         ``fire_webhook`` and the live-chat ``manager`` reach outside the test
         session (the customer's webhook endpoints, open WebSockets); both are
@@ -270,7 +270,7 @@ class TestAllowlistedSurfacesAreWritable:
         assert closed.assigned_operator_id is None
 
     def test_department_edit_is_permitted(self, db, session_maker):
-        """Surface 4 — Department edits (config only, never invites)."""
+        """Surface 4. Department edits (config only, never invites)."""
         session_maker(operator_routes)
         admin = _mk_admin(db, "allow-dept-admin@test.example")
         target = _mk_target(db, "allow-dept-target@test.example")
@@ -291,7 +291,7 @@ class TestAllowlistedSurfacesAreWritable:
         assert db.get(Department, dept_id).name == "Customer Success"
 
     def test_preview_test_chat_is_not_blocked_by_the_write_guard(self, db, session_maker):
-        """Surface 5 — preview-mode test chat.
+        """Surface 5. Preview-mode test chat.
 
         ``POST /chat`` resolves its bot through ``get_bot_for_chat``, which has
         no ``X-Impersonation-Token`` branch, so an impersonated caller is turned
@@ -299,7 +299,7 @@ class TestAllowlistedSurfacesAreWritable:
         request. The marker is therefore declarative today. What this test pins
         is the part that matters: the write guard is **not** what blocks the
         preview surface. If impersonation is ever wired into
-        ``get_bot_for_chat``, this must stay true — and that branch must admit
+        ``get_bot_for_chat``, this must stay true, and that branch must admit
         the owner-preview path only, since the same endpoint's paid path
         deducts the Account's credits.
         """
@@ -316,7 +316,7 @@ class TestAllowlistedSurfacesAreWritable:
         )
 
         assert res.status_code != 403, res.text
-        assert res.status_code == 401, "expected bot auth — not the write guard — to be the blocker"
+        assert res.status_code == 401, "expected bot auth (not the write guard) to be the blocker"
 
 
 # ── Denied by construction (§6.2 + decision D-1) ────────────────────────────
@@ -329,7 +329,7 @@ def _assert_read_only_403(res) -> None:
 
 class TestDeniedSurfacesStay403:
     def test_credit_topup_is_denied(self, db, session_maker):
-        """§6.2 — billing / credits / payments. Spends the customer's money."""
+        """§6.2. Billing / credits / payments. Spends the customer's money."""
         session_maker(subscription_routes)
         admin = _mk_admin(db, "deny-topup-admin@test.example")
         target = _mk_target(db, "deny-topup-target@test.example")
@@ -343,7 +343,7 @@ class TestDeniedSurfacesStay403:
         _assert_read_only_403(res)
 
     def test_subscription_checkout_is_denied(self, db, session_maker):
-        """§6.2 — subscription checkout is the same money-committing family."""
+        """§6.2. Subscription checkout is the same money-committing family."""
         session_maker(subscription_routes)
         admin = _mk_admin(db, "deny-checkout-admin@test.example")
         target = _mk_target(db, "deny-checkout-target@test.example")
@@ -357,7 +357,7 @@ class TestDeniedSurfacesStay403:
         _assert_read_only_403(res)
 
     def test_ai_agent_deletion_is_denied(self, db, session_maker):
-        """§6.2 — AI Agent deletion. Irreversible, and cancels a subscription."""
+        """§6.2. AI Agent deletion. Irreversible, and cancels a subscription."""
         session_maker(bot_routes)
         admin = _mk_admin(db, "deny-del-admin@test.example")
         target = _mk_target(db, "deny-del-target@test.example")
@@ -370,7 +370,7 @@ class TestDeniedSurfacesStay403:
         assert db.get(Bot, bot_id) is not None
 
     def test_crawl_train_trigger_is_denied(self, db, session_maker):
-        """Decision D-1 — training spends the Account's credits, so it stays
+        """Decision D-1. Training spends the Account's credits, so it stays
         denied even though it looks like useful debugging surface."""
         session_maker(document_routes)
         admin = _mk_admin(db, "deny-crawl-admin@test.example")
@@ -385,7 +385,7 @@ class TestDeniedSurfacesStay403:
         _assert_read_only_403(res)
 
     def test_auto_recrawl_toggle_is_denied(self, db, session_maker):
-        """Decision D-1 again — scheduling a recrawl schedules the spend."""
+        """Decision D-1 again. Scheduling a recrawl schedules the spend."""
         session_maker(bot_routes)
         admin = _mk_admin(db, "deny-recrawl-admin@test.example")
         target = _mk_target(db, "deny-recrawl-target@test.example")
@@ -401,7 +401,7 @@ class TestDeniedSurfacesStay403:
         _assert_read_only_403(res)
 
     def test_api_key_rotation_is_denied(self, db, session_maker):
-        """§6.2 — rotating the key would lock the customer's own integrations
+        """§6.2. Rotating the key would lock the customer's own integrations
         out, and hand the session a credential that outlives it."""
         session_maker(client_routes)
         admin = _mk_admin(db, "deny-key-admin@test.example")
@@ -416,7 +416,7 @@ class TestDeniedSurfacesStay403:
         assert db.get(Client, target_id).api_key == original_key
 
     def test_operator_invite_is_denied(self, db, session_maker):
-        """§6.2 — an invite sends email over the customer's name."""
+        """§6.2, an invite sends email over the customer's name."""
         session_maker(invite_routes)
         admin = _mk_admin(db, "deny-invite-admin@test.example")
         target = _mk_target(db, "deny-invite-target@test.example")
@@ -430,7 +430,7 @@ class TestDeniedSurfacesStay403:
         _assert_read_only_403(res)
 
     def test_department_create_and_delete_stay_denied(self, db, session_maker):
-        """§6.1 grants department *edits*. Create and delete are outside it —
+        """§6.1 grants department *edits*. Create and delete are outside it,
         and a delete re-parents every operator in the department."""
         session_maker(operator_routes)
         admin = _mk_admin(db, "deny-dept-admin@test.example")
@@ -453,7 +453,7 @@ class TestDeniedSurfacesStay403:
 
 class TestReadsStayAllowed:
     def test_get_is_allowed_on_every_touched_router(self, db, session_maker):
-        """GET/HEAD/OPTIONS pass unconditionally — including on the routers
+        """GET/HEAD/OPTIONS pass unconditionally, including on the routers
         that carry the denied mutations, so support can still *see* billing,
         credentials and knowledge-base state while unable to change them."""
         session_maker(bot_routes, canned_response_routes, client_routes, operator_routes, subscription_routes)
@@ -505,12 +505,12 @@ class TestReadsStayAllowed:
 
 class TestAllowlistIsPinned:
     def test_marked_endpoints_are_exactly_the_intended_allowlist(self):
-        """REGRESSION GUARD — do not weaken.
+        """REGRESSION GUARD. Do not weaken.
 
         Walks every route the application registers and asserts the set that
         carries ``impersonation_writable`` is exactly
         :data:`IMPERSONATION_ALLOWLIST`. Marking a new endpoint therefore fails
-        this test until someone edits the list above on purpose — which is the
+        this test until someone edits the list above on purpose, which is the
         review moment where "should a super-admin be able to do this inside a
         customer's Account?" actually gets asked.
         """
@@ -532,7 +532,7 @@ class TestAllowlistIsPinned:
         )
 
     def test_no_safe_method_route_is_marked(self):
-        """A marker on a GET route is always a mistake — safe methods already
+        """A marker on a GET route is always a mistake. Safe methods already
         pass unconditionally, so it can only signal a misunderstanding of what
         the marker means."""
         from app.main import app as fastapi_app

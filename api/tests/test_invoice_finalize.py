@@ -1,4 +1,4 @@
-"""finalize_invoice — flag gating, tax computation, snapshots, idempotency."""
+"""finalize_invoice. Flag gating, tax computation, snapshots, idempotency."""
 
 import os
 
@@ -162,7 +162,7 @@ def test_snapshots_captured(db, enabled):
 # A foreign charge is issued in the currency of supply and carries an INR
 # mirror, because GSTR-1 Table 6A reports exports in rupees and IGST on a
 # non-LUT export is remitted in rupees. The mirror is built from Razorpay's
-# ``base_amount`` — the paise it actually converted at the processing bank's
+# ``base_amount``, the paise it actually converted at the processing bank's
 # rate on the payment date, which is the Rule 34(2) GAAP rate for a service.
 #
 # $9.00 came back as ₹805.07, i.e. 89.452222 INR/USD.
@@ -194,7 +194,7 @@ def test_export_in_usd_is_finalized_with_an_inr_mirror(db, enabled):
 def test_export_without_lut_carves_igst_in_both_currencies(db, enabled):
     # Rule 96A: an export made WITHOUT a LUT is made on payment of IGST. The
     # tax is shown on the document in the currency of supply, and remitted to
-    # the government in rupees — so both breakups have to exist and both have
+    # the government in rupees, so both breakups have to exist and both have
     # to reconcile against their own total.
     _seller(db)  # lut_active defaults False
     c = _client(db, "fin-usd-nolut@test.example", billing_country="US")
@@ -223,7 +223,7 @@ def test_non_inr_on_a_domestic_supply_is_refused(db, enabled):
 
 def test_non_inr_without_a_captured_conversion_is_refused(db, enabled):
     # No ``base_amount`` means no defensible Rule 34 rate. A document we cannot
-    # report is worse than a document issued late — the sweep retries, and the
+    # report is worse than a document issued late, the sweep retries, and the
     # anomaly report surfaces it.
     _seller(db, lut_active=True, lut_number="LUT-2026-1")
     c = _client(db, "fin-usd-nofx@test.example", billing_country="US")
@@ -247,7 +247,7 @@ def test_non_inr_with_an_implausible_rate_is_refused(db, enabled):
 def test_inr_invoice_leaves_the_fx_mirror_null(db, enabled):
     # On a rupee document ``amount_cents``/``taxable_value_minor`` ARE the
     # reportable figures. A mirror here would be a second source of truth for
-    # the same number — NULL, not a copy.
+    # the same number. NULL, not a copy.
     _seller(db)
     c = _client(db, "fin-inr-nofx@test.example", billing_state_code="27", billing_country="IN")
     inv = _invoice(db, c.id)
@@ -261,7 +261,7 @@ def test_inr_invoice_leaves_the_fx_mirror_null(db, enabled):
 
 def test_unconfigured_seller_stays_legacy(db, enabled):
     # ACTIVATION GATE: flags default ON, so an unconfigured seller profile must
-    # mean "not activated yet" — no document (a receipt with an empty legal
+    # mean "not activated yet", no document (a receipt with an empty legal
     # name would be worse than none).
     c = _client(db, "fin-noseller@test.example", billing_state_code="27")
     inv = _invoice(db, c.id)

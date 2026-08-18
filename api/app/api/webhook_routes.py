@@ -33,14 +33,14 @@ def _require_webhook_management_access(auth: dict) -> None:
     An outbound webhook is a standing data-export channel: whoever owns one
     receives every ``lead.captured`` / ``tier_transition`` payload for the bot,
     at a URL they choose. Without this guard the lowest-privileged role
-    (``operator`` — the role handed out by the invite flow to support staff)
+    (``operator``, the role handed out by the invite flow to support staff)
     could point a workspace's lead stream at their own server, or silently
     re-point an existing webhook by PATCHing its URL.
 
     Mirrors ``bot_routes._require_bot_management_access`` and
     ``document_routes._require_knowledge_management_access`` so the three
     workspace-configuration surfaces enforce one rule. Reads stay open to
-    operators — listing a masked webhook config leaks nothing.
+    operators. Listing a masked webhook config leaks nothing.
     """
     if auth["type"] == "client":
         return
@@ -78,7 +78,7 @@ def _validate_webhook_url(url: str) -> None:
                 status_code=422, detail="Webhook URLs targeting internal or private network addresses are not allowed."
             )
     except ValueError:
-        # hostname is not a literal IP — resolve DNS and verify all results are public
+        # hostname is not a literal IP. Resolve DNS and verify all results are public
         if not _is_public_hostname(hostname):
             raise HTTPException(
                 status_code=422,

@@ -25,7 +25,7 @@ import {
  *      sessions were double-counted as drop-offs.
  *
  * The backend already computes the honest answer per session
- * (`summary.sessions_no_activity` — no conversion event AND no post-chat page),
+ * (`summary.sessions_no_activity`, no conversion event AND no post-chat page),
  * so the total is read, never derived. Per-JOURNEY drop-off attribution has no
  * backend support at all, so it must not be invented on the client.
  */
@@ -121,7 +121,7 @@ describe('isFilterableOutcome', () => {
     expect(isFilterableOutcome('offline_message_sent')).toBe(true);
   });
 
-  it('rejects drop-off — no per-journey exit attribution exists', () => {
+  it('rejects drop-off, no per-journey exit attribution exists', () => {
     // This is the guard that keeps the old bug unrepresentable: there is no
     // endpoint returning "which pre-chat journeys ended in an exit", so the
     // diagram must never claim to filter by one.

@@ -1,9 +1,9 @@
-"""Foreign-exchange conversion for export invoices — pure, integer-only.
+"""Foreign-exchange conversion for export invoices. Pure, integer-only.
 
 Rule 34(2) CGST: the value of a taxable SERVICE supplied in foreign currency
 is converted at the GAAP rate for the date of the time of supply. Razorpay's
 ``base_amount`` is the processing bank's realised conversion on the payment
-date, which is that rate — so these tests pin the arithmetic that turns it into
+date, which is that rate, so these tests pin the arithmetic that turns it into
 a stored rate, and the guard that refuses an implausible one.
 """
 
@@ -77,7 +77,7 @@ def test_band_rejects_a_rate_100x_too_low():
 
 
 def test_convert_minor_round_trips_the_captured_total():
-    # The INR total must be the amount Razorpay actually converted, exactly —
+    # The INR total must be the amount Razorpay actually converted, exactly,
     # not a re-derivation through the rounded rate, which would drift by a
     # paisa and break reconciliation against the settlement.
     rate = implied_rate_micros(900, 80_507)

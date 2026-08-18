@@ -2,7 +2,7 @@
 
 Everything else about this feature is unit-tested one gate at a time. What no
 test covered is the thing that actually costs money: a real visitor filling the
-widget form, against a real Postgres, with a real `CreditLedger` — and then
+widget form, against a real Postgres, with a real `CreditLedger`, and then
 doing it a SECOND time, because the widget POSTs `/chat/lead-capture` from both
 the pre-chat form and the handoff form. One visitor, two POSTs, and the
 question the customer's invoice answers is whether that visitor cost 15 credits
@@ -109,7 +109,7 @@ def capture(db, paid_bot, monkeypatch):
 
     `submit_background` and the ARQ hand-off both run the enrichment on another
     thread or another process. Running them inline is what makes this a single
-    assertable transaction — the code under test is unchanged.
+    assertable transaction, the code under test is unchanged.
     """
     app = FastAPI()
     app.include_router(chat_routes.router)
@@ -159,14 +159,14 @@ class TestOneVisitorOneCharge:
         assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST - _COMPANY_COST
 
     def test_the_handoff_form_repost_is_free(self, db, capture):
-        """Pre-chat form, then "talk to a human" — one lead, not two invoices.
+        """Pre-chat form, then "talk to a human", one lead, not two invoices.
 
         The email charge is stopped by its per-(session, address) ledger key.
         The company charge never gets that far on a sequential repost: the
         dedup guard sees `company_name` already written and returns before the
         vendor call, so the second POST costs nothing on OUR account either.
         The ledger key behind that guard is exercised separately, in
-        `test_two_overlapping_runs_are_charged_once` — the guard is a read,
+        `test_two_overlapping_runs_are_charged_once`, the guard is a read,
         and a read cannot stop a race.
         """
         with (
@@ -192,7 +192,7 @@ class TestOneVisitorOneCharge:
         """The race the dedup guard cannot win, and the key that can.
 
         `_resolve_lead_company` reads `company_name` to decide whether this
-        lead was already answered — but between that read and the write, a
+        lead was already answered, but between that read and the write, a
         second background run can pass the same read. Re-entering the resolver
         from inside the vendor call reproduces exactly that interleaving.
         What makes the second run free is the shared idempotency key
@@ -222,7 +222,7 @@ class TestOneVisitorOneCharge:
 
         `lead.company` is rewritten on every capture, so a guard keyed only on
         "do we have a name?" would leave `company_name="Infosys Limited"`
-        sitting above `company="wipro.com"` — `companyDisplay` renders the
+        sitting above `company="wipro.com"`. `companyDisplay` renders the
         resolved name over the domain, so the rep would read a confidently
         wrong employer.
         """
@@ -272,7 +272,7 @@ class TestOneVisitorOneCharge:
 
 class TestTheCustomersOffSwitch:
     def test_company_lookup_off_still_verifies_the_email(self, db, paid_bot, capture):
-        """The two toggles are independent — turning one off keeps the other."""
+        """The two toggles are independent. Turning one off keeps the other."""
         paid_bot.company_lookup_enabled = False
         db.commit()
 
@@ -287,7 +287,7 @@ class TestTheCustomersOffSwitch:
         assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST
 
     def test_email_verification_off_skips_the_vendor_entirely(self, db, paid_bot, capture):
-        """Not "call it and hide the result" — the paid call must not fire."""
+        """Not "call it and hide the result", the paid call must not fire."""
         paid_bot.email_verification_enabled = False
         db.commit()
 
@@ -329,7 +329,7 @@ class TestTheSuperAdminKillSwitch:
         """The lever we pull when a vendor is down or burning money.
 
         Plan says yes and the customer's toggle says yes; the switch still
-        wins, and — critically — it stops the VENDOR CALL, not just the
+        wins, and (critically) it stops the VENDOR CALL, not just the
         ledger write. `_charge_for_enrichment` is deliberately unpatched here.
         """
         db.merge(PricingConfig(key=f"feature.{feature}_enabled", value=False))
@@ -382,9 +382,9 @@ class TestTheDedupGuardFailsOpen:
     """The guard is a cost optimisation, not a gate.
 
     `_already_resolved` on the IP path says it outright: "A failed check must
-    never SUPPRESS resolution — fall through and do the work rather than
+    never SUPPRESS resolution. Fall through and do the work rather than
     silently skipping it." The domain guard has to behave the same way, because
-    nothing retries this — the only trigger is another lead-capture POST, so a
+    nothing retries this, the only trigger is another lead-capture POST, so a
     transient DB hiccup would cost the customer the enrichment permanently.
     """
 
@@ -403,7 +403,7 @@ class TestTheDedupGuardFailsOpen:
             capture()
 
         assert chat_routes._company_already_resolved(_SESSION_ID, "infosys.com") is True
-        # Same lead, different employer — not answered, so not skipped.
+        # Same lead, different employer, not answered, so not skipped.
         assert chat_routes._company_already_resolved(_SESSION_ID, "wipro.com") is False
 
 

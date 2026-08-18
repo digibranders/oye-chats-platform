@@ -1,17 +1,17 @@
 """Regression tests for the operator-key -> account-takeover fix (audit F01/F02).
 
-`client_routes.py` imports the permissive ``get_current_client``, which — unlike
-``get_current_client_strict`` — also resolves an ``X-Operator-Key`` to its
+`client_routes.py` imports the permissive ``get_current_client``, which (unlike
+``get_current_client_strict``) also resolves an ``X-Operator-Key`` to its
 workspace's owning ``Client`` (auth.py). That means a lowest-privilege operator
 could call the account-credential/identity endpoints *as the workspace owner*:
 
-  * ``POST /client/api-key/regenerate`` — rotate & read the owner's master key
+  * ``POST /client/api-key/regenerate``. Rotate & read the owner's master key
     (F01: full account takeover + owner lockout; super-admin takeover if the
     owner is a super-admin).
-  * ``GET  /client/api-key``            — read the owner's master key.
-  * ``PATCH /client/profile``           — change the owner's email, then drive
+  * ``GET  /client/api-key``           . Read the owner's master key.
+  * ``PATCH /client/profile``          . Change the owner's email, then drive
     the password-reset OTP to an attacker address (F02: login takeover).
-  * ``POST /client/change-password``    — belt-and-suspenders (account credential).
+  * ``POST /client/change-password``   . Belt-and-suspenders (account credential).
 
 These endpoints must depend on ``get_current_client_strict`` (X-API-Key only).
 Mirrors the DB-free signature-introspection pattern in
@@ -50,7 +50,7 @@ def test_account_credential_endpoint_uses_strict_auth(handler_name):
         f"{handler_name} must authenticate its caller via a Depends(...) on the `client` param"
     )
     assert dep.dependency is get_current_client_strict, (
-        f"{handler_name} must depend on get_current_client_strict (X-API-Key only) — "
+        f"{handler_name} must depend on get_current_client_strict (X-API-Key only). "
         "get_current_client also accepts an X-Operator-Key and would let any operator "
         "act as the workspace owner (audit F01/F02)."
     )

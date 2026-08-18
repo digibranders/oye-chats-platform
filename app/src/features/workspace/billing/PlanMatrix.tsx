@@ -85,7 +85,7 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
     group: 'Usage',
     label: 'Operator seats',
     kind: 'text',
-    // `-1` is the UNLIMITED sentinel, not a count — a bare `> 0` test filed the
+    // `-1` is the UNLIMITED sentinel, not a count, a bare `> 0` test filed the
     // unlimited-seat tier under "None", i.e. the exact opposite of what it sells.
     value: (p) =>
       p.includedSeats === UNLIMITED_LIMIT
@@ -103,7 +103,7 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
   { group: 'Features', label: 'Remove OyeChats branding', kind: 'bool', value: (p) => Boolean(p.features.branding_removable) },
   { group: 'Features', label: 'Online support', kind: 'bool', value: (p) => Boolean(p.features.online_support) },
   // These two are gated by SLUG on the server (`plan_entitlements_service`),
-  // not by a `features` flag — no plan row carries a key for either, so reading
+  // not by a `features` flag, no plan row carries a key for either, so reading
   // `p.features.*` here would render an empty column on every tier. Without
   // them the matrix showed Standard and Professional as identical on every
   // boolean, which is what the plan payload literally says: the only thing

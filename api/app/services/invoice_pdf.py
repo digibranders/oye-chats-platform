@@ -1,7 +1,7 @@
-"""Invoice document rendering — Rule 46 HTML template + WeasyPrint PDF.
+"""Invoice document rendering. Rule 46 HTML template + WeasyPrint PDF.
 
 Pure presentation over a FINALIZED invoice row: every figure comes from the
-frozen columns/snapshots written by ``invoice_service.finalize_invoice`` — this
+frozen columns/snapshots written by ``invoice_service.finalize_invoice``. This
 module computes nothing tax-related itself, so document and ledger can never
 disagree. Dates render in IST (the FY series the serial was allocated in is
 IST-based; a UTC date could show a different calendar day than the series).
@@ -117,7 +117,7 @@ def _fmt_money(minor: int | None, currency: str | None) -> str:
 
     Indian lakh grouping applies to INR only; every other currency uses
     thousands grouping, because "$1,52,458.00" is not a number anyone outside
-    India reads correctly — and on a statutory export document it misstates
+    India reads correctly, and on a statutory export document it misstates
     the figure's presentation.
     """
     code = (currency or "INR").upper()
@@ -388,7 +388,7 @@ def render_invoice_html(invoice: Invoice) -> str:
                 lut = f" ({seller['lut_number']})" if seller.get("lut_number") else ""
                 export_legend = f"Supply meant for export under LUT without payment of IGST{lut}."
             else:
-                # Rule 96A fallback — export WITHOUT a LUT is made on payment of
+                # Rule 96A fallback. Export WITHOUT a LUT is made on payment of
                 # IGST, and Rule 46 mandates this exact endorsement (previously
                 # missing, so an IGST-paid export printed no export legend at all).
                 export_legend = "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX."
@@ -400,7 +400,7 @@ def render_invoice_html(invoice: Invoice) -> str:
             p_start = p_start.replace(tzinfo=UTC)
         if p_end.tzinfo is None:
             p_end = p_end.replace(tzinfo=UTC)
-        period = f"{p_start.astimezone(IST):%d %b %Y} – {p_end.astimezone(IST):%d %b %Y}"
+        period = f"{p_start.astimezone(IST):%d %b %Y} - {p_end.astimezone(IST):%d %b %Y}"
 
     lines = [
         {"description": item.get("description") or "Service", "amount": money(item.get("amount_minor"))}
@@ -408,7 +408,7 @@ def render_invoice_html(invoice: Invoice) -> str:
     ]
 
     # Compliance/reference strip. Plain "Label: value" strings (no inner
-    # markup) — GSTR reviewers and tests both match the literal phrases.
+    # markup). GSTR reviewers and tests both match the literal phrases.
     from app.config import SUPPORT_EMAIL
 
     support_email = seller.get("support_email") or SUPPORT_EMAIL
@@ -417,17 +417,17 @@ def render_invoice_html(invoice: Invoice) -> str:
     if is_tax_invoice:
         if invoice.place_of_supply:
             # Rule 46: the place of supply must carry the State NAME, not a bare
-            # code (e.g. "27 – Maharashtra"), for an inter-state supply.
+            # code (e.g. "27. Maharashtra"), for an inter-state supply.
             name = state_name(invoice.place_of_supply)
-            pos = f"{invoice.place_of_supply} – {name}" if name else invoice.place_of_supply
+            pos = f"{invoice.place_of_supply} - {name}" if name else invoice.place_of_supply
             meta_items.append(f"Place of supply: {pos}")
         elif invoice.is_export:
             # finalize_invoice stores NULL for an export (there is no Indian
             # state), but Rule 46 still wants a place of supply on the document
             # and GSTR-1 Table 6A reports exports under code 96. Rendered here
-            # rather than stored, so 96 never leaks into VALID_STATE_CODES —
-            # that set also validates GSTINs and buyer state codes.
-            meta_items.append("Place of supply: 96 – Outside India")
+            # rather than stored, so 96 never leaks into VALID_STATE_CODES.
+            # That set also validates GSTINs and buyer state codes.
+            meta_items.append("Place of supply: 96 - Outside India")
         meta_items.append("Reverse charge: No")
         if invoice.is_export:
             # Rule 46 requires the country of destination on an export invoice.
@@ -440,8 +440,8 @@ def render_invoice_html(invoice: Invoice) -> str:
         meta_items.append(f"Payment ref: {invoice.razorpay_payment_id}")
 
     # ── INR mirror (non-INR documents only) ──────────────────────────────────
-    # The supply is invoiced in its own currency; GST is reported — and IGST on
-    # a non-LUT export remitted — in rupees. Rule 34(2) fixes the rate for a
+    # The supply is invoiced in its own currency; GST is reported (and IGST on
+    # a non-LUT export remitted) in rupees. Rule 34(2) fixes the rate for a
     # service at the GAAP rate on the date of the time of supply, so the rate
     # and the resulting figures belong ON the document rather than in a
     # spreadsheet somewhere.
@@ -467,7 +467,7 @@ def render_invoice_html(invoice: Invoice) -> str:
         )
 
     # "Amount in words" is rupee wording. On a foreign-currency document it
-    # would state the dollar total as rupees — so the rupee wording moves into
+    # would state the dollar total as rupees, so the rupee wording moves into
     # the INR block above, where it is actually true.
     in_words = amount_in_words_inr(invoice.amount_cents) if code == "INR" else ""
 

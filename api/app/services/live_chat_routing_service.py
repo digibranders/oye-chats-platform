@@ -1,4 +1,4 @@
-"""Live chat routing — pick the best operator for the next chat.
+"""Live chat routing. Pick the best operator for the next chat.
 
 The routing service has exactly one job: given a workspace and a chat session
 that needs a human, return the operator who should receive it. Everything
@@ -10,18 +10,18 @@ is the WebSocket handler's responsibility.
 Customers can pick from three routing strategies via
 ``bot.live_chat_routing_strategy``:
 
-* ``least_busy`` (default) — pick the operator with the fewest active chats.
+* ``least_busy`` (default). Pick the operator with the fewest active chats.
   Ties broken by a round-robin cursor so the same operator doesn't always win
   when everyone has zero active chats. Best for evenly distributing load.
 
-* ``round_robin`` — strict cursor advance regardless of load. Useful when
+* ``round_robin``. Strict cursor advance regardless of load. Useful when
   customers want predictable fairness over throughput.
 
-* ``first_available`` — return the first online+capacity operator by ID.
+* ``first_available``. Return the first online+capacity operator by ID.
   Simplest and cheapest; effectively round-robin without the cursor. Mostly
   useful for single-operator workspaces where the choice doesn't matter.
 
-The selection is intentionally synchronous and short — even with 100 online
+The selection is intentionally synchronous and short, even with 100 online
 operators, the O(N) capacity check is microseconds. We don't try to cache
 "the next operator" because operator state changes faster than any cache TTL
 worth maintaining.
@@ -31,7 +31,7 @@ worth maintaining.
 The spec ships single-pool routing first. Department-aware routing is a v2
 feature (pre-chat form picks Sales/Support/Billing → only operators in that
 department are candidates). The current code path doesn't filter by
-department but the data model supports it — adding the filter is a one-line
+department but the data model supports it. Adding the filter is a one-line
 change once the visitor UI exists.
 """
 
@@ -74,7 +74,7 @@ def _write_rr_cursor(bot_id: int, operator_id: int) -> None:
     if client is None:
         return
     # 1-day TTL so a dormant bot doesn't accumulate stale cursors. Failures
-    # here are non-fatal — routing falls back to fresh-cursor selection.
+    # here are non-fatal. Routing falls back to fresh-cursor selection.
     with contextlib.suppress(Exception):
         client.setex(_rr_cursor_key(bot_id), 86400, str(operator_id))
 
@@ -103,7 +103,7 @@ def select_operator(bot: Bot, db_session: Session) -> Operator | None:
         chosen = _round_robin(candidates, bot.id)
     elif strategy == "first_available":
         chosen = _first_available(candidates)
-    else:  # "least_busy" — default
+    else:  # "least_busy". Default
         chosen = _least_busy(candidates, bot.id, db_session)
 
     if chosen is not None:
@@ -140,7 +140,7 @@ def _least_busy(candidates: list[Operator], bot_id: int, db_session: Session) ->
     if len(least_busy_pool) == 1:
         return least_busy_pool[0]
 
-    # Tie — apply round-robin fallback within the tied subset
+    # Tie. Apply round-robin fallback within the tied subset
     return _round_robin(least_busy_pool, bot_id)
 
 
@@ -160,7 +160,7 @@ def _round_robin(candidates: list[Operator], bot_id: int) -> Operator | None:
         if op.id > cursor:
             return op
 
-    # Cursor was at or past the last candidate — wrap to the front
+    # Cursor was at or past the last candidate. Wrap to the front
     return sorted_ops[0]
 
 
