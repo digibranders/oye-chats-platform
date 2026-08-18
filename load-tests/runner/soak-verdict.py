@@ -67,12 +67,33 @@ def main():
     failed = []
 
     # Restarts are pass/fail, not a trend: one is already a dropped-socket event.
+    #
+    # This check assumes the server ran with GUNICORN_MAX_REQUESTS=0. The default
+    # (10,000 requests, +/-1,000 jitter) retires a worker on a timer of its own,
+    # which shows up here identically to a crash -- a real run logged ten such
+    # "restarts" in 2.4h, every one of them gunicorn recycling on schedule.
+    # That case is worse than a plain failure: recycling also resets the worker's
+    # RSS and descriptors, so the drift checks below are measuring a counter that
+    # was zeroed roughly hourly and a leak cannot surface at all. Hence the note
+    # printed alongside a non-zero count -- the run is not merely failing, it is
+    # not a valid soak.
+    recycle_hint = False
     for col, label in (("api_restarts", "API worker restarts"), ("ws_restarts", "WS worker restarts")):
         total = max((r.get(col) or 0) for r in rows)
         status = "PASS" if total == 0 else "FAIL"
         if total:
             failed.append(f"{label}: {total}")
+            recycle_hint = True
         print(f"  {status}  {label:<24} {total}")
+    if recycle_hint:
+        print(
+            "\n  NOTE: restarts are only meaningful when the server ran with\n"
+            "        GUNICORN_MAX_REQUESTS=0. Confirm with:\n"
+            "          journalctl -u <api-unit> | grep 'Maximum request limit'\n"
+            "        Any hit there means these are scheduled recycles, the RSS and\n"
+            "        descriptor trends below were reset mid-run, and the soak must be\n"
+            "        re-run with recycling disabled before it can prove anything."
+        )
 
     print()
     for col, (label, limit, unit) in CHECKS.items():
