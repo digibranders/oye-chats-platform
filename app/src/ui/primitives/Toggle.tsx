@@ -1,6 +1,6 @@
 import { forwardRef, useId, type ReactNode } from 'react';
-import * as RadixCheckbox from '@radix-ui/react-checkbox';
-import * as RadixSwitch from '@radix-ui/react-switch';
+import { Checkbox as BaseCheckbox } from '@base-ui/react/checkbox';
+import { Switch as BaseSwitch } from '@base-ui/react/switch';
 import { Check, Minus } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useFieldControlProps } from './fieldContext';
@@ -8,8 +8,8 @@ import { useFieldControlProps } from './fieldContext';
 /**
  * Checkbox and Switch, on Radix.
  *
- * Radix rather than a hand-rolled control because what these owe is larger than
- * it looks: label association, space/enter semantics, indeterminate as a real
+ * Base UI rather than a hand-rolled control because what these owe is larger
+ * than it looks: label association, space/enter semantics, indeterminate as a real
  * ARIA state, form participation through a hidden native input, and RTL. The
  * system this replaces had seven separate toggle implementations and none of
  * them agreed. This is one, and its keyboard contract is not ours to get wrong.
@@ -35,21 +35,31 @@ export interface CheckboxProps {
 }
 
 export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Checkbox(
-  { label, description, disabled, className, ...props },
+  { label, description, disabled, className, checked, defaultChecked, onCheckedChange, ...props },
   ref,
 ) {
   const fieldProps = useFieldControlProps();
   const generatedId = useId();
   const describedById = description ? `${generatedId}-description` : undefined;
 
+  // The public API takes one `CheckedState`, because a caller reasoning about a
+  // select-all header thinks in three states, not in two booleans that can
+  // disagree. Base UI splits them, so the translation happens here rather than
+  // at every call site.
+  const isIndeterminate = checked === 'indeterminate';
+
   const control = (
-    <RadixCheckbox.Root
+    <BaseCheckbox.Root
       ref={ref}
+      checked={isIndeterminate ? false : checked}
+      defaultChecked={defaultChecked}
+      indeterminate={isIndeterminate}
+      onCheckedChange={(next) => onCheckedChange?.(next)}
       className={cn(
         'flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border',
         'border-border-strong bg-surface transition-colors duration-[var(--dur-fast)]',
-        'data-[state=checked]:border-ink data-[state=checked]:bg-ink',
-        'data-[state=indeterminate]:border-ink data-[state=indeterminate]:bg-ink',
+        'data-[checked]:border-ink data-[checked]:bg-ink',
+        'data-[indeterminate]:border-ink data-[indeterminate]:bg-ink',
         'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:opacity-60',
         className,
       )}
@@ -65,23 +75,23 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
       }
       {...props}
     >
-      {/* Which glyph shows is driven by Radix's own `data-state` on the
-          indicator, not by reading `props.checked` — that is `undefined` for an
-          uncontrolled checkbox, so an earlier version never showed the
+      {/* Which glyph shows is driven by Base UI's own `data-indeterminate` on
+          the indicator, not by reading `props.checked` — that is `undefined`
+          for an uncontrolled checkbox, so an earlier version never showed the
           indeterminate dash at all. */}
-      <RadixCheckbox.Indicator className="group flex items-center justify-center text-text-inverse">
+      <BaseCheckbox.Indicator className="group flex items-center justify-center text-text-inverse">
         <Check
           aria-hidden
           strokeWidth={3}
-          className="h-3 w-3 group-data-[state=indeterminate]:hidden"
+          className="h-3 w-3 group-data-[indeterminate]:hidden"
         />
         <Minus
           aria-hidden
           strokeWidth={3}
-          className="hidden h-3 w-3 group-data-[state=indeterminate]:block"
+          className="hidden h-3 w-3 group-data-[indeterminate]:block"
         />
-      </RadixCheckbox.Indicator>
-    </RadixCheckbox.Root>
+      </BaseCheckbox.Indicator>
+    </BaseCheckbox.Root>
   );
 
   if (!label) return control;
@@ -141,7 +151,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   const labelId = `${generatedId}-label`;
 
   const control = (
-    <RadixSwitch.Root
+    <BaseSwitch.Root
       ref={ref}
       checked={checked}
       onCheckedChange={onCheckedChange}
@@ -155,7 +165,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
       className={cn(
         'relative inline-flex shrink-0 items-center rounded-full p-0.5',
         'transition-colors duration-[var(--dur-fast)]',
-        'data-[state=checked]:bg-ink data-[state=unchecked]:bg-border-strong',
+        'data-[checked]:bg-ink data-[unchecked]:bg-border-strong',
         'disabled:cursor-not-allowed disabled:opacity-50',
         size === 'sm' ? 'h-4 w-7' : 'h-5 w-9',
         className,
@@ -168,16 +178,16 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           .join(' ') || undefined
       }
     >
-      <RadixSwitch.Thumb
+      <BaseSwitch.Thumb
         className={cn(
           'block rounded-full bg-surface shadow-xs',
           'transition-transform duration-[var(--dur-fast)] ease-[var(--ease-console)]',
           size === 'sm'
-            ? 'h-3 w-3 data-[state=checked]:translate-x-3'
-            : 'h-4 w-4 data-[state=checked]:translate-x-4',
+            ? 'h-3 w-3 data-[checked]:translate-x-3'
+            : 'h-4 w-4 data-[checked]:translate-x-4',
         )}
       />
-    </RadixSwitch.Root>
+    </BaseSwitch.Root>
   );
 
   if (hideLabel) return control;

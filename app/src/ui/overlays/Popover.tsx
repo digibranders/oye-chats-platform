@@ -1,11 +1,10 @@
 import { type ReactNode } from 'react';
-import * as RadixPopover from '@radix-ui/react-popover';
+import { Popover as BasePopover } from '@base-ui/react/popover';
 import { cn } from '../lib/cn';
 
-export const PopoverRoot = RadixPopover.Root;
-export const PopoverTrigger = RadixPopover.Trigger;
-export const PopoverClose = RadixPopover.Close;
-export const PopoverAnchor = RadixPopover.Anchor;
+export const PopoverRoot = BasePopover.Root;
+export const PopoverTrigger = BasePopover.Trigger;
+export const PopoverClose = BasePopover.Close;
 
 /**
  * A floating panel of arbitrary content.
@@ -16,14 +15,15 @@ export const PopoverAnchor = RadixPopover.Anchor;
  * unreachable with a screen reader.
  *
  * Portalled, so it escapes any ancestor with `overflow: hidden`, a `transform`,
- * or a backdrop filter. The old `Select` rendered its list absolutely inside its
- * own wrapper and was clipped whenever it opened inside a scrolling dialog.
+ * or a backdrop filter. The system this replaces rendered its select list
+ * absolutely inside its own wrapper, and it was clipped whenever it opened
+ * inside a scrolling dialog.
  */
 export function PopoverContent({
   children,
   align = 'start',
   side = 'bottom',
-  /** Width in the caller's own class, e.g. `w-72`. Defaults to fitting content. */
+  /** Width belongs to the caller, e.g. `w-72`. Defaults to fitting the content. */
   className,
 }: {
   children: ReactNode;
@@ -32,23 +32,20 @@ export function PopoverContent({
   className?: string;
 }) {
   return (
-    <RadixPopover.Portal>
-      <RadixPopover.Content
-        align={align}
-        side={side}
-        sideOffset={6}
-        collisionPadding={8}
-        className={cn(
-          'z-[var(--z-overlay)] rounded-lg border border-border bg-surface shadow-md',
-          'focus:outline-none motion-pop',
-          // Bounded to what actually fits, so a long list scrolls in place
-          // rather than running off the bottom of the window.
-          'max-h-[var(--radix-popover-content-available-height)] overflow-y-auto',
-          className,
-        )}
-      >
-        {children}
-      </RadixPopover.Content>
-    </RadixPopover.Portal>
+    <BasePopover.Portal>
+      <BasePopover.Positioner align={align} side={side} sideOffset={6} collisionPadding={8}>
+        <BasePopover.Popup
+          className={cn(
+            'motion-pop z-[var(--z-overlay)] rounded-lg border border-border bg-surface shadow-md',
+            // Bounded to what actually fits, so a long list scrolls in place
+            // rather than running off the bottom of the window.
+            'max-h-[var(--available-height)] overflow-y-auto focus:outline-none',
+            className,
+          )}
+        >
+          {children}
+        </BasePopover.Popup>
+      </BasePopover.Positioner>
+    </BasePopover.Portal>
   );
 }

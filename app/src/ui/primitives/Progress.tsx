@@ -1,4 +1,5 @@
-import * as RadixProgress from '@radix-ui/react-progress';
+import { Meter as BaseMeter } from '@base-ui/react/meter';
+import { Progress as BaseProgress } from '@base-ui/react/progress';
 import { cn } from '../lib/cn';
 import { formatNumber, formatPercent } from '../lib/formatters';
 
@@ -20,7 +21,12 @@ const TONE: Record<NonNullable<ProgressProps['tone']>, string> = {
   danger: 'bg-danger-fill',
 };
 
-/** A determinate or indeterminate bar. Progress is the accent's second job. */
+/**
+ * A task in flight: a crawl, a training run, an upload.
+ *
+ * The indeterminate form is a travelling sliver rather than a filled bar, so it
+ * never implies a completion percentage it does not know.
+ */
 export function Progress({
   value,
   label,
@@ -30,36 +36,33 @@ export function Progress({
   className,
 }: ProgressProps) {
   const clamped = value == null ? null : Math.min(100, Math.max(0, value));
+
   return (
-    <div className={cn('w-full', className)}>
+    <BaseProgress.Root value={clamped} className={cn('w-full', className)}>
       {!hideLabel ? (
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="text-xs text-text-secondary">{label}</span>
+          <BaseProgress.Label className="text-xs text-text-secondary">{label}</BaseProgress.Label>
           {clamped != null ? (
-            <span className="figure text-xs font-medium text-text-primary">{Math.round(clamped)}%</span>
+            <BaseProgress.Value className="figure text-xs font-medium text-text-primary" />
           ) : null}
         </div>
       ) : null}
-      <RadixProgress.Root
-        value={clamped}
+      <BaseProgress.Track
         aria-label={hideLabel ? label : undefined}
         className={cn(
-          'relative w-full overflow-hidden rounded-full bg-surface-active',
+          'relative block w-full overflow-hidden rounded-full bg-surface-active',
           size === 'sm' ? 'h-1' : 'h-1.5',
         )}
       >
-        <RadixProgress.Indicator
+        <BaseProgress.Indicator
           className={cn(
-            'h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-console)]',
+            'block h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-console)]',
             TONE[tone],
-            // Indeterminate: a travelling sliver rather than a full bar, so it
-            // never implies a completion percentage it does not know.
             clamped == null && 'w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite]',
           )}
-          style={clamped != null ? { width: `${clamped}%` } : undefined}
         />
-      </RadixProgress.Root>
-    </div>
+      </BaseProgress.Track>
+    </BaseProgress.Root>
   );
 }
 
@@ -80,48 +83,56 @@ export interface MeterProps {
  * and only a meter carries the "this is nearly full" meaning that makes the
  * warning tone legible to assistive tech.
  *
- * Tone escalates at 80% and 100%, so a quota tells the user it is a problem
- * before it becomes one.
+ * The tone escalates at 80% and again at 100%, so a quota says it is becoming a
+ * problem before it is one.
  */
 export function Meter({ label, used, limit, unit, className }: MeterProps) {
   const unlimited = limit < 0;
   const fraction = unlimited || limit === 0 ? 0 : used / limit;
   const tone = fraction >= 1 ? 'danger' : fraction >= 0.8 ? 'warning' : 'accent';
 
+  if (unlimited) {
+    return (
+      <div className={className}>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-xs text-text-secondary">{label}</span>
+          <span className="figure text-xs font-medium text-text-primary">
+            {formatNumber(used)} <span className="text-text-tertiary">used</span>
+          </span>
+        </div>
+        <p className="mt-1 text-2xs text-text-tertiary">Unlimited on your plan</p>
+      </div>
+    );
+  }
+
   return (
-    <div className={className}>
+    <BaseMeter.Root
+      value={used}
+      min={0}
+      max={limit}
+      // Spelled out, because "412 / 500" read aloud as two numbers is not the
+      // fact the user needs; "82% used" is.
+      getAriaValueText={(_formatted, value) =>
+        `${formatNumber(value)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`
+      }
+      className={className}
+    >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs text-text-secondary">{label}</span>
+        <BaseMeter.Label className="text-xs text-text-secondary">{label}</BaseMeter.Label>
         <span className="figure text-xs font-medium text-text-primary">
           {formatNumber(used)}
-          {unlimited ? (
-            <span className="text-text-tertiary"> used</span>
-          ) : (
-            <>
-              <span className="text-text-tertiary"> / {formatNumber(limit)}</span>
-              {unit ? <span className="text-text-tertiary"> {unit}</span> : null}
-            </>
-          )}
+          <span className="text-text-tertiary"> / {formatNumber(limit)}</span>
+          {unit ? <span className="text-text-tertiary"> {unit}</span> : null}
         </span>
       </div>
-      {unlimited ? (
-        <p className="mt-1 text-2xs text-text-tertiary">Unlimited on your plan</p>
-      ) : (
-        <div
-          role="meter"
-          aria-label={label}
-          aria-valuenow={used}
-          aria-valuemin={0}
-          aria-valuemax={limit}
-          aria-valuetext={`${formatNumber(used)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`}
-          className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-active"
-        >
-          <div
-            className={cn('h-full rounded-full transition-[width] duration-[var(--dur-slow)]', TONE[tone])}
-            style={{ width: `${Math.min(100, fraction * 100)}%` }}
-          />
-        </div>
-      )}
-    </div>
+      <BaseMeter.Track className="mt-1.5 block h-1.5 w-full overflow-hidden rounded-full bg-surface-active">
+        <BaseMeter.Indicator
+          className={cn(
+            'block h-full rounded-full transition-[width] duration-[var(--dur-slow)]',
+            TONE[tone],
+          )}
+        />
+      </BaseMeter.Track>
+    </BaseMeter.Root>
   );
 }

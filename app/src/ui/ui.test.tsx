@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './primitives/Button';
@@ -86,7 +86,10 @@ describe('Switch and Checkbox', () => {
         <Switch checked={false} onCheckedChange={() => {}} label="Live chat" hideLabel disabled />
       </Field>,
     );
-    expect(screen.getByRole('switch')).toBeDisabled();
+    // `aria-disabled`, not the `disabled` attribute: the control stays in the
+    // tab order so a screen-reader user can find it and learn it is off, rather
+    // than it silently vanishing from the page.
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('describes a switch by its description without folding it into the name', () => {
@@ -333,6 +336,8 @@ describe('DataTable', () => {
 
 describe('ConfirmDialog', () => {
   it('announces as an alert dialog and starts focus on the safe choice', async () => {
+    // Focus is moved after the popup mounts, so this waits rather than asserting
+    // on the first frame.
     render(
       <ConfirmDialog
         open
@@ -345,7 +350,7 @@ describe('ConfirmDialog', () => {
       />,
     );
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
   });
 
   it('holds the confirm button until the phrase matches exactly', async () => {

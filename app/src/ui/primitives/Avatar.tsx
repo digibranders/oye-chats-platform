@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import * as RadixAvatar from '@radix-ui/react-avatar';
+import { Avatar as BaseAvatar } from '@base-ui/react/avatar';
 import { cn } from '../lib/cn';
 
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -69,7 +69,7 @@ export function Avatar({ name, src, size = 'md', shape = 'circle', className }: 
   const tint = useMemo(() => tintFor(name), [name]);
 
   return (
-    <RadixAvatar.Root
+    <BaseAvatar.Root
       className={cn(
         'inline-flex shrink-0 select-none items-center justify-center overflow-hidden',
         shape === 'circle' ? 'rounded-full' : 'rounded-md',
@@ -78,9 +78,9 @@ export function Avatar({ name, src, size = 'md', shape = 'circle', className }: 
       )}
     >
       {src ? (
-        // Radix only swaps in the fallback once the image has actually failed or
-        // finished loading, so there is no flash of initials behind a good photo.
-        <RadixAvatar.Image
+        // Base UI only swaps in the fallback once the image has actually failed
+        // or finished loading, so there is no flash of initials behind a good photo.
+        <BaseAvatar.Image
           src={src}
           alt=""
           className="h-full w-full object-cover"
@@ -89,9 +89,9 @@ export function Avatar({ name, src, size = 'md', shape = 'circle', className }: 
       ) : null}
       {/* `aria-hidden`: the name is always rendered or labelled beside the avatar,
           and a screen reader announcing "AR" adds nothing. */}
-      <RadixAvatar.Fallback aria-hidden className={cn('flex h-full w-full items-center justify-center font-medium', tint)}>
+      <BaseAvatar.Fallback aria-hidden className={cn('flex h-full w-full items-center justify-center font-medium', tint)}>
         {initials}
-      </RadixAvatar.Fallback>
-    </RadixAvatar.Root>
+      </BaseAvatar.Fallback>
+    </BaseAvatar.Root>
   );
 }

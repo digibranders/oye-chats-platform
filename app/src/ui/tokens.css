@@ -343,7 +343,7 @@ body {
    from the same tokens as everything else, and so the reduced-motion rule below
    governs them like every other transition.
 
-   Radix stamps `data-state="open" | "closed"` on overlay parts and holds the
+   Base UI stamps `data-open` / `data-closed` on overlay parts and keeps the
    element in the DOM until its animation finishes, which is what makes an exit
    animation possible at all.
 
@@ -362,15 +362,15 @@ body {
 @keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
 @keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
 
-.motion-overlay[data-state='open']   { animation: overlay-in var(--dur) var(--ease-console-out); }
-.motion-overlay[data-state='closed'] { animation: overlay-out var(--dur-fast) var(--ease-console); }
-.motion-panel[data-state='open']     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
-.motion-panel[data-state='closed']   { animation: panel-out var(--dur-fast) var(--ease-console); }
-.motion-slide-right[data-state='open']   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
-.motion-slide-right[data-state='closed'] { animation: slide-right-out var(--dur) var(--ease-console); }
-.motion-pop[data-state='open']   { animation: pop-in var(--dur) var(--ease-console-out); }
-.motion-pop[data-state='closed'] { animation: pop-out var(--dur-fast) var(--ease-console); }
-.motion-pop { transform-origin: var(--radix-popper-transform-origin, center); }
+.motion-overlay[data-open]   { animation: overlay-in var(--dur) var(--ease-console-out); }
+.motion-overlay[data-closed] { animation: overlay-out var(--dur-fast) var(--ease-console); }
+.motion-panel[data-open]     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
+.motion-panel[data-closed]   { animation: panel-out var(--dur-fast) var(--ease-console); }
+.motion-slide-right[data-open]   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
+.motion-slide-right[data-closed] { animation: slide-right-out var(--dur) var(--ease-console); }
+.motion-pop[data-open]   { animation: pop-in var(--dur) var(--ease-console-out); }
+.motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
+.motion-pop { transform-origin: var(--transform-origin, center); }
 
 /* -----------------------------------------------------------------------------
    In-progress motion.

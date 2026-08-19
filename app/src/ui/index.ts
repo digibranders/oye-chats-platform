@@ -90,7 +90,7 @@ export {
   MenuSubTrigger,
   MenuSubContent,
 } from './overlays/Menu';
-export { PopoverRoot, PopoverTrigger, PopoverContent, PopoverClose, PopoverAnchor } from './overlays/Popover';
+export { PopoverRoot, PopoverTrigger, PopoverContent, PopoverClose } from './overlays/Popover';
 export { Tooltip, TooltipProvider } from './overlays/Tooltip';
 export type { TooltipProps } from './overlays/Tooltip';
 export { Toaster } from './overlays/Toast';

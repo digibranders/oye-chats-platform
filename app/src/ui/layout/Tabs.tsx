@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import * as RadixTabs from '@radix-ui/react-tabs';
+import { Tabs as BaseTabs } from '@base-ui/react/tabs';
 import { cn } from '../lib/cn';
 
 export interface TabItem {
@@ -23,34 +23,34 @@ export interface TabsProps {
 /**
  * An underline tab row.
  *
- * On Radix, so arrow-key roving, Home/End, and the tab↔panel `aria-controls`
- * relationship are correct by construction — and so a disabled tab is genuinely
- * skipped rather than merely styled as such (the old row fired `onChange` for
- * locked tabs it had already marked `aria-disabled`).
+ * On Base UI, so arrow-key roving, Home/End and the tab-to-panel relationship
+ * are correct by construction, and a disabled tab is genuinely skipped rather
+ * than merely styled as such — the previous row fired `onChange` for locked tabs
+ * it had already marked `aria-disabled`.
  *
- * The row scrolls horizontally rather than wrapping. A wrapped tab row changes
- * the page's height when the active tab changes, which shifts the content under
- * the user's cursor.
+ * **Activation is manual.** Automatic activation selects a tab the moment an
+ * arrow key lands on it, which is how the old row popped its upgrade modal at a
+ * keyboard user who was only passing through, and how an expensive panel gets
+ * mounted three times on the way to the fourth tab.
+ *
+ * The row scrolls horizontally rather than wrapping: a wrapped tab row changes
+ * the page height when the active tab changes, shifting content under the
+ * user's cursor.
  */
 export function Tabs({ items, value, onValueChange, label, children, className }: TabsProps) {
   return (
-    <RadixTabs.Root
+    <BaseTabs.Root
       value={value}
-      onValueChange={onValueChange}
-      // Manual, not Radix's automatic default. Automatic activation selects a
-      // tab the moment an arrow key lands on it, which is how the previous tab
-      // row fired its upgrade modal at a keyboard user who was only passing
-      // through — and how an expensive panel gets mounted three times on the
-      // way to the fourth tab.
-      activationMode="manual"
+      onValueChange={(next) => onValueChange(String(next))}
       className={className}
     >
-      <RadixTabs.List
+      <BaseTabs.List
         aria-label={label}
+        activateOnFocus={false}
         className="flex gap-1 overflow-x-auto border-b border-border"
       >
         {items.map((item) => (
-          <RadixTabs.Trigger
+          <BaseTabs.Tab
             key={item.value}
             value={item.value}
             disabled={item.disabled}
@@ -61,18 +61,18 @@ export function Tabs({ items, value, onValueChange, label, children, className }
               'disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:text-text-disabled',
               // The active marker is an inset shadow rather than a border, so it
               // sits exactly on the list's own hairline instead of one pixel
-              // above it and nudging the label.
-              'data-[state=active]:text-text-primary',
-              'data-[state=active]:shadow-[inset_0_-2px_0_var(--color-ink)]',
+              // above it, nudging the label.
+              'data-[selected]:text-text-primary',
+              'data-[selected]:shadow-[inset_0_-2px_0_var(--color-ink)]',
             )}
           >
             {item.label}
             {item.badge}
-          </RadixTabs.Trigger>
+          </BaseTabs.Tab>
         ))}
-      </RadixTabs.List>
+      </BaseTabs.List>
       {children}
-    </RadixTabs.Root>
+    </BaseTabs.Root>
   );
 }
 
@@ -86,8 +86,8 @@ export function TabPanel({
   className?: string;
 }) {
   return (
-    <RadixTabs.Content value={value} className={cn('pt-6 focus:outline-none', className)}>
+    <BaseTabs.Panel value={value} className={cn('pt-6 focus:outline-none', className)}>
       {children}
-    </RadixTabs.Content>
+    </BaseTabs.Panel>
   );
 }

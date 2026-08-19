@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react';
-import * as RadixSeparator from '@radix-ui/react-separator';
+import { Separator as BaseSeparator } from '@base-ui/react/separator';
 import { cn } from '../lib/cn';
 
-/** A hairline rule. Decorative by default, so it is not announced as a divider. */
+/** A hairline rule. Purely visual — it separates, it does not carry meaning. */
 export function Separator({
   orientation = 'horizontal',
   className,
@@ -11,9 +11,8 @@ export function Separator({
   className?: string;
 }) {
   return (
-    <RadixSeparator.Root
+    <BaseSeparator
       orientation={orientation}
-      decorative
       className={cn('shrink-0 bg-border', orientation === 'horizontal' ? 'h-px w-full' : 'h-full w-px', className)}
     />
   );

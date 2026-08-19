@@ -248,7 +248,6 @@ export function UiGallery() {
                             label="Assign to agent"
                             value={agent}
                             onValueChange={setAgent}
-                            clearable
                             options={[
                               { value: 'acme', label: 'Acme Support', description: 'bot-6a42…29b9' },
                               { value: 'north', label: 'Northwind Sales', description: 'bot-11c8…4f2a' },
@@ -427,16 +426,14 @@ export function UiGallery() {
 
               <TabPanel value="overlays">
                 <Stack>
-                  <Section title="Overlays" description="All on Radix, so focus, scroll lock and dismissal are correct by construction.">
+                  <Section title="Overlays" description="All on Base UI, so focus, scroll lock and dismissal are correct by construction.">
                     <Card>
                       <CardBody className="flex flex-wrap gap-2">
                         <Button onClick={() => setDialogOpen(true)}>Open dialog</Button>
                         <Button onClick={() => setDrawerOpen(true)}>Open drawer</Button>
                         <Button variant="danger" onClick={() => setConfirmOpen(true)}>Delete chatbot…</Button>
                         <MenuRoot>
-                          <MenuTrigger asChild>
-                            <Button variant="secondary">Row actions</Button>
-                          </MenuTrigger>
+                          <MenuTrigger render={<Button variant="secondary">Row actions</Button>} />
                           <MenuContent>
                             <MenuLabel>Chatbot</MenuLabel>
                             <MenuItem icon={<MessageSquare aria-hidden className="h-3.5 w-3.5" />}>Open</MenuItem>

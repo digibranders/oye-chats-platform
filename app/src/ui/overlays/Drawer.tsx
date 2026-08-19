@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import * as RadixDialog from '@radix-ui/react-dialog';
+import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
@@ -34,7 +34,7 @@ export interface DrawerProps {
  * instead of moving it, so closing it puts them back exactly where they were.
  *
  * Full width below `sm` — a 420px panel on a 375px phone is a modal with a
- * useless 40px gutter, so it simply becomes one.
+ * useless gutter, so it simply becomes one.
  */
 export function Drawer({
   open,
@@ -48,46 +48,43 @@ export function Drawer({
   className,
 }: DrawerProps) {
   return (
-    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
-      <RadixDialog.Portal>
-        <RadixDialog.Overlay
+    <BaseDialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!dismissible && !next) return;
+        onOpenChange(next);
+      }}
+      disablePointerDismissal={!dismissible}
+    >
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
+        <BaseDialog.Popup
           className={cn(
-            'fixed inset-0 z-[var(--z-overlay)] bg-overlay',
-            'motion-overlay',
-          )}
-        />
-        <RadixDialog.Content
-          onEscapeKeyDown={(event) => {
-            if (!dismissible) event.preventDefault();
-          }}
-          onInteractOutside={(event) => {
-            if (!dismissible) event.preventDefault();
-          }}
-          className={cn(
-            'fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col border-l border-border bg-surface shadow-lg',
-            'focus:outline-none',
-            'motion-slide-right',
+            'motion-slide-right fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col',
+            'border-l border-border bg-surface shadow-lg focus:outline-none',
             WIDTHS[width],
             className,
           )}
         >
           <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">
-              <RadixDialog.Title className="text-lg font-semibold text-text-primary">
+              <BaseDialog.Title className="text-lg font-semibold text-text-primary">
                 {title}
-              </RadixDialog.Title>
+              </BaseDialog.Title>
               {description ? (
-                <RadixDialog.Description className="mt-1 text-xs leading-relaxed text-text-secondary">
+                <BaseDialog.Description className="mt-1 text-xs leading-relaxed text-text-secondary">
                   {description}
-                </RadixDialog.Description>
+                </BaseDialog.Description>
               ) : null}
             </div>
             {dismissible ? (
-              <RadixDialog.Close asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="Close">
-                  <X aria-hidden className="h-4 w-4" />
-                </Button>
-              </RadixDialog.Close>
+              <BaseDialog.Close
+                render={
+                  <Button variant="ghost" size="icon-sm" aria-label="Close">
+                    <X aria-hidden className="h-4 w-4" />
+                  </Button>
+                }
+              />
             ) : null}
           </div>
 
@@ -98,8 +95,8 @@ export function Drawer({
               {footer}
             </div>
           ) : null}
-        </RadixDialog.Content>
-      </RadixDialog.Portal>
-    </RadixDialog.Root>
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
   );
 }

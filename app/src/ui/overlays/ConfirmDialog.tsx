@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import * as RadixAlertDialog from '@radix-ui/react-alert-dialog';
+import { useRef, useState, type ReactNode } from 'react';
+import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { cn } from '../lib/cn';
 import { buttonClass } from '../primitives/buttonStyles';
 import { Input } from '../primitives/Input';
@@ -21,7 +21,7 @@ export interface ConfirmDialogProps {
    * Demand the user type this exact string before confirming.
    *
    * Reserve it for actions that destroy work which cannot be recreated —
-   * deleting an agent and its whole knowledge base, closing an account. Asking
+   * deleting a chatbot and its whole knowledge base, closing an account. Asking
    * for it on a routine delete trains people to type past it, which is worse
    * than not asking at all.
    */
@@ -32,15 +32,15 @@ export interface ConfirmDialogProps {
 /**
  * A blocking confirmation.
  *
- * A Radix `AlertDialog`, not a plain dialog: it carries `role="alertdialog"`, it
- * cannot be dismissed by clicking outside, and focus lands on Cancel rather than
- * on the destructive button. Those are exactly the differences that matter when
- * the next keypress deletes something.
+ * An `AlertDialog`, not a plain dialog: it carries `role="alertdialog"` and it
+ * cannot be dismissed by clicking outside. Those are exactly the differences
+ * that matter when the next keypress deletes something.
  *
  * One component, rather than the previous app's mixture of inline two-button
  * swaps, per-page bespoke modals, and a `ConfirmProvider` that was written and
  * never mounted — which is how seven equally destructive actions ended up with
- * no confirmation at all, including promoting a member to Owner.
+ * no confirmation at all, including promoting a member to Owner and deleting a
+ * saved payment method.
  */
 export function ConfirmDialog({
   open,
@@ -54,6 +54,10 @@ export function ConfirmDialog({
   confirmPhrase,
   confirmPhraseLabel,
 }: ConfirmDialogProps) {
+  // Focus lands on Cancel, not on the destructive button and not on the popup
+  // itself. When the next keypress can delete something, the default answer has
+  // to be the safe one.
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [typed, setTyped] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -88,13 +92,11 @@ export function ConfirmDialog({
   }
 
   return (
-    <RadixAlertDialog.Root open={open} onOpenChange={handleOpenChange}>
-      <RadixAlertDialog.Portal>
-        <RadixAlertDialog.Overlay className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
-        <RadixAlertDialog.Content
-          onEscapeKeyDown={(event) => {
-            if (busy) event.preventDefault();
-          }}
+    <AlertDialog.Root open={open} onOpenChange={handleOpenChange}>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
+        <AlertDialog.Popup
+          initialFocus={cancelRef}
           className={cn(
             'motion-panel fixed left-1/2 top-1/2 z-[var(--z-overlay)] w-[calc(100vw-2rem)] max-w-md',
             '-translate-x-1/2 -translate-y-1/2',
@@ -102,12 +104,12 @@ export function ConfirmDialog({
           )}
         >
           <div className="px-5 py-4">
-            <RadixAlertDialog.Title className="text-base font-semibold text-text-primary">
+            <AlertDialog.Title className="text-lg font-semibold text-text-primary">
               {title}
-            </RadixAlertDialog.Title>
-            <RadixAlertDialog.Description className="mt-1.5 text-prose text-text-secondary">
+            </AlertDialog.Title>
+            <AlertDialog.Description className="mt-1.5 text-prose text-text-secondary">
               {description}
-            </RadixAlertDialog.Description>
+            </AlertDialog.Description>
 
             {confirmPhrase ? (
               <Field
@@ -137,12 +139,12 @@ export function ConfirmDialog({
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
-            <RadixAlertDialog.Cancel className={buttonClass('ghost', 'md')} disabled={busy}>
+            <AlertDialog.Close ref={cancelRef} className={buttonClass('ghost', 'md')} disabled={busy}>
               {cancelLabel}
-            </RadixAlertDialog.Cancel>
-            {/* Not `AlertDialog.Action`: that closes the dialog on click, which
-                would tear down the busy state and the error surface before the
-                request settles. */}
+            </AlertDialog.Close>
+            {/* A plain button, not `AlertDialog.Close`: closing on click would
+                tear down the busy state and the error surface before the request
+                settles. */}
             <button
               type="button"
               onClick={handleConfirm}
@@ -153,8 +155,8 @@ export function ConfirmDialog({
               {busy ? 'Working…' : confirmLabel}
             </button>
           </div>
-        </RadixAlertDialog.Content>
-      </RadixAlertDialog.Portal>
-    </RadixAlertDialog.Root>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
   );
 }
