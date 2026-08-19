@@ -105,7 +105,7 @@ export function TagInput({
       <div
         className={cn(
           CONTROL_BASE,
-          'flex min-h-[var(--control-h-md)] flex-wrap items-center gap-1.5 px-2 py-1.5',
+          'flex min-h-control-md flex-wrap items-center gap-1.5 px-2 py-1.5',
           disabled && 'cursor-not-allowed bg-surface-sunken',
         )}
       >

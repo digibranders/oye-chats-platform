@@ -42,6 +42,12 @@ import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
 
+// The design-system gallery. Lazy and dev-only: every rebuild phase ends with a
+// review, and a review needs something to look at — without it the only way to
+// see a primitive is to find a screen that happens to use one, so the ones not
+// yet consumed go unexamined until they are already load-bearing.
+const UiGallery = lazy(() => import('../dev/UiGallery').then((m) => ({ default: m.UiGallery })));
+
 // Launch Studio is a one-time onboarding flow on a separate route - lazy-load it
 // so its layout + steps stay out of the initial bundle.
 const LaunchStudio = lazy(() =>
@@ -64,6 +70,17 @@ export const router = createBrowserRouter([
   {
     errorElement: <RootErrorBoundary />,
     children: [
+      // The gallery renders only the design system, so it needs no auth and no
+      // data providers — which is also what makes it usable as a smoke test.
+      {
+        path: '/dev/ui',
+        element: (
+          <Suspense fallback={null}>
+            <UiGallery />
+          </Suspense>
+        ),
+      },
+
       // ── Public - reused legacy auth pages; no guard, no data providers ──
       { path: '/login', element: <Login /> },
       { path: '/register', element: <Register /> },

@@ -4,8 +4,14 @@ import { cn } from '../lib/cn';
 
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
 
+/**
+ * Initials are set one rung below the box they sit in, and never smaller than
+ * the scale's floor. Two characters at 11px in a 20px circle is legible; the
+ * 9px an earlier version used was not, and it was also a size the system does
+ * not have.
+ */
 const SIZES: Record<AvatarSize, string> = {
-  xs: 'h-5 w-5 text-[9px]',
+  xs: 'h-5 w-5 text-2xs',
   sm: 'h-6 w-6 text-2xs',
   md: 'h-8 w-8 text-xs',
   lg: 'h-10 w-10 text-sm',

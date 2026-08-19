@@ -36,9 +36,9 @@ export interface InputProps
 }
 
 const SIZES = {
-  sm: 'h-[var(--control-h-sm)] px-2.5 text-xs',
-  md: 'h-[var(--control-h-md)] px-3 text-base',
-  lg: 'h-[var(--control-h-lg)] px-3.5 text-base',
+  sm: 'h-control-sm px-2.5 text-xs',
+  md: 'h-control-md px-3 text-base',
+  lg: 'h-control-lg px-3.5 text-base',
 } as const;
 
 const AFFIX_PAD = {

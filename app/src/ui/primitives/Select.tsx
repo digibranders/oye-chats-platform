@@ -19,9 +19,9 @@ export interface SelectProps<T extends string = string>
 }
 
 const SIZES = {
-  sm: 'h-[var(--control-h-sm)] pl-2.5 pr-7 text-xs',
-  md: 'h-[var(--control-h-md)] pl-3 pr-8 text-base',
-  lg: 'h-[var(--control-h-lg)] pl-3.5 pr-9 text-base',
+  sm: 'h-control-sm pl-2.5 pr-7 text-xs',
+  md: 'h-control-md pl-3 pr-8 text-base',
+  lg: 'h-control-lg pl-3.5 pr-9 text-base',
 } as const;
 
 /**

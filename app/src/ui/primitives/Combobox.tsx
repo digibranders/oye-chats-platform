@@ -79,7 +79,7 @@ export function Combobox<T extends string>({
           className={cn(
             CONTROL_BASE,
             'flex items-center justify-between gap-2 text-left',
-            size === 'sm' ? 'h-[var(--control-h-sm)] px-2.5 text-xs' : 'h-[var(--control-h-md)] px-3 text-base',
+            size === 'sm' ? 'h-control-sm px-2.5 text-xs' : 'h-control-md px-3 text-base',
             className,
           )}
           {...fieldProps}

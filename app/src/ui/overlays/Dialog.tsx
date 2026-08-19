@@ -90,7 +90,7 @@ export function Dialog({
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">
-              <RadixDialog.Title className="text-md font-semibold text-text-primary">
+              <RadixDialog.Title className="text-lg font-semibold text-text-primary">
                 {title}
               </RadixDialog.Title>
               {description ? (

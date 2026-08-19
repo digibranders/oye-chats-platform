@@ -6,8 +6,8 @@ export type PageWidth = 'default' | 'wide' | 'full';
 const WIDTHS: Record<PageWidth, string> = {
   // Reading-width for settings and forms: a 1,400px-wide form is unusable
   // because the label and its control end up a screen apart.
-  default: 'max-w-4xl',
-  wide: 'max-w-[var(--page-max)]',
+  default: 'max-w-reading',
+  wide: 'max-w-page',
   // No max width. Padding is controlled separately by `gutter`, because a
   // full-bleed table page still wants vertical rhythm — dropping both left the
   // first row flush against the top of the viewport.
@@ -116,7 +116,7 @@ export function Section({ title, description, actions, children, id, className }
       {title ? (
         <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
-            <h2 className="text-md font-semibold text-text-primary">{title}</h2>
+            <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
             {description ? (
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-text-secondary">
                 {description}

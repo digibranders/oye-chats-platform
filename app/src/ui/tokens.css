@@ -148,10 +148,14 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Six rungs, not nine. An earlier draft had 14/16/18/22 doing near-identical
-     jobs with no rule for choosing between them, which is how drift starts —
-     and drift is the thing this whole file exists to prevent. Card titles are
-     14/600; the jump to a heading is 18. */
+  /* Seven rungs, each with exactly one job. An earlier draft had nine, with
+     14/16/18/22 doing near-identical work and no rule for choosing between
+     them — which is how drift starts, and drift is the thing this file exists
+     to prevent. Card titles are 14/600; the jump to a heading is 18.
+
+     Sizes outside this list are a defect, not a choice: `text-md` is not a
+     Tailwind default either, so a component reaching for one silently renders
+     at the inherited body size. `ui.scale.test.ts` fails the build on it. */
   --text-2xs: 0.6875rem;    /* 11 — mono eyebrows, column heads               */
   --text-2xs--line-height: 1rem;
   --text-xs: 0.75rem;       /* 12 — meta, hints, captions, badges            */
@@ -160,8 +164,10 @@
   --text-sm--line-height: 1.25rem;
   --text-base: 0.875rem;    /* 14 — body, inputs, buttons, card titles       */
   --text-base--line-height: 1.375rem;
-  --text-lg: 1.125rem;      /* 18 — section and page headings                */
+  --text-lg: 1.125rem;      /* 18 — section headings, dialog titles          */
   --text-lg--line-height: 1.625rem;
+  --text-xl: 1.375rem;      /* 22 — page titles                              */
+  --text-xl--line-height: 1.875rem;
   --text-2xl: 1.75rem;      /* 28 — headline figures, empty-state heroes     */
   --text-2xl--line-height: 2.25rem;
 
@@ -185,6 +191,11 @@
   --spacing-rail: 15.5rem;          /* 248 — the nav rail                     */
   --spacing-rail-collapsed: 3.75rem;/* 60 */
   --spacing-topbar: 3.5rem;         /* 56 */
+
+  /* Content widths. `--container-*` is Tailwind's namespace for `max-w-*`, so a
+     page writes `max-w-page` rather than an arbitrary value. */
+  --container-page: 90rem;          /* 1440 — the widest content column        */
+  --container-reading: 56rem;       /* 896 — settings and forms                */
 
   /* ------------------------------------------------------------------ shape
      Small radii read as controls; large radii read as marketing. Nothing here
