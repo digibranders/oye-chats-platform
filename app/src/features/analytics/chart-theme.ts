@@ -1,6 +1,13 @@
 import { useTheme } from '../../design-system';
 
 /**
+ * LEGACY. Kept only because `features/feedback/FeedbackTrendChart` still imports
+ * it; nothing in Analytics does any more. Charts here use `ChartFrame` and the
+ * one palette in `src/ui/charts/theme.ts`, which is token-backed and has no raw
+ * hex in it. Delete this file with the legacy design system.
+ */
+
+/**
  * Concrete colors for Recharts, which can't read CSS custom properties. Values
  * mirror the design-system tokens (`tokens.css`) for each theme so the chart
  * stays consistent with the rest of the surface - volt-violet accent, warm

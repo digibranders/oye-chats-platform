@@ -1,211 +1,470 @@
-import { useCallback, useState, type ReactElement } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Bot as BotIcon, Plus, AlertCircle, RefreshCw, Wand2 } from 'lucide-react';
+// The list's search, filter, sort and summary rules are pure functions, tested
+// directly, so they are exported from the page that renders them rather than
+// duplicated in a test. That is the only reason fast refresh's one-export rule
+// is off here.
+/* eslint-disable react-refresh/only-export-components */
+import { useCallback } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueries } from '@tanstack/react-query';
+import { Bot as BotIcon, Plus, SearchX } from 'lucide-react';
 import {
   Button,
   Card,
+  CardBody,
+  CardSection,
   EmptyState,
-  PageContainer,
+  ErrorState,
+  Page,
+  PageHeader,
+  SearchField,
+  SegmentedControl,
+  Select,
   Skeleton,
-} from '../../design-system';
+  Stack,
+  StatTile,
+  Toolbar,
+  buttonClass,
+  formatNumber,
+} from '../../ui';
+import { getDashboardStats } from '../../services/api';
+import { keys } from '../../query/keys';
 import { useBotContext } from '../../context/BotContext';
-import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import { type Bot } from '../../types/domain';
-import { hasLaunchProgress, resumeLaunchPath } from '../launch-studio/resume';
+import { agentPath } from '../../shell/nav';
+import { agentHealth, type AgentHealth } from '../home/agentHealth';
+import type { Bot } from '../../types/domain';
 import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
-import { AgentActionsMenu } from './AgentActionsMenu';
 import { resolveAgentCreationGate } from './agentLimit';
 
 /**
- * One agent in the grid: the shared, fully-navigational <AgentCard> tile with
- * the actions "⋯" menu overlaid in its top-right corner. The menu is a sibling
- * of the card's link (not a child), so both stay independent, accessible
- * controls - clicking the tile opens the agent, the menu handles the rest.
+ * The chatbot list.
+ *
+ * It answers one question — "which chatbots do I have, and which one needs me?"
+ * — and it has to keep answering it at twenty chatbots, not just at two. So the
+ * page is a searchable, filterable, sortable collection rather than an
+ * unordered grid, and every one of those controls lives in the URL: a support
+ * conversation that ends "open the list, filter to needs-attention" should be a
+ * link, and Back should undo a filter rather than leaving the page.
+ *
+ * Three things the page it replaces got wrong, closed here:
+ *
+ * Its loading skeleton drew a four-tile summary row that the loaded page never
+ * rendered, so every visit flashed four tiles that then evaporated. There is a
+ * real summary now, and the skeleton is shaped like it.
+ *
+ * It carried a permanently sticky "Resume setup" button, because the flag only
+ * cleared on the final wizard step — anyone who installed the widget by hand
+ * kept the button forever. Launch Studio is gone; the checklist lives in the
+ * rail and at `/setup`, derived from server state.
+ *
+ * It had two contradictory ways to create the same object: a two-field dialog
+ * here and a seven-step wizard elsewhere. There is one now, and `?new=1` opens
+ * it, because the rail and Home both link straight to it.
  */
-function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }): ReactElement {
-  return (
-    <div className="relative">
-      <AgentCard bot={bot} />
-      <div className="absolute right-3 top-3">
-        <AgentActionsMenu bot={bot} onChanged={onChanged} />
-      </div>
-    </div>
-  );
+
+export type StatusFilter = 'all' | 'live' | 'attention' | 'training';
+export type SortKey = 'status' | 'name' | 'newest' | 'busiest';
+
+export interface AgentListItem {
+  bot: Bot;
+  health: AgentHealth;
+  /**
+   * All-time conversations, or `null` when that chatbot's statistics call has
+   * not settled or failed. Never coerced to zero: a broken chatbot rendered as
+   * a quiet one is the exact bug the workspace totals used to ship.
+   */
+  conversations: number | null;
+  /** True while that call is still in flight, so a card can wait rather than
+   *  render an em dash it is about to replace. */
+  conversationsLoading: boolean;
 }
 
-/** Placeholder grid shown while the agent list is loading. */
-function AgentsLoading(): ReactElement {
-  return (
-    <div className="space-y-6">
-      <span className="sr-only" role="status">
-        Loading your agents&hellip;
-      </span>
-      <div className="space-y-6" aria-hidden="true">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-[92px] rounded-xl" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton key={index} className="h-[132px] rounded-xl" />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+export interface AgentListSummary {
+  total: number;
+  live: number;
+  attention: number;
+  training: number;
+  /** Sum across chatbots that reported. `null` when none of them did. */
+  conversations: number | null;
 }
 
 /**
- * AgentsPage - the AI Agents list. Answers exactly one question: "Which agents
- * do I have?"
- *
- * A summary of portfolio health, then a grid of agent tiles that each navigate
- * to the agent's Overview. Data comes from the reused BotContext (an AI Agent
- * IS a legacy Bot), so `loading`/`error` are read straight from the provider -
- * no local fetch state, no synchronous setState in an effect. Creating an agent
- * reuses the legacy `createBot` API via the CreateAgentDialog.
- *
- * Add-Agent reads the plan's `bots` quota so the create dialog can say up front
- * that this agent will need its own subscription - under the per-bot billing
- * model only the first agent is free. The control itself is never taken away:
- * that second agent is a sale, and `CreateAgentDialog` completes it by routing
- * the server's 402 `must_subscribe` into a plan picker + per-agent checkout.
- * The quota is advisory copy; `can_client_add_new_bot` server-side is the rule.
+ * Worst first, so the default order puts the chatbot that is failing customers
+ * at the top of the page rather than wherever the API happened to return it.
  */
-export function AgentsPage(): ReactElement {
+const HEALTH_RANK: Record<AgentHealth['state'], number> = {
+  broken: 0,
+  untrained: 1,
+  stale: 2,
+  ready: 3,
+  training: 4,
+  live: 5,
+};
+
+export const SORT_OPTIONS = [
+  { value: 'status', label: 'Needs attention first' },
+  { value: 'name', label: 'Name (A–Z)' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'busiest', label: 'Busiest first' },
+] as const satisfies readonly { value: SortKey; label: string }[];
+
+/** Free-text match over the two identifiers a person actually remembers. */
+export function matchesQuery(item: AgentListItem, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = [item.bot.name, item.bot.website, item.bot.bot_key];
+  return haystack.some((value) => (value ?? '').toLowerCase().includes(needle));
+}
+
+export function matchesStatus(item: AgentListItem, status: StatusFilter): boolean {
+  switch (status) {
+    case 'live':
+      return item.health.state === 'live';
+    case 'attention':
+      return item.health.needsAttention;
+    case 'training':
+      return item.health.state === 'training';
+    default:
+      return true;
+  }
+}
+
+/** Roll a set of chatbots up into the figures shown above the grid. */
+export function summarizeAgents(items: readonly AgentListItem[]): AgentListSummary {
+  const reported = items.filter((item) => item.conversations !== null);
+  return {
+    total: items.length,
+    live: items.filter((item) => item.health.state === 'live').length,
+    attention: items.filter((item) => item.health.needsAttention).length,
+    training: items.filter((item) => item.health.state === 'training').length,
+    conversations: reported.length
+      ? reported.reduce((total, item) => total + (item.conversations ?? 0), 0)
+      : null,
+  };
+}
+
+/**
+ * Order the list. Every comparator falls back to the name so the result is
+ * stable — an unstable sort makes a list appear to reshuffle itself on refetch.
+ */
+export function sortAgents(items: readonly AgentListItem[], sort: SortKey): AgentListItem[] {
+  const byName = (a: AgentListItem, b: AgentListItem): number =>
+    (a.bot.name ?? '').localeCompare(b.bot.name ?? '', 'en', { sensitivity: 'base' });
+
+  return [...items].sort((a, b) => {
+    switch (sort) {
+      case 'name':
+        return byName(a, b);
+      case 'newest': {
+        const left = Date.parse(a.bot.created_at ?? '');
+        const right = Date.parse(b.bot.created_at ?? '');
+        // A chatbot with no readable creation date sorts last rather than
+        // first: `NaN` compares false against everything and would otherwise
+        // scatter those rows through the list.
+        if (!Number.isFinite(left) && !Number.isFinite(right)) return byName(a, b);
+        if (!Number.isFinite(left)) return 1;
+        if (!Number.isFinite(right)) return -1;
+        return right - left || byName(a, b);
+      }
+      case 'busiest':
+        return (b.conversations ?? -1) - (a.conversations ?? -1) || byName(a, b);
+      default:
+        return HEALTH_RANK[a.health.state] - HEALTH_RANK[b.health.state] || byName(a, b);
+    }
+  });
+}
+
+function isSortKey(value: string | null): value is SortKey {
+  return SORT_OPTIONS.some((option) => option.value === value);
+}
+
+function isStatusFilter(value: string | null): value is StatusFilter {
+  return value === 'all' || value === 'live' || value === 'attention' || value === 'training';
+}
+
+/** A grid placeholder shaped like the cards that replace it. */
+function AgentsLoading() {
+  return (
+    <ul aria-busy className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {Array.from({ length: 6 }, (_, index) => (
+        <Card as="li" key={index}>
+          <div className="flex items-start gap-3 px-5 py-4">
+            <Skeleton className="h-10 w-10 rounded-md" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          </div>
+          <CardSection className="grid grid-cols-2 gap-4">
+            <Skeleton className="h-10" />
+            <Skeleton className="h-10" />
+          </CardSection>
+          <CardSection>
+            <Skeleton className="h-8" />
+          </CardSection>
+        </Card>
+      ))}
+    </ul>
+  );
+}
+
+export function AgentsPage() {
   const { bots, loading, error, refreshBots } = useBotContext();
-  const { currentWorkspaceId } = useWorkspace();
   const { limitFor, planName } = useEntitlements();
-  const [createOpen, setCreateOpen] = useState(false);
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // Counted from the live agent list rather than `entitlements.usage.bots`,
-  // which is only refetched on mount and on workspace switch and so would
-  // still read 0 right after the first agent is created. `deleteBot` is a hard
-  // delete, so the list matches the server's active-agent count.
+  const query = params.get('q') ?? '';
+  const statusParam = params.get('status');
+  const status: StatusFilter = isStatusFilter(statusParam) ? statusParam : 'all';
+  const sortParam = params.get('sort');
+  const sort: SortKey = isSortKey(sortParam) ? sortParam : 'status';
+  const createOpen = params.get('new') === '1';
+
+  /**
+   * One statistics call per chatbot, on the same key Home uses, so arriving
+   * from Home costs nothing and the two surfaces can never disagree about how
+   * busy a chatbot has been. It is what makes "busiest first" and the
+   * conversations figure possible without a second endpoint.
+   */
+  const statQueries = useQueries({
+    queries: bots.map((bot) => ({
+      queryKey: keys.analytics.dashboard(bot.id, null),
+      queryFn: () => getDashboardStats(bot.id),
+      staleTime: 60_000,
+    })),
+  });
+
+  // Derived plainly rather than memoised: `useQueries` returns a fresh array
+  // every render, so any memo keyed on it would recompute anyway, and the work
+  // is a handful of comparisons over a list bounded by what the plan sells.
+  const items: AgentListItem[] = bots.map((bot, index) => {
+    const stats = statQueries[index];
+    const total = stats?.data?.total_conversations;
+    return {
+      bot,
+      health: agentHealth(bot),
+      conversations: typeof total === 'number' && Number.isFinite(total) ? total : null,
+      conversationsLoading: stats?.isPending ?? false,
+    };
+  });
+
+  // The counts on the filter reflect the search, so the number on a segment is
+  // always what clicking it would show.
+  const searched = items.filter((item) => matchesQuery(item, query));
+  const summary = summarizeAgents(searched);
+  const visible = sortAgents(
+    searched.filter((item) => matchesStatus(item, status)),
+    sort,
+  );
+
+  const setParam = useCallback(
+    (key: string, value: string | null) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (value === null || value === '') next.delete(key);
+          else next.set(key, value);
+          return next;
+        },
+        // Replace, so typing a search does not bury the previous page under a
+        // keystroke's worth of history entries.
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  // Advisory only. Whether the next chatbot is free or needs its own plan is
+  // decided by the server's 402, which the dialog turns into a plan picker —
+  // this just lets the form say so before the user fills it in. Counted from
+  // the live list rather than from cached entitlement usage, which is only
+  // refetched on mount and would still read zero right after a create.
   const creationGate = resolveAgentCreationGate(bots.length, limitFor('bots'));
 
-  // Always open the create dialog. Whether the new agent is free or needs a paid
-  // plan is decided inside the dialog (free → created immediately; paywalled →
-  // it advances to a pricing step and runs the per-agent checkout).
-  const handleAddAgent = useCallback((): void => {
-    setCreateOpen(true);
-  }, []);
+  const closeCreate = useCallback(() => setParam('new', null), [setParam]);
 
   const handleCreated = useCallback(
-    async (bot: Bot): Promise<void> => {
-      setCreateOpen(false);
-      // Refresh first so the destination Overview resolves the new agent from
-      // BotContext instead of briefly rendering "agent not found".
+    async (bot: Bot) => {
+      closeCreate();
+      // Refresh before navigating, so the destination resolves the new chatbot
+      // from context instead of briefly rendering "chatbot not found".
       await refreshBots();
-      navigate(`/agents/${bot.id}/overview`);
+      navigate(agentPath(bot.id, 'overview'));
     },
-    [refreshBots, navigate],
+    [closeCreate, refreshBots, navigate],
   );
 
-  // Paid-agent path: the agent is materialised server-side after checkout. Land
-  // on its Overview when we know the id; otherwise (webhook still in flight)
-  // return to the list, where it appears as soon as it's created.
   const handleCheckoutComplete = useCallback(
-    async (botId: number): Promise<void> => {
-      setCreateOpen(false);
+    async (botId: number) => {
+      closeCreate();
       await refreshBots();
-      navigate(botId > 0 ? `/agents/${botId}/overview` : '/agents');
+      // A zero id means the webhook is still materialising the chatbot; the
+      // list is the honest place to wait for it.
+      navigate(botId > 0 ? agentPath(botId, 'overview') : '/chatbots');
     },
-    [refreshBots, navigate],
+    [closeCreate, refreshBots, navigate],
   );
 
-  const handleChanged = useCallback((): void => {
+  const handleChanged = useCallback(() => {
     void refreshBots();
   }, [refreshBots]);
 
   const hasAgents = bots.length > 0;
-  // Only offered when the user actually abandoned Launch Studio mid-flow, in
-  // THIS workspace. A workspace with no agents already gets the guided path
-  // from the empty state below, and a finished workspace shouldn't be pulled
-  // back into onboarding. The workspace scope also stops a second account on
-  // a shared browser inheriting the first account's progress.
-  const showResumeSetup = hasAgents && hasLaunchProgress(currentWorkspaceId);
+  const showToolbar = hasAgents && !error;
 
   return (
-    <PageContainer
-      title="Your chatbots"
-      description="Select a chatbot to view its health, knowledge and settings."
-      actions={
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Launch Studio saves progress but had no door back in once the user
-              closed it (its only entry was Home's zero-agent empty state, and
-              the flow itself creates the first agent). Surface the resume here
-              while onboarding is unfinished. */}
-          {showResumeSetup && (
-            <Button variant="outline" onClick={() => navigate(resumeLaunchPath())}>
-              <Wand2 size={16} aria-hidden="true" />
-              Resume setup
-            </Button>
-          )}
-          <Button onClick={handleAddAgent}>
-            <Plus size={16} aria-hidden="true" />
+    <Page width="wide">
+      <PageHeader
+        title="Chatbots"
+        description="Every chatbot in this workspace, what it knows, and whether it is answering visitors."
+        actions={
+          <Button variant="primary" iconLeft={<Plus aria-hidden className="h-4 w-4" />} onClick={() => setParam('new', '1')}>
             New chatbot
           </Button>
-        </div>
-      }
-    >
+        }
+        toolbar={
+          showToolbar ? (
+            <Toolbar>
+              <div className="w-full sm:w-72">
+                <SearchField
+                  label="Search chatbots"
+                  placeholder="Search by name, website or key"
+                  value={query}
+                  onValueChange={(value) => setParam('q', value)}
+                />
+              </div>
+              <SegmentedControl
+                label="Chatbot status"
+                value={status}
+                onChange={(value) => setParam('status', value === 'all' ? null : value)}
+                items={[
+                  { value: 'all', label: 'All', count: summary.total },
+                  { value: 'live', label: 'Live', count: summary.live },
+                  { value: 'attention', label: 'Needs attention', count: summary.attention },
+                  { value: 'training', label: 'Training', count: summary.training },
+                ]}
+              />
+              <div className="w-52">
+                <Select
+                  aria-label="Sort chatbots"
+                  size="sm"
+                  value={sort}
+                  onChange={(event) => setParam('sort', event.target.value)}
+                  options={SORT_OPTIONS}
+                />
+              </div>
+              {/* The result of a filter, announced. A count that only changes
+                  visually tells a screen-reader user nothing about whether
+                  their search did anything. */}
+              <p role="status" aria-live="polite" className="ml-auto text-xs text-text-secondary">
+                {visible.length === summary.total
+                  ? `${formatNumber(summary.total)} chatbots`
+                  : `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
+              </p>
+            </Toolbar>
+          ) : undefined
+        }
+      />
+
       {error ? (
-        <Card className="flex flex-col items-center gap-4 p-10 text-center">
-          <span
-            className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]"
-            aria-hidden="true"
-          >
-            <AlertCircle size={22} />
-          </span>
-          <div>
-            <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">
-              We couldn&rsquo;t load your chatbots
-            </h2>
-            <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-[var(--ds-text-muted)]">
-              {error.message || 'Something went wrong while loading your chatbots.'}
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => void refreshBots()}>
-            <RefreshCw size={16} aria-hidden="true" />
-            Try again
-          </Button>
+        <Card>
+          <ErrorState
+            title="We could not load your chatbots"
+            description={error.message || 'Something went wrong while loading this workspace.'}
+            onRetry={() => void refreshBots()}
+          />
         </Card>
-      ) : loading && !hasAgents ? (
-        <AgentsLoading />
-      ) : !hasAgents ? (
-        <EmptyState
-          icon={BotIcon}
-          title="Create your first AI chatbot"
-          description="An AI chatbot answers your visitors from your own content. Name one to get started - training and customization come next."
-          action={
-            <Button onClick={handleAddAgent}>
-              <Plus size={16} aria-hidden="true" />
-              New chatbot
-            </Button>
-          }
-        />
       ) : (
-        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {bots.map((bot) => (
-            <li key={bot.id}>
-              <AgentGridCard bot={bot} onChanged={handleChanged} />
-            </li>
-          ))}
-        </ul>
+        <Stack>
+          {hasAgents || loading ? (
+            <Card>
+              <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
+                <StatTile
+                  label="Chatbots"
+                  value={formatNumber(summary.total)}
+                  period="In this workspace"
+                  loading={loading}
+                />
+                <StatTile
+                  label="Live"
+                  value={formatNumber(summary.live)}
+                  period="Trained and installed"
+                  loading={loading}
+                />
+                <StatTile
+                  label="Needs attention"
+                  value={formatNumber(summary.attention)}
+                  period="Not answering properly"
+                  tone={summary.attention > 0 ? 'warning' : 'neutral'}
+                  loading={loading}
+                />
+                <StatTile
+                  label="Conversations"
+                  value={summary.conversations === null ? undefined : formatNumber(summary.conversations)}
+                  period="All time"
+                  hint={
+                    summary.conversations === null && !loading
+                      ? 'No chatbot reported its numbers'
+                      : undefined
+                  }
+                  loading={loading || statQueries.some((stats) => stats.isPending)}
+                />
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {loading && !hasAgents ? (
+            <AgentsLoading />
+          ) : !hasAgents ? (
+            <Card>
+              <EmptyState
+                icon={BotIcon}
+                title="No chatbots yet"
+                description="Name one and point it at your website. It starts reading straight away, and you can talk to it while it learns."
+                action={
+                  <Button variant="primary" onClick={() => setParam('new', '1')}>
+                    Create your first chatbot
+                  </Button>
+                }
+              />
+            </Card>
+          ) : visible.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={SearchX}
+                title="No chatbots match"
+                description="Nothing in this workspace matches that search and filter. Clear them to see all of your chatbots again."
+                action={
+                  <Link
+                    to="/chatbots"
+                    replace
+                    className={buttonClass('secondary', 'sm')}
+                  >
+                    Clear search and filters
+                  </Link>
+                }
+              />
+            </Card>
+          ) : (
+            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visible.map((item) => (
+                <AgentCard key={item.bot.id} item={item} onChanged={handleChanged} />
+              ))}
+            </ul>
+          )}
+        </Stack>
       )}
 
       <CreateAgentDialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onOpenChange={(open) => setParam('new', open ? '1' : null)}
         onCreated={handleCreated}
         onCheckoutComplete={handleCheckoutComplete}
         gate={creationGate}
         planName={planName}
       />
-    </PageContainer>
+    </Page>
   );
 }

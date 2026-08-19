@@ -89,6 +89,55 @@ function earliestDate(a: string | null, b: string | null): string | null {
   return at <= bt ? a : b;
 }
 
+// ── What a credit buys ───────────────────────────────────────────────────────
+
+/**
+ * The metered actions, in the order a customer thinks about them.
+ *
+ * `key` matches both the `costs` map and the `usage` buckets on
+ * `GET /credits/balance`, so one list drives the price table and the
+ * consumption breakdown and the two cannot fall out of step.
+ */
+export const CREDIT_ACTIONS = [
+  { key: 'ai_chat', bucket: 'aiChat', label: 'AI reply', unit: 'reply' },
+  { key: 'url_scan', bucket: 'urlScan', label: 'Page crawled', unit: 'page' },
+  { key: 'document_upload', bucket: 'documentUpload', label: 'Document trained', unit: 'document' },
+  { key: 'email_send', bucket: 'emailSend', label: 'Customer email', unit: 'email' },
+  { key: 'email_verification', bucket: 'emailVerification', label: 'Email verified', unit: 'check' },
+  { key: 'company_name', bucket: 'companyName', label: 'Company identified', unit: 'lookup' },
+] as const;
+
+export type CreditActionKey = (typeof CREDIT_ACTIONS)[number]['key'];
+export type CreditActionBucket = (typeof CREDIT_ACTIONS)[number]['bucket'];
+
+/**
+ * Per-action credit costs as configured on the server.
+ *
+ * A value of `null` means the balance payload did not carry a cost for that
+ * action. That is NOT the same as "free": a super-admin can remove a key, and
+ * printing 0 credits beside an action that still charges is exactly the lie
+ * this replaces. Callers render an em dash instead.
+ */
+export type CreditCosts = Readonly<Record<CreditActionKey, number | null>>;
+
+function parseCreditCosts(value: unknown): CreditCosts {
+  const record = asRecord(value);
+  const out = {} as Record<CreditActionKey, number | null>;
+  for (const action of CREDIT_ACTIONS) {
+    const raw = record[action.key];
+    const parsed = typeof raw === 'string' ? Number(raw) : raw;
+    out[action.key] =
+      typeof parsed === 'number' && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return out;
+}
+
+/** "1 credit" / "3 credits" / null when the server declared no cost. */
+export function formatCost(cost: number | null): string | null {
+  if (cost === null) return null;
+  return `${formatCredits(cost)} credit${cost === 1 ? '' : 's'}`;
+}
+
 // ── Credit balance ───────────────────────────────────────────────────────────
 
 /**
@@ -102,6 +151,13 @@ interface CreditPool {
   readonly planRemaining: number;
   readonly topupRemaining: number;
   readonly totalRemaining: number;
+  /**
+   * When the current allowance period began - the timestamp of the most recent
+   * `plan_grant`. Every consumption figure on this page is scoped to it, so a
+   * surface that renders one without naming this window is quoting a number
+   * over an unstated period.
+   */
+  readonly periodStart: string | null;
   readonly resetsAt: string | null;
   readonly soonestExpiry: string | null;
   readonly usage: UsageBuckets;
@@ -113,6 +169,7 @@ function parsePool(record: Record<string, unknown>): CreditPool {
     planRemaining: toNumber(record.plan),
     topupRemaining: toNumber(record.topup),
     totalRemaining: toNumber(record.total),
+    periodStart: toStringOrNull(record.period_start),
     resetsAt: toStringOrNull(record.resets_at),
     soonestExpiry: toStringOrNull(record.soonest_expiry),
     usage: parseUsageBuckets(record.usage),
@@ -167,6 +224,8 @@ export interface PoolCredit {
   readonly totalRemaining: number;
   /** Share of this pool's monthly grant already consumed, 0 to 100. */
   readonly planUsedPct: number;
+  /** When the allowance period began, ISO 8601. Every usage figure below is scoped to it. */
+  readonly periodStart: string | null;
   /** When the plan bucket refills, ISO 8601. */
   readonly resetsAt: string | null;
   /**
@@ -213,6 +272,7 @@ function poolCredit(
     totalRemaining: pool.totalRemaining,
     planUsedPct:
       pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
+    periodStart: pool.periodStart,
     resetsAt: pool.resetsAt,
     soonestExpiry: pool.soonestExpiry,
     periodCreditsUsed: poolCreditsUsed(pool.usage),
@@ -257,10 +317,21 @@ export interface CreditBalance {
   readonly planUsedPct: number;
   /** True when total remaining has fallen to ≤20% of the monthly grant. */
   readonly lowBalance: boolean;
+  /** When the allowance period began, ISO 8601 (earliest across pools). */
+  readonly periodStart: string | null;
   /** When the plan bucket refills, ISO 8601 (soonest across pools). */
   readonly resetsAt: string | null;
   /** When the nearest top-up grant expires, ISO 8601 (soonest across pools). */
   readonly soonestExpiry: string | null;
+  /**
+   * What each metered action costs RIGHT NOW, read from `pricing_config` via the
+   * balance payload. Never hard-coded: a super-admin can retune any of these,
+   * and a UI quoting last quarter's numbers is telling the customer something
+   * untrue about money.
+   */
+  readonly costs: CreditCosts;
+  /** The display currency the balance endpoint resolved for this account. */
+  readonly currency: string;
   readonly aiChat: UsageBreakdownEntry;
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
@@ -341,6 +412,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       planRemaining: acc.planRemaining + pool.planRemaining,
       topupRemaining: acc.topupRemaining + pool.topupRemaining,
       totalRemaining: acc.totalRemaining + pool.totalRemaining,
+      periodStart: earliestDate(acc.periodStart, pool.periodStart),
       resetsAt: earliestDate(acc.resetsAt, pool.resetsAt),
       soonestExpiry: earliestDate(acc.soonestExpiry, pool.soonestExpiry),
       aiChat: addBreakdown(acc.aiChat, pool.usage.aiChat),
@@ -355,6 +427,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       planRemaining: 0,
       topupRemaining: 0,
       totalRemaining: 0,
+      periodStart: null as string | null,
       resetsAt: null as string | null,
       soonestExpiry: null as string | null,
       aiChat: empty,
@@ -381,8 +454,11 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     // Watches the combined bucket so a customer who has burned their plan but
     // still holds top-ups isn't warned needlessly (Billing.jsx:381-386).
     lowBalance: aggregate.monthlyGrant > 0 && aggregate.totalRemaining <= aggregate.monthlyGrant * 0.2,
+    periodStart: aggregate.periodStart,
     resetsAt: aggregate.resetsAt,
     soonestExpiry: aggregate.soonestExpiry,
+    costs: parseCreditCosts(record.costs),
+    currency: (toStringOrNull(record.currency) ?? 'INR').toUpperCase(),
     aiChat: aggregate.aiChat,
     documentUpload: aggregate.documentUpload,
     urlScan: aggregate.urlScan,
@@ -418,6 +494,7 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     topupRemaining: balance.topupRemaining,
     totalRemaining: balance.totalRemaining,
     planUsedPct: balance.planUsedPct,
+    periodStart: balance.periodStart,
     resetsAt: balance.resetsAt,
     soonestExpiry: balance.soonestExpiry,
     periodCreditsUsed: balance.periodCreditsUsed,
@@ -606,30 +683,33 @@ export function formatCredits(value: number): string {
   return Math.round(value).toLocaleString('en-US');
 }
 
-/** DD Mon YYYY - unambiguous for a primarily-Indian audience. */
-export function formatDate(iso: string | null): string {
-  if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+/**
+ * Dates and times come from the design system's formatters rather than local
+ * copies, so an absent value is the console's em dash here as everywhere, and
+ * one locale decision covers the whole app.
+ */
+import { formatDate, formatDateTime, formatTime } from '../../ui/lib/formatters';
+export { formatDate, formatDateTime, formatTime };
+
+// ── Periods ──────────────────────────────────────────────────────────────────
+
+/**
+ * The window a consumption figure covers, as a phrase.
+ *
+ * Every number on the Usage page is scoped to the current allowance period, and
+ * a figure without its period is not actionable - it is the defect the whole
+ * console rebuild opened with. `null` start means the ledger has no `plan_grant`
+ * to anchor on (a brand-new account, or one whose grants predate the column),
+ * so we say what we can rather than inventing a start date.
+ */
+export function formatPeriod(start: string | null, resetsAt: string | null): string {
+  if (start && resetsAt) return `${formatDate(start)} to ${formatDate(resetsAt)}`;
+  if (start) return `Since ${formatDate(start)}`;
+  if (resetsAt) return `Until ${formatDate(resetsAt)}`;
+  return 'Current period';
 }
 
-export function formatDateTime(iso: string | null): string {
-  if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-/** HH:MM - the time-of-day, for rows already grouped under a day header. */
-export function formatTime(iso: string | null): string {
-  if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
+/** Read one metered bucket off a pool by its `CREDIT_ACTIONS` key. */
+export function activityFor(usage: UsageBuckets, bucket: CreditActionBucket): UsageBreakdownEntry {
+  return usage[bucket];
 }

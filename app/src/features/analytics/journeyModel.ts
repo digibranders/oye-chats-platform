@@ -39,11 +39,11 @@ export function isFilterableOutcome(id: string): id is FilterableOutcome {
 export function outcomeLabel(id: string): string {
   switch (id) {
     case 'meeting_booked':
-      return 'Book Meeting';
+      return 'Meeting booked';
     case 'handoff_requested':
-      return 'Live Chat';
+      return 'Live chat';
     case 'offline_message_sent':
-      return 'Offline Message';
+      return 'Offline message';
     case 'exit':
       return 'Drop-off';
     default:
@@ -150,4 +150,78 @@ export function filterEmptyDescription(input: FilterEmptyInput): string {
     return `No tracked journeys started on ${input.startPage} in this window.`;
   }
   return 'No tracked journeys match the current filters.';
+}
+
+// ── Outcome buckets ─────────────────────────────────────────────────────────
+
+/** Every bucket a journey can land in. The three conversions, plus two more. */
+export type OutcomeId = FilterableOutcome | 'kept_browsing' | 'exit';
+
+export interface JourneyOutcome {
+  id: OutcomeId;
+  label: string;
+  sessions: number;
+  /** Share of tracked journeys, 0 to 1. `null` when there were none. */
+  share: number | null;
+  /** Whether the outcome can be opened as a path filter. */
+  filterable: boolean;
+  /** Why it cannot be, or how it was arrived at. Shown beside the figure. */
+  note?: string;
+}
+
+export interface OutcomeInput extends DropOffInput {
+  readonly summary: DropOffInput['summary'] & {
+    /** Journeys with no conversion that still visited a page afterwards. */
+    readonly sessions_browsed_no_conversion?: number;
+  };
+}
+
+/**
+ * The outcome column, from one set of numbers.
+ *
+ * Both journey panels used to compute drop-off for themselves, from different
+ * sources, so two cards a few pixels apart could report different totals with
+ * nothing reconciling them. Drop-off is derived exactly once, here, and both
+ * panels render what this returns.
+ *
+ * `kept_browsing` is omitted rather than estimated when the API build does not
+ * report it: subtracting to find it double-counts a session that both converted
+ * and kept browsing, and a bucket that is quietly wrong is worse than a bucket
+ * that is missing.
+ */
+export function buildOutcomes(input: OutcomeInput): JourneyOutcome[] {
+  const { summary } = input;
+  const journeys = summary.sessions_with_journey;
+  const share = (count: number): number | null => (journeys > 0 ? count / journeys : null);
+  const dropOff = deriveDropOffTotal(input);
+
+  const outcomes: JourneyOutcome[] = FILTERABLE_OUTCOMES.map((id) => ({
+    id,
+    label: outcomeLabel(id),
+    sessions: summary[id],
+    share: share(summary[id]),
+    filterable: true,
+  }));
+
+  if (typeof summary.sessions_browsed_no_conversion === 'number') {
+    outcomes.push({
+      id: 'kept_browsing',
+      label: 'Kept browsing',
+      sessions: Math.max(0, summary.sessions_browsed_no_conversion),
+      share: share(Math.max(0, summary.sessions_browsed_no_conversion)),
+      filterable: false,
+      note: 'Left the chat and carried on around the site. No paths are attributed to it.',
+    });
+  }
+
+  outcomes.push({
+    id: 'exit',
+    label: outcomeLabel('exit'),
+    sessions: dropOff.count,
+    share: share(dropOff.count),
+    filterable: false,
+    note: dropOffTooltip(dropOff),
+  });
+
+  return outcomes;
 }

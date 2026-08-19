@@ -9,6 +9,12 @@
  * `*_usd_cents` columns for geo-routed display, so the two must stay apart.
  *
  * Prices are stored in minor units (paise for INR, cents for USD).
+ *
+ * RETAINED FOR ONE CONSUMER. The Billing, Usage and Reports surfaces now price
+ * through `billingModel.resolvePlanPrice`, which returns the charge amount
+ * alongside the displayed one so a converted USD figure can never stand in for
+ * the INR debit. This module still backs the legacy upgrade modal
+ * (`design-system/components/UpgradeModal.tsx`) and should be deleted with it.
  */
 import { FALLBACK_USD_TO_INR } from '../../../lib/currency';
 

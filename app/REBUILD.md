@@ -17,12 +17,12 @@ So each slice goes all the way down, and ships.
 | Slice | Scope | Proves |
 |---|---|---|
 | **0 — Foundation** ✅ | Token layer · `src/ui/` primitives, overlays, layout, data, charts · guardrail tests · `/dev/ui` gallery · dead-code removal | The system compiles, renders, and is measured |
-| **1 — Shell + Inbox** | App shell (ink rail, topbar, command palette, account menu) · router, guards, code splitting · the live-chat inbox end to end | The hardest surface, while the system is still cheap to change |
-| **2 — Chatbot** | Agent scope: Overview · Knowledge · Experience · Deploy · Qualification · Behaviour | The core object, and every configuration pattern |
-| **3 — Onboarding** | Setup rail, first run, contextual nudges. Launch Studio deleted | Activation |
-| **4 — Home · Leads · Analytics** | Daily operations, with the date range the backend has always supported | The reporting surfaces |
-| **5 — Billing · Usage · Settings** | Billing and usage as a top-level destination; one settings home | The money surfaces |
-| **6 — Auth** | Login, register, verify, reset, OAuth callback | The last screens on the legacy palette |
+| **1 — Shell + Inbox** ✅ | App shell (ink rail, topbar, command palette, account menu) · router, guards, code splitting · the live-chat inbox end to end | The hardest surface, while the system is still cheap to change |
+| **2 — Chatbot** ✅ | Agent scope: Overview · Knowledge · Experience · Deploy · Qualification · Behaviour | The core object, and every configuration pattern |
+| **3 — Onboarding** ✅ | Setup rail, first run, contextual nudges. Launch Studio deleted | Activation |
+| **4 — Home · Leads · Analytics** ✅ | Daily operations, with the date range the backend has always supported | The reporting surfaces |
+| **5 — Billing · Usage · Settings** ✅ | Billing and usage as a top-level destination; one settings home | The money surfaces |
+| **6 — Auth** ✅ | Login, register, verify, reset, OAuth callback | The last screens on the legacy palette |
 | **7 — Sweep** | Delete the legacy bridge · a11y and performance pass · capability-ledger audit | That nothing was dropped |
 | **8 — Super-admin** | A separate shell and URL space for ~110 endpoints with no UI today | Operations |
 
@@ -183,12 +183,21 @@ entries are closed.
 ### Blocking bugs
 | # | What | Owner |
 |---|---|---|
-| B1 | Business hours edit `bots[0]` only — agents 2..N can never have hours | Agent ▸ Experience |
-| B2 | Free workspaces fire `/leads`, take the 403, and land on a generic error instead of an upgrade path | Leads |
-| B3 | A linked **admin** seat is misclassified as an operator on every reload and redirected to `/inbox`, destroying the deep link | Shell |
-| B4 | `?session=` is emitted by the incoming-chat banner and never read; `?tab=` only works on a cold mount | Inbox |
-| B5 | The inbox unmounts its panel on tab switch, closing the operator socket and losing every transcript, unread count and typing state | Inbox |
-| B6 | The Experience preview streams from the shell switcher, not the URL agent | Agent ▸ Experience |
+| B1 ✅ | Business hours edit `bots[0]` only — agents 2..N can never have hours | Agent ▸ Experience |
+| B2 ✅ | Free workspaces fire `/leads`, take the 403, and land on a generic error instead of an upgrade path | Leads |
+| B3 ✅ | A linked **admin** seat is misclassified as an operator on every reload and redirected to `/inbox`, destroying the deep link | Shell |
+| B4 ✅ | `?session=` is emitted by the incoming-chat banner and never read; `?tab=` only works on a cold mount | Inbox |
+| B5 ✅ | The inbox unmounts its panel on tab switch, closing the operator socket and losing every transcript, unread count and typing state | Inbox |
+| B6 ✅ | The Experience preview streams from the shell switcher, not the URL agent | Agent ▸ Experience |
+
+### Found during the rebuild, and fixed
+
+| # | What | Where |
+|---|---|---|
+| B7 | `export const httpClient = api` sat above the `axios.create` that defines `api` — a temporal dead zone reference that threw on module evaluation and took down every screen in the app | `services/api.js` |
+| B8 | A checkbox with a visible label had no accessible name outside a `Field`; `Progress` labelled the Track rather than the element carrying `role="progressbar"`; every `CodeBlock` copy button was named "Copy" | `src/ui` |
+| B9 | `normalize_domain_input` strips a leading `www.` before storing but `extract_hostname` does not strip it from the browser's `Origin`, so an allow-list of `acme.com` blocks the customer's own `www.acme.com` homepage | backend · surfaced on Deploy |
+| B10 | `widget_installed_at` is stamped once and never refreshed, and the origin the widget was seen on is read and discarded — so there is no "last seen", only a first-seen date | backend · surfaced on Deploy |
 
 ### Orphan endpoints — no client function at all
 `GET/PUT /operators/me/notification-preferences` (per-event push + quiet hours) →
@@ -218,7 +227,12 @@ pause · routing strategy and disconnect timeouts · chat-history pagination in 
 lead transcript · dunning state · per-invoice GST breakdown · plan overage rate
 and trial days · `max_bots` / `extra_bot_seats`.
 
-### Super-admin
+### Super-admin — in progress
+The console now exists: `src/superadmin/`, mounted at `/platform`, with its own
+shell, its own HTTP layer (`client.ts`, because ~100 endpoints had no client
+function of any kind), shared list/record hooks, and a working command centre.
+Six sections are declared and being filled.
+
 Roughly 110 endpoints with **no UI at all**: command centre and health,
 customers and impersonation, plans/pricing/coupons/promotions, billing ops
 (refunds, GSTR export, dunning, reconciliation), webhook replay, model config

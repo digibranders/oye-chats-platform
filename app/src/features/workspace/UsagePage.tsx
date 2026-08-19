@@ -1,693 +1,546 @@
-import { type ReactElement, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Coins, History } from 'lucide-react';
 import {
-  AlertTriangle,
-  ArrowUpRight,
-  Building2,
-  CalendarClock,
-  FileText,
-  Globe,
-  ListOrdered,
-  MailCheck,
-  MessageSquare,
-  Wallet,
-  type LucideIcon,
-} from 'lucide-react';
-import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  CardFooter,
+  CardSection,
+  DataTable,
+  ErrorState,
+  LoadingRows,
+  Meter,
+  Page,
+  PageHeader,
+  Section,
+  SegmentedControl,
+  Select,
+  Stack,
+  StatTile,
+  buttonClass,
+  formatDateTime,
+  formatNumber,
+  toast,
+  type Column,
+} from '../../ui';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
-import { useBotContext } from '../../context/BotContext';
+import { BillingNav } from './billing/BillingNav';
+import { ConsumptionTrend } from './usage/ConsumptionTrend';
+import { CreditCosts } from './usage/CreditCosts';
+import { TopupDialog } from './usage/TopupDialog';
 import {
-  aggregatePool,
+  DEFAULT_TREND_WINDOW,
+  HISTORY_PAGE_SIZE,
+  TREND_WINDOWS,
+  useUsageData,
+  type TrendWindow,
+} from './useUsageData';
+import { useBillingGeo } from './useBillingData';
+import {
   formatCredits,
   formatDate,
-  formatTime,
+  formatPeriod,
   resolveScopedPool,
-  describeTopupExpiry,
-  type CreditBalance,
   type LedgerRow,
-  type LedgerTone,
   type PoolCredit,
-  type UsageBuckets,
 } from './usage-model';
+import { UNLIMITED_LIMIT, errorMessage, errorStatus } from './billingModel';
 
-import { useUsageData } from './useUsageData';
-import { TopupModal } from './billing/TopupModal';
-import { AgentCreditHero } from './usage/AgentCreditHero';
-import { CreditBreakdown } from './usage/CreditBreakdown';
-import { ConsumptionTrend } from './usage/ConsumptionTrend';
-import { BotCreditsSection, type TopupTarget } from './usage/BotCreditsSection';
+/** The plan ceilings the balance endpoint reports usage against, per agent. */
+const AGENT_LIMITS = [
+  { key: 'operators', label: 'Operator seats' },
+  { key: 'documents', label: 'Documents trained' },
+  { key: 'leads', label: 'Leads captured this period' },
+] as const;
 
-// ── Plan limits (entitlement-driven quota meters) ────────────────────────────
-
-const UNLIMITED = -1;
-
-function formatLimit(limit: number, unit: string): string {
-  return limit === UNLIMITED ? 'Unlimited' : `${limit.toLocaleString()} ${unit}`;
+function parseWindow(raw: string | null): TrendWindow {
+  const value = Number(raw);
+  return (TREND_WINDOWS as readonly number[]).includes(value)
+    ? (value as TrendWindow)
+    : DEFAULT_TREND_WINDOW;
 }
 
-interface PlanLimitStatProps {
-  readonly label: string;
-  readonly icon: LucideIcon;
-  /** Formatted value - the limit alone, no "used" fraction, for the two limit
-   * keys the backend doesn't report usage for (`page_scraping`,
-   * `chat_history_days`), so this stays honest instead of implying a fill. */
-  readonly value: string;
-  readonly caption: string;
-}
+function PlanLimitsCard({ pool }: { pool: PoolCredit }) {
+  if (!pool.planLimits || !pool.limitUsage) return null;
+  const rows = AGENT_LIMITS.map((limit) => ({
+    ...limit,
+    // A plan row that declares no such quota is reported as unknown, not as
+    // zero: "this plan says nothing about documents" and "this plan allows no
+    // documents" are different facts.
+    limit: pool.planLimits?.[limit.key],
+    used: pool.limitUsage?.[limit.key] ?? 0,
+  })).filter((row) => row.limit !== undefined);
 
-/** An informational limit tile - a ceiling with no matching usage count. */
-function PlanLimitStat({ label, icon, value, caption }: PlanLimitStatProps): ReactElement {
-  return <MetricCard label={label} icon={icon} value={value} caption={caption} />;
-}
+  if (rows.length === 0) return null;
 
-/**
- * PlanLimitsSection - the plan's numeric ceilings. `bots` / `operators` /
- * `documents` / `leads` are usage-populated keys, so they render as real
- * used/limit meters. `page_scraping` and `chat_history_days` have no per-page
- * usage on this workspace-wide view, so they render as honest limit-only stats.
- */
-function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement {
-  const { entitlements, limitFor, isFree } = useEntitlements();
-  // The Leads dashboard is feature-locked on Free (sidebar gate), so a Leads
-  // quota meter here would advertise a ceiling for a surface Free can't open.
-  // Hide the meter on Free; paid plans keep it.
-  const showLeads = !isFree;
-  // Free grants 0 operator seats, so a "1 / 0" meter reads as broken (the "1"
-  // is a leftover row from a prior paid subscription that wasn't deactivated
-  // on downgrade). Hide the tile on any plan whose operator ceiling is 0 so
-  // the tile only surfaces when it can plausibly move; the invite path is
-  // separately gated in `operator_routes.py`.
-  const membersLimit = pool?.planLimits?.operators ?? limitFor('operators');
-  const showMembers = membersLimit > 0;
-
-  // Per-agent scope: read ceilings from the selected agent's own plan and pair
-  // them with that agent's usage. Drops "Agents" (a workspace-level count with
-  // no per-agent meaning).
-  if (pool && pool.planLimits && pool.limitUsage) {
-    const limits = pool.planLimits;
-    const usage = pool.limitUsage;
-    const lim = (key: string): number => limits[key] ?? 0;
-    return (
-      <section aria-label="Plan limits" className="space-y-4">
-        <SectionHeader
-          title="Plan limits"
-          description={`The ceilings on ${pool.name}'s plan, alongside what this chatbot has used.`}
-        />
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          {showMembers && (
-            <QuotaMeter label="Members" used={usage.operators} limit={lim('operators')} />
-          )}
-          <QuotaMeter label="Documents" used={usage.documents} limit={lim('documents')} />
-          {showLeads && <QuotaMeter label="Leads" used={usage.leads} limit={lim('leads')} />}
-        </div>
-        {/* Informational limit boxes kept on their own row so they always pair
-            up, regardless of how many usage meters render above. */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <PlanLimitStat
-            label="Page scraping"
-            icon={Globe}
-            value={formatLimit(lim('page_scraping'), 'pages')}
-            caption="Pages this plan allows crawling per period."
-          />
-          <PlanLimitStat
-            label="Chat history retention"
-            icon={CalendarClock}
-            value={formatLimit(lim('chat_history_days'), 'days')}
-            caption="How far back conversation history is kept."
-          />
-        </div>
-      </section>
-    );
-  }
-
-  // Account-wide scope ("All agents"): plan ceilings + workspace-wide usage.
   return (
-    <section aria-label="Plan limits" className="space-y-4">
-      <SectionHeader
-        title="Plan limits"
-        description="The ceilings on your current plan, alongside what your workspace has used."
+    <Card>
+      <CardHeader
+        eyebrow="Plan limits"
+        title={`${pool.name} allowances`}
+        titleAs="h3"
+        description={`On ${pool.planName ?? 'its plan'}. Counts cover ${formatPeriod(pool.periodStart, pool.resetsAt).toLowerCase()}.`}
       />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        {showMembers && (
-          <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
-        )}
-        <QuotaMeter label="Documents" used={entitlements.usage.documents ?? 0} limit={limitFor('documents')} />
-        {showLeads && (
-          <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
-        )}
-      </div>
-      {/* Informational limit boxes kept on their own row so they always pair
-          up, regardless of how many usage meters render above. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <PlanLimitStat
-          label="Page scraping"
-          icon={Globe}
-          value={formatLimit(limitFor('page_scraping'), 'pages')}
-          caption="Pages your plan allows crawling per period."
-        />
-        <PlanLimitStat
-          label="Chat history retention"
-          icon={CalendarClock}
-          value={formatLimit(limitFor('chat_history_days'), 'days')}
-          caption="How far back conversation history is kept."
-        />
-      </div>
-    </section>
-  );
-}
-
-const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
-  credit: 'text-[var(--ds-success)]',
-  expiry: 'text-[var(--ds-warning)]',
-  debit: 'text-[var(--ds-text-muted)]',
-};
-
-// ── How credits work (per-action cost reference) ─────────────────────────────
-
-interface CreditCostRow {
-  readonly icon: LucideIcon;
-  readonly label: string;
-  readonly detail: string;
-  readonly cost: number;
-  /**
-   * When set, the card's name gets a deep-link arrow that jumps to the agent
-   * tab where this action is configured (e.g. crawl/upload live under
-   * Knowledge; the enrichment toggles under Advanced). Omitted for actions
-   * with nothing to configure, like the AI chat reply. Resolved against the
-   * switcher-selected agent at render time.
-   */
-  readonly linkTab?: 'knowledge' | 'advanced';
-  /**
-   * Built but not launched yet, the card shows a muted "Coming soon" badge
-   * instead of a credit price, and never charges (the super-admin
-   * `feature.company_name_enabled` switch stays off until launch).
-   */
-  readonly comingSoon?: boolean;
-  // No row sets this today. Company lookup, the last one that did, has
-  // launched. Kept because it is live machinery for the next metered feature
-  // that ships dark, not dead code.
-}
-
-/**
- * Per-action credit costs, as static values: there is no typed pricing endpoint
- * in `services/api.d.ts` to read these from, and the credit-balance payload this
- * page consumes doesn't carry the per-action costs. Super-admins can override
- * them via PricingConfig, but these match the shipped backend defaults
- * (`_DEFAULT_PRICING` in credit_service.py). Keep in sync if the defaults
- * change. `email_send` is intentionally omitted - it is free and not a
- * surfaced activity.
- */
-const CREDIT_COSTS: readonly CreditCostRow[] = [
-  {
-    icon: MessageSquare,
-    label: 'AI chat reply',
-    detail: 'Each completed answer your AI streams to a visitor.',
-    cost: 1,
-  },
-  {
-    icon: Globe,
-    label: 'URL crawl',
-    detail: 'Charged per page actually ingested into your knowledge base.',
-    cost: 5,
-    linkTab: 'knowledge',
-  },
-  {
-    icon: FileText,
-    // The rate is stated in the detail line rather than expanded into a size
-    // table, because the backend charges one rate and not a set of buckets:
-    // `ceil(words / 250)`, floored at 1 (credit_cost.document_upload_words_per_credit,
-    // credit_service.py). The bucket table this replaced had to restate four
-    // EXCLUSIVE boundaries here, and got every one of them wrong in the
-    // direction that overcharges. A rate has no boundaries to restate.
-    label: 'Document upload',
-    detail: '1 credit per 250 words, rounded up. Refunded if a file fails to save.',
-    cost: 1,
-    linkTab: 'knowledge',
-  },
-  {
-    icon: MailCheck,
-    label: 'Email verification',
-    detail: 'Verifies a captured lead’s email. Standard & Professional plans.',
-    cost: 10,
-    linkTab: 'advanced',
-  },
-  {
-    icon: Building2,
-    label: 'Company lookup',
-    // States the charge condition, because it is unusual and in the customer's
-    // favour: an IP only names a company when that company owns its range, so
-    // most visitors (anyone on a home or mobile connection) resolve to no
-    // employer at all. Those cost nothing. Saying only "5 credits" would read
-    // as 5 per visitor, which is what it would have been had the charge stayed
-    // ahead of the lookup.
-    detail: 'Identifies a visitor’s company from their IP. Charged only when a company is found. Professional plan.',
-    cost: 5,
-    linkTab: 'advanced',
-  },
-];
-
-/** Format a credit amount for a badge/row ("1 credit" / "30 credits"). */
-function formatCreditCost(cost: number): string {
-  return cost === 1 ? '1 credit' : `${cost} credits`;
-}
-
-/** A single cost card: icon, action name, what triggers the charge, price. */
-function CreditCostItem({
-  row,
-  agentBasePath,
-  agentName,
-}: {
-  row: CreditCostRow;
-  /** `/agents/:id` for the switcher-selected agent, or null when the account
-   *  has no agent yet, the deep-link arrow is hidden in that case. */
-  agentBasePath: string | null;
-  /** Name of the agent the arrow resolves to; null when no single agent is in
-   *  scope, in which case no arrow is shown. */
-  agentName: string | null;
-}): ReactElement {
-  const Icon = row.icon;
-
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-        <Icon size={16} aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="inline-flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[13px] font-semibold text-[var(--ds-text)]">
-              {row.label}
-            </span>
-            {row.linkTab && agentBasePath && (
-              <Link
-                to={`${agentBasePath}/${row.linkTab}`}
-                // The agent is NAMED in both labels: this is a per-agent
-                // setting reached from a workspace-level page, so "configure
-                // this" alone left the customer no way to know which ledger
-                // they were about to start spending from.
-                aria-label={`Open ${
-                  row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
-                } for ${agentName ?? 'this chatbot'} to configure this`}
-                title={`Open ${
-                  row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
-                } for ${agentName ?? 'this chatbot'}`}
-                className="shrink-0 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)] focus-visible:text-[var(--ds-accent-text)] focus-visible:outline-none"
-              >
-                <ArrowUpRight size={14} aria-hidden="true" />
-              </Link>
-            )}
-          </span>
-          {row.comingSoon ? (
-            <span className="shrink-0 rounded-md border border-[var(--ds-border)] bg-transparent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-              Coming soon
-            </span>
-          ) : (
-            <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
-              {formatCreditCost(row.cost)}
-            </span>
-          )}
-        </div>
-        <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{row.detail}</p>
-      </div>
-    </div>
-  );
-}
-
-/**
- * CreditCostReference - a compact "what each action costs" card. Lives on the
- * Usage page because it's about consumption, giving the metered activity tiles
- * above their price context.
- */
-function CreditCostReference(): ReactElement {
-  // Deep links resolve ONLY against the switcher-selected agent. These rows
-  // link to per-agent spend controls, and billing attaches to the Bot, so
-  // falling back to `bots[0]` when the scope is "All agents" pointed a customer
-  // at an agent they had not chosen, with nothing on screen saying which. They
-  // would switch enrichment on there, start metered spend on that agent's
-  // ledger, and believe it was live on the one capturing their leads.
-  //
-  // With no single agent in scope the arrow is withheld and the row says which
-  // agent to pick, which is honest about the fact that this is a per-agent
-  // setting. Null also covers an account with no agents at all.
-  const { selectedBot } = useBotContext();
-  const agentBasePath = selectedBot ? `/agents/${selectedBot.id}` : null;
-  const agentName = selectedBot?.name ?? null;
-
-  return (
-    <section aria-label="How credits work" className="space-y-4">
-      <SectionHeader
-        title="How credits work"
-        description="What each action costs from your credit balance."
-      />
-      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
-        {CREDIT_COSTS.map((row) => (
-          <CreditCostItem
-            key={row.label}
-            row={row}
-            agentBasePath={agentBasePath}
-            agentName={agentName}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// ── Consumption history (grouped by day) ─────────────────────────────────────
-
-interface DayGroup {
-  readonly label: string;
-  readonly rows: LedgerRow[];
-}
-
-/** Relative day label ("Today" / "Yesterday" / a date) for a ledger timestamp. */
-function dayLabel(iso: string | null): string {
-  if (!iso) return 'Earlier';
-  const then = new Date(iso);
-  if (Number.isNaN(then.getTime())) return 'Earlier';
-  const startOfDay = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(new Date()) - startOfDay(then)) / 86_400_000);
-  if (diffDays <= 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return formatDate(iso);
-}
-
-/** Group already-descending ledger rows into contiguous day buckets. */
-function groupByDay(rows: LedgerRow[]): DayGroup[] {
-  const groups: DayGroup[] = [];
-  for (const row of rows) {
-    const label = dayLabel(row.createdAt);
-    const last = groups[groups.length - 1];
-    if (last && last.label === label) last.rows.push(row);
-    else groups.push({ label, rows: [row] });
-  }
-  return groups;
-}
-
-function ConsumptionHistory({ rows }: { rows: LedgerRow[] }): ReactElement {
-  const groups = useMemo(() => groupByDay(rows), [rows]);
-  return (
-    <div className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
-      {groups.map((group) => (
-        <div key={group.label} className="border-b border-[var(--ds-border)] last:border-b-0">
-          <div className="bg-[var(--ds-bg-subtle)] px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-            {group.label}
-          </div>
-          <ul>
-            {group.rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-[var(--ds-bg-hover)]"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{row.label}</p>
-                  {row.note && (
-                    <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{row.note}</p>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-4">
-                  <span className="tabular-nums text-[12px] text-[var(--ds-text-subtle)]">
-                    {formatTime(row.createdAt)}
-                  </span>
-                  <span className={cn('w-16 text-right tabular-nums text-[13px] font-semibold', LEDGER_TONE_CLASS[row.tone])}>
-                    {row.delta > 0 ? '+' : ''}
-                    {formatCredits(row.delta)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Recent top-ups ────────────────────────────────────────────────────────────
-
-/**
- * A purchased top-up: a positive `topup` movement that isn't a plan-upgrade
- * proration credit (which `resolveLabel` relabels). Mirrors the legacy
- * Billing.jsx TopupsTab, which listed genuine credit purchases only.
- */
-function isPurchasedTopup(row: LedgerRow): boolean {
-  return row.reason === 'topup' && row.delta > 0 && row.label !== 'Plan upgrade credit';
-}
-
-/**
- * RecentTopups - a compact receipt of the last few credit purchases, restoring
- * the legacy TopupsTab's at-a-glance list. Rendered only when the ledger holds
- * genuine purchases; the full itemized ledger below carries everything else.
- */
-function RecentTopups({
-  rows,
-  balance,
-}: {
-  rows: LedgerRow[];
-  balance: CreditBalance | null;
-}): ReactElement | null {
-  const purchases = useMemo(() => rows.filter(isPurchasedTopup).slice(0, 5), [rows]);
-  if (purchases.length === 0) return null;
-
-  // This said "Top-up credits never expire" unconditionally, on the same
-  // screen as a hero that shows the real expiry date when there is one, the
-  // exact self-contradiction. (It previously said "roll over for 12 months",
-  // and an earlier fix here swapped one unconditional claim for another.)
-  // `describeTopupExpiry` states only what this customer's own ledger proves,
-  // and says nothing when it proves nothing.
-  const expiryNote = balance ? describeTopupExpiry(balance) : null;
-
-  return (
-    <section aria-label="Recent top-ups" className="space-y-4">
-      <SectionHeader
-        title="Recent top-ups"
-        description={`Your latest credit purchases.${expiryNote ? ` ${expiryNote}` : ''}`}
-      />
-      <ul className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
-        {purchases.map((row) => (
-          <li
-            key={row.id}
-            className="flex items-center justify-between gap-4 border-b border-[var(--ds-border)] px-4 py-3 last:border-b-0"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-success-soft)] text-[var(--ds-success)]">
-                <Wallet size={15} aria-hidden="true" />
+      <CardBody className="space-y-4">
+        {rows.map((row) =>
+          row.limit === UNLIMITED_LIMIT ? (
+            <div key={row.key} className="flex items-baseline justify-between gap-2">
+              <span className="text-xs text-text-secondary">{row.label}</span>
+              <span className="figure text-xs font-medium text-text-primary">
+                {formatNumber(row.used)} <span className="text-text-tertiary">of unlimited</span>
               </span>
-              <div className="min-w-0">
-                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                  {row.note || 'Credit top-up'}
-                </p>
-                <p className="text-[12px] text-[var(--ds-text-subtle)]">{formatDate(row.createdAt)}</p>
-              </div>
             </div>
-            <span className="shrink-0 tabular-nums text-[13px] font-semibold text-[var(--ds-success)]">
-              +{formatCredits(row.delta)}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
+          ) : (
+            <Meter key={row.key} label={row.label} used={row.used} limit={row.limit as number} />
+          ),
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
-
 /**
- * UsagePage - the Workspace ▸ Usage analytics surface. One job: answer "how
- * much have I used?". A hero credit position leads; metered activity, a
- * where-credits-go breakdown, and a 30-day trend give the shape of consumption;
- * a grouped ledger gives the detail. Buying credits happens inline; upgrading
- * routes to Billing.
+ * `/billing/usage` - where the credits went.
+ *
+ * Three things this page owes the customer that the one it replaces did not
+ * give them. The cost of every metered action, read live from the server rather
+ * than hard-coded in a component while a super-admin could retune it. The
+ * period each figure covers, on the figure. And a credit history that can be
+ * scoped to one chatbot - the ledger is bot-scoped in the database and was
+ * workspace-scoped in the UI, so a customer running several chatbots on
+ * separate subscriptions could see the total and never the split.
  */
-export function UsagePage(): ReactElement {
-  const { selectedBot } = useBotContext();
-  const { hasFeature } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  // Top-up packs are a paid feature. Free workspaces get an upgrade nudge
-  // instead of the buy modal (the backend rejects the purchase anyway).
-  const canTopup = hasFeature('topup_allowed');
-  const { phase, retry } = useUsageData(selectedBot?.id ?? null);
-  const balance = phase.status === 'ready' ? phase.balance : null;
-  // The credit pool for the current scope: the selected agent's own-plan pool,
-  // the shared pool it draws from, or - as a last resort - the account balance
-  // surfaced as a shared pool so the scoped hero always has something to show.
-  // Shared with the Billing credits card via `resolveScopedPool` so the two
-  // surfaces always agree for the same scope.
-  const selectedPool = useMemo<PoolCredit | null>(() => {
-    if (!balance || !selectedBot) return null;
-    return resolveScopedPool(balance, selectedBot.id);
-  }, [balance, selectedBot]);
-  // Metered consumption for the current scope: the selected agent's pool, or the
-  // whole-workspace aggregate on "All agents". Drives the activity tiles, the
-  // "Credits used" total, and the "Where credits go" breakdown.
-  const emptyBucket = { creditsUsed: 0, eventCount: 0 };
-  const scopedActivity: UsageBuckets =
-    selectedBot && selectedPool
-      ? selectedPool.activity
-      : balance
-        ? {
-            aiChat: balance.aiChat,
-            documentUpload: balance.documentUpload,
-            urlScan: balance.urlScan,
-            emailSend: balance.emailSend,
-            emailVerification: balance.emailVerification,
-            companyName: balance.companyName,
-          }
-        : {
-            aiChat: emptyBucket,
-            documentUpload: emptyBucket,
-            urlScan: emptyBucket,
-            emailSend: emptyBucket,
-            emailVerification: emptyBucket,
-            companyName: emptyBucket,
-          };
-  // `null` = closed. A target carries the pool the top-up is scoped to: the
-  // shared account balance (`botId: null`) or one agent's isolated balance.
+export function UsagePage() {
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [topupTarget, setTopupTarget] = useState<TopupTarget | null>(null);
-  // Single top-up chokepoint for every "Buy credits" affordance (page action +
-  // the per-pool heroes). On a paid plan it opens the scoped top-up modal; on
-  // Free it opens the upgrade modal instead of the buy flow.
-  const handleTopup = (target: TopupTarget): void => {
-    if (canTopup) {
-      setTopupTarget(target);
-    } else {
-      openUpgradeModal('topup_credits');
-    }
-  };
-  // The page-level "Buy credits" tops up the current scope: the selected agent's
-  // pool when one is active, otherwise the shared account balance.
-  const openScopedTopup = (): void =>
-    handleTopup(
-      selectedBot && selectedPool
-        ? { botId: selectedPool.botId, botName: selectedPool.botId === null ? null : selectedPool.name }
-        : { botId: null, botName: null },
+  const { entitlements } = useEntitlements();
+
+  const scopeParam = params.get('chatbot');
+  const botId = scopeParam && /^\d+$/.test(scopeParam) ? Number(scopeParam) : null;
+  const days = parseWindow(params.get('window'));
+  const page = Math.max(Number(params.get('page')) || 1, 1);
+
+  const usage = useUsageData({ botId, days, page });
+  const geo = useBillingGeo();
+  const [toppingUp, setToppingUp] = useState(false);
+
+  // A full page is the only signal the endpoint gives that older movements may
+  // exist. When it turns out none do, the next page says so rather than the
+  // pager having claimed a total it was never told.
+  const pageRows = usage.ledger.data ?? [];
+  const hasOlder = pageRows.length === HISTORY_PAGE_SIZE;
+
+  const balance = usage.balance.data ?? null;
+  const pool = balance ? resolveScopedPool(balance, botId) : null;
+  const scopeLabel = botId === null ? 'this workspace' : (pool?.name ?? 'this chatbot');
+
+  const scopeOptions = useMemo(
+    () => [
+      { value: '', label: 'Whole workspace' },
+      ...(balance?.botCredits ?? [])
+        .filter((entry) => entry.botId !== null)
+        .map((entry) => ({ value: String(entry.botId), label: entry.name })),
+    ],
+    [balance],
+  );
+
+  function setParam(key: string, value: string | null) {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    // A scope or window change is a different question, so the pager resets.
+    if (key !== 'page') next.delete('page');
+    setParams(next, { replace: true });
+  }
+
+  const ledgerColumns: readonly Column<LedgerRow>[] = [
+    {
+      key: 'createdAt',
+      header: 'When',
+      width: '12rem',
+      render: (row) => <span className="figure text-sm">{formatDateTime(row.createdAt)}</span>,
+    },
+    {
+      key: 'label',
+      header: 'Movement',
+      render: (row) => (
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-sm text-text-primary">{row.label}</span>
+          {row.note ? <span className="truncate text-xs text-text-tertiary">{row.note}</span> : null}
+        </span>
+      ),
+    },
+    {
+      key: 'tone',
+      header: 'Kind',
+      width: '8rem',
+      secondary: true,
+      render: (row) => (
+        <Badge tone={row.tone === 'credit' ? 'success' : row.tone === 'expiry' ? 'warning' : 'neutral'}>
+          {row.tone === 'credit' ? 'Added' : row.tone === 'expiry' ? 'Expired' : 'Spent'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'delta',
+      header: 'Credits',
+      align: 'right',
+      width: '8rem',
+      render: (row) => (
+        <span
+          className={`figure text-sm font-medium ${row.delta > 0 ? 'text-success' : 'text-text-primary'}`}
+        >
+          {row.delta > 0 ? '+' : ''}
+          {formatNumber(row.delta)}
+        </span>
+      ),
+    },
+  ];
+
+  if (usage.balance.isError && errorStatus(usage.balance.error) === 403) {
+    return (
+      <Page width="wide">
+        <PageHeader title="Usage" toolbar={<BillingNav />} />
+        <Card>
+          <ErrorState
+            title="Your seat cannot read this workspace's usage"
+            description="Credit balances and spend are visible to owners and admins. Ask one of them if you need the numbers."
+          />
+        </Card>
+      </Page>
     );
+  }
 
   return (
-    <PageContainer
-      title="Usage"
-      description="Everything your workspace is consuming this period - credits, AI chats, documents, and crawled pages."
-      actions={
-        <Button variant="outline" onClick={openScopedTopup}>
-          <Wallet size={16} aria-hidden="true" />
-          Buy credits
-        </Button>
-      }
-    >
-      {phase.status === 'loading' && <LoadingState />}
-
-      {phase.status === 'error' && (
-        <EmptyState
-          icon={AlertTriangle}
-          title="Couldn’t load your usage"
-          description={phase.message}
-          action={<Button onClick={retry}>Try again</Button>}
-        />
-      )}
-
-      {phase.status === 'ready' && (
-        <>
-          {/* Credits are scoped to the agent picked in the shell switcher.
-              A selected agent shows its own pool; "All agents" shows every
-              agent's pool side by side (or the shared pool when the workspace
-              still runs a single balance). The account-wide aggregate hero is
-              intentionally gone - credits belong to an agent, not the account. */}
-          {selectedBot && selectedPool ? (
-            <AgentCreditHero
-              pool={selectedPool}
-              agentName={selectedBot.name}
-              onTopup={handleTopup}
-            />
-          ) : phase.balance.botCredits.length > 0 ? (
-            <BotCreditsSection
-              pools={[
-                ...(phase.balance.accountPool ? [phase.balance.accountPool] : []),
-                ...phase.balance.botCredits,
-              ]}
-              onTopup={handleTopup}
-            />
-          ) : (
-            <AgentCreditHero
-              pool={aggregatePool(phase.balance)}
-              agentName="All chatbots"
-              onTopup={handleTopup}
-            />
-          )}
-
-{/* Breakdown + trend - the shape of consumption. */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <CreditBreakdown activity={scopedActivity} />
-            {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}
-          </div>
-
-          {/* Per-action credit costs - price context for the metered tiles above. */}
-          <CreditCostReference />
-
-          {/* Plan limits - the selected agent's plan when scoped, else workspace-wide. */}
-          <PlanLimitsSection pool={selectedBot ? selectedPool : null} />
-
-          {/* Recent credit purchases - a quick receipt above the full ledger. */}
-          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} balance={balance} />}
-
-          {/* Itemized ledger, grouped by day. */}
-          <section aria-label="Consumption history" className="space-y-3">
-            <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">Consumption history</h2>
-            {phase.ledger.status === 'error' ? (
-              <EmptyState
-                icon={AlertTriangle}
-                title="Couldn’t load your history"
-                description={phase.ledger.message}
-                action={<Button onClick={retry}>Try again</Button>}
+    <Page width="wide">
+      <PageHeader
+        title="Usage"
+        description="What your chatbots are spending, on what, and how much of your allowance is left."
+        toolbar={<BillingNav />}
+        actions={
+          <>
+            {scopeOptions.length > 1 ? (
+              <Select
+                aria-label="Usage scope"
+                size="sm"
+                options={scopeOptions}
+                value={scopeParam ?? ''}
+                onChange={(event) => setParam('chatbot', event.target.value || null)}
               />
-            ) : phase.ledger.rows.length > 0 ? (
-              <ConsumptionHistory rows={phase.ledger.rows} />
-            ) : (
-              <EmptyState
-                icon={ListOrdered}
-                title="No activity yet"
-                description="Once your AI starts answering questions and you add knowledge, every credit movement will appear here."
-              />
+            ) : null}
+            <Button
+              size="sm"
+              onClick={() => setToppingUp(true)}
+              disabled={!entitlements.features?.topup_allowed}
+            >
+              <Coins aria-hidden className="h-4 w-4" />
+              Buy credits
+            </Button>
+          </>
+        }
+      />
+
+      {usage.balance.isPending ? (
+        <Card>
+          <CardBody>
+            <LoadingRows rows={4} />
+          </CardBody>
+        </Card>
+      ) : usage.balance.isError || !pool || !balance ? (
+        <Card>
+          <ErrorState
+            title="We could not load your usage"
+            description={errorMessage(
+              usage.balance.error,
+              'The credits service did not answer. Your balance has not changed.',
             )}
-          </section>
-        </>
+            onRetry={() => void usage.balance.refetch()}
+          />
+        </Card>
+      ) : (
+        <Stack>
+          {!entitlements.features?.topup_allowed ? (
+            <Alert
+              tone="plan"
+              title="Top-ups are not available on your plan"
+              action={
+                <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                  See plans
+                </Link>
+              }
+            >
+              You can still spend the credits your plan grants each month. Buying extra credits
+              outright is available from the paid plans upwards.
+            </Alert>
+          ) : null}
+
+          <Card>
+            <CardHeader
+              eyebrow={botId === null ? 'Whole workspace' : pool.name}
+              title="Credits"
+              titleAs="h2"
+              description={formatPeriod(pool.periodStart, pool.resetsAt)}
+            />
+            <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              <StatTile
+                label="Left to spend"
+                value={formatCredits(pool.totalRemaining)}
+                period={formatPeriod(pool.periodStart, pool.resetsAt)}
+                tone={
+                  pool.totalRemaining <= 0 ? 'danger' : balance.lowBalance ? 'warning' : 'neutral'
+                }
+                size="lg"
+              />
+              <StatTile
+                label="From your plan"
+                value={formatCredits(pool.planRemaining)}
+                period={
+                  pool.resetsAt ? `Refills ${formatDate(pool.resetsAt)}` : 'No refill date on record'
+                }
+              />
+              <StatTile
+                label="Purchased"
+                value={formatCredits(pool.topupRemaining)}
+                period={
+                  pool.soonestExpiry
+                    ? `Earliest expiry ${formatDate(pool.soonestExpiry)}`
+                    : 'Bought outright'
+                }
+              />
+              <StatTile
+                label="Spent this period"
+                value={formatCredits(pool.periodCreditsUsed)}
+                period={formatPeriod(pool.periodStart, pool.resetsAt)}
+              />
+            </CardBody>
+            <CardSection>
+              {pool.monthlyGrant > 0 ? (
+                <Meter
+                  label={`Plan allowance used (${formatCredits(pool.monthlyGrant)} a month)`}
+                  used={Math.min(pool.monthlyGrant - pool.planRemaining, pool.monthlyGrant)}
+                  limit={pool.monthlyGrant}
+                  unit="credits"
+                />
+              ) : (
+                <p className="text-xs text-text-secondary">
+                  This scope has no monthly grant. Everything it spends comes from purchased
+                  credits.
+                </p>
+              )}
+            </CardSection>
+            {pool.totalRemaining <= 0 ? (
+              <CardSection>
+                <Alert tone="danger" title="This chatbot has stopped answering">
+                  A chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a
+                  larger plan to restore it immediately.
+                </Alert>
+              </CardSection>
+            ) : balance.lowBalance ? (
+              <CardSection>
+                <Alert tone="warning" title="Running low">
+                  Less than a fifth of the allowance is left
+                  {pool.resetsAt ? ` and it refills on ${formatDate(pool.resetsAt)}` : ''}.
+                </Alert>
+              </CardSection>
+            ) : null}
+          </Card>
+
+          <Section
+            title="Consumption"
+            description={`Credits spent per day in ${scopeLabel}. Grants, top-ups and refunds are movements in the ledger but they are not spend, so they are left out.`}
+            actions={
+              <SegmentedControl
+                label="Trend window"
+                size="sm"
+                value={String(days)}
+                onChange={(next) => setParam('window', next)}
+                items={TREND_WINDOWS.map((value) => ({
+                  value: String(value),
+                  label: `${value} days`,
+                }))}
+              />
+            }
+          >
+            <Card>
+              <CardBody>
+                <ConsumptionTrend
+                  points={usage.trend.data ?? []}
+                  days={days}
+                  scopeLabel={scopeLabel}
+                  loading={usage.trend.isPending}
+                  error={
+                    usage.trend.isError
+                      ? errorMessage(usage.trend.error, 'The consumption trend did not load.')
+                      : null
+                  }
+                  onRetry={() => void usage.trend.refetch()}
+                />
+              </CardBody>
+            </Card>
+          </Section>
+
+          <CreditCosts costs={balance.costs} pool={pool} />
+
+          {botId !== null ? <PlanLimitsCard pool={pool} /> : null}
+
+          {botId === null && balance.botCredits.length > 0 ? (
+            <Section
+              title="Per-chatbot balances"
+              description="Each chatbot with its own subscription keeps its own credits. One running out does not touch the others."
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                {[...balance.botCredits, ...(balance.accountPool ? [balance.accountPool] : [])].map(
+                  (entry) => (
+                    <Card key={entry.botId ?? 'account'}>
+                      <CardHeader
+                        title={entry.name}
+                        titleAs="h3"
+                        description={entry.planName ?? 'Draws on the shared workspace pool'}
+                        actions={
+                          entry.botId !== null ? (
+                            <Link
+                              to={`/billing/usage?chatbot=${entry.botId}`}
+                              className={buttonClass('ghost', 'sm')}
+                            >
+                              Focus
+                            </Link>
+                          ) : undefined
+                        }
+                      />
+                      <CardBody className="space-y-3">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-xs text-text-secondary">Left to spend</span>
+                          <span className="figure text-lg font-semibold text-text-primary">
+                            {formatCredits(entry.totalRemaining)}
+                          </span>
+                        </div>
+                        {entry.monthlyGrant > 0 ? (
+                          <Meter
+                            label="Plan allowance used"
+                            used={Math.min(
+                              entry.monthlyGrant - entry.planRemaining,
+                              entry.monthlyGrant,
+                            )}
+                            limit={entry.monthlyGrant}
+                            unit="credits"
+                          />
+                        ) : null}
+                        <p className="text-xs text-text-tertiary">
+                          {formatPeriod(entry.periodStart, entry.resetsAt)} ·{' '}
+                          {formatCredits(entry.periodCreditsUsed)} spent
+                        </p>
+                      </CardBody>
+                    </Card>
+                  ),
+                )}
+              </div>
+            </Section>
+          ) : null}
+
+          <Card>
+            <CardHeader
+              eyebrow="Ledger"
+              title={botId === null ? 'Credit history' : `Credit history for ${pool.name}`}
+              titleAs="h2"
+              description="Every movement, newest first. Grants, purchases, spend, refunds and expiries."
+            />
+            <DataTable
+              columns={ledgerColumns}
+              rows={pageRows}
+              rowKey={(row) => row.id}
+              caption={`Credit ledger for ${scopeLabel}, page ${page}`}
+              loading={usage.ledger.isPending}
+              error={
+                usage.ledger.isError
+                  ? errorMessage(usage.ledger.error, 'The credit history did not load.')
+                  : null
+              }
+              onRetry={() => void usage.ledger.refetch()}
+              empty={
+                <div className="px-6 py-14 text-center">
+                  <span className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-surface-sunken">
+                    <History aria-hidden className="h-4.5 w-4.5 text-text-tertiary" />
+                  </span>
+                  <p className="text-base font-medium text-text-primary">
+                    {page > 1 ? 'Nothing further back' : 'No credit movements yet'}
+                  </p>
+                  <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-text-secondary">
+                    {page > 1
+                      ? 'You have reached the end of the ledger for this scope.'
+                      : `Nothing in ${scopeLabel} has granted or spent a credit yet. The first reply your chatbot sends will appear here.`}
+                  </p>
+                </div>
+              }
+            />
+            {/* `GET /credits/history` pages without reporting a total, so the
+                table is deliberately NOT given `rowCount`: its own pager would
+                have to print "of N" and the only N available would be invented.
+                This says exactly which movements are on screen instead, and
+                offers Older only while a full page came back. */}
+            {pageRows.length > 0 || page > 1 ? (
+              <CardFooter className="justify-between">
+                <p className="text-xs text-text-secondary">
+                  Movements{' '}
+                  <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + 1}</span>–
+                  <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + pageRows.length}</span>
+                  , newest first
+                </p>
+                <span className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={page <= 1}
+                    onClick={() => setParam('page', page > 2 ? String(page - 1) : null)}
+                  >
+                    Newer
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!hasOlder}
+                    onClick={() => setParam('page', String(page + 1))}
+                  >
+                    Older
+                  </Button>
+                </span>
+              </CardFooter>
+            ) : null}
+          </Card>
+
+          <p className="text-xs text-text-tertiary">
+            Balances refresh a few seconds after a purchase. If a figure still looks wrong once they
+            have, that is a bug rather than a delay, and we would like to hear about it.
+          </p>
+        </Stack>
       )}
 
-      <TopupModal
-        open={topupTarget !== null}
-        botId={topupTarget?.botId ?? null}
-        botName={topupTarget?.botName ?? null}
-        onClose={() => setTopupTarget(null)}
-        // Usage has no billing-details form of its own, the Billing page owns
-        // it, so send the customer there to complete the hand-off.
-        onBillingDetailsRequired={() => navigate('../billing')}
-        onSuccess={() => {
-          setTopupTarget(null);
-          retry();
+      <TopupDialog
+        open={toppingUp}
+        onOpenChange={setToppingUp}
+        displayCurrency={geo.data?.displayCurrency ?? 'INR'}
+        balance={balance}
+        botId={botId}
+        botName={botId === null ? null : (pool?.name ?? null)}
+        onPurchased={(message) => {
+          toast.success(message);
+          usage.refreshAll();
+        }}
+        onBillingDetailsRequired={(missing) => {
+          // The purchase was refused because the account is not invoiceable
+          // yet, not because anything failed. Send the customer to the form
+          // that fixes it rather than leaving them on a dead error.
+          toast.error(
+            missing.length > 0
+              ? `We need your ${missing.join(', ')} on file before we can charge you.`
+              : 'We need your billing details on file before we can charge you.',
+          );
+          navigate('/billing');
         }}
       />
-    </PageContainer>
-  );
-}
-
-// ── Loading skeleton ─────────────────────────────────────────────────────────
-
-function LoadingState(): ReactElement {
-  return (
-    <div className="space-y-6">
-      <Skeleton className="h-44 w-full rounded-2xl" />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Skeleton className="h-56 rounded-xl" />
-        <Skeleton className="h-56 rounded-xl" />
-      </div>
-      <Skeleton className="h-64 w-full rounded-xl" />
-    </div>
+    </Page>
   );
 }

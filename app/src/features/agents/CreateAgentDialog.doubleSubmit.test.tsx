@@ -53,7 +53,7 @@ function renderDialog(): void {
     <MemoryRouter>
       <CreateAgentDialog
         open
-        onClose={vi.fn()}
+        onOpenChange={vi.fn()}
         onCreated={vi.fn()}
         onCheckoutComplete={vi.fn()}
         gate={{ kind: 'requires_plan', agentCount: 1, agentLimit: 1 }}

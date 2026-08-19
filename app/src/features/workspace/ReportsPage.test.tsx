@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,10 +49,15 @@ const EMPTY_REPORT: PerAgentReport = {
 };
 
 function renderPage() {
+  // A fresh client per test, with retries off: a retry would turn a deliberate
+  // failure into a three-second wait and hide which attempt the assertion saw.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
-    <MemoryRouter>
-      <ReportsPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ReportsPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -182,9 +188,9 @@ describe('empty and error states', () => {
     renderPage();
 
     expect(await screen.findByText('No chatbots to report on yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /create an ai chatbot/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /create a chatbot/i })).toHaveAttribute(
       'href',
-      '/agents',
+      '/chatbots?new=1',
     );
     expect(screen.queryByRole('table')).toBeNull();
   });

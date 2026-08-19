@@ -112,3 +112,32 @@ describe('attribution', () => {
     expect(guideline).toMatch(/do not add/i);
   });
 });
+
+/**
+ * The prompt is pasted into someone else's coding agent, which has no other
+ * source of truth about this product. If it does not carry the failure modes,
+ * the agent reports "installed" for a tag in `<head>`, a blocked CSP, or a
+ * localhost check that could never have registered.
+ */
+describe('buildInstallPrompt. Known failure modes', () => {
+  it('warns that the tag in <head> never mounts', () => {
+    expect(prompt()).toContain('<head>');
+  });
+
+  it('names the CSP directives rather than saying "check your CSP"', () => {
+    const text = prompt();
+    expect(text).toContain('script-src https://cdn.oyechats.com');
+    expect(text).toContain('connect-src https://api.oyechats.com');
+  });
+
+  it('carries the exact www asymmetry that breaks the origin allow-list', () => {
+    const text = prompt();
+    expect(text).toContain('www.acme.com');
+    expect(text).toContain('*.acme.com');
+    expect(text).toContain('origin_not_allowed');
+  });
+
+  it('tells the agent localhost can never mark the widget installed', () => {
+    expect(prompt()).toContain('localhost never counts as installed');
+  });
+});

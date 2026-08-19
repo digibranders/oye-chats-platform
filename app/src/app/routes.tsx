@@ -16,7 +16,8 @@ import { OverviewPage } from '../features/agents/overview/OverviewPage';
 import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
 import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
 import { ChannelsPage } from '../features/agents/channels/ChannelsPage';
-import { AdvancedPage } from '../features/agents/advanced/AdvancedPage';
+import { QualificationPage } from '../features/agents/advanced/QualificationPage';
+import { BehaviourPage } from '../features/agents/advanced/BehaviourPage';
 import { InboxPage } from '../features/inbox/InboxPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
@@ -34,8 +35,11 @@ import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
 import { InviteAirlock } from '../features/workspace/InviteAirlock';
 import { SettingsPage } from '../features/settings';
 import { SetupPage } from '../onboarding/SetupPage';
+import { FirstRunPage } from '../onboarding/FirstRunPage';
+import { FirstChatPage } from '../onboarding/FirstChatPage';
 import { Moved, MovedAgent } from './Moved';
 
+import { platformRoutes } from '../superadmin/routes';
 import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
@@ -70,6 +74,11 @@ export const router = createBrowserRouter([
         ),
       },
 
+      // The platform console. Its own shell and its own URL space, outside the
+      // customer providers: a super-admin has no workspace, no plan and no
+      // chatbots, and mounting them would fetch a workspace that does not exist.
+      platformRoutes,
+
       // ── Public ────────────────────────────────────────────────────────────
       { path: '/login', element: <Login /> },
       { path: '/register', element: <Register /> },
@@ -98,6 +107,13 @@ export const router = createBrowserRouter([
                   { index: true, element: <HomePage /> },
                   { path: 'setup', element: <SetupPage /> },
 
+                  // First run. Inside the shell, deliberately: the wizard this
+                  // replaces lived outside it, so a customer could hand over a
+                  // card on a screen structurally incapable of telling them
+                  // their last payment had failed.
+                  { path: 'welcome', element: <FirstRunPage /> },
+                  { path: 'welcome/:agentId', element: <FirstChatPage /> },
+
                   // ── Chatbots ────────────────────────────────────────────
                   {
                     path: 'chatbots',
@@ -114,8 +130,8 @@ export const router = createBrowserRouter([
                           { path: 'deploy', element: <ChannelsPage /> },
                           // Qualification is promoted out of the technical tab:
                           // it is a revenue surface, not a configuration corner.
-                          { path: 'qualification', element: <AdvancedPage /> },
-                          { path: 'behaviour', element: <AdvancedPage /> },
+                          { path: 'qualification', element: <QualificationPage /> },
+                          { path: 'behaviour', element: <BehaviourPage /> },
                         ],
                       },
                     ],

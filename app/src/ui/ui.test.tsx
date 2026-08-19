@@ -8,6 +8,7 @@ import { Input } from './primitives/Input';
 import { Switch, Checkbox } from './primitives/Toggle';
 import { Progress } from './primitives/Progress';
 import { CodeBlock } from './data/Copyable';
+import { Tooltip, TooltipProvider } from './overlays/Tooltip';
 import { SegmentedControl } from './primitives/SegmentedControl';
 import { Tabs, TabPanel } from './layout/Tabs';
 import { DataTable, type Column } from './data/DataTable';
@@ -594,5 +595,39 @@ describe('CodeBlock copy reporting', () => {
 
     await waitFor(() => expect(onCopy).toHaveBeenCalledWith(false));
     writeText.mockRestore();
+  });
+});
+
+describe('Tooltip', () => {
+  it('opens on the control it describes', async () => {
+    // It never did. The trigger was rendered as `render={<>{children}</>}`, and
+    // Base UI clones the trigger to attach its handlers and its ref — a
+    // fragment takes neither, so React logged an invalid-prop warning and every
+    // handler was silently dropped. No tooltip in the app had ever opened.
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <Tooltip content="Passages are what the chatbot searches">
+          <button type="button">Passages</button>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+
+    await user.hover(screen.getByRole('button', { name: 'Passages' }));
+    expect(
+      await screen.findByText('Passages are what the chatbot searches'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the control untouched when disabled', () => {
+    render(
+      <TooltipProvider>
+        <Tooltip content="not shown" disabled>
+          <button type="button">Passages</button>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Passages' })).toBeInTheDocument();
+    expect(screen.queryByText('not shown')).not.toBeInTheDocument();
   });
 });

@@ -1,341 +1,210 @@
+import { useState } from 'react';
+import { Badge, Button, Dialog, DefinitionList, formatDuration } from '../../ui';
+import type { Lead } from '../../types/domain';
+
 /**
- * LeadInsights - source attribution + behavioural signals for a single lead.
+ * Where the lead came from, and how they behaved before they typed.
  *
- * Restores two blocks the rebuild dropped from `LeadDetailDrawer` (the drawer
- * carried a `TODO(leads)` for source attribution and never rendered behavioural
- * signals). Both read data the backend already produces:
- *   • Source attribution - `detail.source` (UTM params, referrer, landing page,
- *     pre-chat page journey). Only present on plans with the feature, so its
- *     presence is the signal; absent → the section is omitted.
- *   • Behavioural signals - `detail.behavioral.visit_count` (return visits) plus
- *     a plain-language engagement tier derived from `detail.behavioral_score`
- *     (0 to 20, scored by `behavioral_service.py`). The raw score is intentionally
- *     NOT shown as a number: it already feeds the headline 0 to 100 qualification
- *     score, so a second numeric scale in the same drawer competes with that
- *     verdict. We surface it qualitatively (Low/Medium/High) instead.
+ * Both blocks read data the backend already produces and the drawer used to
+ * carry a `TODO` for. Attribution (`detail.source`) only arrives on plans that
+ * include it, so its presence is the gate — absent means the section is simply
+ * not rendered rather than rendered empty.
+ *
+ * The engagement score is deliberately not printed as a number. It already
+ * feeds the headline 0–100 quality score, and a second numeric scale in the
+ * same panel competes with the verdict the panel exists to give, so it is
+ * surfaced as a band instead.
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { Activity, Compass, Maximize2 } from 'lucide-react';
-import { Modal, StatusBadge, cn } from '../../design-system';
-import { type LeadDetail } from './useLeadDetail';
 
-// ── Safe readers over the loosely-typed `source` / `behavioral` JSON ─────────
-
-function asString(v: unknown): string | null {
-  return typeof v === 'string' && v.trim() ? v : null;
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-function asRecord(v: unknown): Record<string, unknown> {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+function asText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function truncate(value: string, max = 80): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-/** Format a dwell time in seconds compactly ("45s", "2m 15s", "1h 5m"). */
-function formatDuration(seconds: number): string | null {
-  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 60 * 60) return null;
-  if (seconds < 1) return '< 1s';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds - m * 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds - h * 3600) / 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-interface JourneyRow {
+interface JourneyStep {
   path: string;
-  ts: string | null;
-  durationLabel: string | null;
-  isLast: boolean;
+  timestamp: string | null;
+  dwell: string | null;
+  last: boolean;
 }
 
-/** Derive each page's dwell time from the delta to the next entry's timestamp. */
-function buildJourneyRows(journey: unknown[]): JourneyRow[] {
-  return journey.map((raw, idx) => {
+/** Each page's dwell time is the gap to the next entry's timestamp. */
+function buildJourney(entries: readonly unknown[]): JourneyStep[] {
+  return entries.map((raw, index) => {
     const entry = asRecord(raw);
-    const next = asRecord(journey[idx + 1]);
-    let durationLabel: string | null = null;
-    const start = asString(entry.ts);
-    const end = asString(next.ts);
-    if (start && end) {
-      const s = Date.parse(start);
-      const e = Date.parse(end);
-      if (Number.isFinite(s) && Number.isFinite(e)) durationLabel = formatDuration((e - s) / 1000);
+    const next = asRecord(entries[index + 1]);
+    const from = asText(entry.ts);
+    const to = asText(next.ts);
+    let dwell: string | null = null;
+    if (from && to) {
+      const start = Date.parse(from);
+      const end = Date.parse(to);
+      // A clock that ran backwards, or a gap of days, is not a dwell time.
+      const seconds = (end - start) / 1000;
+      if (Number.isFinite(seconds) && seconds >= 0 && seconds <= 86_400) {
+        dwell = formatDuration(seconds);
+      }
     }
     return {
-      path: asString(entry.path) ?? '',
-      ts: asString(entry.ts),
-      durationLabel,
-      isLast: idx === journey.length - 1,
+      path: asText(entry.path) ?? '',
+      timestamp: from,
+      dwell,
+      last: index === entries.length - 1,
     };
   });
 }
 
-interface JourneyGroup {
-  key: string;
-  label: string;
-  items: Array<{ row: JourneyRow; index: number }>;
-}
-
-/** A friendly day bucket for a journey timestamp ("Today" / "Yesterday" / date). */
-function dayBucket(ts: string | null): { key: string; label: string } {
-  if (!ts) return { key: 'unknown', label: 'Unknown date' };
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return { key: 'unknown', label: 'Unknown date' };
-  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  const sameDay = (a: Date, b: Date): boolean =>
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
-  const label = sameDay(d, today)
-    ? 'Today'
-    : sameDay(d, yesterday)
-      ? 'Yesterday'
-      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-  return { key, label };
-}
-
-/** Bucket chronological journey rows into consecutive same-day groups. */
-function groupJourneyByDay(rows: JourneyRow[]): JourneyGroup[] {
-  return rows.reduce<JourneyGroup[]>((acc, row, index) => {
-    const { key, label } = dayBucket(row.ts);
-    const last = acc[acc.length - 1];
-    if (last && last.key === key) {
-      last.items.push({ row, index });
-    } else {
-      acc.push({ key, label, items: [{ row, index }] });
-    }
-    return acc;
-  }, []);
-}
-
-/**
- * JourneyList - the visitor's pre-chat page journey, bucketed by day and
- * vertically scrollable. Shared between the inline drawer card and the maximised
- * modal; `maxHeightClass` sets the scroll area's height in each, and
- * `autoScrollToEnd` jumps to the most recent pages (where the chat opened) on
- * mount so the compact inline view still leads with the payoff.
- */
-function JourneyList({
-  rows,
-  maxHeightClass,
-  autoScrollToEnd = false,
-}: {
-  rows: JourneyRow[];
-  maxHeightClass: string;
-  autoScrollToEnd?: boolean;
-}): ReactElement {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (autoScrollToEnd && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [autoScrollToEnd, rows.length]);
-
-  const groups = groupJourneyByDay(rows);
-
+function JourneyList({ steps, className }: { steps: readonly JourneyStep[]; className?: string }) {
   return (
-    <div ref={scrollRef} className={cn('overflow-y-auto pr-1', maxHeightClass)}>
-      <div className="space-y-3">
-        {groups.map((group) => (
-          <div key={`${group.key}-${group.items[0]?.index ?? 0}`}>
-            <div className="mb-1.5 flex items-baseline gap-2">
-              <span className="text-[11px] font-semibold text-[var(--ds-text)]">{group.label}</span>
-              <span className="text-[10.5px] text-[var(--ds-text-subtle)]">
-                {group.items.length} {group.items.length === 1 ? 'page' : 'pages'}
-              </span>
-            </div>
-            <ol className="space-y-1.5">
-              {group.items.map(({ row, index }) => (
-                <li
-                  key={`${row.path}-${row.ts ?? index}`}
-                  className="flex items-start gap-2 text-[12px]"
-                >
-                  <span className="w-9 shrink-0 tabular-nums text-[var(--ds-text-muted)]">
-                    {index + 1}.
-                  </span>
-                  <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
-                  {row.isLast ? (
-                    <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
-                      opened chat here
-                    </span>
-                  ) : row.durationLabel ? (
-                    <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">
-                      {row.durationLabel}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          </div>
-        ))}
-      </div>
-    </div>
+    <ol className={className}>
+      {steps.map((step, index) => (
+        <li
+          key={`${step.path}-${step.timestamp ?? index}`}
+          className="flex items-start gap-2 border-t border-border py-1.5 first:border-t-0 text-xs"
+        >
+          <span className="figure w-6 shrink-0 text-text-tertiary">{index + 1}</span>
+          <span className="min-w-0 flex-1 break-all text-text-primary">{step.path || '—'}</span>
+          {step.last ? (
+            <span className="shrink-0 text-xs text-text-secondary">opened the chat here</span>
+          ) : step.dwell ? (
+            <span className="figure shrink-0 text-text-tertiary">{step.dwell}</span>
+          ) : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 
-// ── Small presentational helpers ─────────────────────────────────────────────
-
-function SectionTitle({ icon: Icon, children }: { icon: typeof Compass; children: string }): ReactElement {
-  return (
-    <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-      <Icon size={13} aria-hidden="true" />
-      {children}
-    </h3>
-  );
-}
-
-function AttrRow({ label, value }: { label: string; value: string }): ReactElement {
-  return (
-    <div className="flex items-start gap-2 text-[12px]">
-      <span className="w-20 shrink-0 text-[var(--ds-text-muted)]">{label}</span>
-      <span className="break-all text-[var(--ds-text)]">{value}</span>
-    </div>
-  );
-}
-
-// ── Sections ─────────────────────────────────────────────────────────────────
-
-function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | null {
-  const [journeyOpen, setJourneyOpen] = useState(false);
-  const source = asRecord(detail.source);
-  // `source` is only attached on eligible plans - absent means "not available".
+function SourceAttribution({ lead }: { lead: Lead }) {
+  const [expanded, setExpanded] = useState(false);
+  const source = asRecord(lead.source);
+  // Absent entirely on plans without attribution — not empty, absent.
   if (Object.keys(source).length === 0) return null;
 
   const utm = asRecord(source.utm_params);
-  const utmSource = asString(utm.utm_source);
-  const utmCampaign = asString(utm.utm_campaign);
-  const utmMedium = asString(utm.utm_medium);
-  const adDetail = asString(utm.utm_content) ?? asString(utm.utm_term);
-  const referrer = asString(source.referrer);
-  const landing = asString(source.landing_page);
-  const journeyRaw = Array.isArray(source.journey) ? source.journey : [];
+  const utmSource = asText(utm.utm_source);
+  const rows = [
+    { label: 'Campaign', value: asText(utm.utm_campaign) },
+    { label: 'Medium', value: asText(utm.utm_medium) },
+    { label: 'Ad detail', value: asText(utm.utm_content) ?? asText(utm.utm_term) },
+    { label: 'Referrer', value: asText(source.referrer) },
+    { label: 'Landed on', value: asText(source.landing_page) },
+  ].filter((row): row is { label: string; value: string } => row.value !== null);
 
-  const hasAttribution = Boolean(
-    utmSource || utmMedium || utmCampaign || referrer || landing || journeyRaw.length > 0,
-  );
+  const journey = buildJourney(Array.isArray(source.journey) ? source.journey : []);
 
-  if (!hasAttribution) {
+  if (!utmSource && rows.length === 0 && journey.length === 0) {
     return (
-      <section className="space-y-3">
-        <SectionTitle icon={Compass}>Source</SectionTitle>
-        <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-muted)]">
-          Direct / Organic - no UTM tags or referrer were captured for this visitor.
+      <section className="space-y-2">
+        <h3 className="text-lg font-semibold text-text-primary">Where they came from</h3>
+        <p className="rounded-md border border-border px-3.5 py-3 text-prose text-text-secondary">
+          Direct or organic. No campaign tags and no referrer were captured for this visitor.
         </p>
       </section>
     );
   }
 
-  const rows = buildJourneyRows(journeyRaw);
-
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <SectionTitle icon={Compass}>Source</SectionTitle>
-        {utmSource && (
-          <StatusBadge tone="info" className="capitalize">
-            {utmSource}
-          </StatusBadge>
-        )}
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-lg font-semibold text-text-primary">Where they came from</h3>
+        {utmSource ? <Badge>{utmSource}</Badge> : null}
       </div>
 
-      <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-        {utmCampaign && <AttrRow label="Campaign" value={utmCampaign} />}
-        {utmMedium && <AttrRow label="Medium" value={utmMedium} />}
-        {adDetail && <AttrRow label="Ad detail" value={adDetail} />}
-        {referrer && <AttrRow label="Referrer" value={truncate(referrer)} />}
-        {landing && <AttrRow label="Landed on" value={truncate(landing)} />}
-      </div>
-
-      {rows.length > 0 && (
-        <div className="rounded-xl border border-[var(--ds-border)] p-4">
-          <div className="mb-2.5 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-              Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
-            </p>
-            <button
-              type="button"
-              onClick={() => setJourneyOpen(true)}
-              aria-label="Maximise journey"
-              title="Maximise journey"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <Maximize2 size={14} aria-hidden="true" />
-            </button>
-          </div>
-          <JourneyList rows={rows} maxHeightClass="max-h-64" autoScrollToEnd />
+      {rows.length > 0 ? (
+        <div className="rounded-md border border-border px-3.5 py-3">
+          <DefinitionList
+            items={rows.map((row) => ({ label: row.label, value: truncate(row.value) }))}
+          />
         </div>
-      )}
+      ) : null}
 
-      {journeyOpen && (
-        <Modal
-          open
-          onClose={() => setJourneyOpen(false)}
-          title="Journey before chat"
-          description={`${rows.length} ${rows.length === 1 ? 'page' : 'pages'} visited before this visitor opened the chat`}
-          size="lg"
-        >
-          <JourneyList rows={rows} maxHeightClass="max-h-[65vh]" />
-        </Modal>
-      )}
+      {journey.length > 0 ? (
+        <div className="rounded-md border border-border px-3.5 py-3">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-text-secondary">
+              {journey.length === 1 ? '1 page' : `${journey.length} pages`} before the chat
+            </p>
+            {journey.length > 6 ? (
+              <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
+                See all
+              </Button>
+            ) : null}
+          </div>
+          {/* The tail is the payoff — the page they were on when they opened the
+              chat — so a long journey shows its end, not its beginning. */}
+          <JourneyList steps={journey.slice(-6)} />
+        </div>
+      ) : null}
+
+      <Dialog
+        open={expanded}
+        onOpenChange={setExpanded}
+        title="Pages visited before the chat"
+        description={`${journey.length} pages, oldest first. The last one is where they opened the chat.`}
+        size="lg"
+      >
+        <div className="max-h-[60vh] overflow-y-auto">
+          <JourneyList steps={journey} />
+        </div>
+      </Dialog>
     </section>
   );
 }
 
-/** Map the raw 0 to 20 engagement score to a plain-language tier + badge tone. */
-function engagementTier(score: number): { label: string; tone: 'success' | 'info' | 'neutral' } {
-  if (score >= 15) return { label: 'High engagement', tone: 'success' };
-  if (score >= 8) return { label: 'Medium engagement', tone: 'info' };
-  return { label: 'Low engagement', tone: 'neutral' };
+/** The 0–20 engagement score as a band, plus the raw return-visit count. */
+function engagementBand(score: number): string {
+  if (score >= 15) return 'High';
+  if (score >= 8) return 'Medium';
+  return 'Low';
 }
 
-function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | null {
-  const score = detail.behavioral_score ?? 0;
-  const behavioral = asRecord(detail.behavioral);
-  const visitCount = Number(behavioral.visit_count) || 0;
+function BehaviouralSignals({ lead }: { lead: Lead }) {
+  const score = lead.behavioral_score ?? 0;
+  const behavioural = lead.behavioral ?? {};
+  const visits = Number(behavioural.visit_count) || 0;
 
-  if (score <= 0 && visitCount <= 1) return null;
-
-  // Only qualify engagement when there's actually a score; a return visitor
-  // with no engagement data still gets their visit count shown.
-  const tier = score > 0 ? engagementTier(score) : null;
+  if (score <= 0 && visits <= 1) return null;
 
   return (
-    <section className="space-y-3">
-      <SectionTitle icon={Activity}>Behavioural signals</SectionTitle>
-      <div className="space-y-2.5 rounded-xl border border-[var(--ds-border)] p-4">
-        {tier && (
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[var(--ds-text)]">Engagement</span>
-            <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>
-          </div>
-        )}
-        {visitCount > 1 && (
-          <div className="flex items-center justify-between text-[12px]">
-            <span className="font-medium text-[var(--ds-text)]">Return visitor</span>
-            <span className="text-[var(--ds-text)]">{visitCount} visits</span>
-          </div>
-        )}
+    <section className="space-y-2">
+      <h3 className="text-lg font-semibold text-text-primary">How they behaved</h3>
+      <div className="rounded-md border border-border px-3.5 py-3">
+        <DefinitionList
+          items={[
+            ...(score > 0
+              ? [{ label: 'Engagement', value: engagementBand(score) }]
+              : []),
+            ...(visits > 1
+              ? [
+                  {
+                    label: 'Visits',
+                    value: <span className="figure">{visits}</span>,
+                  },
+                ]
+              : []),
+          ]}
+        />
       </div>
     </section>
   );
 }
 
-/** Renders whichever insight sections have data; nothing if neither does. */
-export function LeadInsights({ detail }: { detail: LeadDetail }): ReactElement {
+/** Renders whichever insight sections have data, and nothing when neither does. */
+export function LeadInsights({ lead }: { lead: Lead }) {
   return (
     <>
-      <SourceAttribution detail={detail} />
-      <BehavioralSignals detail={detail} />
+      <SourceAttribution lead={lead} />
+      <BehaviouralSignals lead={lead} />
     </>
   );
 }

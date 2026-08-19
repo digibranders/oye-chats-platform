@@ -1,29 +1,28 @@
-/**
- * useAffiliateData - loads the affiliate self-service dashboard state.
- *
- * Fetches the profile, codes, and stats in parallel (one round-trip of latency,
- * not three) and coerces them into strict view-models. A 403 from the profile
- * endpoint means the signed-in client is not an enrolled affiliate - surfaced as
- * `notEnrolled` so the page can render an explanatory empty state instead of an
- * error. Exposes `reload` so mutations (create/edit/deactivate a code) can
- * refresh without a full remount.
- */
-import { useCallback, useEffect, useState } from 'react';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { getAffiliateCodes, getAffiliateMe, getAffiliateStats } from '../../services/api';
+import { keys } from '../../query/keys';
 import {
-  type AffiliateCodeView,
-  type AffiliateProfile,
-  type AffiliateStatsView,
   toAffiliateCodes,
   toAffiliateProfile,
   toAffiliateStats,
+  type AffiliateCodeView,
+  type AffiliateProfile,
+  type AffiliateStatsView,
 } from './affiliateModel';
+
+/**
+ * The affiliate dashboard's three reads, issued together.
+ *
+ * A 403 from the profile call is not an error: the affiliate programme is
+ * invite-only, so it is the answer "you are not in it". Rendering that as a red
+ * failure banner told enrolled-looking users their dashboard was broken when
+ * nothing was wrong.
+ */
 
 export interface AffiliateData {
   loading: boolean;
-  /** True when the client isn't an enrolled affiliate (profile 403). */
+  /** The signed-in client is not an enrolled affiliate. */
   notEnrolled: boolean;
-  /** A non-403 load failure, if any. */
   error: string | null;
   profile: AffiliateProfile | null;
   codes: AffiliateCodeView[];
@@ -31,64 +30,39 @@ export interface AffiliateData {
   reload: () => void;
 }
 
-function errStatus(err: unknown): number | undefined {
-  return (err as { status?: number } | null)?.status;
-}
-
-function errMessage(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
+function statusOf(error: unknown): number | undefined {
+  const withResponse = error as { response?: { status?: number }; status?: number } | null;
+  return withResponse?.response?.status ?? withResponse?.status;
 }
 
 export function useAffiliateData(): AffiliateData {
-  const [loading, setLoading] = useState(true);
-  const [notEnrolled, setNotEnrolled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [profile, setProfile] = useState<AffiliateProfile | null>(null);
-  const [codes, setCodes] = useState<AffiliateCodeView[]>([]);
-  const [stats, setStats] = useState<AffiliateStatsView | null>(null);
-  const [nonce, setNonce] = useState(0);
+  const queryClient = useQueryClient();
 
-  // Reset the request state here (an event callback), not in the effect body -
-  // synchronous setState inside an effect triggers cascading renders (and the
-  // react-hooks lint rule). The effect below only sets state after an await.
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    setNotEnrolled(false);
-    setNonce((n) => n + 1);
-  }, []);
+  const [profile, codes, stats] = useQueries({
+    queries: [
+      { queryKey: keys.affiliate.me(), queryFn: getAffiliateMe, retry: false, staleTime: 60_000 },
+      { queryKey: keys.affiliate.codes(), queryFn: getAffiliateCodes, retry: false, staleTime: 30_000 },
+      { queryKey: keys.affiliate.stats(), queryFn: getAffiliateStats, retry: false, staleTime: 60_000 },
+    ],
+  });
 
-  useEffect(() => {
-    let cancelled = false;
+  const firstError = profile.error ?? codes.error ?? stats.error ?? null;
+  const notEnrolled = statusOf(profile.error) === 403;
 
-    Promise.all([getAffiliateMe(), getAffiliateCodes(), getAffiliateStats()])
-      .then(([meRaw, codesRaw, statsRaw]) => {
-        if (cancelled) return;
-        setProfile(toAffiliateProfile(meRaw));
-        setCodes(toAffiliateCodes(codesRaw));
-        setStats(toAffiliateStats(statsRaw));
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        // 403 on the profile endpoint = this client isn't an affiliate. Treat as
-        // a first-class "not enrolled" state, not an error banner.
-        if (errStatus(err) === 403) {
-          setNotEnrolled(true);
-          setProfile(null);
-          setCodes([]);
-          setStats(null);
-        } else {
-          setError(errMessage(err, 'Could not load your affiliate dashboard.'));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [nonce]);
-
-  return { loading, notEnrolled, error, profile, codes, stats, reload };
+  return {
+    loading: profile.isPending || codes.isPending || stats.isPending,
+    notEnrolled,
+    error:
+      firstError && !notEnrolled
+        ? firstError instanceof Error
+          ? firstError.message
+          : 'We could not load your affiliate dashboard.'
+        : null,
+    profile: notEnrolled ? null : toAffiliateProfile(profile.data),
+    codes: notEnrolled ? [] : toAffiliateCodes(codes.data),
+    stats: notEnrolled ? null : toAffiliateStats(stats.data),
+    reload: () => {
+      void queryClient.invalidateQueries({ queryKey: ['affiliate'] });
+    },
+  };
 }

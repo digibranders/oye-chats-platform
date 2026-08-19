@@ -1,825 +1,811 @@
-/**
- * LeadsPage - "Who are my qualified leads?"
- *
- * One job: surface the people who chatted with your AI, ranked by how ready
- * they are to buy, with a one-glance pipeline summary up top and a click-to-open
- * detail drawer. All qualification jargon is translated to plain language
- * (see {@link leadModel}); BANT/MQL only survives as a power-user tooltip.
- *
- * Data comes from the reused backend via {@link useLeads} (list + tier summary +
- * funnel) and {@link useLeadDetail} (drawer). Loading is derived from a status
- * enum, and every state - loading, empty, error, ready - is explained on screen.
- */
-import { type ReactElement, useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertCircle, BadgeCheck, Bot as BotIcon, CheckCheck, Download, Users } from 'lucide-react';
 import {
-  AlertCircle,
-  BadgeCheck,
-  Bell,
-  ChevronRight,
-  Download,
-  Lock,
-  MessageSquare,
-  Users,
-  X,
-} from 'lucide-react';
-import {
+  ABSENT,
+  Alert,
+  Avatar,
+  Badge,
   Button,
+  Card,
+  CardBody,
+  ConfirmDialog,
+  DataTable,
   EmptyState,
-  PageContainer,
+  LoadingRows,
+  LockedState,
+  Page,
+  PageHeader,
+  SearchField,
   Select,
-  Skeleton,
+  Stack,
+  StatTile,
+  Toolbar,
+  Tooltip,
+  buttonClass,
   cn,
-} from '../../design-system';
-// MetricCard + DataTable are Foundation-phase components not yet re-exported
-// from the design-system barrel (the orchestrator wires those exports), so we
-// import them from their module paths directly.
-import { DataTable, type Column } from '../../design-system/components/DataTable';
+  formatNumber,
+  formatRelative,
+  type Column,
+  type SortState,
+} from '../../ui';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
+import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 import { downloadCsv } from '../../lib/downloadCsv';
-import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
-import { type Lead } from '../../types/domain';
+import { exportLeadsCsv } from '../../services/api';
+import type { Lead } from '../../types/domain';
 import { buildSelectedLeadsCsv } from './leadsCsv';
-import { useLeads } from './useLeads';
-import { useLeadDetail } from './useLeadDetail';
+import { LEADS_PAGE_SIZE, useLeads } from './useLeads';
 import { useLeadAnnotations } from './useLeadAnnotations';
-import { LeadDetailDrawer } from './LeadDetailDrawer';
+import { LeadDrawer } from './LeadDrawer';
 import {
-  type ContactFilter,
-  type TierKey,
+  MIN_SCORE_OPTIONS,
+  hasActiveFilters,
+  hasClientRefinement,
+  readLeadsUrl,
+  writeLeadsUrl,
+  type LeadsUrlState,
+} from './leadsUrl';
+import {
   TIER_META,
   TIER_ORDER,
   companyDisplay,
-  filterLeads,
-  formatDateTime,
+  compareLeads,
   formatLocation,
-  humanizeDimension,
+  hasIntelligence,
   leadDisplayName,
-  leadInitials,
   normalizeTier,
+  orderedDimensions,
+  refineLeads,
+  type ContactFilter,
+  type TierKey,
 } from './leadModel';
-import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 
-const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
+/**
+ * Leads — "who asked about buying, and how ready did they sound?"
+ *
+ * The densest surface in the product after the inbox, and the one the audit
+ * found leaning hardest on the browser: it pulled a 200-row slice, ran every
+ * filter and sort over that slice, and printed the truncated count as though it
+ * were the workspace's total. The API has supported `tier`, `min_score`, `page`
+ * and `limit` the whole time.
+ *
+ * So the division of labour here is explicit, and the page says it out loud:
+ * **tier and minimum score are the server's**, applied across every lead and
+ * driving the count; **search, lead type and column sorting are the browser's**,
+ * applied to the rows on screen. Every one of them lives in the URL, so a
+ * filtered view is a link.
+ *
+ * The pipeline summary at the top is the reason `GET /leads/stats` is called.
+ * The page this replaces fetched it on every load and rendered none of it.
+ */
+
+const CONTACT_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
+  { value: 'all', label: 'Everyone' },
   { value: 'named', label: 'Named leads' },
   { value: 'anonymous', label: 'Anonymous only' },
-  { value: 'all', label: 'Everyone' },
 ];
 
-/** How the lead table is ordered. Exposed via the "Sort by" control. */
-const SORT_OPTIONS = [
-  { value: 'recent', label: 'Latest activity' },
-  { value: 'quality', label: 'BANT' },
-] as const;
-type SortKey = (typeof SORT_OPTIONS)[number]['value'];
+const TIER_OPTIONS = [
+  { value: '', label: 'Any quality' },
+  ...TIER_ORDER.map((tier) => ({ value: tier, label: TIER_META[tier].label })),
+];
 
-/** Epoch ms of a lead's last activity; undated/invalid sinks to 0 so it sorts last. */
-function leadActivityTime(lead: Lead): number {
-  const parsed = lead.last_active_at ? Date.parse(lead.last_active_at) : NaN;
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-/** Comparator per sort key. Every option has a stable secondary tiebreak. */
-function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
-  if (sortBy === 'quality') {
-    return (a, b) =>
-      TIER_ORDER.indexOf(normalizeTier(b.status)) - TIER_ORDER.indexOf(normalizeTier(a.status)) ||
-      b.score - a.score;
-  }
-  // 'recent' (default): most recent chat first, higher score breaks ties.
-  return (a, b) => leadActivityTime(b) - leadActivityTime(a) || b.score - a.score;
-}
-
+const SCORE_OPTIONS = [
+  { value: '', label: 'Any score' },
+  ...MIN_SCORE_OPTIONS.map((score) => ({ value: String(score), label: `Score ${score}+` })),
+];
 
 /**
- * Canonical B-A-N-T display order. The backend emits a bot's framework
- * dimensions in its own order (e.g. need/timeline/authority/budget); we surface
- * them in Budget → Authority → Need → Timeline order so the chips always read
- * "BANT". Dimensions outside this set (MEDDIC/CHAMP frameworks) sort after the
- * BANT four, keeping their original relative order (Array#sort is stable).
- */
-const BANT_ORDER: readonly string[] = ['budget', 'authority', 'need', 'timeline'];
-
-function bantOrderIndex(key: string): number {
-  const index = BANT_ORDER.indexOf(key.toLowerCase());
-  return index === -1 ? BANT_ORDER.length : index;
-}
-
-/**
- * BantSignal - the at-a-glance qualification cell: one small chip per framework
- * dimension (Budget / Authority / Need / Timeline for a BANT bot, or the bot's
- * real dimensions for MEDDIC/CHAMP). A chip turns green once that dimension is
- * "accepted" - i.e. the AI captured a positive signal for it (score > 0);
- * un-assessed dimensions stay a quiet neutral. This restores the "which boxes
- * has this lead ticked?" read the table used to give, in place of the single
- * plain-language quality pill (the tier still drives the top filters, the sort,
- * and the detail drawer's verdict).
- */
-function BantSignal({ lead }: { lead: Lead }): ReactElement {
-  const dimensions = Object.entries(lead.bant ?? {}).sort(
-    ([a], [b]) => bantOrderIndex(a) - bantOrderIndex(b),
-  );
-  if (dimensions.length === 0) {
-    return <span className="text-[12px] text-[var(--ds-text-subtle)]">-</span>;
-  }
-  return (
-    <div className="flex items-center gap-1" role="group" aria-label="Qualification signals">
-      {dimensions.map(([key, dim]) => {
-        const accepted = (dim?.score ?? 0) > 0;
-        const label = humanizeDimension(key);
-        return (
-          <span
-            key={key}
-            title={`${label}: ${dim?.value || 'Not captured'}`}
-            aria-label={`${label}: ${accepted ? 'captured' : 'not captured'}`}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold uppercase',
-              accepted
-                ? 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-                : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
-            )}
-          >
-            {label.charAt(0)}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * EmailValidityMark - a one-glance deliverability marker beside a lead's email.
+ * A deliverability verdict beside an email.
  *
- * Renders NOTHING when `is_valid_email` is absent: the field is only present
- * on plans that include Visitor Intelligence, and `null` there legitimately
- * means "not checked yet" rather than "bad". Only a definitive verdict earns
- * a mark, so the column never implies a judgement the backend didn't make.
+ * Renders nothing when `is_valid_email` is absent: the field only exists on
+ * plans with Visitor Intelligence, and `null` there means "not checked yet"
+ * rather than "bad". Only a definitive verdict earns a mark, so the column
+ * never implies a judgement the backend did not make.
  */
-function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElement | null {
-  if (isValid === true) {
-    return (
-      <BadgeCheck
-        size={12}
-        aria-label="Email verified as deliverable"
-        className="shrink-0 text-[var(--ds-success)]"
-      />
-    );
-  }
-  if (isValid === false) {
-    return (
-      <AlertCircle
-        size={12}
-        aria-label="Email failed validation - cannot be contacted"
-        className="shrink-0 text-[var(--ds-danger)]"
-      />
-    );
-  }
-  return null;
-}
-
-/**
- * LockedValue - a Free-plan stand-in for a paid lead-intelligence cell
- * (quality score, location). The column stays VISIBLE so Free users see the
- * feature exists; the value is replaced by a lock affordance that opens the
- * upgrade modal instead of the real data.
- */
-function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
+function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
+  if (isValid !== true && isValid !== false) return null;
+  const label = isValid
+    ? 'Email verified as deliverable'
+    : 'Email failed validation and cannot be contacted';
   return (
-    <button
-      type="button"
-      title="Upgrade to unlock"
-      aria-label="Upgrade to unlock"
-      onClick={(event) => {
-        event.stopPropagation();
-        onUpgrade();
-      }}
-      className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)]"
-    >
-      <Lock size={12} aria-hidden="true" />
-      Locked
-    </button>
+    <span role="img" aria-label={label} className="inline-flex shrink-0">
+      {isValid ? (
+        <BadgeCheck aria-hidden className="h-3.5 w-3.5 text-success" />
+      ) : (
+        <AlertCircle aria-hidden className="h-3.5 w-3.5 text-danger" />
+      )}
+    </span>
   );
 }
 
-/** The metric row; only shown once stats resolve. */
-export function LeadsPage(): ReactElement {
-  const { selectedBot, bots, loading: botsLoading } = useBotContext();
+/**
+ * The qualification cell: one chip per framework dimension, each carrying its
+ * real name.
+ *
+ * The column this replaces was headed with the literal string "BANT" — the
+ * exact jargon the module was written to eliminate — and its four chips were
+ * single capital letters whose meaning lived only in a `title` attribute, which
+ * is unreachable by keyboard and invisible on touch. Whole words, and a real
+ * tooltip carrying what the visitor actually said.
+ */
+function QualificationChips({ lead }: { lead: Lead }) {
+  const dimensions = orderedDimensions(lead);
+  if (dimensions.length === 0) {
+    return <span className="text-text-tertiary">{ABSENT}</span>;
+  }
+  return (
+    <ul className="flex flex-wrap items-center gap-1">
+      {dimensions.map((dimension) => (
+        <li key={dimension.key}>
+          <Tooltip
+            content={
+              dimension.captured
+                ? `${dimension.label}: ${dimension.value ?? 'captured'}`
+                : `${dimension.label}: nothing captured yet`
+            }
+          >
+            <span
+              className={cn(
+                'inline-flex items-center rounded-xs px-1.5 py-0.5 text-2xs font-medium',
+                dimension.captured
+                  ? 'bg-success-tint text-success'
+                  : 'bg-neutral-tint text-neutral',
+              )}
+            >
+              {dimension.label}
+            </span>
+          </Tooltip>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The row's identity cell.
+ *
+ * Built entirely from `span`s, because `DataTable` wraps the first cell in the
+ * button that activates the row and a `<button>` may only contain phrasing
+ * content — a `div` or a `ul` in there is invalid, whatever the browser makes
+ * of it in practice.
+ */
+function LeadCell({ lead, tags }: { lead: Lead; tags: readonly string[] }) {
+  return (
+    <span className="flex items-center gap-3">
+      <Avatar name={leadDisplayName(lead)} size="md" />
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          {lead.unread ? (
+            <span
+              role="img"
+              aria-label="Not opened yet"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500"
+            />
+          ) : null}
+          <span className={cn('truncate text-sm text-text-primary', lead.unread && 'font-semibold')}>
+            {leadDisplayName(lead)}
+          </span>
+        </span>
+        {lead.contact?.email ? (
+          <span className="mt-0.5 flex items-center gap-1 text-xs text-text-secondary">
+            <span className="truncate">{lead.contact.email}</span>
+            <EmailVerdict isValid={lead.contact.is_valid_email} />
+          </span>
+        ) : null}
+        {tags.length > 0 ? (
+          <span className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="sr-only">Your private tags: </span>
+            {tags.slice(0, 3).map((tag) => (
+              <Badge key={tag}>{tag}</Badge>
+            ))}
+            {tags.length > 3 ? (
+              <span className="figure text-2xs text-text-tertiary">+{tags.length - 3}</span>
+            ) : null}
+          </span>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+export function LeadsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const state = useMemo(() => readLeadsUrl(searchParams), [searchParams]);
+
+  // The functional form so this callback never depends on the state it reads —
+  // otherwise every URL change gives the toolbar new handlers and re-renders it.
+  const update = useCallback(
+    (patch: Partial<LeadsUrlState>, options?: { replace?: boolean }) => {
+      setSearchParams((previous) => writeLeadsUrl(readLeadsUrl(previous), patch), {
+        replace: options?.replace ?? false,
+      });
+    },
+    [setSearchParams],
+  );
+
+  const { bots, selectedBot, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree, hasFeature } = useEntitlements();
-  const bantUnlocked = hasFeature('bant');
-  // Per-agent, matching the backend gate. `null` while resolving. Hold the
-  // gate closed rather than flashing paid UI we'd then have to take away.
-  const selectedBotPlanSlug = useSelectedBotPlanSlug();
-  const visitorIntelligenceUnlocked =
-    selectedBotPlanSlug !== null && planIncludesVisitorIntelligence(selectedBotPlanSlug);
-  const { openUpgradeModal } = useUpgradeModal();
+  const { isFree } = useEntitlements();
+  const planSlug = useSelectedBotPlanSlug();
+  // Per agent, matching the backend gate. `null` while the chatbot resolves, so
+  // the gate is held closed rather than flashing paid UI we would take away.
+  const visitorIntelligence = planSlug !== null && planIncludesVisitorIntelligence(planSlug);
 
-  // Free-plan workspaces never get the list - the backend's `/leads` route
-  // 403s for them. `useLeads` takes `enabled: false` so it never issues that
-  // doomed request; a Free user (including one who deep-links `/leads`) sees
-  // the upgrade teaser below instead of a broken fetch.
-  const {
-    status,
-    leads,
-    stats,
-    error,
-    reload,
-    markViewedLocal,
-    markAllReadLocal,
-  } = useLeads(botId);
-
+  const leads = useLeads({
+    botId,
+    tier: state.tier,
+    minScore: state.minScore,
+    page: state.page,
+  });
   const annotations = useLeadAnnotations();
 
-  const [tierFilter, setTierFilter] = useState<TierKey | null>(null);
-  const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
-  const [query, setQuery] = useState('');
-  const [sortBy, setSortBy] = useState<SortKey>('recent');
+  /**
+   * Whether the paid lead-intelligence layer is present.
+   *
+   * Read off the response first: the server *deletes* score, tier, BANT and
+   * location for Free rather than nulling them, so their absence is the fact.
+   * The plan flag is only the answer before any lead has arrived.
+   */
+  const intelligenceLocked =
+    leads.leads.length > 0 ? !leads.leads.some(hasIntelligence) : isFree;
 
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  // Which face the drawer opens on: the full lead profile ('detail', row click)
-  // or the conversation only ('chat', the row's "View chat" button).
-  const [drawerView, setDrawerView] = useState<'detail' | 'chat'>('detail');
-  const detailData = useLeadDetail(selectedSessionId);
-
-  // Bulk-select for "Export selected". Keyed by session id so a selection
-  // survives re-sorts and filter changes; stale ids are simply never matched.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-
-  const [isExporting, setIsExporting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Filter, then order by the chosen sort key (default: most recent chat first).
-  // filterLeads returns a fresh array, so sorting in place never mutates the
-  // source `leads` state.
-  const filtered = useMemo(
-    () =>
-      filterLeads(leads, { tier: tierFilter, contact: contactFilter, query }).sort(
-        leadComparator(sortBy),
-      ),
-    [leads, tierFilter, contactFilter, query, sortBy],
+  const rows = useMemo(
+    () => refineLeads(leads.leads, { contact: state.contact, query: state.query }),
+    [leads.leads, state.contact, state.query],
   );
 
-  const hasUnread = useMemo(() => leads.some((lead) => lead.unread === true), [leads]);
+  // ── Selection ─────────────────────────────────────────────────────────────
+  // Scoped to what is on screen. The version this replaces kept a selection
+  // across filter and page changes, so "3 selected" could mean three rows the
+  // user could no longer see, with no way to review them before exporting.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.page}|${state.contact}|${state.query}`;
+  const [selectionScope, setSelectionScope] = useState(scope);
+  if (selectionScope !== scope) {
+    setSelectionScope(scope);
+    setSelected(new Set());
+  }
 
-  const allFilteredSelected =
-    filtered.length > 0 && filtered.every((lead) => selectedIds.has(lead.session_id));
+  const [confirmMarkAll, setConfirmMarkAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const toggleSelect = useCallback((sessionId: string): void => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(sessionId)) next.delete(sessionId);
-      else next.add(sessionId);
-      return next;
-    });
-  }, []);
+  const openLead = state.openLead;
+  const markRead = leads.markRead;
+  useEffect(() => {
+    if (openLead) markRead(openLead);
+  }, [openLead, markRead]);
 
-  const toggleSelectAll = useCallback((): void => {
-    setSelectedIds((prev) => {
-      const everySelected =
-        filtered.length > 0 && filtered.every((lead) => prev.has(lead.session_id));
-      if (everySelected) return new Set();
-      return new Set(filtered.map((lead) => lead.session_id));
-    });
-  }, [filtered]);
+  const handleSort = useCallback(
+    (sort: SortState | null) => update({ sort }, { replace: true }),
+    [update],
+  );
 
-  const clearSelection = useCallback((): void => setSelectedIds(new Set()), []);
-
-  const handleExportSelected = useCallback((): void => {
-    const chosen = leads.filter((lead) => selectedIds.has(lead.session_id));
+  const handleExportSelected = useCallback(() => {
+    const chosen = leads.leads.filter((lead) => selected.has(lead.session_id));
     if (chosen.length === 0) return;
-    const csv = buildSelectedLeadsCsv(chosen, annotations.tagsFor);
-    downloadCsv(csv, `selected-leads-${chosen.length}.csv`);
-    setSelectedIds(new Set());
-  }, [leads, selectedIds, annotations]);
+    downloadCsv(
+      buildSelectedLeadsCsv(chosen, annotations.tagsFor),
+      `oyechats-leads-selected-${chosen.length}.csv`,
+    );
+  }, [annotations.tagsFor, leads.leads, selected]);
 
-  const markSeen = useCallback(
-    (lead: Lead): void => {
-      if (lead.unread) {
-        markViewedLocal(lead.session_id);
-        // Fire-and-forget: the badge already updated optimistically.
-        void markLeadViewed(lead.session_id).catch(() => undefined);
-      }
-    },
-    [markViewedLocal],
-  );
-
-  // Row click → full lead profile (no transcript). "View chat" → transcript only.
-  // On plans without BANT (Free / Starter) the detail drawer's core value
-  // (dimension breakdown, signal evidence, tier verdict) is empty, so we
-  // route the click to the qualification upgrade modal instead of opening
-  // a hollow drawer. The "View chat" button (`openChat`) stays wired so
-  // Starter can still reach the transcript, which is not gated.
-  const openLead = useCallback(
-    (lead: Lead): void => {
-      if (!bantUnlocked) {
-        openUpgradeModal('view_qualification');
-        return;
-      }
-      setDrawerView('detail');
-      setSelectedSessionId(lead.session_id);
-      markSeen(lead);
-    },
-    [bantUnlocked, openUpgradeModal, markSeen],
-  );
-
-  const openChat = useCallback(
-    (lead: Lead): void => {
-      setDrawerView('chat');
-      setSelectedSessionId(lead.session_id);
-      markSeen(lead);
-    },
-    [markSeen],
-  );
-
-  async function handleExport(): Promise<void> {
-    setIsExporting(true);
-    setActionError(null);
+  async function handleExportAll(): Promise<void> {
+    setExporting(true);
+    setExportError(null);
     try {
       await exportLeadsCsv(botId);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Export failed. Please try again.');
-    } finally {
-      setIsExporting(false);
-    }
-  }
-
-  async function handleMarkAllRead(): Promise<void> {
-    if (!hasUnread) return;
-    markAllReadLocal();
-    setActionError(null);
-    try {
-      await markAllLeadsViewed(botId);
-    } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : 'Could not mark leads as read. Refreshing…',
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : 'The export could not be produced.',
       );
-      reload();
+    } finally {
+      setExporting(false);
     }
   }
 
-  const columns: Column<Lead>[] = useMemo(
-    () => {
-      const all: Column<Lead>[] = [
+  const columns = useMemo<Column<Lead>[]>(() => {
+    const base: Column<Lead>[] = [
       {
-        key: 'select',
-        header: (
-          <input
-            type="checkbox"
-            checked={allFilteredSelected}
-            onChange={toggleSelectAll}
-            aria-label="Select all leads in view"
-            className="h-4 w-4 cursor-pointer accent-[var(--ds-accent)] align-middle"
-          />
-        ),
-        width: '2.5rem',
-        cellClassName: 'py-0',
-        render: (lead) => (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(lead.session_id)}
-            onChange={() => toggleSelect(lead.session_id)}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Select ${leadDisplayName(lead)}`}
-            className="h-4 w-4 cursor-pointer accent-[var(--ds-accent)] align-middle"
-          />
-        ),
-      },
-      {
-        key: 'contact',
+        key: 'lead',
         header: 'Lead',
-        render: (lead) => {
-          const tags = annotations.tagsFor(lead.session_id);
-          return (
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[11px] font-semibold text-[var(--ds-text-muted)]"
-              >
-                {leadInitials(lead)}
-              </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  {lead.unread && (
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full bg-[var(--ds-accent)]"
-                      aria-label="New lead"
-                    />
-                  )}
-                  <span
-                    className={cn(
-                      'truncate text-[13px]',
-                      lead.unread ? 'font-semibold text-[var(--ds-text)]' : 'text-[var(--ds-text)]',
-                    )}
-                  >
-                    {leadDisplayName(lead)}
-                  </span>
-                </div>
-                {lead.contact?.email && (
-                  <p className="flex items-center gap-1 truncate text-[12px] text-[var(--ds-text-subtle)]">
-                    <span className="truncate">{lead.contact.email}</span>
-                    <EmailValidityMark isValid={lead.contact.is_valid_email} />
-                  </p>
-                )}
-                {tags.length > 0 && (
-                  <ul className="mt-1 flex flex-wrap gap-1" aria-label="Tags">
-                    {tags.slice(0, 3).map((tag) => (
-                      <li
-                        key={tag}
-                        className="inline-flex max-w-[8rem] items-center truncate rounded-full bg-[var(--ds-accent-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--ds-accent-text)]"
-                      >
-                        {tag}
-                      </li>
-                    ))}
-                    {tags.length > 3 && (
-                      <li className="inline-flex items-center text-[10px] font-medium text-[var(--ds-text-subtle)]">
-                        +{tags.length - 3}
-                      </li>
-                    )}
-                  </ul>
-                )}
-              </div>
-            </div>
-          );
-        },
+        sortable: compareLeads.name,
+        render: (lead) => <LeadCell lead={lead} tags={annotations.tagsFor(lead.session_id)} />,
       },
       {
         key: 'company',
         header: 'Company',
-        // The domain is derived free of charge from the lead's email
-        // (`email_domain_service.extract_company_domain`). Personal-provider
-        // addresses correctly yield nothing, so an em-dash here means
-        // "consumer email", not "lookup failed". `companyDisplay` prefers the
-        // resolved name ("Infosys Limited") when the paid lookup found one;
-        // this column showed the bare domain either way, so the enrichment
-        // the customer pays for was invisible in the view they scan.
+        secondary: true,
+        sortable: compareLeads.company,
+        // The domain is derived free of charge from the captured email address.
+        // Personal-provider addresses correctly yield nothing, so an em dash
+        // here means "consumer email", not "the lookup failed".
         render: (lead) => {
           const company = companyDisplay(lead.contact);
-          if (!company) {
-            return <span className="text-[12px] text-[var(--ds-text-subtle)]">&mdash;</span>;
-          }
-          const title = company.secondary ? `${company.value} (${company.secondary})` : company.value;
+          if (!company) return <span className="text-text-tertiary">{ABSENT}</span>;
           return (
-            <span
-              title={title}
-              className="block max-w-[12rem] truncate text-[12px] text-[var(--ds-text)]"
-            >
+            <span className="block max-w-48 truncate text-sm text-text-primary">
               {company.value}
             </span>
           );
         },
       },
+    ];
+
+    if (!intelligenceLocked) {
+      base.push(
+        {
+          key: 'quality',
+          header: 'Quality',
+          width: '11rem',
+          sortable: compareLeads.score,
+          render: (lead) => {
+            const tier = TIER_META[normalizeTier(lead.status)];
+            return (
+              <span className="flex items-center gap-2">
+                <Tooltip content={`${tier.hint} (${tier.code})`}>
+                  <span className="inline-flex">
+                    <Badge tone={tier.tone}>{tier.label}</Badge>
+                  </span>
+                </Tooltip>
+                <span className="figure text-xs text-text-secondary">{lead.score}</span>
+              </span>
+            );
+          },
+        },
+        {
+          key: 'qualification',
+          header: 'Qualification',
+          secondary: true,
+          width: '17rem',
+          render: (lead) => <QualificationChips lead={lead} />,
+        },
+        {
+          key: 'location',
+          header: 'Location',
+          secondary: true,
+          render: (lead) => {
+            const location = formatLocation(lead.location);
+            return location === 'Unknown' ? (
+              <span className="text-text-tertiary">{ABSENT}</span>
+            ) : (
+              <span className="text-sm text-text-secondary">{location}</span>
+            );
+          },
+        },
+      );
+    }
+
+    base.push(
       {
-        key: 'status',
-        header: <span className="text-[var(--ds-success)]">BANT</span>,
-        // BANT scoring is a Standard+ feature (`hasFeature('bant')`). On Free
-        // AND Starter the RAG pipeline skips extraction, so the dimension
-        // pills would render as four blank neutrals. Worse than an honest
-        // lock. Route the click straight to the qualification upgrade.
-        render: (lead) =>
-          !bantUnlocked ? (
-            <LockedValue onUpgrade={() => openUpgradeModal('view_qualification')} />
-          ) : (
-            <BantSignal lead={lead} />
-          ),
-      },
-      {
-        key: 'view_chat',
-        header: 'Chat',
-        render: (lead) => (
-          <button
-            type="button"
-            onClick={(event) => {
-              // Stop the row's onRowClick from double-firing; the button opens
-              // the same lead drawer (which carries the full chat transcript).
-              event.stopPropagation();
-              openChat(lead);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ds-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:border-[var(--ds-border-strong)] hover:text-[var(--ds-text)]"
-          >
-            <MessageSquare size={13} aria-hidden="true" />
-            View chat
-          </button>
-        ),
-      },
-      {
-        key: 'location',
-        header: 'Location',
-        render: (lead) =>
-          isFree ? (
-            <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
-          ) : (
-            <span className="text-[12px] text-[var(--ds-text-muted)]">{formatLocation(lead.location)}</span>
-          ),
-      },
-      {
-        key: 'last_active_at',
-        header: 'Last active',
-        render: (lead) => (
-          <span className="whitespace-nowrap text-[12px] text-[var(--ds-text-subtle)]">
-            {formatDateTime(lead.last_active_at)}
-          </span>
-        ),
-      },
-      {
-        key: 'session_id',
-        header: '',
+        key: 'chats',
+        header: 'Messages',
         align: 'right',
-        width: '3rem',
-        render: () => (
-          <ChevronRight
-            size={16}
-            className="text-[var(--ds-text-subtle)]"
-            aria-hidden="true"
-          />
+        width: '6rem',
+        secondary: true,
+        sortable: compareLeads.chats,
+        render: (lead) => (lead.chats ? formatNumber(lead.chats) : ABSENT),
+      },
+      {
+        key: 'last_active',
+        header: 'Last active',
+        align: 'right',
+        width: '10rem',
+        sortable: compareLeads.lastActive,
+        render: (lead) => (
+          <span className="whitespace-nowrap">{formatRelative(lead.last_active_at)}</span>
         ),
       },
-      ];
-      // Free tier keeps every column VISIBLE, the Quality/Location cells
-      // render a locked affordance (see their `render`), and the row opens a
-      // locked lead-detail drawer. Nothing is hidden; the paid bits are gated.
-      return all;
-    },
-    [
-      allFilteredSelected,
-      selectedIds,
-      toggleSelect,
-      toggleSelectAll,
-      annotations,
-      openChat,
-      isFree,
-      bantUnlocked,
-      openUpgradeModal,
-    ],
-  );
+    );
+
+    return base;
+  }, [annotations, intelligenceLocked]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  // Free plan now reaches Leads too, with a reduced surface: the list hides the
-  // quality/location columns (see `columns`) and rows open the conversation
-  // (`openChat`) instead of the full lead-intelligence drawer.
+
   if (botsLoading && bots.length === 0) {
     return (
-      <PageContainer title="Leads">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-        <Skeleton className="h-64 w-full" />
-      </PageContainer>
+      <Page width="wide">
+        <PageHeader title="Leads" description="Who asked about buying, and how ready they sounded." />
+        <Card>
+          <CardBody>
+            <LoadingRows rows={6} />
+          </CardBody>
+        </Card>
+      </Page>
     );
   }
 
   if (!botsLoading && bots.length === 0) {
     return (
-      <PageContainer title="Leads">
-        <EmptyState
-          icon={Users}
-          title="No leads yet"
-          description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy."
-        />
-      </PageContainer>
+      <Page width="wide">
+        <PageHeader title="Leads" />
+        <Card>
+          <EmptyState
+            icon={BotIcon}
+            title="No chatbots yet"
+            description="Leads are the people who chat with your chatbot. Create one, put it on your site, and everyone who talks to it turns up here."
+            action={
+              <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
+                Create your first chatbot
+              </Link>
+            }
+          />
+        </Card>
+      </Page>
     );
   }
 
-  const exportAction = (
-    <Button
-      variant="outline"
-      onClick={() => void handleExport()}
-      disabled={isExporting || leads.length === 0}
-    >
-      <Download size={16} aria-hidden="true" />
-      {/* Export ignores the active table filters - it always emits the full
-          server-side lead set for the agent, so the label says so explicitly. */}
-      {isExporting ? 'Exporting…' : 'Export all leads'}
-    </Button>
-  );
+  if (leads.locked) {
+    return (
+      <Page width="wide">
+        <PageHeader title="Leads" description="Who asked about buying, and how ready they sounded." />
+        <LockedState
+          title="Leads are not included on your plan"
+          description="Every visitor who chats with your chatbot becomes a lead here, scored on how ready they sounded to buy, with the whole conversation attached."
+          action={
+            <Link to="/billing" className={buttonClass('primary', 'md')}>
+              See plans
+            </Link>
+          }
+          preview={<LockedPreview />}
+        />
+      </Page>
+    );
+  }
+
+  const filtered = hasActiveFilters(state);
+  const refined = hasClientRefinement(state);
+  const shownFrom = (state.page - 1) * LEADS_PAGE_SIZE + 1;
+  const shownTo = Math.min(state.page * LEADS_PAGE_SIZE, leads.total);
 
   return (
-    <PageContainer
-      title="Leads"
-      actions={
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
-            <Bell size={16} aria-hidden="true" />
-            Mark all read
-          </Button>
-          {exportAction}
-        </div>
-      }
-    >
-      {actionError && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]"
-        >
-          <AlertCircle size={16} aria-hidden="true" />
-          {actionError}
-        </div>
-      )}
-
-      {status === 'loading' && (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))}
-          </div>
-          <Skeleton className="h-72 w-full" />
-        </>
-      )}
-
-      {status === 'error' && (
-        <EmptyState
-          icon={AlertCircle}
-          title="We couldn't load your leads"
-          description={error ?? 'Something went wrong. Please try again.'}
-          action={
-            <Button variant="outline" onClick={reload}>
-              Try again
-            </Button>
-          }
-        />
-      )}
-
-      {status === 'ready' && stats && (
-        <>
-          {/* Filters */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div
-              role="group"
-              aria-label="Filter by lead quality"
-              className="flex flex-wrap items-center gap-1.5"
+    <Page width="wide">
+      <PageHeader
+        title="Leads"
+        description="Who asked about buying, and how ready they sounded."
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              iconLeft={<CheckCheck aria-hidden className="h-4 w-4" />}
+              disabled={leads.stats === null || leads.stats.unread === 0}
+              onClick={() => setConfirmMarkAll(true)}
             >
-              <button
-                type="button"
-                aria-pressed={tierFilter === null}
-                onClick={() => setTierFilter(null)}
-                className={cn(
-                  'rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
-                  tierFilter === null
-                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                    : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                )}
+              Mark all read
+            </Button>
+            <Tooltip
+              content={
+                intelligenceLocked
+                  ? 'The CSV export is included on Starter and above.'
+                  : 'Every lead for this chatbot, ignoring the filters on this page. Your private tags are not in it.'
+              }
+            >
+              <span className="inline-flex">
+                <Button
+                  variant="secondary"
+                  loading={exporting}
+                  disabled={intelligenceLocked || leads.total === 0}
+                  iconLeft={<Download aria-hidden className="h-4 w-4" />}
+                  onClick={() => void handleExportAll()}
+                >
+                  Export all leads
+                </Button>
+              </span>
+            </Tooltip>
+          </>
+        }
+      />
+
+      <Stack>
+        {exportError ? (
+          <Alert tone="danger" live title="The export failed">
+            {exportError}
+          </Alert>
+        ) : null}
+
+        {intelligenceLocked ? (
+          <Alert
+            tone="plan"
+            title="Lead scoring is included on Starter and above"
+            action={
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                See plans
+              </Link>
+            }
+          >
+            You can read every conversation and every contact detail here. Quality, score, the
+            qualification breakdown, location and the CSV export arrive with a paid plan.
+          </Alert>
+        ) : null}
+
+        {/* The summary the page owes the reader before any row is scanned. */}
+        <Card>
+          <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-5">
+            <StatTile
+              label="Leads"
+              value={leads.stats ? formatNumber(leads.stats.total) : undefined}
+              period="All time"
+              loading={leads.loading}
+            />
+            <StatTile
+              label="Qualified"
+              value={
+                leads.stats?.qualified === undefined
+                  ? undefined
+                  : formatNumber(leads.stats.qualified)
+              }
+              period="Past just exploring"
+              loading={leads.loading}
+            />
+            <StatTile
+              label="Ready to buy"
+              value={leads.stats?.sql === undefined ? undefined : formatNumber(leads.stats.sql)}
+              period="Highest tier"
+              tone={leads.stats?.sql ? 'success' : 'neutral'}
+              loading={leads.loading}
+            />
+            <StatTile
+              label="Average score"
+              value={
+                leads.stats?.avgScore === undefined
+                  ? undefined
+                  : formatNumber(Math.round(leads.stats.avgScore))
+              }
+              period="Out of 100"
+              loading={leads.loading}
+            />
+            <StatTile
+              label="Not opened"
+              value={leads.stats ? formatNumber(leads.stats.unread) : undefined}
+              period="Nobody has read these"
+              tone={leads.stats?.unread ? 'warning' : 'neutral'}
+              loading={leads.loading}
+            />
+          </CardBody>
+        </Card>
+
+        <div>
+          {/* Each control is boxed to a width. Both `SearchField` and `Select`
+              wrap themselves in a `w-full` element, so dropped straight into a
+              wrapping flex row every one of them would claim its own line. */}
+          <Toolbar>
+            <div className="w-full sm:w-64">
+              <SearchField
+                label="Search the leads on this page"
+                placeholder="Name, email, company…"
+                value={state.query}
+                onValueChange={(query) => update({ query }, { replace: true })}
+              />
+            </div>
+            {/* Disabled rather than clickable-but-refused. The tier chips this
+                replaces were `aria-disabled` and still fired their upgrade modal,
+                so arrowing through the filter row was a keyboard trap. */}
+            <div className="w-40">
+              <Select
+                aria-label="Filter by quality"
+                value={state.tier ?? ''}
+                options={TIER_OPTIONS}
+                disabled={intelligenceLocked}
+                onChange={(event) =>
+                  update({ tier: (event.target.value || null) as TierKey | null })
+                }
+              />
+            </div>
+            <div className="w-36">
+              <Select
+                aria-label="Filter by minimum score"
+                value={state.minScore === null ? '' : String(state.minScore)}
+                options={SCORE_OPTIONS}
+                disabled={intelligenceLocked}
+                onChange={(event) =>
+                  update({ minScore: event.target.value ? Number(event.target.value) : null })
+                }
+              />
+            </div>
+            <div className="w-40">
+              <Select
+                aria-label="Filter by lead type"
+                value={state.contact}
+                options={CONTACT_OPTIONS}
+                onChange={(event) => update({ contact: event.target.value as ContactFilter })}
+              />
+            </div>
+            {filtered ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  update({ query: '', contact: 'all', tier: null, minScore: null, page: 1 })
+                }
               >
-                All
-              </button>
-              {TIER_ORDER.map((key) => {
-                // Without BANT (Free / Starter) the whole tier axis is moot:
-                // no lead is ever scored, so every chip either shows the
-                // full list or an empty list. Lock all four and route to the
-                // qualification upgrade modal so the row honestly reads as
-                // "not on this plan" instead of a broken filter.
-                const locked = !bantUnlocked;
-                const active = tierFilter === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={active}
-                    aria-disabled={locked || undefined}
-                    onClick={() =>
-                      locked
-                        ? openUpgradeModal('view_qualification')
-                        : setTierFilter(active ? null : key)
-                    }
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
-                      active && !locked
-                        ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                        : locked
-                          ? 'text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text-muted)]'
-                          : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
-                  >
-                    {locked && (
-                      <Lock size={11} strokeWidth={1.75} aria-hidden="true" />
-                    )}
-                    {TIER_META[key].label}
-                  </button>
-                );
-              })}
-            </div>
+                Clear filters
+              </Button>
+            ) : null}
+          </Toolbar>
 
-            <div className="flex flex-1 items-center gap-2 sm:justify-end">
-              <label htmlFor="lead-search" className="sr-only">
-                Search leads
-              </label>
-              <input
-                id="lead-search"
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search name, email, company…"
-                className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] sm:max-w-xs"
-              />
-              <label htmlFor="lead-contact-filter" className="sr-only">
-                Filter by lead type
-              </label>
-              <Select
-                id="lead-contact-filter"
-                value={contactFilter}
-                onChange={(next) => setContactFilter(next as ContactFilter)}
-                className="h-9 w-auto shrink-0 text-[13px]"
-                options={CONTACT_FILTER_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
-              />
-              <label htmlFor="lead-sort" className="sr-only">
-                Sort leads by
-              </label>
-              <Select
-                id="lead-sort"
-                value={sortBy}
-                onChange={(next) => setSortBy(next as SortKey)}
-                className="h-9 w-auto shrink-0 text-[13px]"
-                options={SORT_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
-              />
-            </div>
-          </div>
-
-          {/* Result count - makes any active filter visible so a narrowed
-              table never reads as data loss against the headline totals. */}
-          <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
-            {filtered.length === leads.length
-              ? `${leads.length.toLocaleString()} ${leads.length === 1 ? 'lead' : 'leads'}`
-              : `Showing ${filtered.length.toLocaleString()} of ${leads.length.toLocaleString()} leads`}
+          <p className="mt-2 text-xs text-text-secondary" aria-live="polite">
+            {leads.loading ? (
+              'Loading your leads…'
+            ) : (
+              <>
+                <span className="figure">{leads.total === 0 ? 0 : shownFrom}</span>–
+                <span className="figure">{shownTo}</span> of{' '}
+                <span className="figure">{formatNumber(leads.total)}</span>
+                {filtered ? ' matching leads' : ' leads'}
+                {refined && rows.length !== leads.leads.length ? (
+                  <>
+                    {' · '}
+                    <span className="figure">{rows.length}</span> of them match what you typed
+                  </>
+                ) : null}
+                {leads.fetching ? ' · updating…' : null}
+              </>
+            )}
           </p>
 
-          {/* Bulk-action bar - appears only with a live selection. Exports the
-              ticked rows to a CSV built client-side (tags included). */}
-          {selectedIds.size > 0 && (
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-2.5">
-              <span className="text-[13px] font-medium text-[var(--ds-accent-text)]">
-                {selectedIds.size} selected
-              </span>
-              <div className="ml-auto flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={handleExportSelected}>
-                  <Download size={15} aria-hidden="true" />
-                  Export selected
+          {/* The division of labour, stated rather than implied. The page this
+              replaces filtered a truncated slice and reported its length as the
+              workspace total. */}
+          {leads.total > LEADS_PAGE_SIZE || refined ? (
+            <p className="mt-1 text-xs text-text-tertiary">
+              Quality and score filter every lead you have. Search, lead type and column sorting
+              apply to the {LEADS_PAGE_SIZE} rows on this page.
+            </p>
+          ) : null}
+
+          <div className="mt-3">
+            <DataTable
+              caption="Leads captured by your chatbots"
+              columns={columns}
+              rows={rows}
+              rowKey={(lead) => lead.session_id}
+              rowLabel={leadDisplayName}
+              loading={leads.loading}
+              error={leads.error ? leads.error.message : null}
+              onRetry={leads.retry}
+              sort={state.sort}
+              onSortChange={handleSort}
+              selectedKeys={selected}
+              onSelectionChange={setSelected}
+              bulkActions={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
+                  onClick={handleExportSelected}
+                >
+                  Export these rows, with your private tags
                 </Button>
-                <Button variant="ghost" size="sm" onClick={clearSelection}>
-                  <X size={15} aria-hidden="true" />
-                  Clear
+              }
+              onRowClick={(lead) => update({ openLead: lead.session_id, tab: 'profile' })}
+              empty={
+                filtered ? (
+                  <EmptyState
+                    title="No leads match these filters"
+                    description="Nothing on this page matches. Try widening the quality or score filter, or clearing what you typed."
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          update({ query: '', contact: 'all', tier: null, minScore: null, page: 1 })
+                        }
+                      >
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={Users}
+                    title="No leads yet"
+                    description="Every visitor who starts a conversation with your chatbot turns up here, with what they asked and how ready they sounded to buy."
+                  />
+                )
+              }
+            />
+          </div>
+
+          {leads.pageCount > 1 ? (
+            <nav
+              aria-label="Lead pages"
+              className="mt-3 flex items-center justify-between gap-3"
+            >
+              <p className="text-xs text-text-secondary">
+                Page <span className="figure">{state.page}</span> of{' '}
+                <span className="figure">{leads.pageCount}</span>
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={state.page <= 1 || leads.fetching}
+                  onClick={() => update({ page: state.page - 1 })}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={state.page >= leads.pageCount || leads.fetching}
+                  onClick={() => update({ page: state.page + 1 })}
+                >
+                  Next
                 </Button>
               </div>
-            </div>
-          )}
+            </nav>
+          ) : null}
+        </div>
+      </Stack>
 
-          {/* Table */}
-          <DataTable
-            columns={columns}
-            rows={filtered}
-            rowKey={(lead) => lead.session_id}
-            caption="Leads captured by your AI chatbots"
-            pageSize={20}
-            onRowClick={openLead}
-            empty={
-              leads.length === 0 ? (
-                <div className="space-y-1 py-6">
-                  <p className="text-[14px] font-medium text-[var(--ds-text)]">No leads yet</p>
-                  <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    As soon as visitors start chatting with your AI, they'll show up here.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2 py-6">
-                  <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    No leads match these filters.
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setTierFilter(null);
-                      setContactFilter('all');
-                      setQuery('');
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-                </div>
-              )
-            }
-          />
-        </>
-      )}
+      <LeadDrawer
+        sessionId={state.openLead}
+        tab={state.tab}
+        onTabChange={(tab) => update({ tab }, { replace: true })}
+        onClose={() => update({ openLead: null, tab: 'profile' })}
+        intelligenceLocked={intelligenceLocked}
+        visitorIntelligence={visitorIntelligence}
+        annotations={annotations}
+      />
 
-      {selectedSessionId !== null && (
-        <LeadDetailDrawer
-          data={detailData}
-          view={drawerView}
-          locked={isFree}
-          visitorIntelligenceUnlocked={visitorIntelligenceUnlocked}
-          onClose={() => setSelectedSessionId(null)}
-          annotations={annotations.controllerFor(selectedSessionId)}
-        />
-      )}
-    </PageContainer>
+      <ConfirmDialog
+        open={confirmMarkAll}
+        onOpenChange={setConfirmMarkAll}
+        title="Mark every lead as read?"
+        description={
+          <>
+            This clears the unread mark on{' '}
+            <span className="figure">{formatNumber(leads.stats?.unread ?? 0)}</span> leads across
+            every page, not just the ones on screen. There is no way to put the marks back.
+          </>
+        }
+        confirmLabel="Mark all read"
+        onConfirm={async () => {
+          await leads.markAllRead();
+          setConfirmMarkAll(false);
+        }}
+      />
+    </Page>
+  );
+}
+
+/**
+ * What sits behind the plan lock.
+ *
+ * `LockedState` renders this `inert`, so it is a picture of the feature rather
+ * than the feature. Asking someone to buy a surface they have never seen is how
+ * the previous locked pages worked: a bare card, no page title, no description.
+ */
+function LockedPreview() {
+  return (
+    <div className="px-5 py-4">
+      <div className="grid grid-cols-3 gap-6">
+        <StatTile label="Leads" value="128" period="All time" />
+        <StatTile label="Qualified" value="41" period="Past just exploring" />
+        <StatTile label="Ready to buy" value="9" period="Highest tier" tone="success" />
+      </div>
+      <ul className="mt-5 space-y-2">
+        {[
+          { name: 'Priya Raman', company: 'infosys.com', tier: 'sql' as TierKey, score: 84 },
+          { name: 'Tom Whitfield', company: 'northwind.co.uk', tier: 'sal' as TierKey, score: 61 },
+          { name: 'Anonymous visitor', company: null, tier: 'mql' as TierKey, score: 38 },
+        ].map((row) => (
+          <li
+            key={row.name}
+            className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
+          >
+            <Avatar name={row.name} size="sm" />
+            <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{row.name}</span>
+            <span className="truncate text-xs text-text-secondary">{row.company ?? ABSENT}</span>
+            <Badge tone={TIER_META[row.tier].tone}>{TIER_META[row.tier].label}</Badge>
+            <span className="figure text-xs text-text-secondary">{row.score}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

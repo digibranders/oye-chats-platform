@@ -1,47 +1,56 @@
-/**
- * AffiliateInvite - the public magic-link landing at `/affiliate-invite?token=`.
- *
- * Rebuilt from the legacy `pages/AffiliateInvite.jsx` in the new design
- * language. It looks the invite up (to show who it's for and when it expires),
- * then routes on auth state:
- *   • not signed in → sign-in / create-account CTAs that carry the token +
- *     invited email back here (both auth pages are invite-aware);
- *   • signed in     → auto-accept as the current client; on an email mismatch
- *     (403) it offers to sign out and use the invited address; an already-
- *     accepted invite (409) is treated as success.
- *
- * A standalone public page (outside the app shell), so it owns a centered
- * card layout built from design-system primitives.
- *
- * Backend reused verbatim (typed in services/api.d.ts): lookupAffiliateInvite,
- * acceptAffiliateInviteExisting.
- */
-import { type ReactElement, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Gift, Loader2 } from 'lucide-react';
-import { Button, buttonVariants, Card } from '../../design-system';
-import { acceptAffiliateInviteExisting, lookupAffiliateInvite } from '../../services/api';
-import { clearAuthStorage, getAuthItem } from '../../utils/authStorage';
+import { useMutation } from '@tanstack/react-query';
+import { useForm, useWatch } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Eye, EyeOff } from 'lucide-react';
+import { Alert, Button, Field, Input, Spinner, buttonClass } from '../../ui';
+import {
+  acceptAffiliateInvite,
+  acceptAffiliateInviteExisting,
+  lookupAffiliateInvite,
+} from '../../services/api';
+import { clearAuthStorage, getAuthItem, setAuthBundle } from '../../utils/authStorage';
 import { endImpersonationSessionFromSignOut } from '../../utils/impersonation';
+import { AuthShell } from '../../pages/auth/AuthShell';
+import { PasswordRules } from '../../pages/auth/PasswordRules';
+import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
 
-type LookupPhase =
-  | { readonly status: 'loading' }
-  | { readonly status: 'invalid'; readonly message: string }
-  | { readonly status: 'ready'; readonly email: string; readonly expiresAt: string | null };
+/**
+ * `/affiliate-invite?token=…` — the partner magic link.
+ *
+ * Three arrivals, and the page has to tell them apart before it can be useful:
+ *
+ * 1. **Signed in, right account** — wire the affiliate row onto the existing
+ *    client and say so.
+ * 2. **Signed in, wrong account** — a 403 means the token was issued to a
+ *    different address, so offer the way out rather than the error.
+ * 3. **Not signed in at all** — and this is the case the console this replaces
+ *    could not serve. It offered "Sign in" and "Create your account", the
+ *    second of which sent the invitee to the ordinary signup, created a plain
+ *    customer, and bounced them back here to accept a second time — except the
+ *    token is one-shot, so a stumble anywhere in that round trip burned the
+ *    invitation. `POST /affiliate-invites/accept` exists precisely to avoid
+ *    that: it creates the Client and the Affiliate atomically and returns a
+ *    session token. The client function had been written and never called
+ *    (ledger: `acceptAffiliateInvite`). It is the form below.
+ */
 
-type AcceptPhase =
-  | { readonly status: 'idle' }
-  | { readonly status: 'accepting' }
-  | { readonly status: 'accepted' }
-  | { readonly status: 'mismatch'; readonly message: string }
-  | { readonly status: 'error'; readonly message: string };
+const schema = z.object({
+  name: z.string().trim().min(2, 'Enter your name — at least two characters.'),
+  password: z
+    .string()
+    .refine(passwordMeetsRules, 'Your password needs 8 characters, a letter and a number.'),
+  companyName: z.string().trim().optional(),
+  website: z.string().trim().optional(),
+});
 
-function toMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
+type SignupValues = z.infer<typeof schema>;
 
-function errStatus(error: unknown): number | undefined {
-  return (error as { status?: number } | null)?.status;
+function statusOf(error: unknown): number | undefined {
+  const withStatus = error as { response?: { status?: number }; status?: number } | null;
+  return withStatus?.response?.status ?? withStatus?.status;
 }
 
 function formatExpiry(iso: string | null): string | null {
@@ -51,50 +60,45 @@ function formatExpiry(iso: string | null): string | null {
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-/** Shell that centers a single card on the canvas - mirrors the auth pages. */
-function InviteShell({ children }: { children: ReactElement }): ReactElement {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--ds-bg-canvas)] px-4 py-12">
-      <Card className="w-full max-w-md p-8">{children}</Card>
-    </div>
-  );
-}
-
-export function AffiliateInvite(): ReactElement {
+export function AffiliateInvite() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token') ?? '';
-  const isLoggedIn = Boolean(getAuthItem('admin_token'));
+  const signedIn = Boolean(getAuthItem('admin_token'));
 
-  // Initial phases are derived (not set in an effect): no token → invalid up
-  // front; a signed-in visitor lands straight in the "accepting" spinner while
-  // the accept effect runs. The effects below only set state after an await.
-  const [lookup, setLookup] = useState<LookupPhase>(() =>
-    token ? { status: 'loading' } : { status: 'invalid', message: 'This invite link is missing its token.' },
-  );
-  const [accept, setAccept] = useState<AcceptPhase>(() =>
-    isLoggedIn ? { status: 'accepting' } : { status: 'idle' },
+  const [lookup, setLookup] = useState<
+    | { status: 'loading' }
+    | { status: 'invalid'; message: string }
+    | { status: 'ready'; email: string; expiresAt: string | null }
+  >(() =>
+    token
+      ? { status: 'loading' }
+      : { status: 'invalid', message: 'This link is missing its invitation token.' },
   );
 
-  // 1) Resolve the invite.
+  const [accepted, setAccepted] = useState(false);
+  const [mismatch, setMismatch] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // 1) Resolve the token. Never fires without one, so the "invalid" state above
+  //    is a real derived state rather than a flash of loading.
   useEffect(() => {
     if (!token) return undefined;
     let cancelled = false;
     lookupAffiliateInvite(token)
       .then((data) => {
-        if (!cancelled) {
-          setLookup({ status: 'ready', email: data.email, expiresAt: data.expires_at ?? null });
-        }
-      })
-      .catch((err: unknown) => {
         if (cancelled) return;
-        const status = errStatus(err);
+        setLookup({ status: 'ready', email: data.email, expiresAt: data.expires_at ?? null });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
         setLookup({
           status: 'invalid',
           message:
-            status === 410
-              ? 'This invite has expired or was revoked. Ask your OyeChats contact for a fresh link.'
-              : toMessage(err, 'This invite link is invalid.'),
+            statusOf(error) === 410
+              ? 'This invitation has expired or has already been used. Ask your OyeChats contact for a fresh link.'
+              : errorMessage(error, 'This invitation link is not valid.'),
         });
       });
     return () => {
@@ -102,183 +106,257 @@ export function AffiliateInvite(): ReactElement {
     };
   }, [token]);
 
-  // 2) Once resolved AND signed in, accept as the current client.
+  // 2) Signed in already — accept against the current account.
   useEffect(() => {
-    if (lookup.status !== 'ready' || !isLoggedIn || !token) return undefined;
+    if (lookup.status !== 'ready' || !signedIn || !token) return undefined;
     let cancelled = false;
     acceptAffiliateInviteExisting(token)
       .then(() => {
-        if (!cancelled) setAccept({ status: 'accepted' });
+        if (!cancelled) setAccepted(true);
       })
-      .catch((err: unknown) => {
+      .catch((error: unknown) => {
         if (cancelled) return;
-        const status = errStatus(err);
-        if (status === 409) {
-          // Already an affiliate - the desired end state.
-          setAccept({ status: 'accepted' });
-        } else if (status === 403) {
-          setAccept({
-            status: 'mismatch',
-            message: 'This invite was sent to a different email than the account you’re signed in with.',
-          });
-        } else {
-          setAccept({ status: 'error', message: toMessage(err, 'Could not accept the invite.') });
-        }
+        const status = statusOf(error);
+        // 409 is "already an affiliate", which is the state we were trying to
+        // reach. Treating it as a failure told partners their acceptance had
+        // not worked when it had.
+        if (status === 409) setAccepted(true);
+        else if (status === 403) setMismatch(true);
+        else setAcceptError(errorMessage(error, 'We could not add you to the partner programme.'));
       });
     return () => {
       cancelled = true;
     };
-  }, [lookup.status, isLoggedIn, token]);
+  }, [lookup.status, signedIn, token]);
 
-  // ── Invalid / expired token ──────────────────────────────────────────────────
+  const form = useForm<SignupValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { name: '', password: '', companyName: '', website: '' },
+    mode: 'onSubmit',
+  });
+  const password = useWatch({ control: form.control, name: 'password' }) ?? '';
+
+  const signup = useMutation({
+    mutationFn: (values: SignupValues) =>
+      acceptAffiliateInvite({
+        token,
+        name: values.name.trim(),
+        password: values.password,
+        companyName: values.companyName?.trim() || null,
+        website: values.website?.trim() || null,
+      }),
+    onSuccess: (data) => {
+      // The response is shaped like `/auth/register`, so the invitee is signed
+      // in here rather than being asked to log in with a password they typed
+      // ten seconds ago.
+      setAuthBundle({
+        admin_token: data.access_token,
+        admin_name: data.name,
+        admin_client_id: String(data.client_id),
+        auth_type: 'client',
+        is_superadmin: 'false',
+      });
+      navigate('/settings/affiliate', { replace: true });
+    },
+  });
+
+  const returnTo = `/affiliate-invite?token=${encodeURIComponent(token)}`;
+
+  // ── Token could not be resolved ─────────────────────────────────────────────
   if (lookup.status === 'invalid') {
     return (
-      <InviteShell>
-        <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]">
-            <AlertTriangle size={22} aria-hidden="true" />
-          </div>
-          <h1 className="text-lg font-semibold text-[var(--ds-text)]">Invite unavailable</h1>
-          <p className="mt-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">{lookup.message}</p>
-          <Link to="/login" className={cnMt('outline')}>
-            Go to sign in
-          </Link>
-        </div>
-      </InviteShell>
+      <AuthShell
+        title="This invitation is not available"
+        description={lookup.message}
+        footer={
+          <>
+            Already have an account?{' '}
+            <Link to="/login" className="font-medium text-accent-600 hover:underline">
+              Sign in
+            </Link>
+          </>
+        }
+      >
+        <Link to="/login" className={buttonClass('secondary', 'md')}>
+          Go to sign in
+        </Link>
+      </AuthShell>
     );
   }
 
-  // ── Looking up ────────────────────────────────────────────────────────────────
+  // ── Resolving ───────────────────────────────────────────────────────────────
   if (lookup.status === 'loading') {
     return (
-      <InviteShell>
-        <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-[var(--ds-text-muted)]">
-          <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-          Checking your invite…
-        </div>
-      </InviteShell>
+      <AuthShell title="Checking your invitation">
+        <p className="flex items-center gap-2 text-prose text-text-secondary">
+          <Spinner />
+          One moment.
+        </p>
+      </AuthShell>
     );
   }
 
   const expiry = formatExpiry(lookup.expiresAt);
-  const returnTo = `/affiliate-invite?token=${encodeURIComponent(token)}`;
-  const emailParam = `&email=${encodeURIComponent(lookup.email)}`;
 
-  // ── Signed in → accept flow ───────────────────────────────────────────────────
-  if (isLoggedIn) {
-    if (accept.status === 'accepted') {
+  // ── Signed in ───────────────────────────────────────────────────────────────
+  if (signedIn) {
+    if (accepted) {
       return (
-        <InviteShell>
-          <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-success-soft)] text-[var(--ds-success)]">
-              <CheckCircle2 size={22} aria-hidden="true" />
-            </div>
-            <h1 className="text-lg font-semibold text-[var(--ds-text)]">You’re in the affiliate program</h1>
-            <p className="mt-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              Create referral codes, share their links, and earn commission on every signup.
-            </p>
-            <Button type="button" variant="primary" className="mt-6 w-full" onClick={() => navigate('/workspace/affiliate')}>
-              Go to your affiliate dashboard
-            </Button>
-          </div>
-        </InviteShell>
+        <AuthShell
+          title="You are in the partner programme"
+          description="Create referral codes, share their links, and earn a share of what everyone who signs up through them pays."
+        >
+          <Button block onClick={() => navigate('/settings/affiliate')}>
+            Open your partner dashboard
+          </Button>
+        </AuthShell>
       );
     }
 
-    if (accept.status === 'mismatch') {
+    if (mismatch) {
       return (
-        <InviteShell>
-          <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-warning-soft)] text-[var(--ds-warning)]">
-              <AlertTriangle size={22} aria-hidden="true" />
-            </div>
-            <h1 className="text-lg font-semibold text-[var(--ds-text)]">Wrong account</h1>
-            <p className="mt-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              {accept.message} It was sent to <strong className="text-[var(--ds-text)]">{lookup.email}</strong>.
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-6 w-full"
-              onClick={() => {
-                // An impersonated tab must end only the support session.
-                if (endImpersonationSessionFromSignOut()) return;
-                clearAuthStorage();
-                // Reload so the guards re-read the now-empty auth storage and this
-                // page falls through to the signed-out CTAs.
-                window.location.assign(returnTo);
-              }}
-            >
-              Sign out and use {lookup.email}
-            </Button>
-          </div>
-        </InviteShell>
+        <AuthShell
+          title="This invitation is for a different account"
+          description={
+            <>
+              It was sent to <strong className="text-text-primary">{lookup.email}</strong>, and you
+              are signed in as someone else. Sign out and come back to this link with the invited
+              address.
+            </>
+          }
+        >
+          <Button
+            block
+            variant="secondary"
+            onClick={() => {
+              // In an impersonated support session this must end the support
+              // session only — the shared storage holds the super-admin's own
+              // credentials for every other tab.
+              if (endImpersonationSessionFromSignOut()) return;
+              clearAuthStorage();
+              // A full navigation so the guards re-read the now-empty storage
+              // and this page falls through to the signed-out branch.
+              window.location.assign(returnTo);
+            }}
+          >
+            Sign out and use {lookup.email}
+          </Button>
+        </AuthShell>
       );
     }
 
-    if (accept.status === 'error') {
+    if (acceptError) {
       return (
-        <InviteShell>
-          <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]">
-              <AlertTriangle size={22} aria-hidden="true" />
-            </div>
-            <h1 className="text-lg font-semibold text-[var(--ds-text)]">Couldn’t accept the invite</h1>
-            <p className="mt-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">{accept.message}</p>
-            <Button type="button" variant="outline" className="mt-6 w-full" onClick={() => window.location.assign(returnTo)}>
-              Try again
-            </Button>
-          </div>
-        </InviteShell>
+        <AuthShell title="We could not accept the invitation">
+          <Alert tone="danger" live className="mb-4">
+            {acceptError}
+          </Alert>
+          <Button block variant="secondary" onClick={() => window.location.assign(returnTo)}>
+            Try again
+          </Button>
+        </AuthShell>
       );
     }
 
-    // accepting
     return (
-      <InviteShell>
-        <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-[var(--ds-text-muted)]">
-          <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-          Adding you to the affiliate program…
-        </div>
-      </InviteShell>
+      <AuthShell title="Adding you to the partner programme">
+        <p className="flex items-center gap-2 text-prose text-text-secondary">
+          <Spinner />
+          One moment.
+        </p>
+      </AuthShell>
     );
   }
 
-  // ── Signed out → sign-in / create-account CTAs ────────────────────────────────
+  // ── Not signed in — create the account and accept in one step ───────────────
   return (
-    <InviteShell>
-      <div className="text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-          <Gift size={22} aria-hidden="true" />
-        </div>
-        <h1 className="text-lg font-semibold text-[var(--ds-text)]">You’re invited to partner with OyeChats</h1>
-        <p className="mt-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-          This invite is for <strong className="text-[var(--ds-text)]">{lookup.email}</strong>. Sign in or create your
-          account to join the affiliate program and start earning commission on referrals.
-        </p>
-        {expiry && (
-          <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">Invite valid until {expiry}.</p>
-        )}
-        <div className="mt-6 space-y-2">
+    <AuthShell
+      title="You are invited to partner with OyeChats"
+      description={
+        <>
+          This invitation is for <strong className="text-text-primary">{lookup.email}</strong>.
+          Choose a password and your partner account is ready.
+          {expiry ? ` It is valid until ${expiry}.` : ''}
+        </>
+      }
+      footer={
+        <>
+          Already have an OyeChats account?{' '}
           <Link
-            to={`/login?next=${encodeURIComponent(returnTo)}${emailParam}`}
-            className={`w-full ${buttonVariants({ variant: 'primary' })}`}
+            to={`/login?next=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(lookup.email)}`}
+            className="font-medium text-accent-600 hover:underline"
           >
             Sign in to accept
           </Link>
-          <Link
-            to={`/register?next=${encodeURIComponent(returnTo)}${emailParam}`}
-            className={`w-full ${buttonVariants({ variant: 'outline' })}`}
-          >
-            Create your account
-          </Link>
-        </div>
-      </div>
-    </InviteShell>
-  );
-}
+        </>
+      }
+    >
+      <form
+        noValidate
+        onSubmit={form.handleSubmit((values) => signup.mutate(values))}
+        className="space-y-4"
+      >
+        {signup.isError ? (
+          <Alert tone="danger" live title="We could not create your account">
+            {errorMessage(
+              signup.error,
+              'Something went wrong. If this invitation has already been used, ask your OyeChats contact for a fresh link.',
+            )}
+          </Alert>
+        ) : null}
 
-/** Small helper: a top-margined button-styled link for single-CTA panels. */
-function cnMt(variant: 'primary' | 'outline'): string {
-  return `mt-6 ${buttonVariants({ variant })}`;
+        <Field label="Email" hint="Set by the invitation. It is the address we invited.">
+          <Input value={lookup.email} readOnly disabled autoComplete="username" />
+        </Field>
+
+        <Field label="Your name" required error={form.formState.errors.name?.message}>
+          <Input
+            {...form.register('name')}
+            placeholder="Priya Sharma"
+            autoComplete="name"
+            autoFocus
+          />
+        </Field>
+
+        <Field
+          label="Password"
+          required
+          error={form.formState.errors.password?.message}
+          hint={<PasswordRules value={password} />}
+        >
+          <Input
+            {...form.register('password')}
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="new-password"
+            trailing={
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="rounded-sm p-1 text-text-tertiary transition-colors hover:text-text-primary"
+              >
+                {showPassword ? (
+                  <EyeOff aria-hidden className="h-4 w-4" />
+                ) : (
+                  <Eye aria-hidden className="h-4 w-4" />
+                )}
+              </button>
+            }
+          />
+        </Field>
+
+        <Field label="Company" hint="Optional. Appears on the invoices we issue you.">
+          <Input {...form.register('companyName')} placeholder="Acme Corporation" />
+        </Field>
+
+        <Field label="Website" hint="Optional.">
+          <Input {...form.register('website')} placeholder="acme.com" inputMode="url" />
+        </Field>
+
+        <Button type="submit" block loading={signup.isPending}>
+          Accept and create my account
+        </Button>
+      </form>
+    </AuthShell>
+  );
 }

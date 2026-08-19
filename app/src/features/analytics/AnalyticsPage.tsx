@@ -1,397 +1,166 @@
-import { type ReactElement, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  Activity,
-  BarChart3,
-  Bot as BotIcon,
-  Lock,
-  MessageSquare,
-  RefreshCw,
-  Sparkles,
-  TriangleAlert,
-  Zap,
-} from 'lucide-react';
+import { useMemo } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { BarChart3, RefreshCw } from 'lucide-react';
 import {
   Button,
   Card,
-  CardContent,
-  CardHeader,
   EmptyState,
-  InsightCard,
-  type InsightTone,
-  LockedFeatureCard,
-  MetricCard,
-  type MetricTrend,
-  PageContainer,
-  SectionHeader,
+  Page,
+  PageHeader,
   SegmentedControl,
-  Skeleton,
+  Select,
+  TabPanel,
   Tabs,
-} from '../../design-system';
+  buttonClass,
+} from '../../ui';
 import { useBotContext } from '../../context/BotContext';
-import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
-import {
-  MOMENTUM_WINDOW_DAYS,
-  sliceTrend,
-  summarizeTrend,
-  TREND_RANGES,
-  type TrendRange,
-  weekOverWeekChange,
-} from './analytics-types';
-import { useWorkspaceAnalytics, type WorkspaceAnalytics } from './useWorkspaceAnalytics';
-import { MessageTrendChart } from './MessageTrendChart';
-import { TopQuestionsList } from './TopQuestionsList';
-import { LeadJourneyFunnel } from './LeadJourneyFunnel';
-import { SatisfactionBreakdown } from './SatisfactionBreakdown';
-import { FeedbackPanel } from '../feedback/FeedbackPanel';
-
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback';
-
-const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
-  { key: 'conversations', label: 'Conversations' },
-  { key: 'leads', label: 'Leads' },
-  { key: 'satisfaction', label: 'Satisfaction' },
-  { key: 'feedback', label: 'Feedback' },
-];
-
-/** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
-function isAnalyticsTab(key: string): key is AnalyticsTab {
-  return TAB_ITEMS.some((item) => item.key === key);
-}
+import { ANALYTICS_TABS, parseTab, tabFromUrl, tabUrl } from './tabs';
+import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
+import { monthOptions, parseMonth } from './month';
+import { useAnalyticsRefresh } from './useAnalyticsData';
+import { OverviewTab } from './OverviewTab';
+import { ConversationsTab } from './ConversationsTab';
+import { JourneyTab } from './JourneyTab';
+import { VisitorsTab } from './VisitorsTab';
+import { FeedbackTab } from './FeedbackTab';
 
 /**
- * Map a signed week-over-week percentage change onto a MetricCard trend
- * direction. The delta is labelled with its reference window (`· 7d`) so the
- * headline figure reads as a well-defined period-over-period comparison rather
- * than an unqualified percentage.
+ * Analytics — one surface, one period.
+ *
+ * The page it replaces could not answer the question it existed for: how does
+ * this month compare with the last one. Every figure on it was all-time,
+ * because `?days=` has been supported by `/analytics/dashboard` and
+ * `/analytics/unanswered-questions` since they were written and was never once
+ * passed; the range control it did have changed a chart and nothing else, while
+ * the delta glued to the same tile stayed a fixed seven-day figure. Two more
+ * time controls lived inside individual cards, so three windows were on screen
+ * at once with nothing saying they disagreed.
+ *
+ * So the whole surface takes one range, from the URL, and every query on every
+ * tab is scoped by it. Journey is the exception the API forces — its endpoints
+ * take a calendar month and nothing else — so that tab swaps the range control
+ * for a month picker rather than pretending a ninety-day window is a month.
+ *
+ * Journey is also no longer a top-level destination. It was admitted to be a
+ * temporary extra, and it is analytics: it is a tab here, and
+ * `/analytics/journey` still resolves to it so every link already sent keeps
+ * working.
  */
-function trendFromChange(change: number | null): { delta?: string; trend?: MetricTrend } {
-  if (change === null) return {};
-  if (change === 0) return { delta: `No change · ${MOMENTUM_WINDOW_DAYS}d`, trend: 'flat' };
-  const sign = change > 0 ? '+' : '';
-  return {
-    delta: `${sign}${change}% · ${MOMENTUM_WINDOW_DAYS}d`,
-    trend: change > 0 ? 'up' : 'down',
-  };
-}
+export function AnalyticsPage() {
+  const { bots, selectedBot, loading: botsLoading } = useBotContext();
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const refresh = useAnalyticsRefresh();
 
-/** A single derived headline insight, or null when there isn't enough signal. */
-function deriveInsight(
-  data: WorkspaceAnalytics,
-): { tone: InsightTone; title: string; body: string } | null {
-  const { totals, leads } = data;
+  const tab = tabFromUrl(location.pathname, params);
+  const rangeKey = parseRange(params.get('range'));
+  // Resolved once per selection rather than per render: `resolveRange` reads
+  // the clock, and a window that moves between two renders makes two panels on
+  // the same page disagree about where it starts.
+  const range = useMemo(() => resolveRange(rangeKey), [rangeKey]);
+  const month = parseMonth(params.get('month'));
+  const months = useMemo(() => monthOptions(), []);
 
-  if (totals.totalConversations === 0) return null;
+  const botId = selectedBot?.id ?? null;
+  const botName = selectedBot?.name ?? 'this chatbot';
 
-  if (leads.sql > 0) {
-    return {
-      tone: 'accent',
-      title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
-      body: 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
-    };
+  function setParam(key: string, value: string, fallback: string) {
+    const next = new URLSearchParams(params);
+    if (value === fallback) next.delete(key);
+    else next.set(key, value);
+    // Replaced rather than pushed: changing a filter is refining one view, and
+    // a reader who twiddles the range four times should not have to press Back
+    // four times to leave the page.
+    setParams(next, { replace: true });
   }
 
-  return null;
-}
-
-function LoadingState(): ReactElement {
-  return (
-    <div className="space-y-6" aria-busy="true">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-[104px]" />
-        ))}
-      </div>
-      <Skeleton className="h-10 w-72" />
-      <Skeleton className="h-[360px]" />
-    </div>
-  );
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): ReactElement {
-  return (
-    <EmptyState
-      icon={TriangleAlert}
-      title="We couldn’t load your analytics"
-      description={message}
-      action={
-        <Button variant="primary" onClick={onRetry}>
-          <RefreshCw size={16} aria-hidden="true" />
-          Try again
-        </Button>
-      }
-    />
-  );
-}
-
-/**
- * AnalyticsPage - the workspace performance surface (route `/analytics`).
- * Answers one question: "How is my workspace performing?" It aggregates every
- * agent (no bot filter) into headline metrics, a message-volume trend, and
- * three progressive-disclosure tabs (Conversations · Leads · Satisfaction).
- */
-export function AnalyticsPage(): ReactElement {
-  const { bots, selectedBot, loading: botsLoading } = useBotContext();
-  // When the shell BotSwitcher is set to a specific agent, scope the whole
-  // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
-  // back to workspace-aggregated across every agent.
-  const { status, data, error, refreshing, reload } = useWorkspaceAnalytics(selectedBot?.id ?? null);
-  const [tab, setTab] = useState<AnalyticsTab>('conversations');
-  const [range, setRange] = useState<TrendRange>('all');
-  const { hasFeature } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  // Leads is BANT-derived (Standard+). Free / Starter see a lock chip on the
-  // tab and the panel body swaps to the upgrade card.
-  // Satisfaction is CSAT gathered from live-chat post-chat ratings, so it
-  // travels with the `live_chat` feature (Starter and up). Only Free is
-  // locked here. Starter accumulates real ratings and should see them.
-  const leadsUnlocked = hasFeature('bant');
-  const satisfactionUnlocked = hasFeature('live_chat');
-
-  const tabItems = useMemo(
-    () =>
-      TAB_ITEMS.map((item) => {
-        const locked =
-          (item.key === 'leads' && !leadsUnlocked) ||
-          (item.key === 'satisfaction' && !satisfactionUnlocked);
-        if (!locked) return { key: item.key, label: item.label };
-        return {
-          key: item.key,
-          label: (
-            <span className="inline-flex items-center gap-1.5">
-              <Lock
-                size={11}
-                strokeWidth={1.75}
-                aria-hidden="true"
-                className="text-[var(--ds-text-subtle)]"
-              />
-              {item.label}
-            </span>
-          ),
-        };
-      }),
-    [leadsUnlocked, satisfactionUnlocked],
-  );
-
-  const trendWindow = useMemo(
-    () => (data ? sliceTrend(data.trend, range) : []),
-    [data, range],
-  );
-  const trendSummary = useMemo(() => summarizeTrend(trendWindow), [trendWindow]);
-
-  const showLoading = botsLoading || status === 'loading';
-
-  const actions =
-    status === 'ready' ? (
-      <Button variant="outline" size="sm" onClick={reload} disabled={refreshing}>
-        <RefreshCw
-          size={15}
-          aria-hidden="true"
-          className={refreshing ? 'animate-spin' : undefined}
+  const rangeControl =
+    tab === 'journey' ? (
+      <div className="w-48">
+        <Select
+          size="sm"
+          aria-label="Journey month"
+          options={months}
+          value={month}
+          onChange={(event) => setParam('month', event.target.value, months[0]?.value ?? month)}
         />
-        {refreshing ? 'Refreshing…' : 'Refresh'}
-      </Button>
-    ) : undefined;
+      </div>
+    ) : (
+      <SegmentedControl<RangeKey>
+        size="sm"
+        label="Reporting period"
+        items={RANGE_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+        value={rangeKey}
+        onChange={(value) => setParam('range', value, DEFAULT_RANGE)}
+      />
+    );
 
-  // No agents at all → nothing to measure yet. Send them to create one.
+  // No chatbots, so nothing has been measured yet. This is the one state that
+  // replaces the whole page rather than one panel.
   if (!botsLoading && bots.length === 0) {
     return (
-      <PageContainer
-        title="Analytics"
-      >
-        <EmptyState
-          icon={BarChart3}
-          title="No performance data yet"
-          description="Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here."
-          action={
-            <Link
-              to="/agents"
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <BotIcon size={16} aria-hidden="true" />
-              Create an AI chatbot
-            </Link>
-          }
+      <Page width="wide">
+        <PageHeader
+          title="Analytics"
+          description="How your chatbot is doing, over a period you choose."
         />
-      </PageContainer>
+        <Card>
+          <EmptyState
+            icon={BarChart3}
+            title="Nothing measured yet"
+            description="Create a chatbot and put it on your site. Conversations, leads and visitor journeys all start appearing here within minutes of the first visitor."
+            action={
+              <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
+                Create a chatbot
+              </Link>
+            }
+          />
+        </Card>
+      </Page>
     );
   }
 
-  const insight = data ? deriveInsight(data) : null;
-  // Momentum is a fixed 7d-vs-prior-7d figure over the full series, so it stays
-  // comparable no matter which range the user has selected below.
-  const messagesTrend = trendFromChange(data ? weekOverWeekChange(data.trend) : null);
-
   return (
-    <PageContainer
-      title="Analytics"
-      description="How your whole workspace is performing across every AI chatbot."
-      actions={actions}
-    >
-      {showLoading ? (
-        <LoadingState />
-      ) : status === 'error' || !data ? (
-        <ErrorState message={error ?? 'Something went wrong.'} onRetry={reload} />
-      ) : (
-        <>
-          {insight && (
-            <InsightCard tone={insight.tone} icon={Sparkles} title={insight.title} body={insight.body} />
-          )}
+    <Page width="wide">
+      <PageHeader
+        title="Analytics"
+        description={`How ${botName} is doing, and how that compares with before.`}
+        actions={
+          <>
+            {rangeControl}
+            {/* In the header, so it exists in every state. The old one was
+                rendered only once the page had already loaded, which is the
+                one state in which nobody needs it. */}
+            <Button size="sm" onClick={refresh} iconLeft={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}>
+              Refresh
+            </Button>
+          </>
+        }
+      />
 
-          <Tabs
-            tabs={tabItems}
-            value={tab}
-            onChange={(key) => {
-              if (!isAnalyticsTab(key)) return;
-              if (key === 'leads' && !leadsUnlocked) {
-                openUpgradeModal('view_qualification');
-                return;
-              }
-              if (key === 'satisfaction' && !satisfactionUnlocked) {
-                openUpgradeModal('view_qualification');
-                return;
-              }
-              setTab(key);
-            }}
-            ariaLabel="Analytics views"
-          />
-
-          {/* Conversations */}
-          {tab === 'conversations' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-conversations"
-              aria-labelledby="tab-conversations"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title="Message volume"
-                    description="Daily messages across every chatbot"
-                    actions={
-                      <SegmentedControl
-                        options={TREND_RANGES}
-                        value={range}
-                        onChange={setRange}
-                        ariaLabel="Message trend time range"
-                      />
-                    }
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="mb-4 grid grid-cols-3 gap-3">
-                    <MetricCard
-                      size="sm"
-                      label="Messages"
-                      value={trendSummary.total.toLocaleString()}
-                      icon={MessageSquare}
-                      delta={messagesTrend.delta}
-                      trend={messagesTrend.trend}
-                    />
-                    <MetricCard
-                      size="sm"
-                      label="Daily average"
-                      value={trendSummary.dailyAverage.toLocaleString()}
-                      icon={BarChart3}
-                    />
-                    <MetricCard
-                      size="sm"
-                      label="Busiest day"
-                      value={
-                        trendSummary.peak > 0
-                          ? `${trendSummary.peak.toLocaleString()} · ${trendSummary.peakLabel}`
-                          : trendSummary.peak.toLocaleString()
-                      }
-                      icon={Zap}
-                    />
-                  </div>
-                  {trendWindow.length === 0 || trendSummary.total === 0 ? (
-                    <EmptyState
-                      icon={Activity}
-                      title="No messages in this range"
-                      description="Try a wider time range, or come back once your chatbots have handled more conversations."
-                    />
-                  ) : (
-                    <MessageTrendChart points={trendWindow} />
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title="Top questions"
-                    description="What visitors ask your chatbots most"
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <TopQuestionsList questions={data.topQuestions} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {/* Leads */}
-          {tab === 'leads' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-leads"
-              aria-labelledby="tab-leads"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              {leadsUnlocked ? (
-                <LeadJourneyFunnel botId={selectedBot?.id ?? null} />
-              ) : (
-                <LockedFeatureCard intent="view_qualification" />
-              )}
-            </div>
-          )}
-
-          {/* Satisfaction */}
-          {tab === 'satisfaction' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-satisfaction"
-              aria-labelledby="tab-satisfaction"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              {satisfactionUnlocked ? (
-                <Card>
-                  <CardHeader>
-                    <SectionHeader
-                      title="Visitor satisfaction"
-                      description="Post-chat ratings from live conversations, across every chatbot"
-                    />
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <SatisfactionBreakdown ratings={data.ratings} />
-                  </CardContent>
-                </Card>
-              ) : (
-                <LockedFeatureCard intent="view_qualification" />
-              )}
-            </div>
-          )}
-
-          {/* Feedback */}
-          {tab === 'feedback' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-feedback"
-              aria-labelledby="tab-feedback"
-              tabIndex={0}
-              className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <FeedbackPanel agentId={selectedBot ? String(selectedBot.id) : undefined} />
-            </div>
-          )}
-        </>
-      )}
-    </PageContainer>
+      <Tabs
+        items={ANALYTICS_TABS}
+        value={tab}
+        onValueChange={(next) => navigate(tabUrl(parseTab(next), params))}
+        label="Analytics views"
+      >
+        <TabPanel value="overview">
+          <OverviewTab botId={botId} range={range} />
+        </TabPanel>
+        <TabPanel value="conversations">
+          <ConversationsTab botId={botId} range={range} />
+        </TabPanel>
+        <TabPanel value="journey">
+          <JourneyTab botId={botId} month={month} />
+        </TabPanel>
+        <TabPanel value="visitors">
+          <VisitorsTab botId={botId} range={range} />
+        </TabPanel>
+        <TabPanel value="feedback">
+          <FeedbackTab botId={botId} />
+        </TabPanel>
+      </Tabs>
+    </Page>
   );
 }

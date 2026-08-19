@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ABSENT } from '../../ui';
 import {
   annualSavingPercent,
   buildPlan,
@@ -402,7 +403,7 @@ describe('getRenewalDisplay', () => {
   it('falls back to "Renews -" for a plain non-promo subscription with no period end (e.g. Free plan)', () => {
     const result = getRenewalDisplay({ trialEnd: null, currentPeriodEnd: null, promoFreeUntil: null }, false);
     expect(result.caption).toBe('Renews');
-    expect(result.label).toBe('-');
+    expect(result.label).toBe(ABSENT);
   });
 
   it('shows "Plan ends" when cancellation is pending and there is no promo in play', () => {
@@ -417,6 +418,6 @@ describe('getRenewalDisplay', () => {
   it('handles a null subscription (not yet loaded)', () => {
     const result = getRenewalDisplay(null, false);
     expect(result.caption).toBe('Renews');
-    expect(result.label).toBe('-');
+    expect(result.label).toBe(ABSENT);
   });
 });

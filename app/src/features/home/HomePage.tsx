@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { ArrowRight, Bot as BotIcon, Inbox, Plus, Users } from 'lucide-react';
 import {
   Alert,
@@ -88,6 +88,16 @@ export function HomePage() {
   const setup = useSetupChecklist();
 
   const hasAgents = home.agents.length > 0;
+
+  // A workspace with no chatbot has nothing on this page but zeros. Send it to
+  // the first run instead — and decide that here, from server state, rather than
+  // guessing at the end of sign-up: a routing guess made on a registration
+  // response is wrong for anyone who created an account days ago and is only now
+  // getting round to it. The guard is off unless the list actually loaded, so a
+  // failed fetch shows the error rather than pretending the account is new.
+  if (!home.loading && !home.error && !hasAgents) {
+    return <Navigate to="/welcome" replace />;
+  }
 
   return (
     <Page width="wide">
@@ -253,7 +263,7 @@ export function HomePage() {
                   title="No chatbots yet"
                   description="Name one, point it at your website, and it will start reading. You can talk to it while it learns."
                   action={
-                    <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
+                    <Link to="/welcome" className={buttonClass('primary', 'sm')}>
                       Create your first chatbot
                     </Link>
                   }

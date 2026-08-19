@@ -1,364 +1,341 @@
-/**
- * AffiliatePage - the Workspace ▸ Affiliate surface. One job: answer
- * "How are my referral codes performing, and how do I share them?".
- *
- * Rebuilt from the legacy `pages/AffiliateDashboard.jsx` in the new design
- * language. Shows the affiliate's commission pool, four headline counters, and a
- * table of their codes - each with a one-click "copy share link". A new code is
- * created through a focused modal; a code is activated/deactivated inline
- * (respecting the active-code cap). Referral detail + editing land in follow-up
- * modals.
- *
- * Backend reused verbatim (typed in services/api.d.ts): getAffiliateMe,
- * getAffiliateCodes, getAffiliateStats, updateAffiliateCode. Business rules
- * (pool cap, split validation, code format) mirror affiliate_service.py.
- */
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, Copy, Gift, Loader2, Plus, Share2, X } from 'lucide-react';
+import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { Handshake, MoreHorizontal, Pause, Pencil, Play, Plus, Users } from 'lucide-react';
 import {
+  Alert,
+  Badge,
   Button,
-  buttonVariants,
   Card,
+  CardBody,
+  ConfirmDialog,
+  CopyField,
   DataTable,
   EmptyState,
-  MetricCard,
-  PageContainer,
-  SectionHeader,
-  Skeleton,
-  StatusBadge,
+  ErrorState,
+  LoadingRows,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  PageHeader,
+  Stack,
+  StatTile,
+  buttonClass,
+  formatNumber,
+  toast,
   type Column,
-} from '../../design-system';
+} from '../../ui';
 import { updateAffiliateCode } from '../../services/api';
-import { type AffiliateCodeView, formatPct, referralShareUrl } from './affiliateModel';
+import { formatPct, referralShareUrl, type AffiliateCodeView } from './affiliateModel';
 import { useAffiliateData } from './useAffiliateData';
-import { CreateCodeModal } from './CreateCodeModal';
-import { EditCodeModal } from './EditCodeModal';
-import { ReferralsModal } from './ReferralsModal';
+import { CodeDialog } from './CodeDialog';
+import { ReferralsDrawer } from './ReferralsDrawer';
 
 /**
- * Where a `?ref=CODE` visitor lands - the public marketing site captures the
- * click. Overridable per-environment; defaults to the production site.
+ * Settings ▸ Affiliate — the referral codes an enrolled partner shares.
+ *
+ * Where a `?ref=CODE` click lands is the public marketing site, not the
+ * console, so the share link is built from the marketing origin rather than
+ * from `window.location`. Getting that wrong produces a link that works when
+ * the affiliate tests it and attributes nothing.
  */
 const REFERRAL_BASE_URL: string =
   (import.meta.env.VITE_MARKETING_URL as string | undefined) ?? 'https://www.oyechats.com';
 
-function toMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-// ── Copy-to-clipboard button (self-resetting) ────────────────────────────────
-
-function CopyLinkButton({ url, label }: { url: string; label: string }): ReactElement {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-  }, []);
-
-  const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      if (timer.current !== null) window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable - no-op, the link is still visible on hover */
-    }
-  };
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      aria-label={copied ? 'Link copied' : label}
-      onClick={() => void copy()}
-    >
-      {copied ? (
-        <Check size={14} aria-hidden="true" className="text-[var(--ds-success)]" />
-      ) : (
-        <Copy size={14} aria-hidden="true" />
-      )}
-      {copied ? 'Copied' : 'Copy link'}
-    </Button>
-  );
-}
-
-// ── Page ─────────────────────────────────────────────────────────────────────
-
-export function AffiliatePage(): ReactElement {
+export function AffiliatePage() {
   const { loading, notEnrolled, error, profile, codes, stats, reload } = useAffiliateData();
-  const [createOpen, setCreateOpen] = useState(false);
-  const [editCode, setEditCode] = useState<AffiliateCodeView | null>(null);
-  const [referralsFor, setReferralsFor] = useState<AffiliateCodeView | null>(null);
-  const [togglingId, setTogglingId] = useState<number | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AffiliateCodeView | null | 'new'>(null);
+  const [inspecting, setInspecting] = useState<AffiliateCodeView | null>(null);
+  const [pausing, setPausing] = useState<AffiliateCodeView | null>(null);
 
   const poolPct = profile?.commissionPct ?? 0;
-  const activeCount = useMemo(() => codes.filter((c) => c.active).length, [codes]);
+  const activeCount = codes.filter((code) => code.active).length;
   const atCap = profile != null && activeCount >= profile.maxActiveCodes;
 
-  const toggleActive = useCallback(
-    async (row: AffiliateCodeView): Promise<void> => {
-      setActionError(null);
-      setTogglingId(row.id);
-      try {
-        await updateAffiliateCode(row.id, { active: !row.active });
-        reload();
-      } catch (err) {
-        setActionError(toMessage(err, 'Could not update the code.'));
-      } finally {
-        setTogglingId(null);
-      }
+  const setActive = useMutation({
+    mutationFn: ({ code, active }: { code: AffiliateCodeView; active: boolean }) =>
+      updateAffiliateCode(code.id, { active }),
+    onSuccess: (_data, { active }) => {
+      toast.success(active ? 'Code reactivated' : 'Code paused');
+      setPausing(null);
+      reload();
     },
-    [reload],
+    onError: (mutationError) =>
+      toast.error(
+        mutationError instanceof Error ? mutationError.message : 'Could not update that code.',
+      ),
+  });
+
+  const header = (
+    <PageHeader
+      title="Affiliate"
+      description="Your referral codes, what each one has brought in, and the links to share."
+      actions={
+        !notEnrolled && !loading ? (
+          <Button
+            onClick={() => setEditing('new')}
+            disabled={atCap}
+            iconLeft={<Plus aria-hidden className="h-4 w-4" />}
+          >
+            New code
+          </Button>
+        ) : undefined
+      }
+    />
   );
 
-  const columns: Column<AffiliateCodeView>[] = useMemo(
-    () => [
-      {
-        key: 'code',
-        header: 'Code',
-        render: (row) => (
-          <div className="flex items-center gap-2">
-            <code className="rounded-md bg-[var(--ds-bg-sunken)] px-2 py-1 font-mono text-[13px] font-medium text-[var(--ds-text)]">
-              {row.code}
-            </code>
-            {row.label && <span className="truncate text-[12px] text-[var(--ds-text-subtle)]">{row.label}</span>}
-          </div>
-        ),
-      },
-      {
-        key: 'affiliateCommissionPct',
-        header: 'You earn',
-        align: 'right',
-        render: (row) => <span className="tabular-nums">{formatPct(row.affiliateCommissionPct)}</span>,
-      },
-      {
-        key: 'customerDiscountPct',
-        header: 'Friend saves',
-        align: 'right',
-        render: (row) => <span className="tabular-nums">{formatPct(row.customerDiscountPct)}</span>,
-      },
-      {
-        key: 'clicks',
-        header: 'Clicks',
-        align: 'right',
-        render: (row) => <span className="tabular-nums">{row.clicks.toLocaleString()}</span>,
-      },
-      {
-        key: 'signups',
-        header: 'Signups',
-        align: 'right',
-        render: (row) => <span className="tabular-nums">{row.signups.toLocaleString()}</span>,
-      },
-      {
-        key: 'conversionPct',
-        header: 'Conv.',
-        align: 'right',
-        render: (row) => <span className="tabular-nums text-[var(--ds-text-muted)]">{formatPct(row.conversionPct)}</span>,
-      },
-      {
-        key: 'status',
-        header: 'Status',
-        render: (row) =>
-          row.active ? (
-            <StatusBadge tone="success" dot>
-              Active
-            </StatusBadge>
-          ) : (
-            <StatusBadge tone="neutral" dot>
-              Inactive
-            </StatusBadge>
-          ),
-      },
-      {
-        key: 'actions',
-        header: '',
-        align: 'right',
-        render: (row) => (
-          <div className="flex items-center justify-end gap-1">
-            <CopyLinkButton url={referralShareUrl(row.code, REFERRAL_BASE_URL)} label={`Copy share link for ${row.code}`} />
-            <Button type="button" variant="ghost" size="sm" onClick={() => setReferralsFor(row)}>
-              View
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setEditCode(row)}>
-              Edit
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              // Reactivating a code counts against the active cap; block it when full.
-              disabled={togglingId === row.id || (!row.active && atCap)}
-              title={!row.active && atCap ? 'You’ve reached your active-code limit' : undefined}
-              onClick={() => void toggleActive(row)}
-            >
-              {togglingId === row.id ? (
-                <Loader2 size={14} aria-hidden="true" className="animate-spin" />
-              ) : row.active ? (
-                'Deactivate'
-              ) : (
-                'Activate'
-              )}
-            </Button>
-          </div>
-        ),
-      },
-    ],
-    [togglingId, atCap, toggleActive],
-  );
-
-  // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <PageContainer title="Affiliate" description="Share OyeChats, earn commission on every referral.">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-        <Skeleton className="h-64 w-full" />
-      </PageContainer>
+      <>
+        {header}
+        <Card>
+          <CardBody>
+            <LoadingRows rows={4} />
+          </CardBody>
+        </Card>
+      </>
     );
   }
 
-  // ── Not an affiliate ─────────────────────────────────────────────────────────
+  // Not an error: the programme is invite-only, so this is simply the answer.
   if (notEnrolled) {
     return (
-      <PageContainer title="Affiliate" description="Share OyeChats, earn commission on every referral.">
-        <EmptyState
-          icon={Gift}
-          title="You’re not in the affiliate program yet"
-          description="The OyeChats affiliate program is invite-only. If you’d like to partner with us and earn commission on referrals, reach out to our team."
-          action={
-            <a
-              href="mailto:developer@oyechats.com?subject=OyeChats%20Affiliate%20Program"
-              className={buttonVariants({ variant: 'outline', size: 'sm' })}
-            >
-              Request an invite
-            </a>
-          }
-        />
-      </PageContainer>
+      <>
+        {header}
+        <Card>
+          <EmptyState
+            icon={Handshake}
+            title="You are not in the partner programme"
+            description="OyeChats Partners is invite-only. If you refer customers to us and would like a share of what they pay, talk to your OyeChats contact and we will send you an invitation."
+          />
+        </Card>
+      </>
     );
   }
 
-  // ── Error ────────────────────────────────────────────────────────────────────
   if (error) {
     return (
-      <PageContainer title="Affiliate" description="Share OyeChats, earn commission on every referral.">
-        <div className="rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3">
-          <p className="text-[13px] text-[var(--ds-text)]">{error}</p>
-          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={reload}>
-            Try again
-          </Button>
-        </div>
-      </PageContainer>
+      <>
+        {header}
+        <Card>
+          <ErrorState
+            title="We could not load your affiliate dashboard"
+            description={error}
+            onRetry={reload}
+          />
+        </Card>
+      </>
     );
   }
 
-  // ── Ready ────────────────────────────────────────────────────────────────────
-  return (
-    <PageContainer
-      title="Affiliate"
-      description="Share OyeChats, earn commission on every referral."
-      actions={
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={atCap}
-          title={atCap ? 'You’ve reached your active-code limit - deactivate one to add another' : undefined}
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus size={15} aria-hidden="true" />
-          New code
-        </Button>
-      }
-    >
-      {/* Commission pool + headline counters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge tone="accent" dot>
-          {formatPct(poolPct)} commission pool
-        </StatusBadge>
-        <span className="text-[12px] text-[var(--ds-text-subtle)]">
-          Split it between your cut and your friend’s discount, however you like.
+  const columns: Column<AffiliateCodeView>[] = [
+    {
+      key: 'code',
+      header: 'Code',
+      pinned: true,
+      width: '14rem',
+      sortable: (a, b) => a.code.localeCompare(b.code),
+      render: (row) => (
+        <div className="min-w-0">
+          <p className="figure truncate text-sm font-medium text-text-primary">{row.code}</p>
+          <p className="truncate text-xs text-text-secondary">{row.label ?? 'No label'}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (row) => (
+        <Badge tone={row.active ? 'success' : 'neutral'} dot>
+          {row.active ? 'Active' : 'Paused'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'split',
+      header: 'Split',
+      secondary: true,
+      render: (row) => (
+        <span className="text-xs text-text-secondary">
+          <span className="figure text-text-primary">{formatPct(row.affiliateCommissionPct)}</span>{' '}
+          you ·{' '}
+          <span className="figure text-text-primary">{formatPct(row.customerDiscountPct)}</span>{' '}
+          them
         </span>
-      </div>
+      ),
+    },
+    {
+      key: 'clicks',
+      header: 'Clicks',
+      align: 'right',
+      sortable: (a, b) => a.clicks - b.clicks,
+      render: (row) => <span className="figure">{formatNumber(row.clicks)}</span>,
+    },
+    {
+      key: 'signups',
+      header: 'Signups',
+      align: 'right',
+      sortable: (a, b) => a.signups - b.signups,
+      render: (row) => <span className="figure">{formatNumber(row.signups)}</span>,
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '3rem',
+      render: (row) => (
+        <MenuRoot>
+          <MenuTrigger aria-label={`Actions for ${row.code}`} className={buttonClass('ghost', 'icon-sm')}>
+            <MoreHorizontal aria-hidden className="h-4 w-4" />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem
+              icon={<Users aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setInspecting(row)}
+            >
+              See referrals
+            </MenuItem>
+            <MenuItem
+              icon={<Pencil aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setEditing(row)}
+            >
+              Edit code
+            </MenuItem>
+            {row.active ? (
+              <MenuItem
+                icon={<Pause aria-hidden className="h-3.5 w-3.5" />}
+                onSelect={() => setPausing(row)}
+              >
+                Pause code
+              </MenuItem>
+            ) : (
+              <MenuItem
+                icon={<Play aria-hidden className="h-3.5 w-3.5" />}
+                disabled={atCap}
+                onSelect={() => setActive.mutate({ code: row, active: true })}
+              >
+                Reactivate code
+              </MenuItem>
+            )}
+          </MenuContent>
+        </MenuRoot>
+      ),
+    },
+  ];
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <MetricCard
-          label="Active codes"
-          value={`${stats?.activeCodes ?? activeCount} / ${profile?.maxActiveCodes ?? 0}`}
-        />
-        <MetricCard label="Total clicks" value={(stats?.totalClicks ?? 0).toLocaleString()} />
-        <MetricCard label="Signups" value={(stats?.totalSignups ?? 0).toLocaleString()} />
-        <MetricCard label="Conversion" value={formatPct(stats?.conversionPct ?? 0)} />
-      </div>
+  return (
+    <>
+      {header}
+      <Stack>
+        <Card>
+          <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
+            <StatTile
+              label="Clicks"
+              value={formatNumber(stats?.totalClicks ?? 0)}
+              period="All time"
+            />
+            <StatTile
+              label="Signups"
+              value={formatNumber(stats?.totalSignups ?? 0)}
+              period="All time"
+            />
+            <StatTile
+              label="Conversion"
+              value={formatPct(stats?.conversionPct ?? 0)}
+              period="Signups per click"
+            />
+            <StatTile
+              label="Active codes"
+              value={formatNumber(activeCount)}
+              period={`of ${formatNumber(profile?.maxActiveCodes ?? 0)} allowed`}
+              tone={atCap ? 'warning' : 'neutral'}
+            />
+          </CardBody>
+        </Card>
 
-      {/* Codes */}
-      <div className="space-y-4">
-        <SectionHeader title="Your referral codes" description="Copy a code’s share link and send it to your audience." />
+        {atCap ? (
+          <Alert tone="warning" title="You are using all your active codes">
+            Pause one before creating or reactivating another. Pausing does not lose the signups it
+            has already brought in.
+          </Alert>
+        ) : null}
 
-        {actionError && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]">
-            <span className="flex items-start gap-2">
-              <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-danger)]" />
-              {actionError}
-            </span>
-            <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss message" className="shrink-0 opacity-70 hover:opacity-100">
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-
-        {codes.length === 0 ? (
-          <EmptyState
-            icon={Share2}
-            title="No referral codes yet"
-            description="Create your first code, then share its link. You’ll earn commission whenever someone subscribes through it."
-            action={
-              <Button type="button" variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus size={15} aria-hidden="true" />
-                Create a code
-              </Button>
+        <Card>
+          <DataTable
+            caption="Your referral codes and how each one has performed"
+            columns={columns}
+            rows={codes}
+            rowKey={(row) => String(row.id)}
+            rowLabel={(row) => row.code}
+            defaultSort={{ key: 'signups', direction: 'desc' }}
+            empty={
+              <EmptyState
+                icon={Handshake}
+                title="No codes yet"
+                description={`Create one and share its link. You keep up to ${formatPct(poolPct)} of what everyone who signs up through it pays.`}
+                action={
+                  <Button size="sm" onClick={() => setEditing('new')}>
+                    Create your first code
+                  </Button>
+                }
+              />
             }
           />
-        ) : (
-          <Card className="overflow-hidden">
-            <DataTable columns={columns} rows={codes} rowKey={(row) => row.id} caption="Your referral codes" />
+        </Card>
+
+        {codes.length > 0 ? (
+          <Card>
+            <CardBody className="space-y-3">
+              <div>
+                <h2 className="text-lg font-semibold text-text-primary">Links to share</h2>
+                <p className="mt-1 text-xs text-text-secondary">
+                  A click on one of these is what attributes a signup to you. Paused codes still
+                  resolve, but no longer earn.
+                </p>
+              </div>
+              <ul className="space-y-2">
+                {codes.map((row) => (
+                  <li key={row.id} className="flex flex-wrap items-center gap-2">
+                    <span className="figure w-32 shrink-0 truncate text-xs text-text-secondary">
+                      {row.code}
+                    </span>
+                    <CopyField
+                      className="min-w-0 flex-1"
+                      label={`share link for ${row.code}`}
+                      value={referralShareUrl(row.code, REFERRAL_BASE_URL)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </CardBody>
           </Card>
-        )}
-      </div>
+        ) : null}
+      </Stack>
 
-      <CreateCodeModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
+      <CodeDialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        code={editing === 'new' ? null : editing}
         poolPct={poolPct}
-        onCreated={() => {
-          setCreateOpen(false);
-          reload();
+        onSaved={reload}
+      />
+
+      <ReferralsDrawer code={inspecting} onOpenChange={() => setInspecting(null)} />
+
+      <ConfirmDialog
+        open={pausing !== null}
+        onOpenChange={(open) => {
+          if (!open) setPausing(null);
+        }}
+        title={`Pause ${pausing?.code ?? 'this code'}?`}
+        description="The link keeps resolving, but a signup through it is no longer attributed to you and earns nothing. Signups already attributed keep earning. You can reactivate it at any time, as long as you are under your active-code limit."
+        confirmLabel="Pause code"
+        onConfirm={async () => {
+          if (pausing) await setActive.mutateAsync({ code: pausing, active: false });
         }}
       />
-
-      <EditCodeModal
-        open={editCode !== null}
-        onClose={() => setEditCode(null)}
-        code={editCode}
-        poolPct={poolPct}
-        onSaved={() => {
-          setEditCode(null);
-          reload();
-        }}
-      />
-
-      <ReferralsModal
-        open={referralsFor !== null}
-        onClose={() => setReferralsFor(null)}
-        codeId={referralsFor?.id ?? null}
-        codeName={referralsFor?.code ?? null}
-      />
-    </PageContainer>
+    </>
   );
 }

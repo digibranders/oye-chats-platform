@@ -1,7 +1,9 @@
 import { useMemo, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ArrowLeft, ChevronsUpDown, Plus } from 'lucide-react';
+import { ArrowLeft, ChevronsUpDown, Plus, ShieldAlert } from 'lucide-react';
 import { cn, Tooltip, Badge } from '../ui';
+import { getAuthItem } from '../utils/authStorage';
+import { isImpersonating } from '../utils/impersonation';
 import { agentHealth } from '../features/home/agentHealth';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
@@ -111,6 +113,10 @@ export function Rail({ collapsed, onNavigate, inboxCount = 0 }: RailProps) {
     () => (scopedAgentId ? (bots.find((bot) => String(bot.id) === scopedAgentId) ?? null) : null),
     [bots, scopedAgentId],
   );
+
+  const superAdminFlag = getAuthItem('is_superadmin');
+  const showsPlatformLink =
+    !isImpersonating() && (superAdminFlag === 'true' || superAdminFlag === '1');
 
   const primary = navForRole(WORKSPACE_NAV, isOperator);
   const inAgentScope = Boolean(scopedAgentId) && !isOperator;
@@ -252,6 +258,28 @@ export function Rail({ collapsed, onNavigate, inboxCount = 0 }: RailProps) {
       </nav>
 
       <div className="shrink-0 border-t border-rail-border p-2">
+        {/* The way into the platform console, for the handful of people who
+            have one. Not in the account menu: a super-admin switching personas
+            is a navigation act, and burying it under an avatar is how the
+            console it opens went unbuilt for so long. Hidden during a support
+            session — acting on the platform through somebody else's identity is
+            exactly what must not happen. */}
+        {showsPlatformLink ? (
+          <Tooltip content="Platform console" side="right" disabled={!collapsed}>
+            <NavLink
+              to="/platform"
+              onClick={onNavigate}
+              className={cn(
+                'mb-1 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium',
+                'text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text',
+                collapsed && 'justify-center px-0',
+              )}
+            >
+              <ShieldAlert aria-hidden className="h-4 w-4 shrink-0" />
+              {collapsed ? <span className="sr-only">Platform console</span> : 'Platform'}
+            </NavLink>
+          </Tooltip>
+        ) : null}
         {!isOperator ? <SetupProgress collapsed={collapsed} onNavigate={onNavigate} /> : null}
         <div className="mt-1 space-y-0.5">
           {navForRole(FOOTER_NAV, isOperator).map((item) => (

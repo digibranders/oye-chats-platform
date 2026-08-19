@@ -1,152 +1,182 @@
-/**
- * useBillingData - loads everything the Workspace ▸ Billing page needs to answer
- * "What am I paying?": the current subscription + plan, the catalog of plans to
- * compare against, issued invoices, and the buyer's tax/billing identity.
- *
- * Resilience: only the current subscription is load-bearing - if it fails the
- * page shows an error. The plan catalog, invoices, and billing details each
- * degrade independently (a down invoices endpoint must never blank the plan
- * summary, and vice-versa) so a partial outage still renders a useful page.
- *
- * Loading is DERIVED (`data === null && error === null`) and no state is written
- * synchronously inside the effect - the fetch resolves first. Matches the
- * codebase pattern (see features/home/useHomeData.ts).
- */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
   getActivePromotion,
   getBillingDetails,
+  getBillingGeo,
+  getCreditBalance,
   getCurrentSubscription,
   getInvoices,
+  getPaymentRecovery,
   getSubscriptionPlans,
 } from '../../services/api';
+import { keys } from '../../query/keys';
+import { parseCreditBalance, type CreditBalance } from './usage-model';
+import type { BillingDetailsRaw } from './billing/billingDetailsForm';
 import {
   buildBillingDetails,
+  buildDunning,
+  buildGeo,
   buildInvoice,
   buildPlan,
   buildPromotion,
+  buildReauth,
   buildSubscription,
   type BillingDetailsView,
+  type BillingGeoView,
+  type DunningView,
   type InvoiceView,
   type PlanView,
   type PromotionView,
+  type ReauthView,
   type SubscriptionView,
 } from './billingModel';
 
+/**
+ * Everything `/billing` reads, on the shared cache.
+ *
+ * Seven endpoints, seven queries. They are deliberately NOT one `Promise.all`
+ * behind one loading flag, which is what the page this replaces did: a slow
+ * invoice list held back the plan summary, a failed one blanked it, and nothing
+ * on the page could be retried on its own. Each section here has its own state,
+ * so a down invoices endpoint costs the customer the invoice table and nothing
+ * else.
+ *
+ * Only two reads are load-bearing. Without the subscription there is no plan to
+ * describe, and without geo there is no currency to describe it in - and a
+ * money surface that guesses the currency is worse than one that admits it
+ * cannot load. Everything else degrades in place.
+ */
+
 export interface BillingData {
   subscription: SubscriptionView;
-  /** The customer's current plan, or null when the payload omits it. */
   plan: PlanView | null;
-  /** Full catalog for the plan-comparison scaffold. */
-  availablePlans: PlanView[];
-  invoices: InvoiceView[];
-  /** True when the invoices endpoint failed (distinct from "no invoices"). */
-  invoicesError: boolean;
-  details: BillingDetailsView;
-  /** True once the client has consumed their lifetime free trial - gates the trial CTA. */
+  /** True once the client has consumed their lifetime free trial. Gates the trial CTA. */
   trialUsed: boolean;
-  /** Active launch promotion the client qualifies for, else null. Display only. */
-  promotion: PromotionView | null;
+  /** The downgrade re-auth grace row, which is `past_due` but is NOT a failed payment. */
+  reauth: ReauthView | null;
+}
+
+/** The tax identity, in both the shape the panel renders and the shape the form edits. */
+export interface BillingDetails {
+  view: BillingDetailsView;
+  raw: BillingDetailsRaw;
 }
 
 export interface UseBillingDataResult {
-  loading: boolean;
-  error: string | null;
-  data: BillingData | null;
-  reload: () => void;
-  /**
-   * Increments on every `reload()`. Panels that own an independent fetch (the
-   * credits meter) take this as a dep so they converge with the page instead of
-   * showing pre-mutation numbers next to updated ones.
-   */
-  reloadKey: number;
+  /** The subscription + plan. The page's error state keys on this alone. */
+  core: UseQueryResult<BillingData>;
+  geo: UseQueryResult<BillingGeoView>;
+  plans: UseQueryResult<PlanView[]>;
+  invoices: UseQueryResult<InvoiceView[]>;
+  details: UseQueryResult<BillingDetails>;
+  promotion: UseQueryResult<PromotionView | null>;
+  dunning: UseQueryResult<DunningView>;
+  credits: UseQueryResult<CreditBalance>;
+  /** Re-read every billing query. Wire to a post-mutation refresh, not to a button per panel. */
+  refreshAll: () => void;
 }
 
-interface Fetched {
-  data: BillingData | null;
-  error: string | null;
+function envelope(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
 }
 
-async function loadBillingData(botId?: number | null): Promise<BillingData> {
-  // Fire all four requests together so the three independent fetches overlap
-  // the load-bearing subscription round-trip instead of queuing behind it.
-  // getCurrentSubscription has no `.catch`, so a rejection propagates through
-  // Promise.all and surfaces the page error state; the other three each carry
-  // their own catch and degrade independently.
-  //
-  // `botId` scopes the subscription + invoices to the selected agent (the
-  // per-agent Billing overview); plans (catalog) and billing details are
-  // account-level and stay unscoped.
-  const scope = botId ?? undefined;
-  const [subscriptionRaw, plansRaw, invoicesResult, detailsRaw, promotionRaw] = await Promise.all([
-    getCurrentSubscription(scope),
-    getSubscriptionPlans().catch((): Array<Record<string, unknown>> => []),
-    getInvoices(scope)
-      .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: false }))
-      .catch(() => ({ rows: [] as Array<Record<string, unknown>>, error: true })),
-    getBillingDetails().catch((): Record<string, unknown> => ({})),
-    // Promo is a decorative overlay, a failure must never blank the page, so it
-    // degrades to "no promotion" independently like plans/invoices/details.
-    getActivePromotion().catch((): Record<string, unknown> => ({ active: false })),
-  ]);
-
-  const envelope =
-    subscriptionRaw && typeof subscriptionRaw === 'object'
-      ? (subscriptionRaw as Record<string, unknown>)
-      : {};
-
-  return {
-    subscription: buildSubscription(envelope.subscription),
-    plan: buildPlan(envelope.plan),
-    availablePlans: plansRaw
-      .map((raw) => buildPlan(raw))
-      .filter((plan): plan is PlanView => plan !== null),
-    invoices: invoicesResult.rows.map((raw, index) => buildInvoice(raw, index)),
-    invoicesError: invoicesResult.error,
-    details: buildBillingDetails(detailsRaw),
-    trialUsed: envelope.trial_used === true,
-    promotion: buildPromotion(promotionRaw),
-  };
+/**
+ * The geo/currency profile on its own.
+ *
+ * Split out because any surface that renders a price needs it and almost none
+ * of them need the other six reads. The Usage page used to pull the whole
+ * billing bundle - subscription, plans, invoices, tax identity, promotion,
+ * dunning - to find out which currency symbol to print.
+ */
+export function useBillingGeo(): UseQueryResult<BillingGeoView> {
+  return useQuery({
+    queryKey: keys.billing.geo(),
+    queryFn: async () => buildGeo(await getBillingGeo()),
+    // Geo is an account fact, not a live figure. Refetching it every thirty
+    // seconds would re-price a page under a customer mid-decision.
+    staleTime: 10 * 60_000,
+  });
 }
 
-export function useBillingData(botId?: number | null): UseBillingDataResult {
-  const [reloadKey, setReloadKey] = useState(0);
-  const [result, setResult] = useState<Fetched>({ data: null, error: null });
+export function useBillingData(botId: number | null = null): UseBillingDataResult {
+  const client = useQueryClient();
 
-  const reload = useCallback(() => {
-    // Reset to loading from an event handler - never synchronously in the effect.
-    setResult({ data: null, error: null });
-    setReloadKey((key) => key + 1);
-  }, []);
+  const core = useQuery({
+    queryKey: [...keys.billing.subscription(), botId],
+    queryFn: async (): Promise<BillingData> => {
+      const raw = envelope(await getCurrentSubscription(botId ?? undefined));
+      return {
+        subscription: buildSubscription(raw.subscription),
+        plan: buildPlan(raw.plan),
+        trialUsed: raw.trial_used === true,
+        reauth: buildReauth(raw.reauth),
+      };
+    },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const data = await loadBillingData(botId);
-        if (!cancelled) setResult({ data, error: null });
-      } catch (err) {
-        if (!cancelled) {
-          setResult({
-            data: null,
-            error:
-              err instanceof Error
-                ? err.message
-                : 'We couldn’t load your billing information. Please try again.',
-          });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey, botId]);
+  const geo = useBillingGeo();
 
-  return {
-    loading: result.data === null && result.error === null,
-    error: result.error,
-    data: result.data,
-    reload,
-    reloadKey,
-  };
+  const plans = useQuery({
+    queryKey: keys.billing.plans(),
+    queryFn: async () => {
+      const rows = await getSubscriptionPlans();
+      return (Array.isArray(rows) ? rows : [])
+        .map((row) => buildPlan(row))
+        .filter((plan): plan is PlanView => plan !== null)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+    },
+    staleTime: 10 * 60_000,
+  });
+
+  const invoices = useQuery({
+    queryKey: [...keys.billing.invoices(), botId],
+    queryFn: async () => {
+      const rows = await getInvoices(botId ?? undefined);
+      const now = Date.now();
+      return (Array.isArray(rows) ? rows : []).map((row, index) => buildInvoice(row, index, now));
+    },
+  });
+
+  const details = useQuery({
+    queryKey: keys.billing.details(),
+    queryFn: async (): Promise<BillingDetails> => {
+      const raw = await getBillingDetails();
+      // Both shapes travel together. The view is what the panel reads; the raw
+      // record is what the edit form seeds from and diffs against, because
+      // `formToPatch` builds a minimal PATCH by comparing against the stored
+      // snake_case payload. Handing it the camelCase view instead produced a
+      // form that looked empty and then cleared every field it "changed".
+      return { view: buildBillingDetails(raw), raw: raw as BillingDetailsRaw };
+    },
+  });
+
+  const promotion = useQuery({
+    queryKey: keys.billing.promo(),
+    queryFn: async () => buildPromotion(await getActivePromotion()),
+    staleTime: 10 * 60_000,
+  });
+
+  const dunning = useQuery({
+    queryKey: ['billing', 'payment-recovery', botId] as const,
+    queryFn: async () => buildDunning(await getPaymentRecovery(botId ?? undefined)),
+    // Safe to poll by contract: the endpoint resolves Razorpay's EXISTING
+    // hosted page and never mints a second mandate.
+    staleTime: 60_000,
+  });
+
+  const credits = useQuery({
+    queryKey: keys.billing.credits(null),
+    queryFn: async () => parseCreditBalance(await getCreditBalance()),
+    staleTime: 15_000,
+  });
+
+  // One key prefix, so a plan change re-reads the subscription, the invoices,
+  // the credit balance and the dunning state together. A panel-by-panel refresh
+  // is how a page ends up showing a new plan beside the old plan's credits.
+  const refreshAll = useCallback(() => {
+    void client.invalidateQueries({ queryKey: ['billing'] });
+  }, [client]);
+
+  return { core, geo, plans, invoices, details, promotion, dunning, credits, refreshAll };
 }

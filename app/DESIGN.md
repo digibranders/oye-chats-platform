@@ -257,3 +257,34 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
 - `src/ui/scale.test.ts` — the guardrails.
 - `src/ui/ui.test.tsx` — the keyboard and ARIA contracts that are invisible
   until they break.
+
+---
+
+## Addenda from the build
+
+Three things the system learned by being used, recorded here so the reasoning
+survives the commits.
+
+**A ranked bar row is not a progress bar.** `Progress` answers "how far through
+is this?" and `Meter` answers "how much of my allowance is gone?" — both are one
+quantity against a known ceiling, and both carry ARIA semantics that are wrong
+for a comparison between peers. Top questions, funnel stages, a ratings
+distribution and page influence are peers. They get `RankedBars`: a label, a
+proportional bar, a figure, and every value stated in text so the chart survives
+being printed, read aloud, or rendered with its colours stripped.
+
+**A table that pages on the server says so.** `DataTable` takes
+`page`/`onPageChange`/`rowCount` beside `pageSize`. Without them, a surface
+holding one request's worth of rows renders a client-side pager reading "1–50 of
+50" for a workspace with nine thousand. It also refuses to sort a server-paged
+page client-side: ordering fifty rows out of nine thousand and presenting it as
+"sorted by name" is a lie the table will not tell.
+
+**A primitive's accessible name is only testable at the call site.** Four
+defects shipped invisible in their own diffs and only wrong where they were
+used: a checkbox whose label was wired to an id that exists only inside a
+`Field`; a `Progress` labelling the element next to the one carrying
+`role="progressbar"`; three `CodeBlock` copy buttons all named "Copy"; and a
+`Tooltip` whose trigger was a fragment, so Base UI's handlers were dropped and
+no tooltip in the app had ever opened. Each now has a test that renders the
+primitive the way a feature does, not the way its author imagined.

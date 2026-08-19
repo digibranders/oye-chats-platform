@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { type ReactElement, type ReactNode } from 'react';
 import { Tooltip as BaseTooltip } from '@base-ui/react/tooltip';
 import { cn } from '../lib/cn';
 
@@ -15,8 +15,16 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
 }
 
 export interface TooltipProps {
-  /** The element the tooltip describes. Must accept a ref. */
-  children: ReactNode;
+  /**
+   * The single element the tooltip describes.
+   *
+   * A `ReactElement`, not a `ReactNode`: Base UI clones the trigger to attach
+   * its handlers and its ref, and it can only do that to one element. An
+   * earlier version typed this as `ReactNode` and wrapped it in a fragment,
+   * which React cannot take props — every handler was dropped and no tooltip in
+   * the app ever opened.
+   */
+  children: ReactElement;
   content: ReactNode;
   side?: 'top' | 'right' | 'bottom' | 'left';
   align?: 'start' | 'center' | 'end';
@@ -41,7 +49,10 @@ export function Tooltip({ children, content, side = 'top', align = 'center', dis
 
   return (
     <BaseTooltip.Root>
-      <BaseTooltip.Trigger render={<>{children}</>} />
+      {/* The child itself is the trigger. Wrapping it in a fragment, or in a
+          `span`, either drops the props Base UI attaches or inserts an element
+          between the label and the control it names. */}
+      <BaseTooltip.Trigger render={children} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner side={side} align={align} sideOffset={6} collisionPadding={8}>
           <BaseTooltip.Popup

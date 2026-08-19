@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { getEmbedEnvironment } from './embedEnvironment.js';
+import { getEmbedEnvironment } from './embedEnvironment';
 
 describe('getEmbedEnvironment', () => {
   it('selects development for a localhost API endpoint', () => {

@@ -1,164 +1,204 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OverviewPage } from './OverviewPage';
 import { useAgent } from '../../../context/AgentContext';
-import { useOverviewData } from './overview-data';
-import { type Bot } from '../../../types/domain';
+import { useOverviewData, type OverviewData, type Section } from './overview-data';
+import type { Bot } from '../../../types/domain';
 
-vi.mock('../../../context/AgentContext', () => ({
-  useAgent: vi.fn(),
-}));
+vi.mock('../../../context/AgentContext', () => ({ useAgent: vi.fn() }));
+vi.mock('./overview-data', async () => {
+  const actual = await vi.importActual<typeof import('./overview-data')>('./overview-data');
+  return { ...actual, useOverviewData: vi.fn() };
+});
 
-vi.mock('./overview-data', () => ({
-  useOverviewData: vi.fn(),
-}));
+const trained: Bot = {
+  id: 17,
+  name: 'Support Concierge',
+  bot_key: 'bot-6a427d4529b9',
+  website: 'https://example.test',
+  widget_installed_at: '2026-07-01T00:00:00Z',
+  crawl_completed_at: '2026-07-01T00:00:00Z',
+  last_crawl_status: 'completed',
+  indexed_chunk_count: 42,
+  created_at: '2026-07-12T00:00:00.000Z',
+};
+
+function section<T>(data: T, overrides: Partial<Section<T>> = {}): Section<T> {
+  return { data, loading: false, error: null, retry: vi.fn(), ...overrides };
+}
+
+function overviewData(overrides: Partial<OverviewData> = {}): OverviewData {
+  return {
+    figures: section({
+      conversations: 40,
+      messages: 210,
+      activeVisitors: 2,
+      demoShares: 8,
+      demoOpens: 6,
+      demoOpenRate: 75,
+    }),
+    activity: section([]),
+    questions: section([]),
+    ratings: section({ average: 4.6, total: 11 }),
+    resolution: section({ rate: 82, total: 20 }),
+    refreshing: false,
+    refreshAll: vi.fn(),
+    ...overrides,
+  };
+}
+
+function mountAgent(agent: Bot | null, rest: Partial<ReturnType<typeof useAgent>> = {}) {
+  vi.mocked(useAgent).mockReturnValue({
+    agent,
+    agentId: agent ? String(agent.id) : null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    ...rest,
+  });
+}
+
+function renderPage(url = '/chatbots/17/overview') {
+  render(
+    <MemoryRouter initialEntries={[url]}>
+      <OverviewPage />
+    </MemoryRouter>,
+  );
+}
 
 describe('OverviewPage', () => {
-  const mockBot: Bot = {
-    id: 17,
-    name: 'Support Concierge',
-    bot_key: 'bot-1234567890',
-    website: 'https://example.com',
-    widget_installed_at: '2026-07-01T00:00:00Z',
-    crawl_completed_at: '2026-07-01T00:00:00Z',
-    last_crawl_status: 'completed',
-    indexed_chunk_count: 42,
-    created_at: '2026-07-12T00:00:00.000Z',
-  };
-
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(useOverviewData).mockReturnValue(overviewData());
   });
 
-  it('renders skeleton when agent context is loading', () => {
-    vi.mocked(useAgent).mockReturnValue({
-      agent: null,
-      agentId: '17',
-      loading: true,
-      error: null,
-      refresh: vi.fn(),
-    });
+  /**
+   * The layout that rendered the chatbot's name as a second `h1` is gone. The
+   * rail names the chatbot and the top bar breadcrumbs it, so this page owns
+   * exactly one heading.
+   */
+  it('renders exactly one h1', () => {
+    mountAgent(trained);
+    renderPage();
 
-    render(
-      <MemoryRouter>
-        <OverviewPage />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Overview');
   });
 
-  it('renders mission control content when agent and stats are loaded', () => {
-    vi.mocked(useAgent).mockReturnValue({
-      agent: mockBot,
-      agentId: '17',
-      loading: false,
-      error: null,
-      refresh: vi.fn(),
-    });
+  /** Resolution rate and average rating each used to appear twice on one screen. */
+  it('states each quality figure once', () => {
+    mountAgent(trained);
+    renderPage();
 
-    vi.mocked(useOverviewData).mockReturnValue({
-      status: 'success',
-      isRefetching: false,
-      stats: {
-        totalConversations: 100,
-        totalMessages: 500,
-        activeUsers: 50,
-        successRate: 90,
-        resolutionRate: 85,
-        averageRating: 4.7,
-      },
-      activity: [],
-      questions: [],
-      details: mockBot,
-      error: null,
-      refetch: vi.fn(),
-    });
+    expect(screen.getAllByText('Resolution rate')).toHaveLength(1);
+    expect(screen.getAllByText('Average rating')).toHaveLength(1);
+  });
 
-    render(
-      <MemoryRouter>
-        <OverviewPage />
-      </MemoryRouter>,
-    );
+  /**
+   * The card labelled "7-day performance" read all-time values because no period
+   * was ever passed. The range is in the URL now and every figure is anchored.
+   */
+  it('reads the range out of the URL and anchors the figures to it', () => {
+    mountAgent(trained);
+    renderPage('/chatbots/17/overview?days=7');
 
-    // The agent's NAME is no longer this page's job: `AgentOverviewHero` was
-    // deleted and identity (avatar, name, website, created date) moved up into
-    // `AgentLayout`'s header, which wraps every agent tab. Asserting it here
-    // now fails for the right reason (the page genuinely does not render it)
-    // so the assertion is re-homed to what this page does own: the health
-    // verdict that answers "Is my AI healthy?", and the route out to fix it.
-    expect(screen.queryByRole('heading', { level: 1, name: 'Support Concierge' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /manage knowledge/i })).toHaveAttribute(
+    expect(vi.mocked(useOverviewData)).toHaveBeenCalledWith(17, 7);
+    expect(screen.getAllByText('Last 7 days').length).toBeGreaterThan(0);
+    expect(screen.getByRole('radio', { name: '7 days' })).toBeChecked();
+  });
+
+  it('puts a chosen range into the URL so a refresh and a shared link both work', async () => {
+    const user = userEvent.setup();
+    mountAgent(trained);
+    renderPage();
+
+    expect(screen.getByRole('radio', { name: '30 days' })).toBeChecked();
+    await user.click(screen.getByRole('radio', { name: '90 days' }));
+
+    expect(vi.mocked(useOverviewData)).toHaveBeenLastCalledWith(17, 90);
+  });
+
+  /** The demo funnel had zero references anywhere in the app. */
+  it('surfaces the demo-share funnel', () => {
+    mountAgent(trained);
+    renderPage();
+
+    expect(screen.getByText('Links shared')).toBeInTheDocument();
+    expect(screen.getByText('Demos opened')).toBeInTheDocument();
+    expect(screen.getByText('Open rate')).toBeInTheDocument();
+  });
+
+  /** The old CTA pointed at a per-agent route that redirected back to this page. */
+  it('links the deep dive to the analytics destination that exists', () => {
+    mountAgent(trained);
+    renderPage();
+
+    expect(screen.getByRole('link', { name: 'Full analytics' })).toHaveAttribute(
       'href',
-      '/agents/17/knowledge',
+      '/analytics',
     );
   });
 
-  it('renders MetricsError and retry surface on metrics error', () => {
-    const mockRefetch = vi.fn();
-    vi.mocked(useAgent).mockReturnValue({
-      agent: mockBot,
-      agentId: '17',
-      loading: false,
-      error: null,
-      refresh: vi.fn(),
-    });
-
-    vi.mocked(useOverviewData).mockReturnValue({
-      status: 'error',
-      isRefetching: false,
-      stats: null,
-      activity: [],
-      questions: [],
-      details: null,
-      error: 'Failed to load metrics',
-      refetch: mockRefetch,
-    });
-
-    render(
-      <MemoryRouter>
-        <OverviewPage />
-      </MemoryRouter>,
+  /** A failed section used to be a dead card with no way to reload it. */
+  it('gives a failed section its own retry', async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn();
+    mountAgent(trained);
+    vi.mocked(useOverviewData).mockReturnValue(
+      overviewData({
+        figures: section(
+          {
+            conversations: 0,
+            messages: 0,
+            activeVisitors: 0,
+            demoShares: 0,
+            demoOpens: 0,
+            demoOpenRate: null,
+          },
+          { error: 'The analytics service is unavailable.', retry },
+        ),
+      }),
     );
+    renderPage();
 
-    expect(screen.getByText('Couldn’t load your metrics')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+    expect(screen.getByText('We could not load these figures')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(retry).toHaveBeenCalled();
   });
 
-  it('renders dashes for unavailable metrics without crashing', () => {
-    vi.mocked(useAgent).mockReturnValue({
-      agent: mockBot,
-      agentId: '17',
-      loading: false,
-      error: null,
-      refresh: vi.fn(),
-    });
+  /** Refreshing has to reload the chatbot record, not only the metrics. */
+  it('reloads the chatbot record as well as the metrics', async () => {
+    const user = userEvent.setup();
+    const refresh = vi.fn().mockResolvedValue([]);
+    const refreshAll = vi.fn();
+    mountAgent(trained, { refresh });
+    vi.mocked(useOverviewData).mockReturnValue(overviewData({ refreshAll }));
+    renderPage();
 
-    vi.mocked(useOverviewData).mockReturnValue({
-      status: 'success',
-      isRefetching: false,
-      stats: {
-        totalConversations: 0,
-        totalMessages: 0,
-        activeUsers: 0,
-        successRate: 0,
-        resolutionRate: null,
-        averageRating: null,
-      },
-      activity: [],
-      questions: [],
-      details: null,
-      error: null,
-      refetch: vi.fn(),
-    });
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
 
-    render(
-      <MemoryRouter>
-        <OverviewPage />
-      </MemoryRouter>,
+    expect(refresh).toHaveBeenCalled();
+    expect(refreshAll).toHaveBeenCalled();
+  });
+
+  it('offers the fix the health verdict asks for', () => {
+    mountAgent({ ...trained, indexed_chunk_count: 0, last_crawl_status: 'failed' });
+    renderPage();
+
+    expect(screen.getByRole('link', { name: 'Fix training' })).toHaveAttribute(
+      'href',
+      '/chatbots/17/knowledge',
     );
+  });
 
-    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  it('offers a retry when the chatbot itself could not be loaded', () => {
+    mountAgent(null, { error: { message: 'Network is down', status: null } });
+    renderPage();
+
+    expect(screen.getByText('We could not load this chatbot')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });

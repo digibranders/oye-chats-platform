@@ -91,9 +91,9 @@ export function isValidGstin(raw: string): boolean {
 }
 
 /** GST state options for the State dropdown, in code order. */
-export const GST_STATE_OPTIONS: { value: string; label: string; search: string }[] = Object.entries(
+export const GST_STATE_OPTIONS: { value: string; label: string; keywords: string }[] = Object.entries(
   GST_STATE_NAMES,
-).map(([code, name]) => ({ value: code, label: name, search: `${name} ${code}` }));
+).map(([code, name]) => ({ value: code, label: name, keywords: code }));
 
 // ── PIN → GST state autofill ─────────────────────────────────────────────────
 // Indian PIN codes are allocated by postal circle; the first 2-3 digits map to

@@ -1,96 +1,126 @@
 /**
- * Client-side CSV assembly for "Export selected".
+ * The browser-built CSV, for "export the rows I selected".
  *
- * Its own module rather than a helper inside `LeadsPage`: a component file
- * that also exports a plain function breaks React Fast Refresh, and this is
- * the one path where a dropped field leaves the product for good, it needs
- * tests of its own.
+ * Its own module rather than a helper inside the page: a component file that
+ * also exports a plain function breaks React Fast Refresh, and this is the one
+ * path where a dropped field leaves the product for good, so it needs tests of
+ * its own.
+ *
+ * **Its columns deliberately mirror `GET /leads/export`**, in the same order,
+ * with the same ISO timestamps and the same "absence is an empty cell" rule.
+ * The two files used to disagree — different columns, different date formats,
+ * one of them carrying a column the other did not — with nothing on screen
+ * saying so, so a customer who exported twice got two incompatible
+ * spreadsheets. They now differ in exactly one documented way: the last column,
+ * which the server cannot produce because the data has never left this browser.
  */
 import { csvField } from '../../lib/csvSafe';
 import { type Lead } from '../../types/domain';
-
-import {
-  EMPTY_PLACEHOLDER,
-  TIER_META,
-  UNKNOWN_LOCATION,
-  companyDisplay,
-  formatDateTime,
-  formatLocation,
-  normalizeTier,
-} from './leadModel';
+import { TIER_META, UNKNOWN_LOCATION, formatLocation, hasIntelligence, normalizeTier } from './leadModel';
 
 /**
- * Drop the table's absence placeholder, which must not reach the file.
+ * The one column the server export cannot have.
  *
- * A CSV says "no value" with an empty cell, not with a glyph meant for a table
- * cell, a CRM importing this would store a literal dash as the last-active
- * date. It also keeps `csvSafe` from quoting the placeholder: a bare `-` is a
- * formula trigger, so an absent timestamp would otherwise export as `'-`.
- *
- * Compares against `EMPTY_PLACEHOLDER` rather than a local `'-'` so the two
- * cannot drift apart: a hardcoded copy here would silently stop matching the
- * day `leadModel` switches to a true em-dash, and nothing would fail.
+ * Named, not implied: tags are stored in `localStorage` on this machine only,
+ * and a column headed plain "Tags" in a file that gets mailed around reads as
+ * workspace data that every teammate also has.
  */
-function blankIfPlaceholder(formatted: string): string {
-  return formatted === EMPTY_PLACEHOLDER ? '' : formatted;
+export const LOCAL_TAGS_COLUMN = 'Tags (this browser only)';
+
+/**
+ * The server export's columns, in its order, followed by the two it does not
+ * produce.
+ *
+ * "Company" is the raw email domain in both files, because that is what the
+ * server writes and a downstream sheet keyed on the domain must not silently
+ * receive a company name instead. The *resolved* identity — the thing the paid
+ * enrichment produces — is appended as its own column rather than substituted,
+ * so nothing is lost and the first sixteen columns still line up when the two
+ * downloads are merged.
+ *
+ * Attribution columns are not reproduced: they are plan-gated server-side and
+ * the list payload does not carry them, so emitting the headers with empty
+ * cells would assert that a lead had no campaign when we never asked.
+ */
+const HEADER = [
+  'Session ID',
+  'Name',
+  'Email',
+  'Phone',
+  'Company',
+  'Score',
+  'Status',
+  'Need',
+  'Budget',
+  'Authority',
+  'Timeline',
+  'Location',
+  'Device',
+  'Messages',
+  'Created',
+  'Last Active',
+  'Company name',
+  LOCAL_TAGS_COLUMN,
+] as const;
+
+/** One dimension's captured value, tolerating frameworks that lack it. */
+function dimensionValue(lead: Lead, dimension: string): string {
+  return lead.bant?.[dimension]?.value ?? '';
 }
 
 /**
- * The same rule for the Location column's own placeholder.
+ * ISO, like the server export.
  *
- * `formatLocation` answers the word "Unknown" when a session has no resolved
- * geography. Right for a table cell, wrong for a file. The server export
- * (`GET /leads/export`) writes an empty cell for exactly that case, so the two
- * downloads disagreed about the same lead: a customer merging them saw one row
- * with a blank Location and one with a country named Unknown, and a CRM import
- * created that country. An empty cell is what a spreadsheet means by "no
- * value", so the server's answer is the one both paths now give.
- *
- * A real place is never lost to this: `UNKNOWN_LOCATION` is only ever produced
- * by `formatLocation` itself, never carried through from stored geography.
+ * The two downloads previously formatted the same instant two ways — one ISO,
+ * one "Jul 21, 3:04 PM" — so merging them in a spreadsheet produced a text
+ * column beside a date column.
  */
-function blankIfUnknownLocation(formatted: string): string {
+function isoOrBlank(value: string | null | undefined): string {
+  if (!value) return '';
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
+}
+
+/**
+ * `formatLocation` answers the word "Unknown" for a session with no resolved
+ * geography, which is right for a table cell and wrong for a file: a CRM
+ * importing it creates a country by that name. The server writes an empty cell,
+ * so this does too.
+ */
+function locationOrBlank(lead: Lead): string {
+  const formatted = formatLocation(lead.location);
   return formatted === UNKNOWN_LOCATION ? '' : formatted;
 }
 
-/**
- * Build a CSV for a subset of leads entirely client-side. The server export
- * (`exportLeadsCsv`) only emits the full set, so "Export selected" assembles its
- * own file from the rows the user ticked - including their private tags.
- */
 export function buildSelectedLeadsCsv(
-  leads: Lead[],
+  leads: readonly Lead[],
   tagsFor: (sessionId: string) => readonly string[],
 ): string {
-  // 'Company' is the resolved identity when the paid lookup produced one, with
-  // the raw email domain kept in its own column, a CSV that silently swapped
-  // one for the other would break any sheet keyed on the domain.
-  const header = [
-    'Name',
-    'Email',
-    'Phone',
-    'Company',
-    'Company domain',
-    'Quality',
-    'Score',
-    'Location',
-    'Tags',
-    'Last active',
-  ];
   const rows = leads.map((lead) => {
-    const tier = TIER_META[normalizeTier(lead.status)];
+    // Free workspaces receive no score, tier, location or device at all — the
+    // server deletes those keys rather than nulling them. Empty cells are the
+    // honest rendering; a zero would be a claim.
+    const scored = hasIntelligence(lead);
     return [
+      csvField(lead.session_id),
       csvField(lead.contact?.name),
       csvField(lead.contact?.email),
       csvField(lead.contact?.phone),
-      csvField(companyDisplay(lead.contact)?.value),
       csvField(lead.contact?.company),
-      csvField(tier.label),
-      csvField(lead.score),
-      csvField(blankIfUnknownLocation(formatLocation(lead.location))),
+      csvField(scored ? lead.score : ''),
+      csvField(scored ? TIER_META[normalizeTier(lead.status)].label : ''),
+      csvField(dimensionValue(lead, 'need')),
+      csvField(dimensionValue(lead, 'budget')),
+      csvField(dimensionValue(lead, 'authority')),
+      csvField(dimensionValue(lead, 'timeline')),
+      csvField(locationOrBlank(lead)),
+      csvField(lead.device === 'Unknown' ? '' : lead.device),
+      csvField(lead.chats ?? ''),
+      csvField(isoOrBlank(lead.created_at)),
+      csvField(isoOrBlank(lead.last_active_at)),
+      csvField(lead.contact?.company_name),
       csvField(tagsFor(lead.session_id).join('; ')),
-      csvField(blankIfPlaceholder(formatDateTime(lead.last_active_at))),
     ].join(',');
   });
-  return [header.map(csvField).join(','), ...rows].join('\r\n');
+  return [HEADER.map(csvField).join(','), ...rows].join('\r\n');
 }

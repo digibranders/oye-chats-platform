@@ -75,7 +75,7 @@ export function useSetupChecklist() {
       label: 'Create your chatbot',
       description: 'Give it a name and the website it should learn from.',
       done: bots.length > 0,
-      to: '/chatbots?new=1',
+      to: '/welcome',
     },
     {
       id: 'train',

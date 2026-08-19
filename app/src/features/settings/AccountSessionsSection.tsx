@@ -1,84 +1,89 @@
-import { type ReactElement } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Monitor } from 'lucide-react';
-import { Button, Card, SectionHeader, StatusBadge } from '../../design-system';
+import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog } from '../../ui';
 import { clearAuthStorage } from '../../utils/authStorage';
 import { endImpersonationSession, isImpersonating } from '../../utils/impersonation';
 
 export interface AccountSessionsSectionProps {
-  /** The signed-in account's email, shown against the current device. */
+  /** The signed-in address, shown against the current device. */
   email: string;
 }
 
 /**
- * AccountSessionsSection - active sign-in sessions + the (not-yet-built)
- * two-factor / device-management surface. Moved here from the former Workspace
- * ▸ Security tab: this is account-level protection, so it belongs on Settings
- * beside Account security, not on a workspace-admin surface.
+ * Where you are signed in.
  *
- * What's real: the current device with a working `Sign out`. Two-factor auth
- * and multi-device management are stated plainly as not-yet-built rather than
- * rendered as controls that look actionable but do nothing.
+ * Exactly one device, because that is all the backend can tell us: there is no
+ * session table and no revoke-elsewhere endpoint. The card says so rather than
+ * listing a "Two-factor authentication" row with a switch that does nothing —
+ * a control that looks actionable and is not is worse than an honest absence,
+ * because it makes the user believe they have protection they do not have.
+ *
+ * Rotating the workspace API key *does* end every other session, since the key
+ * is the credential, so that is where a user who has lost a device is pointed.
  */
-export function AccountSessionsSection({ email }: AccountSessionsSectionProps): ReactElement {
+export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
   const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
 
-  const handleSignOut = (): void => {
-    // In an impersonated support session this button ends the SUPPORT session
-    // only. `clearAuthStorage()` clears the shared localStorage bundle, which
-    // holds the super-admin's own credentials for every other tab of this
-    // browser - signing out of a customer's Account must never touch them.
+  function signOut(): void {
+    // In an impersonated support tab this ends the *support* session only.
+    // `clearAuthStorage()` wipes the shared localStorage bundle, which holds
+    // the super-admin's own credentials for every other tab of this browser.
     if (isImpersonating()) {
       endImpersonationSession('Impersonation session ended. You can close this tab.');
       return;
     }
-    // Clear both localStorage + sessionStorage so a session-only login leaves no
-    // stale shadow that would auto-log the user back in. Mirrors the shell's
-    // TopBar logout so behaviour is identical wherever the user signs out.
     clearAuthStorage();
     navigate('/login');
-  };
+  }
 
   return (
-    <div className="space-y-6">
-      {/* ── Sessions - real: current device + working sign-out. ─────────────── */}
+    <>
       <Card>
-        <div className="p-5 sm:p-6">
-          <SectionHeader
-            title="Active sessions"
-            description="Where you’re currently signed in to the dashboard."
-          />
-
-          <ul className="mt-4 overflow-hidden rounded-xl border border-[var(--ds-border)]">
-            <li className="flex items-center gap-3 bg-[var(--ds-bg-surface)] px-4 py-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                <Monitor size={18} aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                  This device
-                  {email ? (
-                    <span className="font-normal text-[var(--ds-text-subtle)]">
-                      {' · '}
-                      {email}
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <StatusBadge tone="success" dot>
-                Current
-              </StatusBadge>
-            </li>
-          </ul>
-
-          <div className="mt-4">
-            <Button variant="outline" onClick={handleSignOut}>
-              <LogOut size={16} aria-hidden="true" />
-              Sign out
-            </Button>
+        <CardHeader
+          title="Signed in"
+          titleAs="h2"
+          description="This is the only session we can see — we do not keep a record of your other devices."
+        />
+        <CardBody className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-sunken">
+              <Monitor aria-hidden className="h-4 w-4 text-text-tertiary" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-medium text-text-primary">This device</p>
+              {email ? <p className="figure truncate text-xs text-text-secondary">{email}</p> : null}
+            </div>
+            <Badge tone="success" dot>
+              Current
+            </Badge>
           </div>
-        </div>
+
+          <Alert tone="neutral">
+            Lost a device you were signed in on? We cannot end that session from here. Rotating the
+            workspace API key in Settings ▸ Developers ends every session in the workspace, because
+            the key is what a session is.
+          </Alert>
+
+          <Button
+            variant="secondary"
+            onClick={() => setConfirming(true)}
+            iconLeft={<LogOut aria-hidden className="h-4 w-4" />}
+          >
+            Sign out
+          </Button>
+        </CardBody>
       </Card>
-    </div>
+
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Sign out of this device?"
+        description="Anything you have typed and not saved is lost. Live conversations you are handling go back to the queue for a teammate to pick up, and the visitor is not told why."
+        confirmLabel="Sign out"
+        onConfirm={signOut}
+      />
+    </>
   );
 }
