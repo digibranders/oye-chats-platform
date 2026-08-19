@@ -359,6 +359,8 @@ body {
 @keyframes panel-out   { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.97; } }
 @keyframes slide-right-in  { from { translate: 100% 0; } to { translate: 0 0; } }
 @keyframes slide-right-out { from { translate: 0 0; } to { translate: 100% 0; } }
+@keyframes slide-left-in   { from { translate: -100% 0; } to { translate: 0 0; } }
+@keyframes slide-left-out  { from { translate: 0 0; } to { translate: -100% 0; } }
 @keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
 @keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
 
@@ -368,6 +370,8 @@ body {
 .motion-panel[data-closed]   { animation: panel-out var(--dur-fast) var(--ease-console); }
 .motion-slide-right[data-open]   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
 .motion-slide-right[data-closed] { animation: slide-right-out var(--dur) var(--ease-console); }
+.motion-slide-left[data-open]   { animation: slide-left-in var(--dur-slow) var(--ease-console-out); }
+.motion-slide-left[data-closed] { animation: slide-left-out var(--dur) var(--ease-console); }
 .motion-pop[data-open]   { animation: pop-in var(--dur) var(--ease-console-out); }
 .motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
 .motion-pop { transform-origin: var(--transform-origin, center); }
@@ -411,6 +415,7 @@ body {
   .motion-overlay,
   .motion-panel,
   .motion-slide-right,
+  .motion-slide-left,
   .motion-pop,
   .typing-dot {
     animation: none !important;

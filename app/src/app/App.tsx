@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { RouterProvider } from 'react-router-dom';
-import { ThemeProvider } from '../design-system';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '../query/client';
 import { router } from './routes';
 
 /** CDN URL for the embeddable OyeChats chat widget. */
@@ -9,10 +10,17 @@ const OYECHATS_WIDGET_SRC = 'https://cdn.oyechats.com/oyechats-widget.js';
 /**
  * Application root (Admin Platform 2.0 foundation).
  *
- * Composes the global providers and the route architecture. Phase 1 keeps the
- * provider tree intentionally lean (theme only) - data contexts (Workspace,
- * Agent, Notifications, etc.) are mounted as the pages that need them are built
- * in later phases, per the strangler-fig migration (decision #3).
+ * Composes the global providers and the routes.
+ *
+ * The query client is the outermost provider because everything below it reads
+ * server state through the cache — including the shell itself, which needs the
+ * signed-in identity and the chatbot list before it can render a rail. The
+ * workspace-scoped data contexts are mounted inside the authenticated boundary
+ * in `ProtectedLayout`, where a token is guaranteed to exist.
+ *
+ * There is no theme provider. The console is light-only by design: one theme
+ * done properly, and every ground in the token file a known quantity because of
+ * it. See `DESIGN.md`.
  */
 export default function App() {
   // Embed the OyeChats chat widget on the admin app itself. Guarded against
@@ -28,8 +36,8 @@ export default function App() {
   }, []);
 
   return (
-    <ThemeProvider>
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
-    </ThemeProvider>
+    </QueryClientProvider>
   );
 }

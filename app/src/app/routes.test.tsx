@@ -3,13 +3,13 @@ import { matchRoutes } from 'react-router-dom';
 import { router } from './routes';
 
 /**
- * Guards the failure mode that produced the post-signup 404: Admin 2.0 renamed
- * the information architecture, but the paths other code redirects to were
- * never updated, so real users were sent to routes that no longer existed.
+ * Guards the failure mode that produced a live post-signup 404: the previous
+ * rebuild renamed the information architecture and never updated the paths other
+ * code redirects to, so real users were sent to routes that no longer existed.
  *
- * These assertions run against the REAL router config (not a synthetic
- * `<Routes>` tree), so they also cover route ranking - a legacy alias is only
- * useful if it out-ranks the in-shell `*` splat that renders the 404 page.
+ * These assertions run against the REAL router config rather than a synthetic
+ * `<Routes>` tree, so they also cover ranking — an alias is only useful if it
+ * out-ranks the in-shell `*` splat that renders the 404 page.
  */
 
 /** The route path React Router settles on for `pathname`. */
@@ -18,28 +18,73 @@ function matchedPath(pathname: string): string | undefined {
   return matches?.[matches.length - 1]?.route.path;
 }
 
-describe('legacy path aliases', () => {
-  // Old dashboard URLs that still arrive from delivered emails, push
-  // notification `click_url`s and bookmarks. Each must match its own alias
-  // route rather than falling through to the 404 splat.
-  it.each(['/build', '/support', '/billing', '/affiliate', '/knowledge'])(
-    'resolves %s to a real route instead of the 404 splat',
-    (path) => {
-      expect(matchedPath(path)).toBe(path);
-    },
-  );
+describe('the current information architecture', () => {
+  it.each([
+    ['home', '/'],
+    ['setup checklist', '/setup'],
+    ['chatbot list', '/chatbots'],
+    ['chatbot overview', '/chatbots/7/overview'],
+    ['chatbot knowledge', '/chatbots/7/knowledge'],
+    ['chatbot experience', '/chatbots/7/experience'],
+    ['chatbot deploy', '/chatbots/7/deploy'],
+    ['chatbot qualification', '/chatbots/7/qualification'],
+    ['chatbot behaviour', '/chatbots/7/behaviour'],
+    ['inbox', '/inbox'],
+    ['leads', '/leads'],
+    ['analytics', '/analytics'],
+    ['analytics journey', '/analytics/journey'],
+    ['billing', '/billing'],
+    ['usage', '/billing/usage'],
+    ['reports', '/billing/reports'],
+    ['workspace settings', '/settings/workspace'],
+    ['team', '/settings/team'],
+    ['integrations', '/settings/integrations'],
+    ['developers', '/settings/developers'],
+    ['affiliate', '/settings/affiliate'],
+    ['your account', '/account'],
+  ])('resolves the %s route', (_name, path) => {
+    expect(matchedPath(path)).not.toBe('*');
+  });
 });
 
-describe('post-authentication landing routes', () => {
-  // Every destination the auth pages can send a user to. `/build` living here
-  // (as the *old* value) is what produced the reported bug: Google sign-up
-  // redirected a brand-new account to a route that did not exist.
+describe('moved URLs', () => {
+  /**
+   * Every path the previous IA shipped. These live in delivered emails, push
+   * payloads and bookmarks, so each has to out-rank the 404 splat — including
+   * the two the last rename dropped on the floor.
+   */
   it.each([
-    ['dashboard root', '/'],
-    ['new-account onboarding (OAuthCallback, VerifyEmail)', '/launch'],
-    ['operator console (Login, Register)', '/inbox'],
-    ['affiliate-only accounts (OAuthCallback)', '/workspace/affiliate'],
-  ])('%s → %s exists', (_label, path) => {
+    '/agents',
+    '/agents/7',
+    '/agents/7/overview',
+    '/agents/7/knowledge',
+    '/agents/7/experience',
+    '/agents/7/channels',
+    '/agents/7/advanced',
+    '/agents/7/analytics',
+    '/journey',
+    '/support',
+    '/build',
+    '/launch',
+    '/launch/welcome',
+    '/workspace',
+    '/workspace/general',
+    '/workspace/members',
+    '/workspace/billing',
+    '/workspace/usage',
+    '/workspace/reports',
+    '/workspace/api-keys',
+    '/workspace/integrations',
+    '/workspace/affiliate',
+    '/workspace/settings',
+    '/workspace/security',
+  ])('carries %s onto a real route rather than the 404 splat', (path) => {
     expect(matchedPath(path)).not.toBe('*');
+  });
+});
+
+describe('the 404 splat', () => {
+  it('still catches a genuinely unknown path', () => {
+    expect(matchedPath('/definitely-not-a-page')).toBe('*');
   });
 });

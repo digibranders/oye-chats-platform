@@ -1,115 +1,135 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
+import { Dialog as BaseDialog } from '@base-ui/react/dialog';
+import { Toaster, TooltipProvider, cn } from '../ui';
+import { Rail } from './Rail';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
-import { FeedbackLauncher } from './FeedbackLauncher';
-import { IncomingChatBanner } from './IncomingChatBanner';
-import { InstallAppBanner } from './InstallAppBanner';
-import { PushPermissionNudge } from './PushPermissionNudge';
-import { PastDueBanner } from '../features/workspace/billing/PastDueBanner';
-import { DowngradeReauthBanner } from '../features/workspace/billing/DowngradeReauthBanner';
-import VerifyEmailBanner from '../components/VerifyEmailBanner';
-import { cn } from '../design-system';
+import { ShellBanners } from './ShellBanners';
+import { useNotifications } from '../context/NotificationContext';
 
-const MOBILE_BREAKPOINT = 768;
-const COLLAPSE_KEY = 'oc_sidebar_collapsed';
-
-function readCollapsed(): boolean {
-  if (typeof localStorage === 'undefined') return false;
-  return localStorage.getItem(COLLAPSE_KEY) === 'true';
-}
+const MOBILE_QUERY = '(max-width: 767px)';
+const COLLAPSE_KEY = 'oc_rail_collapsed';
 
 /**
- * AppShell - the global layout. Owns the responsive sidebar/topbar chrome and
- * the command-palette state, and renders routed pages through `<Outlet />`.
- * This is the layout route wrapping the entire authenticated app.
+ * The application frame: a rail, a top bar, and the page.
+ *
+ * The breakpoint is a CSS media query read through `matchMedia`, not a `resize`
+ * listener maintaining a number in React state. The previous shell recomputed a
+ * width on every resize event, unthrottled, and could paint one frame with the
+ * wrong layout after a window restore.
+ *
+ * On desktop the rail is a fixed column that the content sits beside — a grid,
+ * not a manually mirrored margin, so the two cannot drift out of step. On mobile
+ * it is a real dialog: focus trap, scroll lock, Escape, and a scrim that is
+ * genuinely above the top bar. The old scrim shared a z-index with the bar and
+ * came earlier in the DOM, so the bar painted over its own overlay and stayed
+ * clickable underneath it.
  */
 export function AppShell() {
   const [isMobile, setIsMobile] = useState(
-    () => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT,
+    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches,
   );
-  const [collapsed, setCollapsed] = useState(readCollapsed);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const { items } = useNotifications();
 
-  // Track viewport → mobile drawer vs. desktop rail.
+  const waiting = items.filter(
+    (item) => !item.is_read && item.type === 'handoff_request',
+  ).length;
+
   useEffect(() => {
-    const onResize = () => {
-      const mobile = window.innerWidth < MOBILE_BREAKPOINT;
-      setIsMobile(mobile);
-      if (!mobile) setMobileOpen(false);
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const query = window.matchMedia(MOBILE_QUERY);
+    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
   }, []);
 
-  // Persist desktop collapse preference.
-  useEffect(() => {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(COLLAPSE_KEY, String(collapsed));
-  }, [collapsed]);
-
-  // ⌘K / Ctrl-K opens the command palette.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
+  const toggleRail = useCallback(() => {
+    if (isMobile) {
+      setDrawerOpen((open) => !open);
+      return;
+    }
+    setCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
+      } catch {
+        // A browser with storage disabled still gets the toggle, just not the memory.
       }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
-
-  const toggleSidebar = useCallback(() => {
-    if (isMobile) setMobileOpen((open) => !open);
-    else setCollapsed((value) => !value);
+      return next;
+    });
   }, [isMobile]);
 
-  const closeMobile = useCallback(() => setMobileOpen(false), []);
-  const openSearch = useCallback(() => setPaletteOpen(true), []);
-
-  const contentMargin = isMobile ? 'ml-0' : collapsed ? 'ml-[68px]' : 'ml-60';
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'k' || !(event.metaKey || event.ctrlKey)) return;
+      // Guarded, unlike the previous shell's unconditional `preventDefault` — a
+      // user typing into a message composer or a search field expects their own
+      // browser's shortcut, not ours.
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable ||
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '');
+      if (typing) return;
+      event.preventDefault();
+      setSearchOpen((open) => !open);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
-    <div className="min-h-screen bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
-      {/* Mobile backdrop */}
-      {isMobile && mobileOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm"
-          onClick={closeMobile}
-          aria-hidden="true"
-        />
-      )}
+    <TooltipProvider>
+      <div
+        className={cn(
+          'min-h-dvh bg-canvas text-text-primary',
+          !isMobile && 'grid',
+          !isMobile && (collapsed ? 'grid-cols-[var(--spacing-rail-collapsed)_1fr]' : 'grid-cols-[var(--spacing-rail)_1fr]'),
+        )}
+      >
+        {!isMobile ? (
+          <aside
+            id="app-rail"
+            className="sticky top-0 h-dvh overflow-hidden border-r border-rail-border"
+          >
+            <Rail collapsed={collapsed} inboxCount={waiting} />
+          </aside>
+        ) : (
+          <BaseDialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+            <BaseDialog.Portal>
+              <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-scrim)] bg-overlay" />
+              <BaseDialog.Popup className="motion-slide-left fixed inset-y-0 left-0 z-[var(--z-scrim)] w-64 focus:outline-none">
+                <BaseDialog.Title className="sr-only">Navigation</BaseDialog.Title>
+                <Rail collapsed={false} onNavigate={() => setDrawerOpen(false)} inboxCount={waiting} />
+              </BaseDialog.Popup>
+            </BaseDialog.Portal>
+          </BaseDialog.Root>
+        )}
 
-      <Sidebar
-        collapsed={collapsed}
-        isMobile={isMobile}
-        mobileOpen={mobileOpen}
-        onNavigate={closeMobile}
-      />
-
-      <div className={cn('flex min-h-screen flex-col transition-[margin] duration-300', contentMargin)}>
-        <TopBar isMobile={isMobile} onToggleSidebar={toggleSidebar} onOpenSearch={openSearch} />
-        {/* Above the routed outlet, not inside Billing: the customer who most
-            needs this warning is the one who never opens the Billing page. */}
-        <PastDueBanner />
-        <DowngradeReauthBanner />
-        {/* Same reasoning, for email verification. Mounted in the shell so the
-            nudge appears once, on every authenticated route - and NOT on
-            `/verify-email` itself or any public auth page, which render
-            outside this layout. Renders null for verified accounts. */}
-        <VerifyEmailBanner />
-        <main className="flex-1 px-4 pt-3 pb-6 md:px-6 md:pt-4 md:pb-8">
-          <Outlet />
-        </main>
+        <div className="flex min-w-0 flex-col">
+          <TopBar
+            isMobile={isMobile}
+            collapsed={collapsed}
+            onToggleRail={toggleRail}
+            onOpenSearch={() => setSearchOpen(true)}
+          />
+          <ShellBanners />
+          <main id="main" className="min-w-0 flex-1">
+            <Outlet />
+          </main>
+        </div>
       </div>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-      <FeedbackLauncher />
-      <IncomingChatBanner />
-      <PushPermissionNudge />
-      <InstallAppBanner isMobile={isMobile} />
-    </div>
+      <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
+      <Toaster />
+    </TooltipProvider>
   );
 }

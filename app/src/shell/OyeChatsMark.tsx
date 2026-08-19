@@ -1,40 +1,29 @@
-import { type ReactElement } from 'react';
-import { cn } from '../design-system';
+import { cn } from '../ui';
 
 export interface OyeChatsMarkProps {
   /** Rendered box size in px (square). */
   size?: number;
+  /**
+   * Rendered on the ink rail rather than on paper.
+   *
+   * The mark is a solid ink `C`, so on a near-black ground the dark asset
+   * disappears entirely; the light asset is the same glyph knocked out.
+   */
+  onInk?: boolean;
   className?: string;
 }
 
-/**
- * OyeChatsMark - the brand glyph, theme-aware.
- *
- * Two purpose-made logos (transparent background): `logo-light.png` for light
- * mode and `logo-dark.png` for dark mode. Both render, and Tailwind's
- * class-based `dark:` variant toggles which is visible, so the mark always has
- * contrast against the sidebar. Rendered `object-contain` (no invert/crop).
- */
-export function OyeChatsMark({ size = 32, className = '' }: OyeChatsMarkProps): ReactElement {
+/** The brand glyph: a `C` of three dots — a speech bubble mid-typing. */
+export function OyeChatsMark({ size = 28, onInk = false, className }: OyeChatsMarkProps) {
   return (
-    <div
-      role="img"
-      aria-label="OyeChats"
-      className={cn('relative shrink-0 overflow-hidden', className)}
+    <img
+      src={onInk ? '/logo-dark.png' : '/logo-light.png'}
+      alt="OyeChats"
+      width={size}
+      height={size}
+      draggable={false}
+      className={cn('pointer-events-none shrink-0 select-none object-contain', className)}
       style={{ width: size, height: size }}
-    >
-      <img
-        src="/logo-light.png?v=6"
-        alt=""
-        draggable={false}
-        className="pointer-events-none h-full w-full select-none object-contain block dark:hidden"
-      />
-      <img
-        src="/logo-dark.png?v=6"
-        alt=""
-        draggable={false}
-        className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain hidden dark:block"
-      />
-    </div>
+    />
   );
 }

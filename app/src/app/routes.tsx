@@ -3,16 +3,15 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../shell/AppShell';
 import { ProtectedLayout } from './ProtectedLayout';
 import { OperatorRouteGuard } from './OperatorRouteGuard';
+import { AgentScope } from './AgentScope';
 import Login from '../pages/Login';
 import Register from '../pages/Register';
 import VerifyEmail from '../pages/VerifyEmail';
 import ForgotPassword from '../pages/ForgotPassword';
 import OAuthCallback from '../pages/OAuthCallback';
 
-// Admin 2.0 pages
 import { HomePage } from '../features/home/HomePage';
 import { AgentsPage } from '../features/agents/AgentsPage';
-import { AgentLayout } from '../features/agents/AgentLayout';
 import { OverviewPage } from '../features/agents/overview/OverviewPage';
 import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
 import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
@@ -34,44 +33,34 @@ import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
 import { InviteAirlock } from '../features/workspace/InviteAirlock';
 import { SettingsPage } from '../features/settings';
-import { LegacyRedirect, LegacyKnowledgeRedirect } from './legacyRedirects';
+import { SetupPage } from '../onboarding/SetupPage';
+import { Moved, MovedAgent } from './Moved';
 
-// Error surfaces - attached as `errorElement`s so route/render crashes render an
-// on-brand recovery UI instead of React Router's default developer screen.
 import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
 
-// The design-system gallery. Lazy and dev-only: every rebuild phase ends with a
-// review, and a review needs something to look at — without it the only way to
-// see a primitive is to find a screen that happens to use one, so the ones not
-// yet consumed go unexamined until they are already load-bearing.
 const UiGallery = lazy(() => import('../dev/UiGallery').then((m) => ({ default: m.UiGallery })));
 
-// Launch Studio is a one-time onboarding flow on a separate route - lazy-load it
-// so its layout + steps stay out of the initial bundle.
-const LaunchStudio = lazy(() =>
-  import('../features/launch-studio/LaunchStudio').then((m) => ({ default: m.LaunchStudio })),
-);
-
 /**
- * Route Architecture - the Admin Platform 2.0 information architecture.
- * The AI Agent is a first-class URL object: `/agents/:agentId/<tab>` (the six
- * tabs each answer one question). Launch Studio is a full-screen route OUTSIDE
- * the shell - temporary onboarding, never navigation.
+ * The console's routes.
  *
- * Error handling: a pathless root layout owns the app-wide `errorElement`
- * (`RootErrorBoundary`) so a shell/provider crash or a public-page loader error
- * surfaces on-brand full-screen. In-shell pages sit under a pathless
- * `PageErrorBoundary` so a single page crash renders inside the shell - the
- * sidebar/top bar survive and the user can navigate away.
+ * Two scopes, matching the rail: workspace destinations at the top level, and a
+ * chatbot's destinations under `/chatbots/:agentId`. `AgentScope` mounts the
+ * chatbot provider and renders nothing else — the rail carries the chatbot's
+ * navigation and the top bar names it, so the per-chatbot layout that used to
+ * render its own heading and tab row is gone.
+ *
+ * Error surfaces are attached as `errorElement`s: a shell or provider crash goes
+ * full-screen, while a single page crash renders inside the shell so the rail
+ * survives and the user can navigate away.
  */
 export const router = createBrowserRouter([
   {
     errorElement: <RootErrorBoundary />,
     children: [
-      // The gallery renders only the design system, so it needs no auth and no
-      // data providers — which is also what makes it usable as a smoke test.
+      // Renders only the design system, so it needs no auth and no data
+      // providers — which is also what makes it usable as a smoke test.
       {
         path: '/dev/ui',
         element: (
@@ -81,132 +70,115 @@ export const router = createBrowserRouter([
         ),
       },
 
-      // ── Public - reused legacy auth pages; no guard, no data providers ──
+      // ── Public ────────────────────────────────────────────────────────────
       { path: '/login', element: <Login /> },
       { path: '/register', element: <Register /> },
       { path: '/verify-email', element: <VerifyEmail /> },
       { path: '/forgot-password', element: <ForgotPassword /> },
       { path: '/auth/callback', element: <OAuthCallback /> },
       { path: '/affiliate-invite', element: <AffiliateInvite /> },
-      // Team-invite airlock - public magic link; resolves the token and routes
-      // on auth state. Must stay OUTSIDE the ProtectedLayout guard so an
-      // invited (often signed-out) visitor can land and accept.
+      // The team-invite airlock resolves a magic link and routes on auth state,
+      // so it must stay outside the guard: the invited visitor is usually
+      // signed out when they land.
       { path: '/invite/:token', element: <InviteAirlock /> },
 
-      // ── Authenticated area - token guard + reused Workspace/Bot/Crawl providers ──
+      // ── Authenticated ─────────────────────────────────────────────────────
       {
         element: <ProtectedLayout />,
         children: [
           {
             path: '/',
             element: <AppShell />,
-            // A crash in the shell chrome itself escalates to the full-screen boundary.
             errorElement: <RootErrorBoundary />,
-            handle: { crumb: 'Home' },
             children: [
-              // Pathless layout: page-level crashes bubble here and render the
-              // in-shell PageErrorBoundary through the shell's <Outlet />, so the
-              // sidebar and top bar survive and the user can navigate away.
-              // `OperatorRouteGuard` also runs here so a plain operator can't
-              // deep-link into owner/admin-only sections - it redirects them to
-              // the live-chat console while owners/admins pass through.
               {
                 errorElement: <PageErrorBoundary />,
                 element: <OperatorRouteGuard />,
                 children: [
                   { index: true, element: <HomePage /> },
+                  { path: 'setup', element: <SetupPage /> },
 
-                  // ── AI Agents ──────────────────────────────────────────────
+                  // ── Chatbots ────────────────────────────────────────────
                   {
-                    path: 'agents',
-                    handle: { crumb: 'AI Chatbots' },
+                    path: 'chatbots',
                     children: [
                       { index: true, element: <AgentsPage /> },
                       {
                         path: ':agentId',
-                        handle: { crumb: 'Chatbot' },
-                        element: <AgentLayout />,
+                        element: <AgentScope />,
                         children: [
                           { index: true, element: <Navigate to="overview" replace /> },
-                          { path: 'overview', handle: { crumb: 'Overview' }, element: <OverviewPage /> },
-                          { path: 'knowledge', handle: { crumb: 'Knowledge' }, element: <KnowledgePage /> },
-                          { path: 'experience', handle: { crumb: 'Experience' }, element: <ExperiencePage /> },
-                          { path: 'channels', handle: { crumb: 'Channels' }, element: <ChannelsPage /> },
-                          // Per-agent Analytics tab removed - performance lives on the
-                          // agent-scoped workspace Analytics page. Redirect old links.
-                          { path: 'analytics', element: <Navigate to="../overview" replace /> },
-                          { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
+                          { path: 'overview', element: <OverviewPage /> },
+                          { path: 'knowledge', element: <KnowledgePage /> },
+                          { path: 'experience', element: <ExperiencePage /> },
+                          { path: 'deploy', element: <ChannelsPage /> },
+                          // Qualification is promoted out of the technical tab:
+                          // it is a revenue surface, not a configuration corner.
+                          { path: 'qualification', element: <AdvancedPage /> },
+                          { path: 'behaviour', element: <AdvancedPage /> },
                         ],
                       },
                     ],
                   },
 
-                  // ── Operations ─────────────────────────────────────────────
-                  { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
-                  { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
-                  { path: 'journey', handle: { crumb: 'Journey' }, element: <JourneyPage /> },
-                  { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
+                  // ── Operations ──────────────────────────────────────────
+                  { path: 'inbox', element: <InboxPage /> },
+                  { path: 'leads', element: <LeadsPage /> },
+                  { path: 'analytics', element: <AnalyticsPage /> },
+                  { path: 'analytics/journey', element: <JourneyPage /> },
 
-                  // ── Workspace ──────────────────────────────────────────────
+                  // ── Billing ─────────────────────────────────────────────
+                  { path: 'billing', element: <BillingPage /> },
+                  { path: 'billing/usage', element: <UsagePage /> },
+                  { path: 'billing/reports', element: <ReportsPage /> },
+
+                  // ── Settings ────────────────────────────────────────────
                   {
-                    path: 'workspace',
-                    handle: { crumb: 'Workspace' },
+                    path: 'settings',
                     element: <WorkspaceLayout />,
                     children: [
-                      { index: true, element: <Navigate to="general" replace /> },
-                      { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
-                      { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
-                      { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
-                      { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
-                      { path: 'reports', handle: { crumb: 'Reports' }, element: <ReportsPage /> },
-                      { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
-                      { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
-                      { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
+                      { index: true, element: <Navigate to="workspace" replace /> },
+                      { path: 'workspace', element: <GeneralPage /> },
+                      { path: 'team', element: <MembersPage /> },
+                      { path: 'integrations', element: <IntegrationsPage /> },
+                      { path: 'developers', element: <ApiKeysPage /> },
+                      { path: 'affiliate', element: <AffiliatePage /> },
                     ],
                   },
-                  // Old Workspace ▸ Settings and ▸ Security moved to the top-level
-                  // account pages - redirect so existing links/bookmarks keep working.
-                  { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
-                  { path: 'workspace/security', element: <Navigate to="/settings" replace /> },
 
-                  // ── Settings - bottom-anchored secondary nav, not an object tab ──
-                  { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
+                  // Your own account, distinct from the workspace's settings.
+                  { path: 'account', element: <SettingsPage /> },
+                  { path: 'account/preferences', element: <SettingsPage /> },
 
-                  // Unknown routes get a real, in-shell 404 (sidebar/topbar survive).
+                  // ── Moved ───────────────────────────────────────────────
+                  { path: 'agents', element: <Moved to="/chatbots" /> },
+                  { path: 'agents/:agentId', element: <MovedAgent /> },
+                  { path: 'agents/:agentId/overview', element: <MovedAgent segment="overview" /> },
+                  { path: 'agents/:agentId/knowledge', element: <MovedAgent segment="knowledge" /> },
+                  { path: 'agents/:agentId/experience', element: <MovedAgent segment="experience" /> },
+                  { path: 'agents/:agentId/channels', element: <MovedAgent segment="deploy" /> },
+                  { path: 'agents/:agentId/advanced', element: <MovedAgent segment="behaviour" /> },
+                  { path: 'agents/:agentId/analytics', element: <MovedAgent segment="overview" /> },
+                  { path: 'journey', element: <Moved to="/analytics/journey" /> },
+                  { path: 'support', element: <Moved to="/inbox" /> },
+                  { path: 'build', element: <Moved to="/setup" /> },
+                  { path: 'launch', element: <Moved to="/setup" /> },
+                  { path: 'launch/:step', element: <Moved to="/setup" /> },
+                  { path: 'workspace', element: <Moved to="/settings/workspace" /> },
+                  { path: 'workspace/general', element: <Moved to="/settings/workspace" /> },
+                  { path: 'workspace/members', element: <Moved to="/settings/team" /> },
+                  { path: 'workspace/billing', element: <Moved to="/billing" /> },
+                  { path: 'workspace/usage', element: <Moved to="/billing/usage" /> },
+                  { path: 'workspace/reports', element: <Moved to="/billing/reports" /> },
+                  { path: 'workspace/api-keys', element: <Moved to="/settings/developers" /> },
+                  { path: 'workspace/integrations', element: <Moved to="/settings/integrations" /> },
+                  { path: 'workspace/affiliate', element: <Moved to="/settings/affiliate" /> },
+                  { path: 'workspace/settings', element: <Moved to="/account" /> },
+                  { path: 'workspace/security', element: <Moved to="/account" /> },
+                  { path: 'billing/affiliate', element: <Moved to="/settings/affiliate" /> },
+
                   { path: '*', element: <NotFoundPage /> },
                 ],
-              },
-            ],
-          },
-
-          // ── Legacy aliases ─────────────────────────────────────────────
-          // Pre-Admin-2.0 URLs still live in delivered emails, push-notification
-          // payloads and bookmarks, and used to render the in-shell 404. Alias
-          // them onto their new homes (query string + hash preserved) so those
-          // links keep working. Aliases only - never link here from inside the
-          // app. See `legacyRedirects.tsx` for who emits each path.
-          // Old Build Studio → Launch Studio onboarding.
-          { path: '/build', element: <LegacyRedirect to="/launch" /> },
-          // Old operator console → Inbox (labelled "Support" in the sidebar).
-          { path: '/support', element: <LegacyRedirect to="/inbox" /> },
-          // Billing and affiliate moved under Workspace.
-          { path: '/billing', element: <LegacyRedirect to="/workspace/billing" /> },
-          { path: '/affiliate', element: <LegacyRedirect to="/workspace/affiliate" /> },
-          // Knowledge became an agent tab - needs bot resolution.
-          { path: '/knowledge', element: <LegacyKnowledgeRedirect /> },
-
-          // Launch Studio - full-screen 8-step onboarding, OUTSIDE the app shell.
-          {
-            path: '/launch',
-            children: [
-              { index: true, element: <Navigate to="welcome" replace /> },
-              {
-                path: ':step',
-                element: (
-                  <Suspense fallback={null}>
-                    <LaunchStudio />
-                  </Suspense>
-                ),
               },
             ],
           },

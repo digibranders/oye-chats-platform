@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { isOperatorAllowedPath } from '../shell/nav.config';
+import { isOperatorAllowedPath } from '../shell/nav';
 
 /**
  * OperatorRouteGuard - the route-layer half of operator scoping.
