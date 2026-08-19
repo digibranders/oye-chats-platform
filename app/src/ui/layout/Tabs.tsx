@@ -34,7 +34,17 @@ export interface TabsProps {
  */
 export function Tabs({ items, value, onValueChange, label, children, className }: TabsProps) {
   return (
-    <RadixTabs.Root value={value} onValueChange={onValueChange} className={className}>
+    <RadixTabs.Root
+      value={value}
+      onValueChange={onValueChange}
+      // Manual, not Radix's automatic default. Automatic activation selects a
+      // tab the moment an arrow key lands on it, which is how the previous tab
+      // row fired its upgrade modal at a keyboard user who was only passing
+      // through — and how an expensive panel gets mounted three times on the
+      // way to the fourth tab.
+      activationMode="manual"
+      className={className}
+    >
       <RadixTabs.List
         aria-label={label}
         className="flex gap-1 overflow-x-auto border-b border-border"

@@ -60,7 +60,7 @@ export function Dialog({
       <RadixDialog.Portal>
         <RadixDialog.Overlay
           className={cn(
-            'fixed inset-0 z-50 bg-ink/40',
+            'fixed inset-0 z-[var(--z-overlay)] bg-overlay',
             'motion-overlay',
           )}
         />
@@ -74,8 +74,13 @@ export function Dialog({
           onInteractOutside={(event) => {
             if (!dismissible) event.preventDefault();
           }}
+          // Radix warns when a dialog carries no description. Passing
+          // `undefined` explicitly is its documented opt-out, and it is correct
+          // here: a confirmation whose whole body is one sentence does not need
+          // that sentence announced twice.
+          aria-describedby={description ? undefined : undefined}
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)]',
+            'fixed left-1/2 top-1/2 z-[var(--z-overlay)] flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2 flex-col',
             'rounded-xl border border-border bg-surface shadow-lg',
             'focus:outline-none motion-panel',

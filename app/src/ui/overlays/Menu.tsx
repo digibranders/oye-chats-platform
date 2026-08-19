@@ -21,12 +21,12 @@ export const MenuTrigger = RadixMenu.Trigger;
 export const MenuSub = RadixMenu.Sub;
 
 const PANEL = cn(
-  'z-50 min-w-[11rem] overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-md',
+  'z-[var(--z-overlay)] min-w-44 overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-md',
   'motion-pop',
 );
 
 const ITEM = cn(
-  'flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base',
+  'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base',
   'text-text-primary outline-none',
   'data-[highlighted]:bg-surface-hover',
   'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
@@ -127,7 +127,7 @@ export function MenuCheckboxItem({
 
 export function MenuLabel({ children }: { children: ReactNode }) {
   return (
-    <RadixMenu.Label className="px-2 py-1.5 font-mono text-2xs uppercase tracking-[0.08em] text-text-tertiary">
+    <RadixMenu.Label className="px-2 py-1.5 font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
       {children}
     </RadixMenu.Label>
   );

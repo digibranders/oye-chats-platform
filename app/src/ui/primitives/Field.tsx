@@ -1,61 +1,14 @@
-import { createContext, useContext, useId, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { cn } from '../lib/cn';
-
-interface FieldContextValue {
-  id: string;
-  descriptionId?: string;
-  errorId?: string;
-  invalid: boolean;
-  required: boolean;
-  disabled: boolean;
-}
-
-const FieldContext = createContext<FieldContextValue | null>(null);
-
-/**
- * Read the field a control is sitting in.
- *
- * Returns `null` outside a `Field`, which is deliberate: `Input` is usable on
- * its own inside a toolbar or a table cell, where a label and a hint would be
- * noise. Controls spread `useFieldControlProps()` and get correct wiring in both
- * cases without the caller choosing.
- */
-export function useField(): FieldContextValue | null {
-  return useContext(FieldContext);
-}
-
-/**
- * The ARIA a control needs to be described by its own hint and error.
- *
- * This is the part hand-rolled forms almost always get wrong. A red border and a
- * message underneath say "invalid" to someone who can see the form and nothing
- * at all to someone using a screen reader; `aria-invalid` plus a
- * `aria-describedby` that actually points at the error text is what makes the
- * message reachable. Doing it here means no caller has to remember.
- */
-export function useFieldControlProps() {
-  const field = useContext(FieldContext);
-  if (!field) return {};
-  const describedBy = [field.descriptionId, field.errorId].filter(Boolean).join(' ');
-  return {
-    id: field.id,
-    'aria-invalid': field.invalid || undefined,
-    'aria-describedby': describedBy || undefined,
-    'aria-required': field.required || undefined,
-    disabled: field.disabled || undefined,
-  } as const;
-}
+import { FieldContext } from './fieldContext';
 
 export interface FieldProps {
   label: string;
   children: ReactNode;
   /** Guidance shown before the user acts. Keep it to one line. */
   hint?: ReactNode;
-  /**
-   * A validation failure. Replaces the hint in the reading order and turns the
-   * control's boundary red, so the two never compete for the same slot.
-   */
+  /** A validation failure. Shown below the hint, never instead of it. */
   error?: string | null;
   required?: boolean;
   disabled?: boolean;
@@ -67,9 +20,13 @@ export interface FieldProps {
 /**
  * A labelled form control, with its hint and its error.
  *
- * Layout is fixed on purpose: label, control, then one line of either hint or
- * error. Letting each screen choose produced forms where the hint sat above the
- * control on one page and below it on the next.
+ * Layout is fixed on purpose — label, control, hint, error. Letting each screen
+ * choose produced forms where the hint sat above the control on one page and
+ * below it on the next.
+ *
+ * The hint is **not** replaced by the error. An earlier version swapped them,
+ * which removed the format guidance ("at least 8 characters, one number") at
+ * exactly the moment the user had failed to meet it.
  */
 export function Field({
   label,
@@ -93,7 +50,7 @@ export function Field({
         <label
           htmlFor={id}
           className={cn(
-            'text-sm font-medium text-text-primary',
+            'text-base font-medium text-text-primary',
             hideLabel && 'sr-only',
             disabled && 'text-text-disabled',
           )}
@@ -111,6 +68,12 @@ export function Field({
 
         {children}
 
+        {hint ? (
+          <p id={descriptionId} className="text-xs leading-relaxed text-text-secondary">
+            {hint}
+          </p>
+        ) : null}
+
         {error ? (
           <p
             id={errorId}
@@ -122,10 +85,6 @@ export function Field({
           >
             <AlertCircle aria-hidden className="mt-px h-3.5 w-3.5 shrink-0" />
             <span>{error}</span>
-          </p>
-        ) : hint ? (
-          <p id={descriptionId} className="text-xs leading-relaxed text-text-secondary">
-            {hint}
           </p>
         ) : null}
       </div>
@@ -153,7 +112,7 @@ export function FieldSet({
 }) {
   return (
     <fieldset className={cn('min-w-0', className)}>
-      <legend className="text-sm font-medium text-text-primary">{legend}</legend>
+      <legend className="text-base font-medium text-text-primary">{legend}</legend>
       {hint ? <p className="mt-1 text-xs leading-relaxed text-text-secondary">{hint}</p> : null}
       <div className="mt-2.5">{children}</div>
     </fieldset>

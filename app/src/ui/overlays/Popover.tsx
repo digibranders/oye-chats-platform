@@ -39,7 +39,7 @@ export function PopoverContent({
         sideOffset={6}
         collisionPadding={8}
         className={cn(
-          'z-50 rounded-lg border border-border bg-surface shadow-md',
+          'z-[var(--z-overlay)] rounded-lg border border-border bg-surface shadow-md',
           'focus:outline-none motion-pop',
           // Bounded to what actually fits, so a long list scrolls in place
           // rather than running off the bottom of the window.

@@ -1,18 +1,18 @@
-import { forwardRef, type ReactNode } from 'react';
+import { forwardRef, useId, type ReactNode } from 'react';
 import * as RadixCheckbox from '@radix-ui/react-checkbox';
 import * as RadixSwitch from '@radix-ui/react-switch';
 import { Check, Minus } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { useFieldControlProps } from './Field';
+import { useFieldControlProps } from './fieldContext';
 
 /**
  * Checkbox and Switch, on Radix.
  *
- * Radix rather than a hand-rolled control because the behaviour these owe is
- * larger than it looks: label association, space/enter semantics, indeterminate
- * as a real ARIA state, form participation through a hidden native input, and
- * RTL. The previous system had seven separate toggle implementations and none of
- * them agreed; this is one, and its keyboard contract is not ours to get wrong.
+ * Radix rather than a hand-rolled control because what these owe is larger than
+ * it looks: label association, space/enter semantics, indeterminate as a real
+ * ARIA state, form participation through a hidden native input, and RTL. The
+ * system this replaces had seven separate toggle implementations and none of
+ * them agreed. This is one, and its keyboard contract is not ours to get wrong.
  *
  * The visual layer is entirely ours — Radix ships no styles.
  */
@@ -29,7 +29,7 @@ export interface CheckboxProps {
   value?: string;
   label?: ReactNode;
   description?: ReactNode;
-  /** Required when there is no visible `label`, e.g. a table's select-row cell. */
+  /** Required when there is no visible `label` — a table's select-row cell. */
   'aria-label'?: string;
   className?: string;
 }
@@ -38,45 +38,75 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
   { label, description, disabled, className, ...props },
   ref,
 ) {
+  const fieldProps = useFieldControlProps();
+  const generatedId = useId();
+  const describedById = description ? `${generatedId}-description` : undefined;
+
   const control = (
     <RadixCheckbox.Root
       ref={ref}
-      disabled={disabled}
       className={cn(
-        'peer flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border',
+        'flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border',
         'border-border-strong bg-surface transition-colors duration-[var(--dur-fast)]',
         'data-[state=checked]:border-ink data-[state=checked]:bg-ink',
         'data-[state=indeterminate]:border-ink data-[state=indeterminate]:bg-ink',
         'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:opacity-60',
         className,
       )}
+      // The field's wiring first, so an explicit `disabled` on the control
+      // still wins. `useFieldControlProps` omits keys rather than emitting
+      // `undefined`, which would otherwise clobber the prop set beside it.
+      {...fieldProps}
+      disabled={disabled ?? (fieldProps.disabled as boolean | undefined)}
+      aria-describedby={
+        [describedById, fieldProps['aria-describedby'] as string | undefined]
+          .filter(Boolean)
+          .join(' ') || undefined
+      }
       {...props}
     >
-      <RadixCheckbox.Indicator className="flex items-center justify-center text-text-inverse">
-        {props.checked === 'indeterminate' ? (
-          <Minus aria-hidden className="h-3 w-3" strokeWidth={3} />
-        ) : (
-          <Check aria-hidden className="h-3 w-3" strokeWidth={3} />
-        )}
+      {/* Which glyph shows is driven by Radix's own `data-state` on the
+          indicator, not by reading `props.checked` — that is `undefined` for an
+          uncontrolled checkbox, so an earlier version never showed the
+          indeterminate dash at all. */}
+      <RadixCheckbox.Indicator className="group flex items-center justify-center text-text-inverse">
+        <Check
+          aria-hidden
+          strokeWidth={3}
+          className="h-3 w-3 group-data-[state=indeterminate]:hidden"
+        />
+        <Minus
+          aria-hidden
+          strokeWidth={3}
+          className="hidden h-3 w-3 group-data-[state=indeterminate]:block"
+        />
       </RadixCheckbox.Indicator>
     </RadixCheckbox.Root>
   );
 
   if (!label) return control;
 
-  // A `label` element rather than Radix's id-wiring, so the description text is
-  // part of the hit target too: a two-line option whose subtitle is not clickable
-  // reads as broken on touch.
   return (
-    <label className={cn('flex items-start gap-2.5', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+    <div className={cn('flex items-start gap-2.5', disabled && 'opacity-60')}>
       <span className="mt-0.5">{control}</span>
       <span className="min-w-0">
-        <span className="block text-base text-text-primary">{label}</span>
+        {/* The label is a sibling wired by `htmlFor`, not a wrapper. Nesting the
+            description inside the label folds it into the control's accessible
+            name, so the switch announces as "Enable live chat Route
+            conversations to a human when your team is online". */}
+        <label
+          htmlFor={(fieldProps.id as string | undefined) ?? undefined}
+          className={cn('block text-base text-text-primary', !disabled && 'cursor-pointer')}
+        >
+          {label}
+        </label>
         {description ? (
-          <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">{description}</span>
+          <span id={describedById} className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+            {description}
+          </span>
         ) : null}
       </span>
-    </label>
+    </div>
   );
 });
 
@@ -85,7 +115,7 @@ export interface SwitchProps {
   onCheckedChange: (checked: boolean) => void;
   /** Required — a bare switch has no accessible name. */
   label: string;
-  /** Hides the label visually when a neighbouring row heading already names it. */
+  /** Hides the label when a neighbouring row heading already names it. */
   hideLabel?: boolean;
   description?: ReactNode;
   disabled?: boolean;
@@ -106,14 +136,22 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   ref,
 ) {
   const fieldProps = useFieldControlProps();
+  const generatedId = useId();
+  const describedById = description ? `${generatedId}-description` : undefined;
+  const labelId = `${generatedId}-label`;
+
   const control = (
     <RadixSwitch.Root
       ref={ref}
       checked={checked}
       onCheckedChange={onCheckedChange}
-      disabled={disabled}
       name={name}
+      // A `switch` is a button, so a neighbouring `<span>` does not name it the
+      // way a `<label htmlFor>` names an input. Without one of these two the
+      // control has no accessible name at all — which is what the visible-label
+      // path shipped with until a test asked for the name.
       aria-label={hideLabel ? label : undefined}
+      aria-labelledby={hideLabel ? undefined : labelId}
       className={cn(
         'relative inline-flex shrink-0 items-center rounded-full p-0.5',
         'transition-colors duration-[var(--dur-fast)]',
@@ -123,6 +161,12 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
         className,
       )}
       {...fieldProps}
+      disabled={disabled ?? (fieldProps.disabled as boolean | undefined)}
+      aria-describedby={
+        [describedById, fieldProps['aria-describedby'] as string | undefined]
+          .filter(Boolean)
+          .join(' ') || undefined
+      }
     >
       <RadixSwitch.Thumb
         className={cn(
@@ -141,9 +185,13 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   return (
     <div className="flex items-start justify-between gap-4">
       <span className="min-w-0">
-        <span className="block text-base font-medium text-text-primary">{label}</span>
+        <span id={labelId} className="block text-base font-medium text-text-primary">
+          {label}
+        </span>
         {description ? (
-          <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">{description}</span>
+          <span id={describedById} className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+            {description}
+          </span>
         ) : null}
       </span>
       {control}

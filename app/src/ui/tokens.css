@@ -2,90 +2,131 @@
    OyeChats Console — design tokens
    -----------------------------------------------------------------------------
    The single source of truth for every colour, size, shape and timing in the
-   admin app. Nothing outside this file may declare a raw hex, a raw px radius,
-   or a raw transition duration.
+   admin app. Nothing outside this file may declare a raw hex, a raw radius, or
+   a raw duration.
 
-   Three ideas hold the system together:
+   Four ideas hold the system together:
 
-   1. PAPER AND INK. The ground is warm paper, reading surfaces are white, and
-      structure is drawn with hairlines rather than shadows. Shadows belong to
-      things that float (menus, modals) and to nothing else.
-   2. ONE SIGNAL. Blue is the only hue with no status meaning in an operations
-      tool, so it owns interactivity (links, focus, selection, active nav) and
-      progress (crawling, training, streaming, a live conversation). That gives
-      the accent a real job and removes any need for a fifth status hue.
-   3. COLOUR IS MEANING. Four status tones, each always paired with a word.
-      Everything else is neutral.
+   1. PAPER, INK, AND AN INK RAIL. The content ground is warm paper, reading
+      surfaces are white, and structure is drawn with hairlines rather than
+      shadows. The navigation rail is near-black — not a dark theme, a dark
+      chrome element — which gives the product a silhouette that is recognisable
+      at thumbnail size and stops the rail competing with the content for the
+      same three greys.
+   2. BLUE MEANS INTERACTIVE. Links, focus, selection, active nav. Nothing else.
+      It deliberately does NOT also mean "in progress": a selected row that is
+      also streaming would then be one colour saying two things, which is
+      exactly the collision the inbox cannot afford.
+   3. IN-PROGRESS IS MOTION, NOT HUE. Crawling, training and streaming are
+      carried by an indeterminate bar, a pulsing dot and the animated mark.
+      "Live / online" is green-with-a-pulse, which is what every chat tool has
+      already taught people to read.
+   4. EVERY FIGURE IS MONO. Table cells, stat tiles, timestamps, money, IDs. A
+      tool where every number is monospaced reads as an instrument rather than
+      as a website, and it costs one class.
 
-   Every value here was measured, not eyeballed. The contrast comments are real
-   ratios against the three grounds a token can land on: --surface (#FFFFFF),
-   --canvas (#F7F6F3) and --surface-sunken (#F2F1ED).
+   Every value here was measured. The contrast comments are real ratios against
+   the three grounds a token can land on: --surface (#FFFFFF), --canvas
+   (#EFEDE6) and --surface-sunken (#F4F2EC).
 
    Light mode only, deliberately. One theme done properly beats two done
    adequately, and every ground in this file is a known quantity because of it.
    ============================================================================= */
 
 @theme {
+  /* Drop Tailwind's 22 default palettes.
+
+     Without this, `bg-violet-600` still compiles — so the lint rule that bans
+     raw hex would happily let the old brand violet walk straight back in under
+     a utility class. If a colour is not named below, it does not exist. */
+  --color-*: initial;
+
   /* ---------------------------------------------------------------- neutrals
-     A warm, very low chroma ramp. The warmth is what stops the console reading
-     as another cold Tailwind dashboard; the low chroma is what stops it
-     reading as beige. */
-  --color-canvas: #f7f6f3;         /* app ground, sidebar rail                */
-  --color-surface: #ffffff;        /* cards, tables, drawers, menus, popovers */
-  --color-surface-sunken: #f2f1ed; /* toolbars, table heads, wells, code      */
-  --color-surface-hover: #f5f4f0;  /* row and menu-item hover                 */
-  --color-surface-active: #edece7; /* pressed, and the selected row's ground  */
+     Warm, very low chroma. The warmth is what stops the console reading as
+     another cold Tailwind dashboard; the low chroma is what stops it reading as
+     beige.
 
-  --color-border: #e5e3de;         /* 1.28:1 — decorative hairline ONLY       */
-  --color-border-strong: #8b877f;  /* 3.58 / 3.31 / 3.17 — control boundaries */
+     The ramp is spaced by measured lightness, not by eye: canvas→surface is
+     6.3 L*, and every interaction step clears 2.4. An earlier draft put four
+     neutrals inside ten L* points, which looks like restraint on a colour-
+     managed laptop and like a rendering fault on the panel a support operator
+     actually uses. */
+  --color-surface: #ffffff;         /* L* 100  cards, tables, drawers, menus   */
+  --color-surface-hover: #f7f6f2;   /* L*  96.9  row and menu-item hover       */
+  --color-surface-sunken: #f4f2ec;  /* L*  95.5  toolbars, table heads, wells  */
+  --color-canvas: #efede6;          /* L*  93.7  the page ground               */
+  --color-surface-active: #e9e6dd;  /* L*  91.3  pressed                       */
 
-  --color-text-primary: #1a1a18;   /* 17.43 / 16.13 / 15.42                   */
-  --color-text-secondary: #5f5c56; /*  6.66 /  6.17 /  5.90                   */
-  --color-text-tertiary: #6e6a62;  /*  5.38 /  4.98 /  4.76                   */
-  --color-text-disabled: #8b877f;  /* placeholders + disabled (WCAG-exempt)   */
+  --color-border: #e2dfd7;          /* decorative hairline ONLY                */
+  --color-border-strong: #8b877f;   /* control boundaries — 3.58 / 3.05 / 3.20 */
+
+  --color-text-primary: #1a1a18;    /* 17.43 / 14.88 / 15.57                   */
+  --color-text-secondary: #5f5c56;  /*  6.66 /  5.69 /  5.95                   */
+  --color-text-tertiary: #6e6a62;   /*  5.38 /  4.60 /  4.81                   */
+  --color-text-disabled: #8b877f;   /* placeholders + disabled (WCAG-exempt)   */
   --color-text-inverse: #ffffff;
 
-  --color-ink: #17171a;            /* primary buttons, brand mark             */
+  --color-ink: #17171a;             /* primary buttons, the rail, the mark     */
   --color-ink-hover: #2a2a2e;
 
+  /* -------------------------------------------------------------------- rail
+     The navigation rail is ink. Its own scale, because paper tokens on a near
+     black ground are unreadable and would otherwise be reached for by habit. */
+  --color-rail: #17171a;
+  --color-rail-hover: #232327;      /* 1.14 on rail — a felt step, not a stripe */
+  --color-rail-active: #2c2c31;
+  --color-rail-border: #2e2e33;
+  --color-rail-text: #f2f0ea;       /* 15.70 on rail                            */
+  --color-rail-text-muted: #a5a099; /*  6.89 on rail                            */
+  --color-rail-accent: #8faaf5;     /*  7.87 on rail — the active marker        */
+
   /* ------------------------------------------------------------------ signal
-     Interactivity and progress. Never a status. */
-  --color-accent-50: #eef3fe;      /* selected tint, progress track           */
-  --color-accent-100: #dce6fd;     /* badge tint                              */
-  --color-accent-200: #bdcffb;
-  --color-accent-500: #3a6ae6;     /* fill, focus ring, active indicator      */
-  --color-accent-600: #2b54c8;     /* link text (6.55 on white), fill hover   */
-  --color-accent-700: #1f3fa0;     /* link text sitting on --color-accent-50  */
+     Interactive and selected. Never a status, and never "in progress". */
+  --color-accent-50: #e9effd;       /* selected row, focus tint                */
+  --color-accent-100: #d7e2fb;
+  --color-accent-200: #b6c9f8;
+  --color-accent-400: #5b85f0;
+  --color-accent-500: #3a6ae6;      /* fill, focus ring, active indicator      */
+  --color-accent-600: #2b54c8;      /* link text — 6.55 / 5.59 / 5.85          */
+  --color-accent-700: #1f3fa0;      /* text on --color-accent-50 — 8.01        */
 
   /* ------------------------------------------------------------------ status
      Four tones. Colour is never the only signal: each pairs with a word, and
-     StatusDot varies its shape as well as its fill. */
-  --color-success: #1b6b4c;        /* text + icon — 6.45 / 5.97 / 5.71        */
-  --color-success-fill: #1d7350;   /* white on it: 5.80                       */
-  --color-success-tint: #eaf4ef;   /* text on tint: 5.74                      */
+     StatusDot varies shape and motion as well as fill.
 
-  --color-warning: #8a5a16;        /* 5.91 / 5.47 / 5.23                      */
-  --color-warning-fill: #9a6a1c;   /* white on it: 4.72                       */
-  --color-warning-tint: #fbf3e3;   /* text on tint: 5.35                      */
+     There is deliberately no `info` hue. An informational notice is neutral
+     with an ink leading rule — a fifth hue only makes badges harder to read,
+     and a blue one would collide with the interactive accent. */
+  --color-success: #1b6b4c;         /* 6.45 / 5.51 / 5.76                      */
+  --color-success-fill: #1d7350;    /* white on it: 5.80. Also the live pulse. */
+  --color-success-tint: #e7f1eb;    /* text on tint: 5.59                      */
 
-  --color-danger: #a32a28;         /* 7.19 / 6.66 / 6.37                      */
-  --color-danger-fill: #b5322b;    /* white on it: 6.08                       */
-  --color-danger-tint: #fcedec;    /* text on tint: 6.33                      */
+  --color-warning: #8a5a16;         /* 5.91 / 5.04 / 5.28                      */
+  --color-warning-fill: #9a6a1c;    /* white on it: 4.72                       */
+  --color-warning-tint: #f9efdd;    /* text on tint: 5.18                      */
+
+  --color-danger: #a32a28;          /* 7.19 / 6.14 / 6.43                      */
+  --color-danger-fill: #b5322b;     /* white on it: 6.08                       */
+  --color-danger-tint: #fbeae8;     /* text on tint: 6.18                      */
 
   --color-neutral: #5f5c56;
   --color-neutral-fill: #6e6a62;
-  --color-neutral-tint: #f2f1ed;   /* text on tint: 5.90                      */
+  --color-neutral-tint: #e4e1d7;    /* text on tint: 5.09. Distinct from sunken. */
 
   /* Reserved brass. Plan, entitlement and upgrade surfaces only, so "this is a
      paid capability" reads at a glance without inventing a status. */
-  --color-plan: #755814;           /* 6.64 on white, 5.89 on its tint         */
-  --color-plan-tint: #f7f1e1;
+  --color-plan: #755814;            /* 6.64 / 5.67 / 5.93                      */
+  --color-plan-tint: #f4eedc;       /* text on tint: 5.73                      */
+
+  /* Scrims. Named, so no overlay hardcodes its own black. */
+  --color-overlay: rgb(23 23 26 / 0.45);
 
   /* ------------------------------------------------------------------- data
-     A categorical ramp for charts. Muted violet is permitted here and ONLY
-     here — as data, never as UI chrome. Every series clears 3:1 on the canvas.
-     Their greyscale spread is narrow, so a chart never leans on hue alone:
-     series carry direct labels or a legend, and lines vary dash past four. */
+     One categorical ramp. The app this replaces had six, so the same series was
+     a different colour on three adjacent pages. Muted violet is permitted here
+     and ONLY here — as data, never as UI chrome. Every series clears 3:1 on the
+     canvas; past four, charts also vary dash pattern, because the greyscale
+     spread is narrow and hue alone stops separating them. */
   --color-chart-1: #2f5fe0;
   --color-chart-2: #1f7c56;
   --color-chart-3: #a8701f;
@@ -94,38 +135,60 @@
   --color-chart-6: #0f6e6c;
   --color-chart-7: #8e4a7c;
   --color-chart-8: #4e5c6b;
-  --color-chart-grid: #edece7;
+  --color-chart-grid: #e9e6dd;
 
   /* ------------------------------------------------------------------- type
-     One sans, one mono. Geist leads with Inter as the loaded fallback, so a
-     Geist fetch failure degrades to a face that is already on the page rather
-     than to a system stack. Mono is eyebrows, IDs, keys and code — never
-     running text. */
-  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+     Inter for everything, Geist Mono for figures, eyebrows, IDs and code.
+
+     Inter rather than a more fashionable face because the system leans on two
+     of its features: `cv11` straightens the `l` so it cannot be read as a `1`
+     in an API key, and `ss01` gives the single-storey alternates. Declaring a
+     face the page never fetches — which the previous system did — buys nothing
+     but a wrong spec. */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  --text-2xs: 0.6875rem;    /* 11 — mono eyebrows, column heads, badges       */
+  /* Six rungs, not nine. An earlier draft had 14/16/18/22 doing near-identical
+     jobs with no rule for choosing between them, which is how drift starts —
+     and drift is the thing this whole file exists to prevent. Card titles are
+     14/600; the jump to a heading is 18. */
+  --text-2xs: 0.6875rem;    /* 11 — mono eyebrows, column heads               */
   --text-2xs--line-height: 1rem;
-  --text-xs: 0.75rem;       /* 12 — meta, hints, captions                     */
+  --text-xs: 0.75rem;       /* 12 — meta, hints, captions, badges            */
   --text-xs--line-height: 1.125rem;
-  --text-sm: 0.8125rem;     /* 13 — table cells, dense UI, form labels        */
+  --text-sm: 0.8125rem;     /* 13 — table cells, dense UI                    */
   --text-sm--line-height: 1.25rem;
-  --text-base: 0.875rem;    /* 14 — body, inputs, buttons. The default.       */
+  --text-base: 0.875rem;    /* 14 — body, inputs, buttons, card titles       */
   --text-base--line-height: 1.375rem;
-  --text-md: 1rem;          /* 16 — card titles                               */
-  --text-md--line-height: 1.5rem;
-  --text-lg: 1.125rem;      /* 18 — page titles                               */
+  --text-lg: 1.125rem;      /* 18 — section and page headings                */
   --text-lg--line-height: 1.625rem;
-  --text-xl: 1.375rem;      /* 22 — page titles (hero)                        */
-  --text-xl--line-height: 1.875rem;
-  --text-2xl: 1.75rem;      /* 28 — headline figures                          */
+  --text-2xl: 1.75rem;      /* 28 — headline figures, empty-state heroes     */
   --text-2xl--line-height: 2.25rem;
-  --text-3xl: 2.125rem;     /* 34 — big metrics, empty-state heroes           */
-  --text-3xl--line-height: 2.625rem;
+
+  /* Prose is read at length and needs looser leading than a 14px button label,
+     which is fixed-height anyway. Transcripts and long descriptions use it. */
+  --text-prose: 0.875rem;
+  --text-prose--line-height: 1.5rem;
+
+  --tracking-eyebrow: 0.08em;
+
+  /* ------------------------------------------------------------------ space
+     Control and row heights are spacing tokens, so they are consumed as
+     `h-control-md` rather than as `h-[var(--control-h-md)]` — an arbitrary
+     value, inside the design system, under a plan whose stated guardrail is a
+     lint rule banning arbitrary values. */
+  --spacing-control-sm: 1.75rem;    /* 28 */
+  --spacing-control-md: 2.125rem;   /* 34 */
+  --spacing-control-lg: 2.5rem;     /* 40 */
+  --spacing-row: 2.75rem;           /* 44 */
+  --spacing-row-compact: 2.25rem;   /* 36 */
+  --spacing-rail: 15.5rem;          /* 248 — the nav rail                     */
+  --spacing-rail-collapsed: 3.75rem;/* 60 */
+  --spacing-topbar: 3.5rem;         /* 56 */
 
   /* ------------------------------------------------------------------ shape
-     Small radii read as controls; large radii read as marketing. Nothing in
-     the console is pill-shaped except avatars, badges and toggles. */
+     Small radii read as controls; large radii read as marketing. Nothing here
+     is pill-shaped except avatars, badges and toggles. */
   --radius-xs: 4px;         /* chips, checkboxes                              */
   --radius-sm: 6px;         /* small buttons, inputs, menu items              */
   --radius-md: 8px;         /* buttons, selects, inner panels                 */
@@ -133,35 +196,37 @@
   --radius-xl: 14px;        /* modals, drawers, popovers                      */
 
   /* -------------------------------------------------------------- elevation
-     Cards get no shadow. These are for things that float above the page. */
-  --shadow-xs: 0 1px 2px rgb(20 19 17 / 0.04);
-  --shadow-sm: 0 1px 3px rgb(20 19 17 / 0.06), 0 1px 2px rgb(20 19 17 / 0.04);
-  --shadow-md: 0 4px 12px rgb(20 19 17 / 0.08), 0 1px 3px rgb(20 19 17 / 0.05);
-  --shadow-lg: 0 16px 40px rgb(20 19 17 / 0.12), 0 2px 8px rgb(20 19 17 / 0.06);
+     Cards get no shadow: elevation means "floating above the page, and
+     dismissible", which a card is not. `xs` is a 1px seam, not elevation — it
+     is what separates a switch thumb or an active segment from its own track. */
+  --shadow-xs: 0 1px 2px rgb(20 19 17 / 0.05);
+  --shadow-sm: 0 1px 3px rgb(20 19 17 / 0.07), 0 1px 2px rgb(20 19 17 / 0.04);
+  --shadow-md: 0 4px 12px rgb(20 19 17 / 0.09), 0 1px 3px rgb(20 19 17 / 0.05);
+  --shadow-lg: 0 16px 40px rgb(20 19 17 / 0.13), 0 2px 8px rgb(20 19 17 / 0.06);
 
   /* ----------------------------------------------------------------- motion */
   --ease-console: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-console-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Non-@theme tokens: sizes the layout reasons about, exposed as plain custom
-   properties because they are consumed in `calc()` and inline styles rather
-   than as Tailwind utilities. */
+/* Plain custom properties: values consumed in `calc()`, inline styles, or as
+   bare numbers, which the Tailwind namespaces above cannot express. */
 :root {
   --dur-fast: 120ms;        /* hover, press, colour                           */
   --dur: 180ms;             /* menus, popovers, tooltips                      */
   --dur-slow: 240ms;        /* drawers, modals, sheets                        */
 
-  --control-h-sm: 28px;
-  --control-h-md: 34px;
-  --control-h-lg: 40px;
-  --row-h: 44px;
-  --row-h-compact: 36px;
-
-  --sidebar-w: 248px;
-  --sidebar-w-collapsed: 60px;
-  --topbar-h: 56px;
-  --page-max: 1440px;
+  /* One ladder for everything that stacks. The system this replaces put the
+     mobile scrim and the top bar both on z-20, with the bar later in the DOM,
+     so the bar painted above its own scrim and stayed clickable. */
+  --z-base: 0;
+  --z-sticky: 10;           /* sticky toolbars and table heads                 */
+  --z-rail: 20;             /* the navigation rail                            */
+  --z-topbar: 30;
+  --z-scrim: 40;            /* the mobile rail's backdrop                      */
+  --z-overlay: 50;          /* dialogs, drawers, menus, popovers, tooltips     */
+  --z-toast: 60;
+  --z-banner: 70;           /* impersonation and other must-see bars           */
 }
 
 /* =============================================================================
@@ -190,43 +255,49 @@ body {
   line-height: var(--text-base--line-height);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* ss01 gives Inter its single-storey 'a' alternates; cv11 straightens the
-     'l' so it cannot be read as a '1' in an ID or an API key. */
   font-feature-settings: 'ss01', 'cv11';
 }
 
-/* Every figure in the console is tabular, so a column of numbers does not
-   jitter between renders and a live-updating count does not shuffle its own
-   digits sideways. Applied by utility rather than globally, because tabular
-   figures in running prose look mechanical. */
-.tnum {
+/* Every figure in the console. Mono family plus tabular figures, so a column of
+   numbers cannot jitter between renders and a live count cannot shuffle its own
+   digits sideways.
+
+   `font-feature-settings` REPLACES rather than extends, so `ss01` and `cv11`
+   have to be restated here — dropping `cv11` on exactly the elements that
+   render API keys and session ids is how a lowercase `l` starts being read as a
+   `1`. */
+.figure {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
+  font-feature-settings: 'ss01', 'cv11', 'tnum';
+  letter-spacing: -0.01em;
 }
 
-/* One focus ring, everywhere, on every control. The double ring keeps the
-   indicator visible whether the control sits on white, on paper, or on a
-   filled button, because the inner 2px always matches the surface behind it. */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--color-surface),
-    0 0 0 4px var(--color-accent-500);
-  border-radius: var(--radius-sm);
+/* One focus ring, everywhere.
+
+   `outline`, not `box-shadow`. The system uses inset box-shadows for structure
+   — the active tab's underline, the table's hairlines, a switch thumb's seam —
+   and a box-shadow ring overwrites all of them, so focusing an active tab used
+   to erase the marker that said it was active. An outline also follows
+   `border-radius` on its own and is never clipped by an `overflow: hidden`
+   ancestor, which a ring on a table cell always is.
+
+   `[tabindex]` is deliberately absent from the selector: it matches the
+   programmatically-focused content element of every Radix overlay, which would
+   flash a ring around an entire dialog as it opens. */
+:where(a[href], button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-accent-500);
+  outline-offset: 2px;
 }
 
 /* A skeleton has to breathe to read as "loading" rather than "broken". The
-   blanket reduced-motion rule below only shortens durations, which would
-   freeze a pulse at whatever opacity it happened to land on, so the animation
-   is removed outright there and the block is left at full strength. */
+   blanket reduced-motion rule below only shortens durations, which would freeze
+   a pulse at whatever opacity it landed on, so the animation is removed
+   outright there and the block is left at full strength. */
 @keyframes console-pulse {
   0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+  100% { opacity: 1; }
+  50%  { opacity: 0.45; }
 }
 
 .console-skeleton {
@@ -234,10 +305,10 @@ body {
   animation: console-pulse 1.6s ease-in-out infinite;
 }
 
-/* A sticky cell in a `border-collapse` table arrives with no borders of its
-   own: the table paints them, not the cell, so the rest of the row shows
-   through underneath a pinned column. `border-separate` with hairlines drawn
-   as inset shadows makes the boundary travel with the cell. */
+/* A sticky cell in a `border-collapse` table arrives with no borders of its own:
+   the table paints them, not the cell, so the rest of the row shows through
+   underneath a pinned column or a stuck header. `border-separate` with hairlines
+   drawn as inset shadows makes the boundary travel with the cell. */
 .console-table {
   border-collapse: separate;
   border-spacing: 0;
@@ -258,74 +329,61 @@ body {
    Overlay motion.
 
    Written here rather than pulled from an animation plugin so the durations come
-   from the same tokens as everything else, and so the reduced-motion rule at the
-   bottom of this file governs them like every other transition.
+   from the same tokens as everything else, and so the reduced-motion rule below
+   governs them like every other transition.
 
    Radix stamps `data-state="open" | "closed"` on overlay parts and holds the
    element in the DOM until its animation finishes, which is what makes an exit
    animation possible at all.
-   ----------------------------------------------------------------------------- */
-@keyframes overlay-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes overlay-out {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
-@keyframes panel-in {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
-  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-@keyframes panel-out {
-  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
-}
-@keyframes slide-right-in {
-  from { transform: translateX(100%); }
-  to   { transform: translateX(0); }
-}
-@keyframes slide-right-out {
-  from { transform: translateX(0); }
-  to   { transform: translateX(100%); }
-}
-/* Popovers, menus and tooltips grow from the edge they are anchored to, which is
-   what makes the connection to their trigger legible without an arrow. */
-@keyframes indeterminate {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
 
-@keyframes pop-in {
-  from { opacity: 0; transform: scale(0.96); }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes pop-out {
-  from { opacity: 1; transform: scale(1); }
-  to   { opacity: 0; transform: scale(0.96); }
-}
+   The panel keyframes animate `scale` and `opacity` only. Tailwind v4 emits
+   `-translate-x-1/2` as the standalone `translate` property rather than as
+   `transform`, so a keyframe that also wrote `transform: translate(-50%,-50%)`
+   would COMPOSE with it — the dialog would fly in from a point offset by its own
+   full width and height, then snap to centre.
+   ----------------------------------------------------------------------------- */
+@keyframes overlay-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes panel-in    { from { opacity: 0; scale: 0.97; } to { opacity: 1; scale: 1; } }
+@keyframes panel-out   { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.97; } }
+@keyframes slide-right-in  { from { translate: 100% 0; } to { translate: 0 0; } }
+@keyframes slide-right-out { from { translate: 0 0; } to { translate: 100% 0; } }
+@keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
+@keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
 
 .motion-overlay[data-state='open']   { animation: overlay-in var(--dur) var(--ease-console-out); }
 .motion-overlay[data-state='closed'] { animation: overlay-out var(--dur-fast) var(--ease-console); }
-
-.motion-panel[data-state='open']   { animation: panel-in var(--dur-slow) var(--ease-console-out); }
-.motion-panel[data-state='closed'] { animation: panel-out var(--dur-fast) var(--ease-console); }
-
+.motion-panel[data-state='open']     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
+.motion-panel[data-state='closed']   { animation: panel-out var(--dur-fast) var(--ease-console); }
 .motion-slide-right[data-state='open']   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
 .motion-slide-right[data-state='closed'] { animation: slide-right-out var(--dur) var(--ease-console); }
-
 .motion-pop[data-state='open']   { animation: pop-in var(--dur) var(--ease-console-out); }
 .motion-pop[data-state='closed'] { animation: pop-out var(--dur-fast) var(--ease-console); }
 .motion-pop { transform-origin: var(--radix-popper-transform-origin, center); }
 
-@media (prefers-reduced-motion: reduce) {
-  .motion-overlay,
-  .motion-panel,
-  .motion-slide-right,
-  .motion-pop {
-    animation: none !important;
-  }
+/* -----------------------------------------------------------------------------
+   In-progress motion.
+
+   This is the console's answer to "the bot is crawling / training / streaming".
+   It is motion rather than a hue on purpose: giving progress its own colour
+   meant giving it the interactive blue, and a selected row that is also
+   streaming then says two things at once in one colour.
+   ----------------------------------------------------------------------------- */
+@keyframes indeterminate {
+  0%   { translate: -100% 0; }
+  100% { translate: 300% 0; }
 }
+
+/* The brand mark is a C made of three dots — a bubble mid-typing. Working is the
+   mark, animating. */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.25; translate: 0 0; }
+  30%           { opacity: 1; translate: 0 -2px; }
+}
+
+.typing-dot { animation: typing-dot 1.2s var(--ease-console) infinite; }
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -336,8 +394,38 @@ body {
     transition-duration: 0.01ms !important;
   }
 
-  .console-skeleton {
+  /* Overridden rather than shortened: a 0.01ms pulse strobes, and a 0.01ms
+     entrance is a flash. These stop entirely. */
+  .console-skeleton,
+  .motion-overlay,
+  .motion-panel,
+  .motion-slide-right,
+  .motion-pop,
+  .typing-dot {
     animation: none !important;
     opacity: 1;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Windows High Contrast.
+
+   Every status in this system is encoded as a background tint, and forced-colors
+   mode strips backgrounds — which would render success, warning, danger and
+   neutral badges identically. A border is the one decoration the mode keeps, so
+   each tinted surface grows one.
+   ----------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .console-table th,
+  .console-table td {
+    border-bottom: 1px solid CanvasText;
+  }
+
+  [data-tone] {
+    border: 1px solid CanvasText;
+  }
+
+  :where(a[href], button, input, select, textarea, summary):focus-visible {
+    outline: 2px solid Highlight;
   }
 }

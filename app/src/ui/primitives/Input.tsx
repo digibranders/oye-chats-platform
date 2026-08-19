@@ -1,6 +1,6 @@
 import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { useFieldControlProps } from './Field';
+import { useFieldControlProps } from './fieldContext';
 
 /**
  * The shared shape of every text-entry control.
@@ -17,7 +17,7 @@ export const CONTROL_BASE = cn(
   'transition-colors duration-[var(--dur-fast)]',
   'hover:border-text-tertiary',
   'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-text-disabled',
-  'aria-[invalid]:border-danger aria-[invalid]:hover:border-danger',
+  'aria-[invalid=true]:border-danger aria-[invalid=true]:hover:border-danger',
 );
 
 export interface InputProps

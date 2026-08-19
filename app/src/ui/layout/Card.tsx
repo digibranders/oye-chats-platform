@@ -40,13 +40,27 @@ export interface CardHeaderProps {
   /** Mono uppercase label above the title. The console's editorial signature. */
   eyebrow?: string;
   title: ReactNode;
+  /**
+   * The heading level.
+   *
+   * A card inside a `Section` is a level below it, and hardcoding `h2` produced
+   * a document outline of h1 → h2 → h2 where the third should have been h3.
+   */
+  titleAs?: 'h2' | 'h3' | 'h4';
   description?: ReactNode;
   /** Buttons, menus, filters. Wraps below the title on narrow screens. */
   actions?: ReactNode;
   className?: string;
 }
 
-export function CardHeader({ eyebrow, title, description, actions, className }: CardHeaderProps) {
+export function CardHeader({
+  eyebrow,
+  title,
+  titleAs: Title = 'h2',
+  description,
+  actions,
+  className,
+}: CardHeaderProps) {
   return (
     <div
       className={cn(
@@ -57,11 +71,13 @@ export function CardHeader({ eyebrow, title, description, actions, className }: 
     >
       <div className="min-w-0">
         {eyebrow ? (
-          <p className="font-mono text-2xs uppercase tracking-[0.08em] text-text-tertiary">
+          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
             {eyebrow}
           </p>
         ) : null}
-        <h2 className={cn('text-md font-semibold text-text-primary', eyebrow && 'mt-1')}>{title}</h2>
+        <Title className={cn('text-base font-semibold text-text-primary', eyebrow && 'mt-1')}>
+          {title}
+        </Title>
         {description ? (
           <p className="mt-1 max-w-prose text-xs leading-relaxed text-text-secondary">
             {description}
@@ -114,7 +130,9 @@ export function CardFooter({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center justify-end gap-2 rounded-b-lg border-t border-border',
+        // `rounded-b-[inherit]` rather than restating the card's radius: the
+        // two drifted apart the moment either token moved.
+        'flex flex-wrap items-center justify-end gap-2 rounded-b-[inherit] border-t border-border',
         'bg-surface-sunken px-5 py-3',
         className,
       )}

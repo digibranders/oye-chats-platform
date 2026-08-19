@@ -69,7 +69,7 @@ export function StatTile({
       ) : (
         <p
           className={cn(
-            'tnum mt-1.5 font-semibold leading-tight',
+            'figure mt-1.5 font-semibold leading-tight',
             size === 'lg' ? 'text-2xl' : 'text-xl',
             VALUE_TONE[tone],
           )}
@@ -81,7 +81,7 @@ export function StatTile({
         {delta && TrendIcon && !loading ? (
           <span
             className={cn(
-              'inline-flex items-center gap-0.5 font-medium tnum',
+              'inline-flex items-center gap-0.5 font-medium figure',
               good === null ? 'text-text-tertiary' : good ? 'text-success' : 'text-danger',
             )}
           >
@@ -126,7 +126,7 @@ export function FigureRow({
       </dt>
       <dd
         className={cn(
-          'tnum shrink-0 text-right text-sm',
+          'figure shrink-0 text-right text-sm',
           emphasis ? 'font-semibold' : 'font-medium',
           VALUE_TONE[tone],
         )}

@@ -36,7 +36,7 @@ export function Progress({
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="text-xs text-text-secondary">{label}</span>
           {clamped != null ? (
-            <span className="tnum text-xs font-medium text-text-primary">{Math.round(clamped)}%</span>
+            <span className="figure text-xs font-medium text-text-primary">{Math.round(clamped)}%</span>
           ) : null}
         </div>
       ) : null}
@@ -92,7 +92,7 @@ export function Meter({ label, used, limit, unit, className }: MeterProps) {
     <div className={className}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs text-text-secondary">{label}</span>
-        <span className="tnum text-xs font-medium text-text-primary">
+        <span className="figure text-xs font-medium text-text-primary">
           {formatNumber(used)}
           {unlimited ? (
             <span className="text-text-tertiary"> used</span>

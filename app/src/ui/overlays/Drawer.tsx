@@ -52,7 +52,7 @@ export function Drawer({
       <RadixDialog.Portal>
         <RadixDialog.Overlay
           className={cn(
-            'fixed inset-0 z-50 bg-ink/40',
+            'fixed inset-0 z-[var(--z-overlay)] bg-overlay',
             'motion-overlay',
           )}
         />
@@ -64,7 +64,7 @@ export function Drawer({
             if (!dismissible) event.preventDefault();
           }}
           className={cn(
-            'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface shadow-lg',
+            'fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col border-l border-border bg-surface shadow-lg',
             'focus:outline-none',
             'motion-slide-right',
             WIDTHS[width],

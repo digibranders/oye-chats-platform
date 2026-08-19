@@ -8,23 +8,27 @@ const WIDTHS: Record<PageWidth, string> = {
   // because the label and its control end up a screen apart.
   default: 'max-w-4xl',
   wide: 'max-w-[var(--page-max)]',
-  // No max and no padding — for the inbox, which is a full-bleed workspace.
+  // No max width. Padding is controlled separately by `gutter`, because a
+  // full-bleed table page still wants vertical rhythm — dropping both left the
+  // first row flush against the top of the viewport.
   full: 'max-w-none',
 };
 
 export interface PageProps {
   children: ReactNode;
   width?: PageWidth;
+  /** Horizontal padding. Off for a surface that must reach the viewport edge. */
+  gutter?: boolean;
   className?: string;
 }
 
 /** The scroll body of a routed page. Chrome above it belongs to the shell. */
-export function Page({ children, width = 'wide', className }: PageProps) {
+export function Page({ children, width = 'wide', gutter = true, className }: PageProps) {
   return (
     <div
       className={cn(
-        'mx-auto w-full',
-        width !== 'full' && 'px-6 py-6 md:px-8',
+        'mx-auto w-full py-6',
+        gutter && 'px-6 md:px-8',
         WIDTHS[width],
         className,
       )}
@@ -67,7 +71,7 @@ export function PageHeader({
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           {eyebrow ? (
-            <p className="font-mono text-2xs uppercase tracking-[0.08em] text-text-tertiary">
+            <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
               {eyebrow}
             </p>
           ) : null}
@@ -127,9 +131,15 @@ export function Section({ title, description, actions, children, id, className }
   );
 }
 
-/** Vertical rhythm between sections. One gap value, applied in one place. */
+/**
+ * Vertical rhythm between sections. One gap value, applied in one place.
+ *
+ * `flex` + `gap` rather than `space-y`: the margin-based utility skips over
+ * fragments and misbehaves the moment a child is itself a flex or grid item,
+ * which makes the spacing depend on how the caller happened to wrap things.
+ */
 export function Stack({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('space-y-6', className)}>{children}</div>;
+  return <div className={cn('flex flex-col gap-6', className)}>{children}</div>;
 }
 
 /**
@@ -151,7 +161,7 @@ export function Toolbar({
     <div
       className={cn(
         'flex flex-wrap items-center gap-2',
-        sticky && 'sticky top-[var(--topbar-h)] z-20 -mx-2 bg-canvas/95 px-2 py-2 backdrop-blur',
+        sticky && 'sticky top-topbar z-[var(--z-sticky)] -mx-2 bg-canvas/95 px-2 py-2 backdrop-blur',
         className,
       )}
     >

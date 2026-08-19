@@ -2,7 +2,7 @@ import { forwardRef, type SelectHTMLAttributes } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
-import { useFieldControlProps } from './Field';
+import { useFieldControlProps } from './fieldContext';
 
 export interface SelectOption<T extends string = string> {
   value: T;

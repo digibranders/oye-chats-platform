@@ -49,7 +49,7 @@ export function Tooltip({ children, content, side = 'top', align = 'center', dis
           sideOffset={6}
           collisionPadding={8}
           className={cn(
-            'z-50 max-w-xs rounded-sm bg-ink px-2 py-1 text-xs leading-snug text-text-inverse shadow-md',
+            'z-[var(--z-overlay)] max-w-xs rounded-sm bg-ink px-2 py-1 text-xs leading-snug text-text-inverse shadow-md',
             'motion-pop',
           )}
         >

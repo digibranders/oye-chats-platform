@@ -40,17 +40,6 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-/** True when the user is on a Mac, so shortcut hints name the right key. */
-export function isMacPlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-}
-
-/** The platform's command-key glyph, for shortcut hints. */
-export function modifierKey(): string {
-  return isMacPlatform() ? '⌘' : 'Ctrl';
-}
-
 /**
  * The console's mono eyebrow: a small uppercase label above a title or figure.
  *
@@ -60,7 +49,7 @@ export function modifierKey(): string {
  */
 export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <p className={cn('font-mono text-2xs uppercase tracking-[0.08em] text-text-tertiary', className)}>
+    <p className={cn('font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary', className)}>
       {children}
     </p>
   );

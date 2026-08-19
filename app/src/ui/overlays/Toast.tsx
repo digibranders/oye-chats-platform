@@ -1,4 +1,4 @@
-import { Toaster as SonnerToaster, toast as sonnerToast } from 'sonner';
+import { Toaster as SonnerToaster } from 'sonner';
 import { AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 
 /**
@@ -21,7 +21,10 @@ import { AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 export function Toaster() {
   return (
     <SonnerToaster
-      position="bottom-right"
+      // Not bottom-right: this app embeds the OyeChats widget on itself, and
+      // its launcher lives in that corner. Bottom-centre clears both the
+      // launcher and the navigation rail.
+      position="bottom-center"
       // Sonner's own theming is bypassed entirely: `unstyled` plus our classes
       // means a toast is built from the same tokens as everything else instead
       // of from a second, parallel palette.
@@ -53,5 +56,3 @@ export function Toaster() {
     />
   );
 }
-
-export const toast = sonnerToast;

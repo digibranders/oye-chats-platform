@@ -138,10 +138,12 @@ export function LockedState({
   return (
     <div className={cn('rounded-lg border border-border bg-surface', className)}>
       {preview ? (
-        // Dimmed and inert: it is an illustration of the feature, not the
-        // feature. `aria-hidden` keeps a screen reader from reading out a
-        // sample the user cannot actually reach.
-        <div aria-hidden className="pointer-events-none select-none opacity-40">
+        // `inert` rather than `aria-hidden`: it is an illustration of the
+        // feature, not the feature. `aria-hidden` alone hides the subtree from
+        // a screen reader while leaving every control inside it in the tab
+        // order, which is a keyboard trap into UI the user cannot use. `inert`
+        // removes it from both.
+        <div inert className="pointer-events-none select-none opacity-40">
           {preview}
         </div>
       ) : null}

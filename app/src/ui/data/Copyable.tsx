@@ -1,44 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Check, Copy, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
-
-/**
- * Copy-to-clipboard with honest feedback.
- *
- * `navigator.clipboard` rejects on an insecure origin, without permission, or
- * when the document is not focused. The previous app called it in eight places
- * and swallowed the failure in most of them, so the button simply never said
- * "Copied" and the user had no idea whether anything happened. This reports the
- * failure so the caller can fall back to select-the-text.
- */
-export function useClipboard(resetAfter = 2000) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const timer = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timer.current) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  const copy = useCallback(
-    async (text: string) => {
-      if (timer.current) window.clearTimeout(timer.current);
-      try {
-        await navigator.clipboard.writeText(text);
-        setState('copied');
-      } catch {
-        setState('failed');
-      }
-      timer.current = window.setTimeout(() => setState('idle'), resetAfter);
-    },
-    [resetAfter],
-  );
-
-  return { state, copy };
-}
+import { useClipboard } from '../hooks/useClipboard';
 
 export interface CopyFieldProps {
   value: string;
