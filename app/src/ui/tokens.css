@@ -1,0 +1,343 @@
+/* =============================================================================
+   OyeChats Console — design tokens
+   -----------------------------------------------------------------------------
+   The single source of truth for every colour, size, shape and timing in the
+   admin app. Nothing outside this file may declare a raw hex, a raw px radius,
+   or a raw transition duration.
+
+   Three ideas hold the system together:
+
+   1. PAPER AND INK. The ground is warm paper, reading surfaces are white, and
+      structure is drawn with hairlines rather than shadows. Shadows belong to
+      things that float (menus, modals) and to nothing else.
+   2. ONE SIGNAL. Blue is the only hue with no status meaning in an operations
+      tool, so it owns interactivity (links, focus, selection, active nav) and
+      progress (crawling, training, streaming, a live conversation). That gives
+      the accent a real job and removes any need for a fifth status hue.
+   3. COLOUR IS MEANING. Four status tones, each always paired with a word.
+      Everything else is neutral.
+
+   Every value here was measured, not eyeballed. The contrast comments are real
+   ratios against the three grounds a token can land on: --surface (#FFFFFF),
+   --canvas (#F7F6F3) and --surface-sunken (#F2F1ED).
+
+   Light mode only, deliberately. One theme done properly beats two done
+   adequately, and every ground in this file is a known quantity because of it.
+   ============================================================================= */
+
+@theme {
+  /* ---------------------------------------------------------------- neutrals
+     A warm, very low chroma ramp. The warmth is what stops the console reading
+     as another cold Tailwind dashboard; the low chroma is what stops it
+     reading as beige. */
+  --color-canvas: #f7f6f3;         /* app ground, sidebar rail                */
+  --color-surface: #ffffff;        /* cards, tables, drawers, menus, popovers */
+  --color-surface-sunken: #f2f1ed; /* toolbars, table heads, wells, code      */
+  --color-surface-hover: #f5f4f0;  /* row and menu-item hover                 */
+  --color-surface-active: #edece7; /* pressed, and the selected row's ground  */
+
+  --color-border: #e5e3de;         /* 1.28:1 — decorative hairline ONLY       */
+  --color-border-strong: #8b877f;  /* 3.58 / 3.31 / 3.17 — control boundaries */
+
+  --color-text-primary: #1a1a18;   /* 17.43 / 16.13 / 15.42                   */
+  --color-text-secondary: #5f5c56; /*  6.66 /  6.17 /  5.90                   */
+  --color-text-tertiary: #6e6a62;  /*  5.38 /  4.98 /  4.76                   */
+  --color-text-disabled: #8b877f;  /* placeholders + disabled (WCAG-exempt)   */
+  --color-text-inverse: #ffffff;
+
+  --color-ink: #17171a;            /* primary buttons, brand mark             */
+  --color-ink-hover: #2a2a2e;
+
+  /* ------------------------------------------------------------------ signal
+     Interactivity and progress. Never a status. */
+  --color-accent-50: #eef3fe;      /* selected tint, progress track           */
+  --color-accent-100: #dce6fd;     /* badge tint                              */
+  --color-accent-200: #bdcffb;
+  --color-accent-500: #3a6ae6;     /* fill, focus ring, active indicator      */
+  --color-accent-600: #2b54c8;     /* link text (6.55 on white), fill hover   */
+  --color-accent-700: #1f3fa0;     /* link text sitting on --color-accent-50  */
+
+  /* ------------------------------------------------------------------ status
+     Four tones. Colour is never the only signal: each pairs with a word, and
+     StatusDot varies its shape as well as its fill. */
+  --color-success: #1b6b4c;        /* text + icon — 6.45 / 5.97 / 5.71        */
+  --color-success-fill: #1d7350;   /* white on it: 5.80                       */
+  --color-success-tint: #eaf4ef;   /* text on tint: 5.74                      */
+
+  --color-warning: #8a5a16;        /* 5.91 / 5.47 / 5.23                      */
+  --color-warning-fill: #9a6a1c;   /* white on it: 4.72                       */
+  --color-warning-tint: #fbf3e3;   /* text on tint: 5.35                      */
+
+  --color-danger: #a32a28;         /* 7.19 / 6.66 / 6.37                      */
+  --color-danger-fill: #b5322b;    /* white on it: 6.08                       */
+  --color-danger-tint: #fcedec;    /* text on tint: 6.33                      */
+
+  --color-neutral: #5f5c56;
+  --color-neutral-fill: #6e6a62;
+  --color-neutral-tint: #f2f1ed;   /* text on tint: 5.90                      */
+
+  /* Reserved brass. Plan, entitlement and upgrade surfaces only, so "this is a
+     paid capability" reads at a glance without inventing a status. */
+  --color-plan: #755814;           /* 6.64 on white, 5.89 on its tint         */
+  --color-plan-tint: #f7f1e1;
+
+  /* ------------------------------------------------------------------- data
+     A categorical ramp for charts. Muted violet is permitted here and ONLY
+     here — as data, never as UI chrome. Every series clears 3:1 on the canvas.
+     Their greyscale spread is narrow, so a chart never leans on hue alone:
+     series carry direct labels or a legend, and lines vary dash past four. */
+  --color-chart-1: #2f5fe0;
+  --color-chart-2: #1f7c56;
+  --color-chart-3: #a8701f;
+  --color-chart-4: #6e4fb8;
+  --color-chart-5: #b5322b;
+  --color-chart-6: #0f6e6c;
+  --color-chart-7: #8e4a7c;
+  --color-chart-8: #4e5c6b;
+  --color-chart-grid: #edece7;
+
+  /* ------------------------------------------------------------------- type
+     One sans, one mono. Geist leads with Inter as the loaded fallback, so a
+     Geist fetch failure degrades to a face that is already on the page rather
+     than to a system stack. Mono is eyebrows, IDs, keys and code — never
+     running text. */
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;    /* 11 — mono eyebrows, column heads, badges       */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;       /* 12 — meta, hints, captions                     */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem;     /* 13 — table cells, dense UI, form labels        */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;    /* 14 — body, inputs, buttons. The default.       */
+  --text-base--line-height: 1.375rem;
+  --text-md: 1rem;          /* 16 — card titles                               */
+  --text-md--line-height: 1.5rem;
+  --text-lg: 1.125rem;      /* 18 — page titles                               */
+  --text-lg--line-height: 1.625rem;
+  --text-xl: 1.375rem;      /* 22 — page titles (hero)                        */
+  --text-xl--line-height: 1.875rem;
+  --text-2xl: 1.75rem;      /* 28 — headline figures                          */
+  --text-2xl--line-height: 2.25rem;
+  --text-3xl: 2.125rem;     /* 34 — big metrics, empty-state heroes           */
+  --text-3xl--line-height: 2.625rem;
+
+  /* ------------------------------------------------------------------ shape
+     Small radii read as controls; large radii read as marketing. Nothing in
+     the console is pill-shaped except avatars, badges and toggles. */
+  --radius-xs: 4px;         /* chips, checkboxes                              */
+  --radius-sm: 6px;         /* small buttons, inputs, menu items              */
+  --radius-md: 8px;         /* buttons, selects, inner panels                 */
+  --radius-lg: 10px;        /* cards                                          */
+  --radius-xl: 14px;        /* modals, drawers, popovers                      */
+
+  /* -------------------------------------------------------------- elevation
+     Cards get no shadow. These are for things that float above the page. */
+  --shadow-xs: 0 1px 2px rgb(20 19 17 / 0.04);
+  --shadow-sm: 0 1px 3px rgb(20 19 17 / 0.06), 0 1px 2px rgb(20 19 17 / 0.04);
+  --shadow-md: 0 4px 12px rgb(20 19 17 / 0.08), 0 1px 3px rgb(20 19 17 / 0.05);
+  --shadow-lg: 0 16px 40px rgb(20 19 17 / 0.12), 0 2px 8px rgb(20 19 17 / 0.06);
+
+  /* ----------------------------------------------------------------- motion */
+  --ease-console: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-console-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Non-@theme tokens: sizes the layout reasons about, exposed as plain custom
+   properties because they are consumed in `calc()` and inline styles rather
+   than as Tailwind utilities. */
+:root {
+  --dur-fast: 120ms;        /* hover, press, colour                           */
+  --dur: 180ms;             /* menus, popovers, tooltips                      */
+  --dur-slow: 240ms;        /* drawers, modals, sheets                        */
+
+  --control-h-sm: 28px;
+  --control-h-md: 34px;
+  --control-h-lg: 40px;
+  --row-h: 44px;
+  --row-h-compact: 36px;
+
+  --sidebar-w: 248px;
+  --sidebar-w-collapsed: 60px;
+  --topbar-h: 56px;
+  --page-max: 1440px;
+}
+
+/* =============================================================================
+   Base
+   ============================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* The console is a tool, not a page: native smooth scrolling fights the
+     inbox's programmatic scroll-to-latest. */
+  scroll-behavior: auto;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* ss01 gives Inter its single-storey 'a' alternates; cv11 straightens the
+     'l' so it cannot be read as a '1' in an ID or an API key. */
+  font-feature-settings: 'ss01', 'cv11';
+}
+
+/* Every figure in the console is tabular, so a column of numbers does not
+   jitter between renders and a live-updating count does not shuffle its own
+   digits sideways. Applied by utility rather than globally, because tabular
+   figures in running prose look mechanical. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* One focus ring, everywhere, on every control. The double ring keeps the
+   indicator visible whether the control sits on white, on paper, or on a
+   filled button, because the inner 2px always matches the surface behind it. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--color-surface),
+    0 0 0 4px var(--color-accent-500);
+  border-radius: var(--radius-sm);
+}
+
+/* A skeleton has to breathe to read as "loading" rather than "broken". The
+   blanket reduced-motion rule below only shortens durations, which would
+   freeze a pulse at whatever opacity it happened to land on, so the animation
+   is removed outright there and the block is left at full strength. */
+@keyframes console-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.console-skeleton {
+  background-color: var(--color-surface-sunken);
+  animation: console-pulse 1.6s ease-in-out infinite;
+}
+
+/* A sticky cell in a `border-collapse` table arrives with no borders of its
+   own: the table paints them, not the cell, so the rest of the row shows
+   through underneath a pinned column. `border-separate` with hairlines drawn
+   as inset shadows makes the boundary travel with the cell. */
+.console-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.console-table th,
+.console-table td {
+  box-shadow: inset 0 -1px 0 var(--color-border);
+}
+
+.console-table .is-pinned {
+  box-shadow:
+    inset 0 -1px 0 var(--color-border),
+    inset -1px 0 0 var(--color-border);
+}
+
+/* -----------------------------------------------------------------------------
+   Overlay motion.
+
+   Written here rather than pulled from an animation plugin so the durations come
+   from the same tokens as everything else, and so the reduced-motion rule at the
+   bottom of this file governs them like every other transition.
+
+   Radix stamps `data-state="open" | "closed"` on overlay parts and holds the
+   element in the DOM until its animation finishes, which is what makes an exit
+   animation possible at all.
+   ----------------------------------------------------------------------------- */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes panel-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
+}
+@keyframes slide-right-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes slide-right-out {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+/* Popovers, menus and tooltips grow from the edge they are anchored to, which is
+   what makes the connection to their trigger legible without an arrow. */
+@keyframes indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes pop-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.96); }
+}
+
+.motion-overlay[data-state='open']   { animation: overlay-in var(--dur) var(--ease-console-out); }
+.motion-overlay[data-state='closed'] { animation: overlay-out var(--dur-fast) var(--ease-console); }
+
+.motion-panel[data-state='open']   { animation: panel-in var(--dur-slow) var(--ease-console-out); }
+.motion-panel[data-state='closed'] { animation: panel-out var(--dur-fast) var(--ease-console); }
+
+.motion-slide-right[data-state='open']   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
+.motion-slide-right[data-state='closed'] { animation: slide-right-out var(--dur) var(--ease-console); }
+
+.motion-pop[data-state='open']   { animation: pop-in var(--dur) var(--ease-console-out); }
+.motion-pop[data-state='closed'] { animation: pop-out var(--dur-fast) var(--ease-console); }
+.motion-pop { transform-origin: var(--radix-popper-transform-origin, center); }
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-overlay,
+  .motion-panel,
+  .motion-slide-right,
+  .motion-pop {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .console-skeleton {
+    animation: none !important;
+    opacity: 1;
+  }
+}
