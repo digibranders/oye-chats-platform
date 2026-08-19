@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ArrowLeft, ChevronsUpDown, Plus } from 'lucide-react';
 import { cn, Tooltip, Badge } from '../ui';
+import { agentHealth } from '../features/home/agentHealth';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
 import {
@@ -207,20 +208,32 @@ export function Rail({ collapsed, onNavigate, inboxCount = 0 }: RailProps) {
                   Chatbots
                 </RailSectionLabel>
                 <div className="space-y-0.5">
-                  {bots.slice(0, 3).map((bot) => (
-                    <NavLink
-                      key={bot.id}
-                      to={agentPath(bot.id, 'overview')}
-                      onClick={onNavigate}
-                      className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text"
-                    >
-                      <span
-                        aria-hidden
-                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-rail-text-muted"
-                      />
-                      <span className="min-w-0 flex-1 truncate">{bot.name}</span>
-                    </NavLink>
-                  ))}
+                  {bots.slice(0, 3).map((bot) => {
+                    // The dot carries health, so the rail answers "is anything
+                    // wrong?" without the user opening anything. It is never the
+                    // only signal — Home names the chatbot and says what to do.
+                    const health = agentHealth(bot);
+                    return (
+                      <NavLink
+                        key={bot.id}
+                        to={agentPath(bot.id, 'overview')}
+                        onClick={onNavigate}
+                        className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text"
+                      >
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 shrink-0 rounded-full',
+                            health.tone === 'danger' && 'bg-danger-fill',
+                            health.tone === 'warning' && 'bg-warning-fill',
+                            health.tone === 'success' && 'bg-success-fill',
+                            health.tone === 'neutral' && 'bg-rail-text-muted',
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{bot.name}</span>
+                        <span className="sr-only">{health.label}</span>
+                      </NavLink>
+                    );
+                  })}
                   {bots.length > 3 ? (
                     <NavLink
                       to="/chatbots"

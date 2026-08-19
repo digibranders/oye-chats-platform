@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { getAgentHealth } from './agent-status';
-import { deriveAgentHealth } from '../home/home-data';
 import { type Bot } from '../../types/domain';
 
 /**
@@ -52,34 +51,5 @@ describe('getAgentHealth (Agents list)', () => {
 
   it('reports a never-trained agent as draft', () => {
     expect(getAgentHealth(bot({ indexed_chunk_count: 0 }))).toBe('draft');
-  });
-});
-
-describe('deriveAgentHealth (Home)', () => {
-  it('keeps a trained, installed agent live after a failed recrawl', () => {
-    const health = deriveAgentHealth(
-      bot({
-        indexed_chunk_count: 5000,
-        widget_installed_at: '2026-07-01T00:00:00Z',
-        last_crawl_status: 'failed',
-      }),
-    );
-
-    expect(health.label).toBe('Live');
-    expect(health.needsAttention).toBe(false);
-  });
-
-  it('still flags an untrained agent whose crawl failed', () => {
-    const health = deriveAgentHealth(bot({ indexed_chunk_count: 0, last_crawl_status: 'failed' }));
-
-    expect(health.label).toBe('Needs attention');
-    expect(health.needsAttention).toBe(true);
-  });
-
-  it('distinguishes never-trained from failed-training', () => {
-    const health = deriveAgentHealth(bot({ indexed_chunk_count: 0 }));
-
-    expect(health.label).toBe('Not trained yet');
-    expect(health.needsAttention).toBe(true);
   });
 });
