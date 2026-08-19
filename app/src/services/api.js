@@ -11,19 +11,6 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-/**
- * The configured axios instance.
- *
- * Exported so the platform console can reuse the auth header, impersonation
- * suppression, 401 handling and error shaping that live on this client's
- * interceptors. Roughly a hundred super-admin endpoints have no wrapper here
- * and adding them all would double the size of this module without adding
- * anything: they are a different product with a different persona. A second
- * `axios.create` would silently lose every interceptor, which is the actual
- * hazard this export exists to prevent.
- */
-export const httpClient = api;
-
 /** Returns the backend endpoint configured for this dashboard build. */
 export const getApiBaseUrl = () => API_BASE_URL;
 
@@ -56,6 +43,22 @@ const api = axios.create({
     },
     timeout: 30000,
 });
+
+/**
+ * The configured axios instance.
+ *
+ * Exported so the platform console can reuse the auth header, impersonation
+ * suppression, 401 handling and error shaping that live on this client's
+ * interceptors. Roughly a hundred super-admin endpoints have no wrapper here,
+ * and a second `axios.create` would silently lose every one of those.
+ *
+ * It must stay BELOW the `axios.create` call. `const` bindings are hoisted into
+ * a temporal dead zone, so an `export const httpClient = api` placed earlier in
+ * the file throws `ReferenceError: Cannot access 'api' before initialization`
+ * the moment this module is evaluated — which takes down every screen in the
+ * app, not just the console. That is exactly what it did.
+ */
+export const httpClient = api;
 
 const buildApiError = (error, fallbackMessage = 'Request failed') => {
     const status = error.response?.status;
