@@ -6,15 +6,16 @@ import { cn } from '../lib/cn';
 import { useFieldControlProps } from './fieldContext';
 
 /**
- * Checkbox and Switch, on Radix.
+ * Checkbox and Switch.
  *
  * Base UI rather than a hand-rolled control because what these owe is larger
- * than it looks: label association, space/enter semantics, indeterminate as a real
- * ARIA state, form participation through a hidden native input, and RTL. The
- * system this replaces had seven separate toggle implementations and none of
- * them agreed. This is one, and its keyboard contract is not ours to get wrong.
+ * than it looks: label association, space/enter semantics, indeterminate as a
+ * real ARIA state, form participation through a hidden native input, and RTL.
+ * The system this replaces had seven separate toggle implementations and none
+ * of them agreed. This is one, and its keyboard contract is not ours to get
+ * wrong.
  *
- * The visual layer is entirely ours — Radix ships no styles.
+ * The visual layer is entirely ours — Base UI ships no styles.
  */
 
 export type CheckedState = boolean | 'indeterminate';
@@ -41,6 +42,12 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
   const fieldProps = useFieldControlProps();
   const generatedId = useId();
   const describedById = description ? `${generatedId}-description` : undefined;
+  // Inside a `Field` the id comes from the field, which is what pairs the
+  // field's own label with this control. Outside one there is no id at all, and
+  // a `<label htmlFor={undefined}>` names nothing — so a checkbox with a
+  // perfectly visible label announced as an unnamed checkbox. Fall back to our
+  // own id so the visible label always associates.
+  const controlId = (fieldProps.id as string | undefined) ?? `${generatedId}-control`;
 
   // The public API takes one `CheckedState`, because a caller reasoning about a
   // select-all header thinks in three states, not in two booleans that can
@@ -67,6 +74,7 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
       // still wins. `useFieldControlProps` omits keys rather than emitting
       // `undefined`, which would otherwise clobber the prop set beside it.
       {...fieldProps}
+      id={label ? controlId : (fieldProps.id as string | undefined)}
       disabled={disabled ?? (fieldProps.disabled as boolean | undefined)}
       aria-describedby={
         [describedById, fieldProps['aria-describedby'] as string | undefined]
@@ -105,7 +113,7 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
             name, so the switch announces as "Enable live chat Route
             conversations to a human when your team is online". */}
         <label
-          htmlFor={(fieldProps.id as string | undefined) ?? undefined}
+          htmlFor={controlId}
           className={cn('block text-base text-text-primary', !disabled && 'cursor-pointer')}
         >
           {label}
@@ -148,6 +156,8 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   const fieldProps = useFieldControlProps();
   const generatedId = useId();
   const describedById = description ? `${generatedId}-description` : undefined;
+  // A switch needs no id fallback: it is a button, and a button is named by
+  // `aria-label` or `aria-labelledby`, never by a sibling `<label htmlFor>`.
   const labelId = `${generatedId}-label`;
 
   const control = (

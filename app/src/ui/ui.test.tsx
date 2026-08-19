@@ -6,6 +6,8 @@ import { Button } from './primitives/Button';
 import { Field } from './primitives/Field';
 import { Input } from './primitives/Input';
 import { Switch, Checkbox } from './primitives/Toggle';
+import { Progress } from './primitives/Progress';
+import { CodeBlock } from './data/Copyable';
 import { SegmentedControl } from './primitives/SegmentedControl';
 import { Tabs, TabPanel } from './layout/Tabs';
 import { DataTable, type Column } from './data/DataTable';
@@ -526,5 +528,71 @@ describe('RankedBars', () => {
     expect(row).toHaveAttribute('aria-pressed', 'true');
     await user.click(row);
     expect(onSelect).toHaveBeenCalled();
+  });
+});
+
+describe('Checkbox and Progress accessible names', () => {
+  it('names a checkbox from its visible label outside a Field', () => {
+    // The label was wired with `htmlFor={fieldProps.id}`, and outside a `Field`
+    // there is no id — so a checkbox with a perfectly visible label announced
+    // as an unnamed checkbox everywhere it was used without one.
+    render(<Checkbox label="Restrict to these domains" />);
+    expect(screen.getByRole('checkbox', { name: /restrict to these domains/i })).toBeInTheDocument();
+  });
+
+  it('still takes its name from the surrounding Field when there is one', () => {
+    render(
+      <Field label="Send me a weekly summary">
+        <Checkbox />
+      </Field>,
+    );
+    expect(screen.getByRole('checkbox', { name: /weekly summary/i })).toBeInTheDocument();
+  });
+
+  it('names the element that actually carries the progressbar role', () => {
+    // Base UI puts `role="progressbar"` on the Root. The label used to sit on
+    // the Track, a plain div with no role, so an indeterminate bar announced as
+    // an unnamed progressbar — and an indeterminate bar's label is the only
+    // thing it communicates.
+    render(<Progress value={null} label="Reading your website" />);
+    expect(screen.getByRole('progressbar', { name: /reading your website/i })).toBeInTheDocument();
+  });
+});
+
+describe('CodeBlock copy reporting', () => {
+  it('tells the caller whether the copy actually happened', async () => {
+    // The snippet's copy button is the single most important activation event
+    // in the product, and it could not be observed at all: the primitive
+    // swallowed the outcome, so the event had to be inferred from a
+    // neighbouring button that most people never press.
+    const onCopy = vi.fn();
+    const user = userEvent.setup();
+    // Spied rather than assigned: `setup()` installs its own clipboard as a
+    // getter-only property, so assigning over it throws.
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+
+    render(<CodeBlock code="<script src=x></script>" label="embed snippet" onCopy={onCopy} />);
+    await user.click(screen.getByRole('button', { name: /copy embed snippet/i }));
+
+    await waitFor(() => expect(onCopy).toHaveBeenCalledWith(true));
+    expect(writeText).toHaveBeenCalledWith('<script src=x></script>');
+    writeText.mockRestore();
+  });
+
+  it('reports a refused clipboard as a failure rather than as a copy', async () => {
+    // `navigator.clipboard` rejects on an insecure origin, without permission,
+    // and when the document is not focused. Reporting that as a successful copy
+    // is how a user ends up pasting nothing into their website.
+    const onCopy = vi.fn();
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockRejectedValue(new Error('not allowed'));
+
+    render(<CodeBlock code="x" label="embed snippet" onCopy={onCopy} />);
+    await user.click(screen.getByRole('button', { name: /copy embed snippet/i }));
+
+    await waitFor(() => expect(onCopy).toHaveBeenCalledWith(false));
+    writeText.mockRestore();
   });
 });

@@ -38,7 +38,15 @@ export function Progress({
   const clamped = value == null ? null : Math.min(100, Math.max(0, value));
 
   return (
-    <BaseProgress.Root value={clamped} className={cn('w-full', className)}>
+    // The label goes on the Root, which is where Base UI puts
+    // `role="progressbar"`. An earlier version put it on the Track — a plain
+    // `div` with no role — so an indeterminate bar announced as an unnamed
+    // progressbar and the one thing it was communicating went unsaid.
+    <BaseProgress.Root
+      value={clamped}
+      aria-label={hideLabel ? label : undefined}
+      className={cn('w-full', className)}
+    >
       {!hideLabel ? (
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <BaseProgress.Label className="text-xs text-text-secondary">{label}</BaseProgress.Label>
@@ -48,7 +56,6 @@ export function Progress({
         </div>
       ) : null}
       <BaseProgress.Track
-        aria-label={hideLabel ? label : undefined}
         className={cn(
           'relative block w-full overflow-hidden rounded-full bg-surface-active',
           size === 'sm' ? 'h-1' : 'h-1.5',

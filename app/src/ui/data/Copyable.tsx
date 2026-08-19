@@ -11,11 +11,26 @@ export interface CopyFieldProps {
   secret?: boolean;
   /** Shown instead of the value when masked. */
   maskedValue?: string;
+  /**
+   * Fired after a copy attempt, with whether it worked.
+   *
+   * Copying is the whole point of several surfaces — the embed snippet most of
+   * all — so it is the activation event worth recording. Without this the one
+   * moment that matters had to be inferred from a neighbouring button.
+   */
+  onCopy?: (succeeded: boolean) => void;
   className?: string;
 }
 
 /** A read-only value with a copy control. Keys, bot ids, webhook URLs. */
-export function CopyField({ value, label, secret = false, maskedValue, className }: CopyFieldProps) {
+export function CopyField({
+  value,
+  label,
+  secret = false,
+  maskedValue,
+  onCopy,
+  className,
+}: CopyFieldProps) {
   const { state, copy } = useClipboard();
   const [revealed, setRevealed] = useState(!secret);
   const shown = revealed ? value : (maskedValue ?? '•'.repeat(Math.min(value.length, 32)));
@@ -40,7 +55,7 @@ export function CopyField({ value, label, secret = false, maskedValue, className
           {revealed ? <EyeOff aria-hidden className="h-3.5 w-3.5" /> : <Eye aria-hidden className="h-3.5 w-3.5" />}
         </Button>
       ) : null}
-      <Button size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void copy(value)}>
+      <Button size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void copy(value).then((ok) => onCopy?.(ok))}>
         {state === 'copied' ? (
           <Check aria-hidden className="h-3.5 w-3.5 text-success" />
         ) : (
@@ -61,6 +76,8 @@ export interface CodeBlockProps {
   /** A short caption, e.g. "Paste before </body>". */
   caption?: ReactNode;
   label?: string;
+  /** Fired after a copy attempt, with whether it worked. See `CopyFieldProps`. */
+  onCopy?: (succeeded: boolean) => void;
   className?: string;
 }
 
@@ -71,7 +88,7 @@ export interface CodeBlockProps {
  * page, in onboarding, and in the widget-copy card — with different affordances
  * in each.
  */
-export function CodeBlock({ code, caption, label = 'code', className }: CodeBlockProps) {
+export function CodeBlock({ code, caption, label = 'code', onCopy, className }: CodeBlockProps) {
   const { state, copy } = useClipboard();
 
   return (
@@ -94,7 +111,12 @@ export function CodeBlock({ code, caption, label = 'code', className }: CodeBloc
           size="sm"
           variant="secondary"
           className="absolute right-2 top-2"
-          onClick={() => void copy(code)}
+          // The visible word is "Copy" on every block; the accessible name says
+          // *what* is being copied, because a page with three snippets on it
+          // otherwise offers a screen-reader user three identical buttons. The
+          // name still begins with the visible text, so it satisfies SC 2.5.3.
+          aria-label={state === 'copied' ? `Copied ${label}` : `Copy ${label}`}
+          onClick={() => void copy(code).then((ok) => onCopy?.(ok))}
           iconLeft={
             state === 'copied' ? (
               <Check aria-hidden className="h-3.5 w-3.5 text-success" />

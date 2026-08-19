@@ -23,15 +23,21 @@ export function useClipboard(resetAfter = 2000) {
   );
 
   const copy = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<boolean> => {
       if (timer.current) window.clearTimeout(timer.current);
+      let succeeded = false;
       try {
         await navigator.clipboard.writeText(text);
+        succeeded = true;
         setState('copied');
       } catch {
         setState('failed');
       }
       timer.current = window.setTimeout(() => setState('idle'), resetAfter);
+      // Returned as well as rendered: a caller that records an activation event
+      // needs to know whether the copy actually happened, and the visible state
+      // resets itself two seconds later.
+      return succeeded;
     },
     [resetAfter],
   );

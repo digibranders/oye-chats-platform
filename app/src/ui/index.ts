@@ -31,7 +31,7 @@ export { Button } from './primitives/Button';
 export type { ButtonProps } from './primitives/Button';
 export { buttonClass } from './primitives/buttonStyles';
 export type { ButtonVariant, ButtonSize } from './primitives/buttonStyles';
-export { Badge, StatusDot } from './primitives/Badge';
+export { Badge, StatusDot, WorkingDots } from './primitives/Badge';
 export type { BadgeProps, StatusDotProps, Tone } from './primitives/Badge';
 export { Avatar } from './primitives/Avatar';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';
