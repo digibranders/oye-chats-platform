@@ -1,22 +1,87 @@
-import { EmptyState } from '../../ui';
+import { Route, Routes } from 'react-router-dom';
+import { TabPanel, Tabs, type TabItem } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
+import { useUrlState } from '../usePlatform';
+import { CouponsScreen } from './CouponsScreen';
+import { PlansScreen } from './PlansScreen';
+import { PricingConfigScreen } from './PricingConfigScreen';
+import { PricingContentScreen } from './PricingContentScreen';
+import { PromotionsScreen } from './PromotionsScreen';
 
 /**
- * Catalogue — not built yet.
+ * Catalogue — everything that decides what is sold and at what price.
  *
- * Deliberately an honest placeholder rather than a half-built screen. The rail
- * lists this section because the endpoints behind it exist and are part of the
- * console's scope; the page says plainly that the UI does not, which is a fact
- * an operator can act on. A screen that renders a chrome of empty tables over
- * calls nobody wired reads as "there is no data", and that is a lie.
+ * Five screens, in the order the money flows: what a plan grants, what a credit
+ * costs, what the pricing page says about both, and the two discount objects.
+ *
+ * They are tabs held in the query string rather than nested paths, for one
+ * reason. The tab row is `Tabs` from the design system, whose panels give each
+ * screen a real `tabpanel` with the arrow-key, Home/End and manual-activation
+ * contract already correct, and whose inactive panels unmount, so only the
+ * visible screen fetches. Driving the same row from nested routes would mean
+ * either re-implementing that contract over links or rendering tabs whose
+ * `aria-controls` points at panels that do not exist. The query string still
+ * deep-links, which is the property that actually mattered: a filtered screen in
+ * this console exists to be sent to a colleague.
+ *
+ * The section is still mounted at `catalogue/*`, so a stale sub-path renders the
+ * section rather than an empty splat.
  */
+
+const TABS: TabItem[] = [
+  { value: 'plans', label: 'Plans' },
+  { value: 'pricing', label: 'Credit pricing' },
+  { value: 'content', label: 'Pricing page copy' },
+  { value: 'coupons', label: 'Coupons' },
+  { value: 'promotions', label: 'Promotions' },
+];
+
+const DESCRIPTIONS: Record<string, string> = {
+  plans: 'What each tier grants and charges. Editing a plan changes what live customers may do.',
+  pricing: 'The credit economics every metered action is billed against.',
+  content: 'The copy the public pricing page renders — marketing, not entitlements.',
+  coupons: 'Recorded discounts. There is no online redemption path for them.',
+  promotions: 'Time-boxed free-cycle offers, resolved live at checkout.',
+};
+
+function CatalogueSection() {
+  const url = useUrlState();
+  const raw = url.get('view', 'plans');
+  const view = TABS.some((tab) => tab.value === raw) ? raw : 'plans';
+
+  return (
+    <PlatformPage eyebrow="Money" title="Catalogue" description={DESCRIPTIONS[view]}>
+      <Tabs
+        label="Catalogue sections"
+        items={TABS}
+        value={view}
+        onValueChange={(next) => url.set({ view: next === 'plans' ? null : next })}
+      >
+        <TabPanel value="plans">
+          <PlansScreen />
+        </TabPanel>
+        <TabPanel value="pricing">
+          <PricingConfigScreen />
+        </TabPanel>
+        <TabPanel value="content">
+          <PricingContentScreen />
+        </TabPanel>
+        <TabPanel value="coupons">
+          <CouponsScreen />
+        </TabPanel>
+        <TabPanel value="promotions">
+          <PromotionsScreen />
+        </TabPanel>
+      </Tabs>
+    </PlatformPage>
+  );
+}
+
 export function CataloguePage() {
   return (
-    <PlatformPage title="Catalogue" description="Plans, pricing, coupons and promotions.">
-      <EmptyState
-        title="This section is still being built"
-        description="The endpoints behind it exist and are in scope; the screens are not written yet. Nothing here is broken — there is simply nothing to show."
-      />
-    </PlatformPage>
+    <Routes>
+      <Route path="/" element={<CatalogueSection />} />
+      <Route path="*" element={<CatalogueSection />} />
+    </Routes>
   );
 }

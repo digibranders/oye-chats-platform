@@ -227,13 +227,18 @@ pause · routing strategy and disconnect timeouts · chat-history pagination in 
 lead transcript · dunning state · per-invoice GST breakdown · plan overage rate
 and trial days · `max_bots` / `extra_bot_seats`.
 
-### Super-admin — in progress
-The console now exists: `src/superadmin/`, mounted at `/platform`, with its own
-shell, its own HTTP layer (`client.ts`, because ~100 endpoints had no client
-function of any kind), shared list/record hooks, and a working command centre.
-Six sections are declared and being filled.
+### Super-admin ✅
+The console exists: `src/superadmin/`, mounted at `/platform`, with its own
+shell, its own HTTP layer (`client.ts` — roughly a hundred endpoints had no
+client function of any kind), shared list/record plumbing, and seven sections:
+command centre, customers, records, revenue, billing operations, catalogue and
+configuration. Every endpoint listed below is now reachable.
 
-Roughly 110 endpoints with **no UI at all**: command centre and health,
+What the console could *not* build, because the API blocks it, is recorded on
+the screen that would have owned it rather than omitted — a super-admin needs to
+know a control is missing, not wonder why they cannot find it.
+
+Originally: roughly 110 endpoints with **no UI at all**: command centre and health,
 customers and impersonation, plans/pricing/coupons/promotions, billing ops
 (refunds, GSTR export, dunning, reconciliation), webhook replay, model config
 and LLM cost, the data browsers, and growth reporting. Slice 8, in its own shell

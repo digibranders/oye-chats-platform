@@ -6,6 +6,7 @@ import {
   PopoverContent,
   PopoverRoot,
   PopoverTrigger,
+  SegmentedControl,
   Tooltip,
   cn,
   formatRelative,
@@ -26,6 +27,8 @@ import { useNotifications } from '../context/NotificationContext';
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const { items, unreadCount, connected, markAllRead, markRead } = useNotifications();
+  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const visible = showUnreadOnly ? items.filter((item) => !item.is_read) : items;
 
   return (
     <PopoverRoot open={open} onOpenChange={setOpen}>
@@ -64,20 +67,38 @@ export function NotificationBell() {
           ) : null}
         </div>
 
-        {items.length === 0 ? (
+        {/* Filters what is loaded, not what exists — the popover holds the
+            latest thirty. Saying so is the difference between a filter and a
+            claim about the account. */}
+        <div className="border-b border-border px-3 py-2">
+          <SegmentedControl
+            size="sm"
+            label="Which notifications to show"
+            value={showUnreadOnly ? 'unread' : 'all'}
+            onChange={(next) => setShowUnreadOnly(next === 'unread')}
+            items={[
+              { value: 'all', label: 'All', count: items.length },
+              { value: 'unread', label: 'Unread', count: items.filter((item) => !item.is_read).length },
+            ]}
+          />
+        </div>
+
+        {visible.length === 0 ? (
           <EmptyState
             compact
             icon={Inbox}
-            title="Nothing new"
+            title={showUnreadOnly ? 'Nothing unread' : 'Nothing new'}
             description={
-              connected
-                ? 'Handoffs, offline messages and billing events land here.'
-                : 'Reconnecting — anything that arrives will appear here.'
+              showUnreadOnly
+                ? 'Everything in the latest thirty has been read.'
+                : connected
+                  ? 'Handoffs, offline messages and billing events land here.'
+                  : 'Reconnecting — anything that arrives will appear here.'
             }
           />
         ) : (
           <ul className="max-h-96 overflow-y-auto py-1">
-            {items.map((item) => (
+            {visible.map((item) => (
               <li key={item.id}>
                 <button
                   type="button"

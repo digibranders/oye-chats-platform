@@ -72,6 +72,7 @@ import { useTeamData } from './useTeamData';
 import { MemberDialog } from './MemberDialog';
 import { InviteDialog } from './InviteDialog';
 import { DepartmentDialog } from './DepartmentDialog';
+import { QueueSettingsCard } from './QueueSettingsCard';
 
 /**
  * Settings ▸ Team — who is in this workspace, and what each of them may do.
@@ -86,16 +87,22 @@ import { DepartmentDialog } from './DepartmentDialog';
  * invitation and promoting somebody to Owner were all one unguarded click.
  */
 
-type TabKey = 'people' | 'invitations' | 'departments';
+type TabKey = 'people' | 'invitations' | 'departments' | 'routing';
 
 const TAB_ITEMS = [
   { value: 'people', label: 'People' },
   { value: 'invitations', label: 'Invitations' },
   { value: 'departments', label: 'Departments' },
+  { value: 'routing', label: 'Routing' },
 ] as const;
 
 function isTab(value: string | null): value is TabKey {
-  return value === 'people' || value === 'invitations' || value === 'departments';
+  return (
+    value === 'people' ||
+    value === 'invitations' ||
+    value === 'departments' ||
+    value === 'routing'
+  );
 }
 
 export function MembersPage() {
@@ -106,8 +113,11 @@ export function MembersPage() {
   const { currentRole } = useWorkspace();
   const { isFree, limitFor, hasFeature } = useEntitlements();
 
-  const botId = selectedBot?.id ?? bots[0]?.id ?? null;
-  const botName = selectedBot?.name ?? bots[0]?.name ?? null;
+  // One resolution of "which chatbot is this page about", so the seat meter,
+  // the invite dialog and the queue settings can never disagree about it.
+  const routedBot = selectedBot ?? bots[0] ?? null;
+  const botId = routedBot?.id ?? null;
+  const botName = routedBot?.name ?? null;
   const canManage = canManageTeam(currentRole);
 
   const team = useTeamData(!isFree);
@@ -643,6 +653,20 @@ export function MembersPage() {
                 )}
               </Card>
             </Section>
+          </TabPanel>
+
+          <TabPanel value="routing">
+            {routedBot ? (
+              <QueueSettingsCard bot={routedBot} onSaved={invalidate} />
+            ) : (
+              <Card>
+                <EmptyState
+                  icon={Users}
+                  title="No chatbot to route"
+                  description="Queue settings belong to a chatbot. Create one and its waiting rules appear here."
+                />
+              </Card>
+            )}
           </TabPanel>
         </Tabs>
 

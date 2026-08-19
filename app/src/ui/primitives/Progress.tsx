@@ -14,12 +14,13 @@ export interface ProgressProps {
   className?: string;
 }
 
-const TONE: Record<NonNullable<ProgressProps['tone']>, string> = {
+const TONE = {
   accent: 'bg-accent-500',
   success: 'bg-success-fill',
   warning: 'bg-warning-fill',
   danger: 'bg-danger-fill',
-};
+  plan: 'bg-plan',
+} as const;
 
 /**
  * A task in flight: a crawl, a training run, an upload.
@@ -79,6 +80,24 @@ export interface MeterProps {
   /** `-1` means unlimited — rendered as a figure, never as a full bar. */
   limit: number;
   unit?: string;
+  /**
+   * What to say when the limit is unlimited.
+   *
+   * A prop, not a fixed string. It used to read "Unlimited on your plan", which
+   * is customer-facing copy baked into a shared primitive — and it is simply
+   * false in the platform console, where a super-admin is looking at somebody
+   * else's account.
+   */
+  unlimitedNote?: string;
+  /**
+   * Force the fill's tone instead of letting it escalate with the fraction.
+   *
+   * Pass `plan` when the ceiling is a **price rather than a fault** — a full
+   * knowledge allowance on a plan that includes that much knowledge is not a
+   * problem, and painting it red next to correctly brass-toned copy tells the
+   * customer their account is broken when it is working exactly as sold.
+   */
+  tone?: 'plan';
   className?: string;
 }
 
@@ -93,10 +112,19 @@ export interface MeterProps {
  * The tone escalates at 80% and again at 100%, so a quota says it is becoming a
  * problem before it is one.
  */
-export function Meter({ label, used, limit, unit, className }: MeterProps) {
+export function Meter({
+  label,
+  used,
+  limit,
+  unit,
+  unlimitedNote = 'No limit',
+  tone: forcedTone,
+  className,
+}: MeterProps) {
   const unlimited = limit < 0;
   const fraction = unlimited || limit === 0 ? 0 : used / limit;
-  const tone = fraction >= 1 ? 'danger' : fraction >= 0.8 ? 'warning' : 'accent';
+  const tone =
+    forcedTone ?? (fraction >= 1 ? 'danger' : fraction >= 0.8 ? 'warning' : 'accent');
 
   if (unlimited) {
     return (
@@ -107,7 +135,7 @@ export function Meter({ label, used, limit, unit, className }: MeterProps) {
             {formatNumber(used)} <span className="text-text-tertiary">used</span>
           </span>
         </div>
-        <p className="mt-1 text-2xs text-text-tertiary">Unlimited on your plan</p>
+        <p className="mt-1 text-2xs text-text-tertiary">{unlimitedNote}</p>
       </div>
     );
   }

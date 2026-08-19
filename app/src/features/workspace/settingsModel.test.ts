@@ -44,6 +44,14 @@ import {
   toBotPatch,
   validateMeetingUrl,
 } from './integrations/emailModel';
+import {
+  QUEUE_BOUNDS,
+  queueSettingsChanged,
+  readQueueSettings,
+  toQueuePatch,
+  validateQueueField,
+  validateQueueSettings,
+} from './queueSettings';
 import type { Bot, Operator, OperatorInvite } from '../../types/domain';
 
 /**
@@ -374,5 +382,55 @@ describe('emailModel', () => {
     expect(validateMeetingUrl(zcal, 'https://calendly.com/me/30min')).toContain('Zcal');
     expect(validateMeetingUrl(calendly, '')).toContain('Calendly');
     expect(validateMeetingUrl(calendly, 'http://calendly.com/me')).toContain('https');
+  });
+});
+
+describe('queueSettings', () => {
+  const bot = { id: 1, name: 'Acme Support' } as Bot;
+
+  it('falls back to the server’s own defaults, not to zero', () => {
+    // A zero here would tell the customer nobody may queue and every operator
+    // has no time to answer — the opposite of what the row actually holds.
+    expect(readQueueSettings(bot)).toEqual({
+      acceptSeconds: '120',
+      waitSeconds: '20',
+      maxQueue: '10',
+    });
+  });
+
+  it('enforces exactly the bounds the API enforces', () => {
+    // A form stricter than the server rejects a value that would have worked;
+    // a form looser than it produces a 422 the user cannot act on.
+    expect(QUEUE_BOUNDS.acceptSeconds).toMatchObject({ min: 5, max: 3600 });
+    expect(QUEUE_BOUNDS.waitSeconds).toMatchObject({ min: 5, max: 600 });
+    expect(QUEUE_BOUNDS.maxQueue).toMatchObject({ min: 1, max: 100 });
+
+    expect(validateQueueField('acceptSeconds', '120')).toBeNull();
+    expect(validateQueueField('acceptSeconds', '4')).not.toBeNull();
+    expect(validateQueueField('acceptSeconds', '3601')).not.toBeNull();
+    expect(validateQueueField('maxQueue', '0')).not.toBeNull();
+    expect(validateQueueField('waitSeconds', '')).toBe('Enter a number.');
+    expect(validateQueueField('waitSeconds', '12.5')).toBe('Use a whole number.');
+  });
+
+  it('reports every bad field at once, so the form fixes them together', () => {
+    expect(
+      Object.keys(validateQueueSettings({ acceptSeconds: '1', waitSeconds: '9999', maxQueue: '0' })),
+    ).toEqual(['acceptSeconds', 'waitSeconds', 'maxQueue']);
+    expect(validateQueueSettings(readQueueSettings(bot))).toEqual({});
+  });
+
+  it('sends numbers, never the raw strings from the inputs', () => {
+    expect(toQueuePatch({ acceptSeconds: '90', waitSeconds: '30', maxQueue: '5' })).toEqual({
+      operator_timeout_seconds: 90,
+      live_chat_queue_timeout_seconds: 30,
+      live_chat_max_queue_size: 5,
+    });
+  });
+
+  it('does not call a trailing space a change', () => {
+    const settings = readQueueSettings(bot);
+    expect(queueSettingsChanged(settings, { ...settings, acceptSeconds: '120 ' })).toBe(false);
+    expect(queueSettingsChanged(settings, { ...settings, acceptSeconds: '90' })).toBe(true);
   });
 });

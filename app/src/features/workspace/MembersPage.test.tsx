@@ -34,6 +34,7 @@ const api = vi.hoisted(() => ({
   createDepartment: vi.fn(),
   updateDepartment: vi.fn(),
   deleteDepartment: vi.fn(),
+  updateBot: vi.fn(),
 }));
 vi.mock('../../services/api', () => api);
 
@@ -112,6 +113,7 @@ beforeEach(() => {
   api.addSelfAsOperator.mockResolvedValue({ operator_id: 9 });
   api.revokeOperatorInvite.mockResolvedValue(true);
   api.deleteDepartment.mockResolvedValue({ success: true });
+  api.updateBot.mockResolvedValue({ message: 'ok' });
 });
 
 describe('MembersPage — the four states', () => {
@@ -311,5 +313,26 @@ describe('MembersPage — tabs live in the URL', () => {
     await user.keyboard('{ArrowRight}');
     expect(screen.getByRole('tab', { name: /invitations/i })).toHaveFocus();
     expect(screen.getByRole('tab', { name: /people/i })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('MembersPage — routing', () => {
+  it('exposes the queue settings that had no control anywhere', async () => {
+    renderPage('/settings/team?tab=routing');
+    expect(await screen.findByText('Waiting and routing')).toBeInTheDocument();
+    expect(screen.getByLabelText(/seconds an operator has to accept/i)).toHaveValue('120');
+    expect(screen.getByLabelText(/visitors who may wait at once/i)).toHaveValue('10');
+  });
+
+  it('refuses a value the API would refuse, at the field', async () => {
+    const user = userEvent.setup();
+    renderPage('/settings/team?tab=routing');
+    const field = await screen.findByLabelText(/visitors who may wait at once/i);
+
+    await user.clear(field);
+    await user.type(field, '0');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText(/At least one, or nobody can ever wait/i)).toBeInTheDocument();
   });
 });

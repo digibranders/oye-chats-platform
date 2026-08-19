@@ -40,6 +40,7 @@ import {
   Page,
   PageHeader,
   Progress,
+  NavTabs,
   RankedBars,
   Section,
   SearchField,
@@ -387,6 +388,20 @@ export function UiGallery() {
                           <Button size="sm" variant="danger">Delete</Button>
                         </>
                       }
+                    />
+                  </Section>
+
+                  <Section
+                    title="Routed tabs"
+                    description="Tabs whose tabs are links. A tablist promises every tab controls a panel in the document; a routed surface only ever has the current one."
+                  >
+                    <NavTabs
+                      label="Example section views"
+                      items={[
+                        { to: '/dev/ui', label: 'Overview', end: true },
+                        { to: '/dev/ui#invoices', label: 'Invoices' },
+                        { to: '/dev/ui#credits', label: 'Credits' },
+                      ]}
                     />
                   </Section>
 

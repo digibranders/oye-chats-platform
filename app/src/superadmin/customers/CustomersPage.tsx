@@ -1,22 +1,25 @@
-import { EmptyState } from '../../ui';
-import { PlatformPage } from '../PlatformPage';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { CustomerDetailPage } from './CustomerDetailPage';
+import { CustomerListPage } from './CustomerListPage';
+import { SupportSessionsProvider } from './SupportSessions';
 
 /**
- * Customers — not built yet.
+ * The Support section: everything about a customer and everyone in it.
  *
- * Deliberately an honest placeholder rather than a half-built screen. The rail
- * lists this section because the endpoints behind it exist and are part of the
- * console's scope; the page says plainly that the UI does not, which is a fact
- * an operator can act on. A screen that renders a chrome of empty tables over
- * calls nobody wired reads as "there is no data", and that is a lie.
+ * The provider wraps both screens rather than sitting on the detail page,
+ * because an impersonation token outlives the screen that minted it. A
+ * super-admin who opens a support session, navigates back to the list and then
+ * into a second account must not lose the only control that ends the first one.
  */
 export function CustomersPage() {
   return (
-    <PlatformPage title="Customers" description="Accounts, operators, sign-in identities and support sessions.">
-      <EmptyState
-        title="This section is still being built"
-        description="The endpoints behind it exist and are in scope; the screens are not written yet. Nothing here is broken — there is simply nothing to show."
-      />
-    </PlatformPage>
+    <SupportSessionsProvider>
+      <Routes>
+        <Route index element={<CustomerListPage />} />
+        <Route path=":clientId" element={<CustomerDetailPage />} />
+        {/* An unknown sub-path is a stale link, not a dead end. */}
+        <Route path="*" element={<Navigate to="." replace />} />
+      </Routes>
+    </SupportSessionsProvider>
   );
 }

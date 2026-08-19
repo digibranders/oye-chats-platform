@@ -101,7 +101,14 @@ export const platform = {
   },
 };
 
-/** The envelope almost every list endpoint returns. */
+/**
+ * The envelope almost every list endpoint returns.
+ *
+ * Note that several `/superadmin/*` endpoints answer with a bare **object**
+ * rather than a list — `/api-keys` and `/visitors` among them. Those want
+ * `usePlatformResource`, not `usePlatformList`: `toList` cannot read a shape
+ * that has no array in it and will hand back an empty one.
+ */
 export interface PlatformList<T> {
   items: T[];
   total: number;

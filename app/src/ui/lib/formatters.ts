@@ -27,16 +27,25 @@ const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 /** Built once per currency, not once per cell. */
 const moneyCache = new Map<string, Intl.NumberFormat>();
 
+/**
+ * Never throws.
+ *
+ * `Intl.NumberFormat` raises a `RangeError` on a malformed currency code, and a
+ * throw inside a cell takes out the whole table around it. Rows predating a
+ * `currency` column, and any row where the server sent something unexpected,
+ * therefore fall back to a plain decimal — which is honest: it says the amount
+ * without claiming a denomination nobody recorded.
+ */
 function moneyFormatter(currency: string, decimals: boolean): Intl.NumberFormat {
   const key = `${currency}:${decimals}`;
   let formatter = moneyCache.get(key);
   if (!formatter) {
-    formatter = new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: decimals ? 2 : 0,
-      maximumFractionDigits: decimals ? 2 : 0,
-    });
+    const digits = { minimumFractionDigits: decimals ? 2 : 0, maximumFractionDigits: decimals ? 2 : 0 };
+    try {
+      formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency, ...digits });
+    } catch {
+      formatter = new Intl.NumberFormat('en-US', digits);
+    }
     moneyCache.set(key, formatter);
   }
   return formatter;

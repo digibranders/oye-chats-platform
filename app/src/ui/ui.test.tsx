@@ -9,6 +9,9 @@ import { Switch, Checkbox } from './primitives/Toggle';
 import { Progress } from './primitives/Progress';
 import { CodeBlock } from './data/Copyable';
 import { Tooltip, TooltipProvider } from './overlays/Tooltip';
+import { NavTabs } from './layout/NavTabs';
+import { Meter } from './primitives/Progress';
+import { MemoryRouter } from 'react-router-dom';
 import { SegmentedControl } from './primitives/SegmentedControl';
 import { Tabs, TabPanel } from './layout/Tabs';
 import { DataTable, type Column } from './data/DataTable';
@@ -629,5 +632,48 @@ describe('Tooltip', () => {
     );
     expect(screen.getByRole('button', { name: 'Passages' })).toBeInTheDocument();
     expect(screen.queryByText('not shown')).not.toBeInTheDocument();
+  });
+});
+
+describe('NavTabs', () => {
+  it('is navigation, not a tablist, and marks the current page', () => {
+    // A routed tab row only ever has one panel in the document, so a `tablist`
+    // would promise `aria-controls` targets that do not exist. Three surfaces
+    // were faking it with `Tabs` plus a single panel and `useNavigate`.
+    render(
+      <MemoryRouter initialEntries={['/platform/revenue/invoices']}>
+        <NavTabs
+          label="Revenue views"
+          items={[
+            { to: '/platform/revenue', label: 'Overview', end: true },
+            { to: '/platform/revenue/invoices', label: 'Invoices' },
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('navigation', { name: /revenue views/i })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Invoices' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current');
+  });
+});
+
+describe('Meter and money, without customer-facing copy baked in', () => {
+  it('lets the caller say what "no limit" means here', () => {
+    // It used to read "Unlimited on your plan" — customer copy in a shared
+    // primitive, and simply false in the platform console, where the account
+    // being looked at is somebody else's.
+    render(<Meter label="Documents" used={412} limit={-1} unlimitedNote="Unlimited on this account" />);
+    expect(screen.getByText('Unlimited on this account')).toBeInTheDocument();
+  });
+
+  it('formats a malformed currency code instead of throwing the table away', () => {
+    // `Intl.NumberFormat` raises a RangeError on a bad code, and a throw inside
+    // a cell takes out every row around it. Legacy invoice rows predate the
+    // currency column.
+    expect(() => formatMoney(149900, 'not-a-code')).not.toThrow();
+    expect(formatMoney(149900, 'not-a-code')).toContain('1,499');
+    expect(formatMoney(149900, 'INR')).toContain('1,499');
   });
 });

@@ -70,6 +70,8 @@ export { Page, PageHeader, Section, Stack, Toolbar } from './layout/Page';
 export type { PageProps, PageHeaderProps, SectionProps, PageWidth } from './layout/Page';
 export { Tabs, TabPanel } from './layout/Tabs';
 export type { TabsProps, TabItem } from './layout/Tabs';
+export { NavTabs } from './layout/NavTabs';
+export type { NavTabsProps, NavTabItem } from './layout/NavTabs';
 
 /* -------------------------------------------------------------- overlays */
 export { Dialog } from './overlays/Dialog';

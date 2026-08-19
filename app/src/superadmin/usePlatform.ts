@@ -83,14 +83,25 @@ export interface PlatformResourceState<T> {
   reload: () => void;
 }
 
-/** One record. `path` of `null` means "nothing selected", and fetches nothing. */
-export function usePlatformResource<T>(path: string | null): PlatformResourceState<T> {
+/**
+ * One record, or one aggregate.
+ *
+ * `path` of `null` means "nothing selected" and fetches nothing. `params` is
+ * compared by its serialised form, like `usePlatformList`, so a caller can build
+ * it inline — without that, the windowed aggregates were reaching for template
+ * strings and hand-encoding their own query strings.
+ */
+export function usePlatformResource<T>(
+  path: string | null,
+  params?: QueryParams,
+): PlatformResourceState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [nonce, setNonce] = useState(0);
   const tokenRef = useRef(0);
+  const serialised = JSON.stringify(params ?? {});
 
   useEffect(() => {
     const token = (tokenRef.current += 1);
@@ -108,7 +119,7 @@ export function usePlatformResource<T>(path: string | null): PlatformResourceSta
       // opened customer's name is the worst thing a support console can show.
       setData(null);
       try {
-        const raw = await platform.get<T>(path);
+        const raw = await platform.get<T>(path, JSON.parse(serialised) as QueryParams);
         if (!active || token !== tokenRef.current) return;
         setData(raw);
         setError(null);
@@ -127,7 +138,7 @@ export function usePlatformResource<T>(path: string | null): PlatformResourceSta
     return () => {
       active = false;
     };
-  }, [path, nonce]);
+  }, [path, serialised, nonce]);
 
   const reload = useCallback(() => setNonce((current) => current + 1), []);
   return { data, loading, error, forbidden, reload };

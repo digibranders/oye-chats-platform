@@ -109,7 +109,10 @@ describe('the edit form', () => {
     renderSection();
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
     await screen.findByRole('dialog');
+    // Something has to actually change, or the form closes without a request.
+    await userEvent.type(await screen.findByLabelText(/legal name/i), ' Ltd');
     await userEvent.click(screen.getByRole('button', { name: /save details/i }));
+    await waitFor(() => expect(api.updateBillingDetails).toHaveBeenCalled());
 
     await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('dialog')).toBeInTheDocument();

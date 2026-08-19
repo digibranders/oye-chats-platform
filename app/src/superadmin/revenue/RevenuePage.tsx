@@ -1,22 +1,71 @@
-import { EmptyState } from '../../ui';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { TabPanel, Tabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
+import { OverviewTab } from './OverviewTab';
+import { SubscriptionsTab } from './SubscriptionsTab';
+import { InvoicesTab } from './InvoicesTab';
+import { UsageCreditsTab } from './UsageCreditsTab';
+import { PaymentsTab } from './PaymentsTab';
+import { GrowthTab } from './GrowthTab';
+import { REVENUE_BASE, REVENUE_TABS, revenueTabFor, revenueTabPath } from './tabs';
 
 /**
- * Revenue — not built yet.
+ * Revenue — the money as it is *reported*.
  *
- * Deliberately an honest placeholder rather than a half-built screen. The rail
- * lists this section because the endpoints behind it exist and are part of the
- * console's scope; the page says plainly that the UI does not, which is a fact
- * an operator can act on. A screen that renders a chrome of empty tables over
- * calls nobody wired reads as "there is no data", and that is a lie.
+ * Six screens, one per question an operator actually arrives with: what is the
+ * business worth, who is subscribed, what have we invoiced, what are people
+ * consuming, how are they paying, and where are they coming from. Each is its
+ * own URL, because every one of these lists is something somebody will want to
+ * send to a colleague, and a tab held in component state cannot be sent to
+ * anyone.
+ *
+ * The line this section holds throughout: **aggregates are normalised USD, and
+ * documents are not.** The two are never placed in the same column, and every
+ * figure says which it is. Getting that wrong is not a formatting bug — it is a
+ * support agent quoting a customer a refund amount in the wrong currency.
+ *
+ * What is deliberately *not* here: the actions that change an invoice. Those
+ * live in Billing operations and are reached through the shared invoice drawer,
+ * so there is exactly one place in the console where money moves.
  */
 export function RevenuePage() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const current = revenueTabFor(pathname);
+
   return (
-    <PlatformPage title="Revenue" description="Subscriptions, invoices, credits and the funnels behind them.">
-      <EmptyState
-        title="This section is still being built"
-        description="The endpoints behind it exist and are in scope; the screens are not written yet. Nothing here is broken — there is simply nothing to show."
-      />
+    <PlatformPage
+      eyebrow="Money"
+      title="Revenue"
+      description="Subscriptions, invoices, credits and the funnels behind them."
+    >
+      <Tabs
+        label="Revenue views"
+        value={current}
+        onValueChange={(next) => {
+          const path = revenueTabPath(next);
+          if (path) navigate(path);
+        }}
+        items={REVENUE_TABS.map(({ value, label }) => ({ value, label }))}
+      >
+        {/* One panel, for the tab that is showing. The others have no panel to
+            control because their content is a different route entirely — which
+            is also what makes the browser's back button work here. */}
+        <TabPanel value={current}>
+          <Routes>
+            <Route index element={<OverviewTab />} />
+            <Route path="subscriptions" element={<SubscriptionsTab />} />
+            <Route path="invoices" element={<InvoicesTab />} />
+            <Route path="usage" element={<UsageCreditsTab />} />
+            <Route path="payments" element={<PaymentsTab />} />
+            <Route path="growth" element={<GrowthTab />} />
+            {/* A mistyped sub-path is a wrong URL, not an error state: send it
+                to the section's own first screen rather than showing a dead
+                page inside a working section. */}
+            <Route path="*" element={<Navigate to={REVENUE_BASE} replace />} />
+          </Routes>
+        </TabPanel>
+      </Tabs>
     </PlatformPage>
   );
 }
