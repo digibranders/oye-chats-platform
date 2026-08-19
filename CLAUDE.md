@@ -4,8 +4,13 @@ OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot 
 
 ---
 
-> ## 🚀 ACTIVE MANDATE — Admin Platform 2.0 rebuild → see [`app/CLAUDE.md`](app/CLAUDE.md)
-> All work inside `app/` (the admin dashboard) is governed by a **complete product-rebuild mandate**. Before touching anything in `app/`, read **`app/CLAUDE.md`**. In short: the admin dashboard is being rebuilt from first principles as a premium SaaS (Linear/Stripe/Vercel-grade); **reuse** the backend/APIs/DB/auth/logic documented in this file, but the existing UI, navigation, onboarding, layouts, pages, and flows are **technical references only — NOT UX references.** Every `app/src/pages/*` entry in the Key Files table below is a pointer to reusable logic, not a UX/layout reference.
+> ## ACTIVE MANDATE — the console rebuild → see [`app/CLAUDE.md`](app/CLAUDE.md)
+> All work inside `app/` (the admin dashboard) is governed by a complete rebuild
+> mandate, and by the design language in [`app/DESIGN.md`](app/DESIGN.md). This
+> file stays the **technical** reference — backend, APIs, DB models, auth, dev
+> commands — and every word of it still applies. What it says about the *UI* does
+> not: the existing pages, navigation, onboarding and layouts are pointers to
+> reusable logic, never to UX worth keeping.
 
 ---
 
@@ -343,7 +348,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Admin billing | `app/src/pages/Billing.jsx` |
 | Admin qualification config | `app/src/pages/Qualification.jsx` |
 
-> ⚠️ **Under the Admin Platform 2.0 mandate, every `app/src/pages/*` and `app/src/App.jsx` entry above is a TECHNICAL reference only** — use it to find which APIs/hooks/business logic to reuse, NOT as a UX/layout/navigation reference. The pages, flows, IA, and navigation are being rebuilt from first principles (see the mandate at the top of this file).
+> ⚠️ **Every `app/src/*` entry above is a TECHNICAL reference only** — use it to find which APIs, hooks and business logic to reuse, never as a UX, layout or navigation reference. The pages, flows, IA and navigation are being rebuilt from first principles; see [`app/CLAUDE.md`](app/CLAUDE.md) and [`app/DESIGN.md`](app/DESIGN.md).
 
 ## Tech Stack
 
