@@ -40,6 +40,7 @@ import {
   Page,
   PageHeader,
   Progress,
+  RankedBars,
   Section,
   SearchField,
   SegmentedControl,
@@ -387,6 +388,23 @@ export function UiGallery() {
                         </>
                       }
                     />
+                  </Section>
+
+                  <Section
+                    title="Ranked bars"
+                    description="A label, a proportional bar, a figure. Not a Progress and not a Meter — this is a comparison between peers, not a quantity against a ceiling."
+                  >
+                    <Card>
+                      <RankedBars
+                        label="Most asked questions"
+                        items={[
+                          { id: '1', label: 'How much does it cost?', value: 412, display: '412', meta: '31% of all questions' },
+                          { id: '2', label: 'Do you integrate with Shopify?', value: 268, display: '268', meta: '20% of all questions' },
+                          { id: '3', label: 'Where are you based?', value: 97, display: '97', meta: '7% of all questions' },
+                          { id: '4', label: 'Can I get a refund?', value: 41, display: '41', meta: '3% of all questions' },
+                        ]}
+                      />
+                    </Card>
                   </Section>
 
                   <Section title="Record and code">

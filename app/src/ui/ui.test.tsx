@@ -9,6 +9,7 @@ import { Switch, Checkbox } from './primitives/Toggle';
 import { SegmentedControl } from './primitives/SegmentedControl';
 import { Tabs, TabPanel } from './layout/Tabs';
 import { DataTable, type Column } from './data/DataTable';
+import { RankedBars } from './charts/RankedBars';
 import { ConfirmDialog } from './overlays/ConfirmDialog';
 import { formatDuration, formatMoney, formatNumber, truncateId, ABSENT } from './lib/formatters';
 
@@ -397,5 +398,133 @@ describe('formatters', () => {
   it('keeps both ends of an identifier so two keys cannot collapse into one', () => {
     expect(truncateId('bot-6a427d4529b9')).toBe('bot-6a42…29b9');
     expect(truncateId('bot-1')).toBe('bot-1');
+  });
+});
+
+describe('DataTable server paging', () => {
+  interface Row {
+    id: string;
+    name: string;
+  }
+  const COLUMNS: Column<Row>[] = [{ key: 'name', header: 'Name', render: (row) => row.name }];
+  const PAGE: Row[] = [
+    { id: '1', name: 'Ana' },
+    { id: '2', name: 'Ben' },
+  ];
+
+  it('reports the server total, not the size of the page it was handed', () => {
+    // The bug this replaces: every server-paged surface hand-rolled a pager,
+    // and a client-side one over one request reads "1–2 of 2" for 900 rows.
+    render(
+      <DataTable
+        caption="Leads"
+        columns={COLUMNS}
+        rows={PAGE}
+        rowKey={(row) => row.id}
+        pageSize={2}
+        page={1}
+        rowCount={900}
+        onPageChange={() => {}}
+      />,
+    );
+    const pager = screen.getByRole('navigation', { name: /leads pages/i });
+    expect(pager).toHaveTextContent('1–2');
+    expect(pager).toHaveTextContent('900');
+    expect(pager).toHaveTextContent('450');
+  });
+
+  it('asks the caller for the next page instead of slicing what it has', async () => {
+    const onPageChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DataTable
+        caption="Leads"
+        columns={COLUMNS}
+        rows={PAGE}
+        rowKey={(row) => row.id}
+        pageSize={2}
+        page={3}
+        rowCount={900}
+        onPageChange={onPageChange}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+    expect(onPageChange).toHaveBeenCalledWith(4);
+    await user.click(screen.getByRole('button', { name: /previous page/i }));
+    expect(onPageChange).toHaveBeenLastCalledWith(2);
+    // The rows it was given are the rows it shows — never a slice of them.
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+    expect(screen.getByText('Ben')).toBeInTheDocument();
+  });
+
+  it('refuses to sort one page of a server-paged set behind the user’s back', async () => {
+    const user = userEvent.setup();
+    const sortable: Column<Row>[] = [
+      { key: 'name', header: 'Name', render: (row) => row.name, sortable: (a, b) => a.name.localeCompare(b.name) },
+    ];
+    const rows: Row[] = [
+      { id: '2', name: 'Ben' },
+      { id: '1', name: 'Ana' },
+    ];
+    render(
+      <DataTable
+        caption="Leads"
+        columns={sortable}
+        rows={rows}
+        rowKey={(row) => row.id}
+        pageSize={2}
+        page={1}
+        rowCount={900}
+        onPageChange={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: /name/i }));
+    const cells = screen.getAllByRole('cell').map((cell) => cell.textContent);
+    // Still the server's order. Sorting fifty of nine thousand rows and calling
+    // it "sorted by name" is a lie the table will not tell.
+    expect(cells[0]).toBe('Ben');
+  });
+});
+
+describe('RankedBars', () => {
+  it('states every value in text, so the chart survives without the bars', () => {
+    render(
+      <RankedBars
+        label="Top questions"
+        items={[
+          { id: 'a', label: 'Pricing', value: 40, display: '40' },
+          { id: 'b', label: 'Refunds', value: 10, display: '10' },
+        ]}
+      />,
+    );
+    const list = screen.getByRole('list', { name: /top questions/i });
+    expect(within(list).getByText('Pricing')).toBeInTheDocument();
+    expect(within(list).getByText('40')).toBeInTheDocument();
+    expect(within(list).getByText('10')).toBeInTheDocument();
+  });
+
+  it('draws nothing rather than dividing by a zero ceiling', () => {
+    // Every value zero used to paint every bar full in the hand-rolled copies.
+    const { container } = render(
+      <RankedBars label="Top questions" items={[{ id: 'a', label: 'Pricing', value: 0 }]} />,
+    );
+    const fill = container.querySelector('[aria-hidden] > div') as HTMLElement | null;
+    expect(fill).not.toBeNull();
+    expect(fill!.style.width).toBe('0%');
+  });
+
+  it('is a real control when a row is selectable, and reports its own state', async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RankedBars
+        label="Outcomes"
+        items={[{ id: 'a', label: 'Booked a meeting', value: 3, onSelect, selected: true }]}
+      />,
+    );
+    const row = screen.getByRole('button', { name: /booked a meeting/i });
+    expect(row).toHaveAttribute('aria-pressed', 'true');
+    await user.click(row);
+    expect(onSelect).toHaveBeenCalled();
   });
 });

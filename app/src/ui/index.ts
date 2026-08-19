@@ -117,3 +117,5 @@ export type { CopyFieldProps, CodeBlockProps } from './data/Copyable';
 export { CHART_SERIES, CHART_DASH, CHART_AXIS, CHART_GRID, CHART_MARGIN, seriesColor, seriesDash } from './charts/theme';
 export { ChartFrame, ChartLegend } from './charts/ChartFrame';
 export type { ChartFrameProps, ChartLegendItem } from './charts/ChartFrame';
+export { RankedBars } from './charts/RankedBars';
+export type { RankedBar, RankedBarsProps } from './charts/RankedBars';

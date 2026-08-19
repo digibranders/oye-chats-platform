@@ -11,6 +11,19 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+/**
+ * The configured axios instance.
+ *
+ * Exported so the platform console can reuse the auth header, impersonation
+ * suppression, 401 handling and error shaping that live on this client's
+ * interceptors. Roughly a hundred super-admin endpoints have no wrapper here
+ * and adding them all would double the size of this module without adding
+ * anything: they are a different product with a different persona. A second
+ * `axios.create` would silently lose every interceptor, which is the actual
+ * hazard this export exists to prevent.
+ */
+export const httpClient = api;
+
 /** Returns the backend endpoint configured for this dashboard build. */
 export const getApiBaseUrl = () => API_BASE_URL;
 
@@ -621,6 +634,32 @@ export const uploadDocuments = async (files, botId) => {
     } catch (error) {
         console.error('API Error during document upload:', error);
         throw buildApiError(error, 'Document upload failed');
+    }
+};
+
+/**
+ * Poll a background ingestion job started by POST /ingest.
+ *
+ * `POST /ingest` returns 202 with a `job_id` whenever the ARQ worker is
+ * enabled; this reads `GET /ingest/status/{job_id}` so an upload can report
+ * honest progress instead of a spinner that stops the moment the HTTP request
+ * settles (which is long before the document is readable by the chatbot).
+ *
+ * Statuses mirror ARQ: `queued` | `in_progress` | `complete` | `failed` |
+ * `not_found`. The endpoint answers 501 when the worker is disabled, in which
+ * case ingestion runs inline as a FastAPI BackgroundTask and there is no job
+ * to poll - callers should treat that as "no progress available", not an error.
+ *
+ * @param {string} jobId - the `job_id` returned by uploadDocuments
+ * @returns {Promise<{job_id: string, status: string, function?: string, enqueue_time?: string|null, start_time?: string, finish_time?: string, result?: unknown}>}
+ */
+export const getIngestStatus = async (jobId) => {
+    try {
+        const response = await api.get(`/ingest/status/${encodeURIComponent(jobId)}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching ingest status:', error);
+        throw buildApiError(error, 'Failed to load ingestion status');
     }
 };
 
@@ -1550,6 +1589,30 @@ export const getSeedQuestions = async (botId) => {
 };
 
 /**
+ * Recompute a bot's seed questions, ignoring the cached set.
+ *
+ * ``POST /bots/{id}/seed-questions`` caches its result on the bot the first
+ * time it is computed and returns that same list forever after; ``force=true``
+ * is the only way to ask for a fresh one. Unlike ``getSeedQuestions`` this
+ * throws, because it is only ever called from an explicit "suggest again"
+ * control that has somewhere to show the failure.
+ * @param {number} botId
+ * @returns {Promise<string[]>} 0 to 3 freshly-generated questions
+ */
+export const refreshSeedQuestions = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/seed-questions`, null, {
+            params: { force: true },
+        });
+        const questions = response.data?.questions;
+        return Array.isArray(questions) ? questions : [];
+    } catch (error) {
+        console.error('API Error regenerating seed questions:', error);
+        throw buildApiError(error, 'Failed to regenerate suggested questions');
+    }
+};
+
+/**
  * Records an onboarding/activation milestone event. Best-effort: it must NEVER
  * throw, so instrumentation can't break the flow it measures.
  * @param {string} eventType - e.g. 'studio_opened', 'bot_created', 'crawl_completed'
@@ -1908,6 +1971,27 @@ export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
     }
 };
 
+// Correct or reset one qualification dimension's score for a lead (BR-03).
+// The automated extractor never downgrades a dimension, by design, so a single
+// false-positive extraction ("we have a $50k budget approved") otherwise pins a
+// lead to the wrong tier forever. Every override is written to the append-only
+// BANTSignal trail tagged `operator_override`, and the server recomputes the
+// composite score and tier, which it returns. `score` is bounded server-side by
+// the dimension's own configured maximum, so a 400 here means the caller sent a
+// score the bot's framework does not allow.
+export const overrideLeadQualification = async (sessionId, dimension, score) => {
+    try {
+        const response = await api.patch(`/operators/session/${sessionId}/qualification`, {
+            dimension,
+            score,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error overriding lead qualification:', error);
+        throw buildApiError(error, 'Failed to update the qualification score');
+    }
+};
+
 // ── Webhooks ──
 
 export const getWebhooks = async (botId) => {
@@ -2099,6 +2183,41 @@ export const getMyOperatorStatus = async ({ botId } = {}) => {
     } catch (error) {
         console.error('API Error getting operator status:', error);
         return null;
+    }
+};
+
+// ── Notification preferences (self-service) ──
+//
+// app/api/operator_routes.py:
+//   GET /operators/me/notification-preferences
+//   PUT /operators/me/notification-preferences
+//
+// Works for BOTH auth types: an operator token writes the Operator row, a
+// client token writes the Client row - the backend picks the row whose prefs
+// its own push dispatch actually consults (``_prefs_target``). The response is
+// always fully defaulted, so the caller never has to infer a missing field.
+
+/** Read the signed-in user's own push preferences (events + quiet hours). */
+export const getNotificationPreferences = async () => {
+    try {
+        const response = await api.get('/operators/me/notification-preferences');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load your notification preferences');
+    }
+};
+
+/**
+ * Replace the signed-in user's own push preferences. The backend stores the
+ * whole ``push`` object, so callers must send the complete state - a partial
+ * body silently resets the fields it omits to their defaults.
+ */
+export const updateNotificationPreferences = async (preferences) => {
+    try {
+        const response = await api.put('/operators/me/notification-preferences', preferences);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save your notification preferences');
     }
 };
 

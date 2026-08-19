@@ -101,14 +101,20 @@ export function WorkspaceProvider({ children }) {
                 {
                     current_workspace_id: String(workspace.id),
                     current_workspace_name: workspace.name || '',
-                    current_workspace_role: workspace.role || '',
+                    // The EFFECTIVE role, not the coarse membership role. A
+                    // linked admin's ``workspace.role`` is not 'owner', so
+                    // persisting it meant that on the next reload — before
+                    // /me/workspaces resolves — the app read them back as a
+                    // plain operator and the route guard bounced them to
+                    // /inbox, destroying whatever they had deep-linked to.
+                    current_workspace_role: _effectiveRole(workspace) || '',
                 },
                 persistent,
             );
         }
         setCurrentWorkspaceId(workspace.id);
         setCurrentWorkspaceName(workspace.name);
-        setCurrentRole(workspace.role);
+        setCurrentRole(_effectiveRole(workspace));
     }, []);
 
     const refresh = useCallback(async () => {
@@ -131,7 +137,7 @@ export function WorkspaceProvider({ children }) {
                 persistWorkspace(next);
             } else {
                 // Ensure name / role stay in sync if backend metadata changed.
-                if (next.name !== currentWorkspaceName || next.role !== currentRole) {
+                if (next.name !== currentWorkspaceName || _effectiveRole(next) !== currentRole) {
                     persistWorkspace(next);
                 }
             }

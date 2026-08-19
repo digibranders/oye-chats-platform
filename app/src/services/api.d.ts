@@ -32,6 +32,16 @@ import type {
   Workspace,
 } from '../types/domain';
 import type { FeedbackItem } from '../features/feedback/types';
+import type { AxiosInstance } from 'axios';
+
+/**
+ * The configured axios instance, shared with the platform console.
+ *
+ * Exported so `src/superadmin/` reuses this client's auth header, impersonation
+ * suppression, 401 handling and error shaping. A second `axios.create` would
+ * silently lose every one of those.
+ */
+export const httpClient: AxiosInstance;
 
 // ── Agents (bots) ────────────────────────────────────────────────────────────
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
@@ -70,6 +80,37 @@ export function getBotPreviewUrl(
 
 // ── Knowledge / crawl ────────────────────────────────────────────────────────
 export function discoverCrawlUrls(url: string, botId?: number): Promise<CrawlDiscovery>;
+
+/**
+ * Submit a URL to be crawled and ingested. Long-running (the client allows five
+ * minutes) — callers that must stay responsive fire it without awaiting and
+ * follow `getCrawlProgress`.
+ */
+export function crawlWebsite(
+  url: string,
+  botId?: number,
+  useJs?: boolean,
+  replaceSource?: string | null,
+  expectedNewPages?: number | null,
+  orderedUrls?: string[] | null,
+  maxPages?: number | null,
+  mode?: 'full' | 'delta',
+  discoveredPages?: number | null,
+): Promise<Record<string, unknown>>;
+
+/** The caller's in-flight crawl, from Redis. Never rejects: a network failure resolves to `idle`. */
+export interface CrawlProgress {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  urls?: string[];
+  pages_crawled?: number;
+  max_pages?: number;
+  current_url?: string | null;
+  started_at?: string | null;
+  cancellable?: boolean;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+export function getCrawlProgress(): Promise<CrawlProgress>;
 export function getDocuments(botId?: number): Promise<KnowledgeSource[]>;
 export function getDocumentPages(source: string, botId?: number): Promise<SourcePagesResult>;
 export function deleteDocument(documentName: string, botId?: number): Promise<Record<string, unknown>>;
@@ -79,6 +120,9 @@ export function deleteDocument(documentName: string, botId?: number): Promise<Re
 export function getKnowledgeState(botId?: number): Promise<KnowledgeState>;
 
 export function getSeedQuestions(botId: number): Promise<string[]>;
+/** POST /bots/{id}/seed-questions?force=true — recompute, ignoring the cached set.
+ *  Throws (unlike `getSeedQuestions`): it is only called from an explicit control. */
+export function refreshSeedQuestions(botId: number): Promise<string[]>;
 export function previewChatStream(
   botId: number,
   question: string,
@@ -116,12 +160,113 @@ export function previewUploadCost(
   botId?: number,
 ): Promise<UploadCostPreview | null>;
 
+/**
+ * One background ingestion job, as reported by `GET /ingest/status/{job_id}`.
+ *
+ * `status` mirrors ARQ's own job states. `not_found` is a real answer, not an
+ * error: ARQ drops finished job records after its retention window, so a job
+ * polled late reads as missing rather than as complete.
+ */
+export interface IngestJobStatus {
+  job_id: string;
+  status: 'queued' | 'in_progress' | 'complete' | 'failed' | 'not_found' | (string & {});
+  function?: string;
+  enqueue_time?: string | null;
+  start_time?: string;
+  finish_time?: string;
+  result?: unknown;
+}
+/**
+ * `GET /ingest/status/{job_id}` — progress of an upload's background ingestion.
+ *
+ * Rejects with status 501 when the API runs without the ARQ worker, in which
+ * case ingestion happens inline and there is no job to poll. Callers should
+ * read that as "no progress available" rather than as a failure.
+ */
+export function getIngestStatus(jobId: string): Promise<IngestJobStatus>;
+
 // ── Onboarding / activation ──────────────────────────────────────────────────
 export function completeOnboarding(): Promise<Record<string, unknown> | null>;
 export function recordActivationEvent(
   eventType: string,
   opts?: { botId?: number | null; eventData?: unknown },
 ): Promise<void>;
+
+// ── Authentication ───────────────────────────────────────────────────────────
+/** `POST /auth/login` — the customer/admin credential. */
+export interface ClientLoginResult {
+  access_token: string;
+  token_type?: string;
+  client_id: number;
+  name: string;
+  is_superadmin?: boolean;
+  is_verified?: boolean;
+  company_name?: string | null;
+  website?: string | null;
+}
+export function loginAdmin(email: string, password: string): Promise<ClientLoginResult>;
+
+/**
+ * `POST /auth/operator-login` — the team-member credential.
+ *
+ * A separate endpoint with a separate password, and it answers a bad attempt
+ * with the same 401 the customer endpoint does, so nothing in the response
+ * distinguishes "wrong password" from "not an operator".
+ */
+export interface OperatorLoginResult {
+  access_token: string;
+  token_type?: string;
+  operator_id: number;
+  client_id: number;
+  default_bot_id?: number | null;
+  name: string;
+  role: string;
+  department_id?: number | null;
+  company_name?: string | null;
+  website?: string | null;
+}
+export function loginOperator(email: string, password: string): Promise<OperatorLoginResult>;
+
+/** `POST /auth/register`. `is_verified` is true only where the backend auto-verifies. */
+export interface RegisterResult {
+  access_token: string;
+  token_type?: string;
+  client_id: number;
+  name: string;
+  is_superadmin?: boolean;
+  is_verified?: boolean;
+  company_name?: string | null;
+  website?: string | null;
+  message?: string;
+}
+export function registerClient(
+  name: string,
+  email: string,
+  password: string,
+  companyName?: string | null,
+  website?: string | null,
+  billingCountry?: string | null,
+  promoCode?: string | null,
+): Promise<RegisterResult>;
+
+/**
+ * `GET /auth/detect-country` — ISO 3166-1 alpha-2 from the edge headers, or
+ * null where there is no signal. Never throws.
+ */
+export function detectCountry(): Promise<string | null>;
+
+/** The OTP endpoints all answer with the server's own wording under `message`. */
+export interface AuthMessageResult {
+  message?: string;
+}
+export function verifyEmail(email: string, otp: string): Promise<AuthMessageResult>;
+export function resendVerification(email: string): Promise<AuthMessageResult>;
+export function requestPasswordReset(email: string): Promise<AuthMessageResult>;
+export function resetPassword(
+  email: string,
+  otp: string,
+  newPassword: string,
+): Promise<AuthMessageResult>;
 
 // ── Identity / workspace ─────────────────────────────────────────────────────
 export function getCurrentUser(): Promise<CurrentUser>;
@@ -318,6 +463,20 @@ export interface SendFollowUpResult {
   success: boolean;
 }
 export function sendLeadFollowUp(sessionId: string, confirmOverride?: boolean): Promise<SendFollowUpResult>;
+/** What the server recomputes after an operator corrects one dimension's score. */
+export interface QualificationOverrideResult {
+  session_id: string;
+  dimension: string;
+  score_before: number;
+  score_after: number;
+  bant_score: number;
+  bant_tier: string;
+}
+export function overrideLeadQualification(
+  sessionId: string,
+  dimension: string,
+  score: number,
+): Promise<QualificationOverrideResult>;
 
 // ── Inbox / offline messages ─────────────────────────────────────────────────
 export function getOfflineMessages(params?: Record<string, unknown>): Promise<OfflineMessagesResult>;
@@ -350,6 +509,41 @@ export function uploadOperatorChatFile(
 // ── Operator self-status ─────────────────────────────────────────────────────
 export function getMyOperatorStatus(opts?: { botId?: number }): Promise<OperatorStatus | null>;
 export function toggleOperatorStatus(opts?: { isOnline?: boolean; botId?: number }): Promise<Record<string, unknown>>;
+
+// ── Notification preferences (self-service) ──────────────────────────────────
+//
+// `GET/PUT /operators/me/notification-preferences`. Serves the signed-in
+// identity whichever way it authenticated: an operator token writes the
+// Operator row, a client token writes the Client row. The GET response is
+// always fully defaulted by the backend, so no field is ever absent.
+
+/** Per-event push opt-outs. Mirrors `_PUSH_EVENT_KEYS` in `operator_routes.py`. */
+export interface PushEventPreferences {
+  handoff_request: boolean;
+  chat_transferred: boolean;
+  offline_message: boolean;
+}
+
+/** A nightly window during which push is withheld. `HH:MM`, 24-hour. */
+export interface PushQuietHours {
+  start: string;
+  end: string;
+  tz: string;
+}
+
+export interface NotificationPreferences {
+  push: {
+    enabled: boolean;
+    events: PushEventPreferences;
+    quiet_hours: PushQuietHours | null;
+  };
+}
+
+export function getNotificationPreferences(): Promise<NotificationPreferences>;
+/** Replaces the whole `push` object — send complete state, never a patch. */
+export function updateNotificationPreferences(
+  preferences: NotificationPreferences,
+): Promise<NotificationPreferences>;
 
 // ── Team: operators ──────────────────────────────────────────────────────────
 export function getOperators(): Promise<Operator[]>;
@@ -468,6 +662,24 @@ export function updateAffiliateCode(
 export function getAffiliateStats(): Promise<Record<string, unknown>>;
 /** Look up a magic-link affiliate invite by token. Throws 404 (invalid) / 410 (expired/revoked). */
 export function lookupAffiliateInvite(token: string): Promise<{ email: string; expires_at: string }>;
+/**
+ * Accept a magic-link affiliate invite as a BRAND-NEW user: creates the Client
+ * and the Affiliate row atomically and returns an `access_token` shaped like
+ * `/auth/register`, so the console can sign the invitee straight in.
+ */
+export function acceptAffiliateInvite(params: {
+  token: string;
+  name: string;
+  password: string;
+  companyName?: string | null;
+  website?: string | null;
+}): Promise<{
+  access_token: string;
+  client_id: number;
+  name: string;
+  is_affiliate: boolean;
+}>;
+
 /** Accept an affiliate invite as the signed-in client. Throws 403 (email mismatch) / 409 (already an affiliate). */
 export function acceptAffiliateInviteExisting(
   token: string,
@@ -616,6 +828,15 @@ export function diffRecrawl(
 ): Promise<Record<string, unknown>>;
 /** GET recrawl history/status for a bot's sources. */
 export function getRecrawlStatus(botId: number): Promise<Record<string, unknown>>;
+/**
+ * `PATCH /bots/{id}/recrawl` — turn weekly auto-retrain on or off.
+ *
+ * Implemented in `api.js` since the feature shipped but never declared here, so
+ * every consumer reached it through a module cast. Resolves with the same
+ * payload `getRecrawlStatus` returns, so a toggle needs no follow-up read.
+ * Rejects 403 `{ error: 'feature_locked' }` on plans without auto-retrain.
+ */
+export function updateRecrawl(botId: number, enabled: boolean): Promise<Record<string, unknown>>;
 
 // ── Notifications: web push (settings) ───────────────────────────────────────
 /** GET /operators/push/vapid-public-key - server VAPID key + whether push is enabled. */
@@ -630,6 +851,13 @@ export function unsubscribePush(endpoint: string, keys?: unknown): Promise<boole
 export function getBrandTonePresets(): Promise<Array<Record<string, unknown>>>;
 /** POST /bots/{id}/brand-tone/detect - infer a brand tone from the crawled site. */
 export function detectBrandTone(botId: number): Promise<Record<string, unknown>>;
+/** POST /bots/{id}/brand-tone/preview - a sample reply in an UNSAVED tone.
+ *  Distinct from `previewChatStream`, which answers from the bot's saved record:
+ *  this is how a tone can be heard before it is committed. */
+export function previewBrandTone(
+  botId: number,
+  brandTone: string,
+): Promise<{ sample?: string }>;
 
 // ── Demo share tracking (channels) ───────────────────────────────────────────
 /** POST /bots/{id}/demo-share-click - record a shared demo-link click. */

@@ -69,8 +69,28 @@ export interface DataTableProps<T> {
    */
   rowLabel?: (row: T) => string;
 
-  /** Client-side paging. Omit for an unpaged or server-paged table. */
+  /**
+   * Rows per page.
+   *
+   * On its own this is client-side paging: the table holds the page number and
+   * slices `rows` itself. Add `page`, `onPageChange` and `rowCount` and it
+   * becomes server paging — `rows` is taken to be exactly the page the server
+   * returned, and the pager reports the server's total.
+   */
   pageSize?: number;
+  /**
+   * The current page, 1-based. Supplying it (with `onPageChange`) switches the
+   * table to server paging.
+   *
+   * Server paging exists because the alternative is a client-side pager over
+   * whatever one request happened to return, which quietly reports "1–50 of 50"
+   * for a workspace with nine thousand rows. Every server-paged surface in this
+   * app was hand-rolling its own pager beside the table before this.
+   */
+  page?: number;
+  onPageChange?: (page: number) => void;
+  /** The server's total across all pages. Required for server paging. */
+  rowCount?: number;
   /** Sticks the header while the body scrolls. Needs a bounded `maxHeight`. */
   maxHeight?: string;
   className?: string;
@@ -132,10 +152,13 @@ export function DataTable<T>({
   bulkActions,
   rowLabel,
   pageSize,
+  page: controlledPage,
+  onPageChange,
+  rowCount,
   maxHeight,
   className,
 }: DataTableProps<T>) {
-  const [page, setPage] = useState(0);
+  const [uncontrolledPage, setUncontrolledPage] = useState(0);
   const [uncontrolledSort, setUncontrolledSort] = useState<SortState | null>(defaultSort);
 
   // Controlled when the caller passes a handler; otherwise the table owns it.
@@ -146,9 +169,14 @@ export function DataTable<T>({
   const setSort = isControlled ? onSortChange : setUncontrolledSort;
 
   const selectable = Boolean(selectedKeys && onSelectionChange);
+  const serverPaged = controlledPage !== undefined && onPageChange !== undefined;
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
+    // Sorting one page of a server-paged set client-side would order fifty rows
+    // out of nine thousand and present the result as the sort the user asked
+    // for. A server-paged table sorts on the server or not at all.
+    if (serverPaged && !isControlled) return rows;
     const column = columns.find((candidate) => candidate.key === sort.key);
     // `sortable: true` means the server ordered these; re-sorting here would
     // fight it.
@@ -160,10 +188,19 @@ export function DataTable<T>({
     return [...rows].sort(
       sort.direction === 'desc' ? (a, b) => -comparator(a, b) : comparator,
     );
-  }, [rows, sort, columns]);
+  }, [rows, sort, columns, serverPaged, isControlled]);
 
-  const pageCount = pageSize ? Math.max(1, Math.ceil(sortedRows.length / pageSize)) : 1;
-  const safePage = Math.min(page, pageCount - 1);
+  const totalRows = serverPaged ? (rowCount ?? sortedRows.length) : sortedRows.length;
+  const pageCount = pageSize ? Math.max(1, Math.ceil(totalRows / pageSize)) : 1;
+  const safePage = serverPaged
+    ? Math.min(Math.max(0, (controlledPage ?? 1) - 1), pageCount - 1)
+    : Math.min(uncontrolledPage, pageCount - 1);
+
+  function goToPage(next: number) {
+    const clamped = Math.min(Math.max(0, next), pageCount - 1);
+    if (serverPaged) onPageChange?.(clamped + 1);
+    else setUncontrolledPage(clamped);
+  }
 
   // A filter that shrinks the set must not strand the reader on a page that no
   // longer exists — and clearing the filter must not restore a page they never
@@ -172,15 +209,19 @@ export function DataTable<T>({
   // Adjusted during render rather than in an effect. An effect would paint the
   // stale page first and then correct it, which flashes the wrong rows; this is
   // React's documented pattern for state that derives from changing props.
+  //
+  // Only for client paging. When the server owns the page, so does the caller:
+  // resetting here would fight the URL the caller is keeping the page in.
   const [resetOn, setResetOn] = useState<{ rows: unknown; sort: SortState | null }>({ rows, sort });
-  if (resetOn.rows !== rows || resetOn.sort !== sort) {
+  if (!serverPaged && (resetOn.rows !== rows || resetOn.sort !== sort)) {
     setResetOn({ rows, sort });
-    setPage(0);
+    setUncontrolledPage(0);
   }
 
-  const visibleRows = pageSize
-    ? sortedRows.slice(safePage * pageSize, safePage * pageSize + pageSize)
-    : sortedRows;
+  const visibleRows =
+    pageSize && !serverPaged
+      ? sortedRows.slice(safePage * pageSize, safePage * pageSize + pageSize)
+      : sortedRows;
 
   function toggleSort(key: string) {
     // asc → desc → unsorted. The third press has to exist: without it there is
@@ -400,14 +441,15 @@ export function DataTable<T>({
         </table>
       </div>
 
-      {pageSize && !loading && !error && sortedRows.length > pageSize ? (
-        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5">
+      {pageSize && !loading && !error && totalRows > pageSize ? (
+        <nav
+          aria-label={`${caption} pages`}
+          className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5"
+        >
           <p className="text-xs text-text-secondary">
             <span className="figure">{safePage * pageSize + 1}</span>–
-            <span className="figure">
-              {Math.min((safePage + 1) * pageSize, sortedRows.length)}
-            </span>{' '}
-            of <span className="figure">{sortedRows.length}</span>
+            <span className="figure">{Math.min((safePage + 1) * pageSize, totalRows)}</span> of{' '}
+            <span className="figure">{totalRows}</span>
           </p>
           <div className="flex items-center gap-1">
             <Button
@@ -415,7 +457,7 @@ export function DataTable<T>({
               variant="ghost"
               aria-label="Previous page"
               disabled={safePage === 0}
-              onClick={() => setPage((current) => Math.max(0, current - 1))}
+              onClick={() => goToPage(safePage - 1)}
             >
               <ChevronLeft aria-hidden className="h-4 w-4" />
             </Button>
@@ -428,12 +470,12 @@ export function DataTable<T>({
               variant="ghost"
               aria-label="Next page"
               disabled={safePage >= pageCount - 1}
-              onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+              onClick={() => goToPage(safePage + 1)}
             >
               <ChevronRight aria-hidden className="h-4 w-4" />
             </Button>
           </div>
-        </div>
+        </nav>
       ) : null}
     </div>
   );

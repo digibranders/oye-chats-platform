@@ -3,24 +3,25 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { isOperatorAllowedPath } from '../shell/nav';
 
 /**
- * OperatorRouteGuard - the route-layer half of operator scoping.
+ * The route-layer half of operator scoping.
  *
- * Hiding owner/admin destinations from the sidebar (see `navForRole`) is a
- * convenience, not a boundary: a bookmark, a deep link, or `switchWorkspace`'s
- * redirect could still drop an operator onto `/agents`, `/analytics`, `/workspace`
- * or the dashboard. This pathless layout enforces the same allow-list at the
- * router, redirecting a plain operator to their live-chat console instead.
+ * Hiding owner and admin destinations from the rail is a convenience, not a
+ * boundary: a bookmark, a deep link or a workspace switch could still drop a
+ * plain operator onto `/chatbots`, `/analytics` or `/settings`. This pathless
+ * layout enforces the same allow-list at the router.
  *
- * It only ever narrows access for `isOperator` (a plain-operator membership in
- * someone else's workspace); owners and admins fall straight through to
- * `<Outlet />`. When the caller switches back into their own workspace they act
- * as owner again and the guard is inert.
+ * It waits for the membership list. The guard used to run against the role
+ * restored from storage, which was the coarse membership role rather than the
+ * effective seat — so on every reload a *linked admin* was read back as an
+ * operator and redirected to `/inbox`, throwing away the URL they had opened.
+ * A redirect made on a provisional answer cannot be taken back, so the guard
+ * makes none until it has the real one.
  */
 export function OperatorRouteGuard() {
-  const { isOperator } = useWorkspace();
+  const { isOperator, isLoading } = useWorkspace();
   const { pathname } = useLocation();
 
-  if (isOperator && !isOperatorAllowedPath(pathname)) {
+  if (!isLoading && isOperator && !isOperatorAllowedPath(pathname)) {
     return <Navigate to="/inbox" replace />;
   }
 
