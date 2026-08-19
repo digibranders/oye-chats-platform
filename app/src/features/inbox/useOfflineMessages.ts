@@ -5,7 +5,7 @@ import {
   deleteOfflineMessage,
 } from '../../services/api';
 import { type OfflineMessage } from '../../types/domain';
-import { type OfflineStatus } from './inboxHelpers';
+import { type OfflineStatus } from './inboxModel';
 
 /** Status filter values surfaced in the toolbar. `'all'` clears the filter. */
 export type StatusFilter = 'all' | OfflineStatus;

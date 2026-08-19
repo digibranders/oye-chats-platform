@@ -109,6 +109,7 @@ export { StatTile, FigureRow, DefinitionList } from './data/Figures';
 export type { StatTileProps, TrendDirection } from './data/Figures';
 export { CopyField, CodeBlock } from './data/Copyable';
 export { useClipboard } from './hooks/useClipboard';
+export { useMediaQuery } from './hooks/useMediaQuery';
 export type { ClipboardState } from './hooks/useClipboard';
 export type { CopyFieldProps, CodeBlockProps } from './data/Copyable';
 

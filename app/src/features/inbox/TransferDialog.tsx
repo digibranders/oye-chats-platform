@@ -1,35 +1,43 @@
-import { useEffect, useState, type ReactElement } from 'react';
-import { ArrowRightLeft, Building2, User } from 'lucide-react';
-import { Button, Modal, Skeleton, cn } from '../../design-system';
+import { useEffect, useMemo, useState } from 'react';
+import { Building2, User } from 'lucide-react';
+import { Alert, Avatar, Button, Dialog, LoadingRows, StatusDot, cn, toast } from '../../ui';
 import { getDepartments, getOperators, transferChat } from '../../services/api';
 import type { Department, Operator } from '../../types/domain';
-import { initials } from './liveChatHelpers';
 
 export interface TransferDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   sessionId: string;
   visitorName: string;
-  /** Current owner - excluded from the operator target list. */
+  /** The current owner, excluded from the list — you cannot transfer to yourself. */
   currentOperatorId: number | null;
-  onClose: () => void;
-  /** Called after a successful transfer so the caller can drop the chat locally. */
+  /** Called after the transfer lands, so the caller can drop the conversation. */
   onTransferred: () => void;
 }
 
 type Target = { kind: 'operator'; id: number } | { kind: 'department'; id: number };
 
+function sameTarget(a: Target | null, b: Target): boolean {
+  return a?.kind === b.kind && a.id === b.id;
+}
+
 /**
- * TransferDialog - hand the active conversation to another online operator or a
- * department. Targets load from `getOperators` / `getDepartments`; the transfer
- * itself goes through the typed `transferChat` REST wrapper. The backend emits
- * `chat_transferred` over WS, which removes the chat from this operator's board.
+ * Hand this conversation to someone else.
+ *
+ * Operators are listed with their availability and current load, because
+ * "transfer to Priya" is a decision about whether Priya can actually take it —
+ * the previous dialog listed names alone, so a chat could be handed to someone
+ * who was offline or already at their concurrency limit, and the visitor waited
+ * in silence.
  */
 export function TransferDialog({
+  open,
+  onOpenChange,
   sessionId,
   visitorName,
   currentOperatorId,
-  onClose,
   onTransferred,
-}: TransferDialogProps): ReactElement {
+}: TransferDialogProps) {
   const [operators, setOperators] = useState<Operator[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,10 +45,12 @@ export function TransferDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Mounted fresh each time the dialog opens (the parent renders it only while
-  // open), so the targets load once here - no synchronous setState in the effect.
   useEffect(() => {
+    if (!open) return;
     let active = true;
+    setLoading(true);
+    setError(null);
+    setTarget(null);
     Promise.all([getOperators(), getDepartments()])
       .then(([ops, depts]) => {
         if (!active) return;
@@ -48,8 +58,7 @@ export function TransferDialog({
         setDepartments(depts);
       })
       .catch(() => {
-        if (!active) return;
-        setError('Couldn’t load transfer targets.');
+        if (active) setError('Could not load the people and departments you can transfer to.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -57,131 +66,159 @@ export function TransferDialog({
     return () => {
       active = false;
     };
-  }, [sessionId]);
+  }, [open, sessionId]);
 
-  const eligibleOperators = operators.filter(
-    (op) => op.id !== currentOperatorId && op.is_active !== false && op.is_online,
+  const candidates = useMemo(
+    () => operators.filter((operator) => operator.id !== currentOperatorId && operator.is_active !== false),
+    [operators, currentOperatorId],
   );
 
-  const submit = async (): Promise<void> => {
+  async function submit(): Promise<void> {
     if (!target || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
       await transferChat(
         sessionId,
-        target.kind === 'operator' ? { target_operator_id: target.id } : { target_department_id: target.id },
+        target.kind === 'operator' ? { to_operator_id: target.id } : { to_department_id: target.id },
       );
+      toast.success('Conversation transferred', {
+        description: `${visitorName} is now with the person you chose.`,
+      });
       onTransferred();
+      onOpenChange(false);
     } catch (err) {
-      setError(
-        err instanceof Error ? `Transfer failed: ${err.message}` : 'Transfer failed. Please try again.',
-      );
+      setError(err instanceof Error ? `Could not transfer: ${err.message}` : 'Could not transfer this conversation.');
+    } finally {
       setSubmitting(false);
     }
-  };
-
-  const isSelected = (kind: Target['kind'], id: number): boolean =>
-    target?.kind === kind && target.id === id;
+  }
 
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
       title="Transfer conversation"
-      description={`Hand ${visitorName} to an operator or department.`}
-      size="sm"
+      description={`${visitorName} will be told they are being connected to someone else.`}
+      dismissible={!submitting}
       footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>
-          <Button size="sm" onClick={() => void submit()} disabled={!target || submitting}>
-            <ArrowRightLeft size={14} aria-hidden="true" />
-            {submitting ? 'Transferring…' : 'Transfer'}
+          <Button onClick={() => void submit()} disabled={!target || submitting} loading={submitting}>
+            Transfer
           </Button>
-        </div>
+        </>
       }
     >
-      {loading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {error && (
-            <p role="alert" className="text-[13px] text-[var(--ds-danger)]">
-              {error}
-            </p>
-          )}
+      {error ? (
+        <Alert tone="danger" className="mb-4">
+          {error}
+        </Alert>
+      ) : null}
 
-          <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-              Online operators
-            </p>
-            {eligibleOperators.length === 0 ? (
-              <p className="text-[13px] text-[var(--ds-text-muted)]">No other operators are online right now.</p>
+      {loading ? (
+        <LoadingRows rows={4} />
+      ) : (
+        <div className="space-y-5">
+          <section>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-text-tertiary">
+              People
+            </h3>
+            {candidates.length === 0 ? (
+              <p className="text-xs text-text-secondary">
+                Nobody else is set up as an operator on this workspace yet.
+              </p>
             ) : (
-              <div className="space-y-1.5">
-                {eligibleOperators.map((op) => (
-                  <button
-                    key={op.id}
-                    type="button"
-                    onClick={() => setTarget({ kind: 'operator', id: op.id })}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-[var(--ds-radius-lg)] border px-3 py-2 text-left transition-colors',
-                      isSelected('operator', op.id)
-                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
-                        : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[11px] font-semibold text-[var(--ds-text-muted)]">
-                      {initials(op.name)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{op.name}</span>
-                      <span className="block text-[11px] text-[var(--ds-text-muted)]">
-                        {op.active_chats ?? 0} active
+              <div role="radiogroup" aria-label="Transfer to a person" className="space-y-1.5">
+                {candidates.map((operator) => {
+                  const option: Target = { kind: 'operator', id: operator.id };
+                  const selected = sameTarget(target, option);
+                  const load =
+                    operator.max_concurrent_chats && operator.max_concurrent_chats > 0
+                      ? `${operator.active_chats ?? 0}/${operator.max_concurrent_chats} chats`
+                      : `${operator.active_chats ?? 0} chats`;
+                  return (
+                    <button
+                      key={operator.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setTarget(option)}
+                      className={cn(
+                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left',
+                        selected
+                          ? 'border-accent-500 bg-accent-50'
+                          : 'border-border bg-surface hover:bg-surface-hover',
+                      )}
+                    >
+                      <Avatar size="sm" name={operator.name} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-base text-text-primary">{operator.name}</span>
+                        <span className="figure block text-2xs text-text-tertiary">{load}</span>
                       </span>
-                    </span>
-                    <User size={14} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-                  </button>
-                ))}
+                      <StatusDot
+                        tone={operator.is_online ? 'success' : 'neutral'}
+                        pulse={operator.is_online}
+                        label={operator.is_online ? 'Online' : 'Offline'}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             )}
-          </div>
+          </section>
 
-          {departments.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+          {departments.length > 0 ? (
+            <section>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-eyebrow text-text-tertiary">
                 Departments
-              </p>
-              <div className="space-y-1.5">
-                {departments.map((dept) => (
-                  <button
-                    key={dept.id}
-                    type="button"
-                    onClick={() => setTarget({ kind: 'department', id: dept.id })}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-[var(--ds-radius-lg)] border px-3 py-2 text-left transition-colors',
-                      isSelected('department', dept.id)
-                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
-                        : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]">
-                      <Building2 size={14} aria-hidden="true" />
-                    </span>
-                    <span className="truncate text-[13px] font-medium text-[var(--ds-text)]">{dept.name}</span>
-                  </button>
-                ))}
+              </h3>
+              <div role="radiogroup" aria-label="Transfer to a department" className="space-y-1.5">
+                {departments.map((department) => {
+                  const option: Target = { kind: 'department', id: department.id };
+                  const selected = sameTarget(target, option);
+                  return (
+                    <button
+                      key={department.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setTarget(option)}
+                      className={cn(
+                        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left',
+                        selected
+                          ? 'border-accent-500 bg-accent-50'
+                          : 'border-border bg-surface hover:bg-surface-hover',
+                      )}
+                    >
+                      <span className="flex h-6 w-6 items-center justify-center rounded-xs bg-surface-sunken">
+                        <Building2 aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-base text-text-primary">{department.name}</span>
+                        {department.description ? (
+                          <span className="block truncate text-2xs text-text-tertiary">
+                            {department.description}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            </section>
+          ) : null}
+
+          {candidates.length === 0 && departments.length === 0 ? (
+            <p className="flex items-center gap-2 text-xs text-text-secondary">
+              <User aria-hidden className="h-3.5 w-3.5" />
+              Invite a teammate from Settings → Team before you can transfer conversations.
+            </p>
+          ) : null}
         </div>
       )}
-    </Modal>
+    </Dialog>
   );
 }

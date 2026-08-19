@@ -1,74 +1,30 @@
 /* =============================================================================
    OyeChats Console — stylesheet entry
    -----------------------------------------------------------------------------
-   Three imports, in this order, and the order matters:
+   Two imports, in this order, and the order matters:
 
    1. Tailwind, which brings the engine and its default scales.
    2. `ui/tokens.css`, the design system. Its `@theme` block opens with
       `--color-*: initial`, which clears Tailwind's twenty-two default palettes
       so a stray `bg-violet-600` cannot compile. Everything after that point in
       the merged theme survives.
-   3. The legacy bridge below, declared AFTER the reset so the handful of
-      screens still on the old palette keep rendering. It shrinks as those
-      screens are rebuilt, and the file is finished when it is empty.
+
+   There used to be a third: a legacy bridge re-declaring the pre-rebuild
+   `primary-*` and `surface-*` ramps, because the token layer's
+   `--color-*: initial` would otherwise have left the last screens on the old
+   palette unstyled. Those screens — the five auth pages, the impersonation
+   notice, the error fallback and one select — have been rebuilt, so the bridge
+   is gone and the old ramps can no longer compile anywhere in the app.
    ============================================================================= */
 
 @import "tailwindcss";
 
-/* Inter carries the console's text; Geist Mono carries every figure, eyebrow,
-   identifier and code block. Both are declared in the token layer's font
-   stacks, and both are fetched here — a face that is specified but never
-   loaded is just a wrong spec. */
-@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+/* Inter carries the console's text and Geist Mono carries every figure, eyebrow,
+   identifier and code block. Both are declared in the token layer's font stacks
+   and both are fetched from `index.html`, where the browser can start the
+   request in parallel with this stylesheet rather than after parsing it. */
 
 @import "./ui/tokens.css";
-
-/* -----------------------------------------------------------------------------
-   LEGACY BRIDGE — temporary, and deliberately ugly so nobody adopts it.
-
-   Eight files still use the pre-rebuild palette: the five auth pages, the
-   impersonation notice, the error fallback, and one select. They are their own
-   rebuild phase. Until then these ramps have to exist, because the token
-   layer's `--color-*: initial` would otherwise erase them and leave those
-   screens unstyled.
-
-   Do not use these in new code. Every entry here is a file that has not been
-   rebuilt yet, and deleting the last of them is how this phase finishes.
-   ----------------------------------------------------------------------------- */
-@theme {
-  --color-primary-50: #f5f3ff;
-  --color-primary-100: #ede9fe;
-  --color-primary-200: #ddd6fe;
-  --color-primary-400: #a78bfa;
-  --color-primary-500: #8b5cf6;
-  --color-primary-600: #7c3aed;
-  --color-primary-700: #6d28d9;
-  --color-primary-900: #4c1d95;
-
-  --color-surface-50: #fafaf7;
-  --color-surface-100: #f4f3ef;
-  --color-surface-200: #e7e5de;
-  --color-surface-300: #d4d4d0;
-  --color-surface-400: #a1a1aa;
-  --color-surface-500: #71717a;
-  --color-surface-600: #52525b;
-  --color-surface-700: #3f3f46;
-  --color-surface-800: #27272a;
-  --color-surface-900: #18181b;
-
-  --animate-wave: wave 1.4s ease-in-out;
-}
-
-/* Semantic aliases the surviving legacy screens read directly. */
-:root {
-  --bg: var(--color-surface-50);
-  --bg-card: #ffffff;
-  --bg-muted: var(--color-surface-100);
-  --border: var(--color-surface-200);
-  --text: var(--color-surface-900);
-  --focus: #6366f1;
-  --focus-ring: rgb(99 102 241 / 0.28);
-}
 
 @keyframes wave {
   0%, 60%, 100% { transform: rotate(0deg); }

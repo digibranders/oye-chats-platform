@@ -26,8 +26,8 @@ export function TopBar({ isMobile, collapsed, onToggleRail, onOpenSearch }: TopB
   return (
     <header
       className={cn(
-        'sticky top-0 z-[var(--z-topbar)] flex h-topbar shrink-0 items-center gap-3',
-        'border-b border-border bg-canvas/90 px-4 backdrop-blur md:px-6',
+        'z-[var(--z-topbar)] flex h-topbar shrink-0 items-center gap-3',
+        'border-b border-border bg-canvas px-4 md:px-6',
       )}
     >
       <Button

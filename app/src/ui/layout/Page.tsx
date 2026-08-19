@@ -161,7 +161,10 @@ export function Toolbar({
     <div
       className={cn(
         'flex flex-wrap items-center gap-2',
-        sticky && 'sticky top-topbar z-[var(--z-sticky)] -mx-2 bg-canvas/95 px-2 py-2 backdrop-blur',
+        // `top-0`, not an offset: the shell's `main` is the scroll container,
+        // so the toolbar sticks to the top of its own scroll box, immediately
+        // under the top bar rather than a topbar's height below it.
+        sticky && 'sticky top-0 z-[var(--z-sticky)] -mx-2 bg-canvas/95 px-2 py-2 backdrop-blur',
         className,
       )}
     >

@@ -315,3 +315,19 @@ export function reconnectDelay(attempt: number): number {
 export function heartbeatInterval(visible: boolean): number {
   return visible ? 25000 : 50000;
 }
+
+/**
+ * How a conversation left the board.
+ *
+ * `chat_transferred` and `chat_closed` used to share one branch and one outcome
+ * — the conversation simply vanished — so an operator who handed a visitor to a
+ * colleague got no confirmation that it had landed anywhere, and the
+ * `transferred_to` field the protocol has always carried was never read.
+ */
+export interface SessionEnding {
+  reason: 'closed' | 'transferred';
+  /** The receiving operator or department, when the server names one. */
+  transferredTo: string | null;
+  /** Local receipt time, for ordering the "recently ended" list. */
+  at: number;
+}

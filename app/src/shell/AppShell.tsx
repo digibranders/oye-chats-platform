@@ -25,6 +25,12 @@ const COLLAPSE_KEY = 'oc_rail_collapsed';
  * genuinely above the top bar. The old scrim shared a z-index with the bar and
  * came earlier in the DOM, so the bar painted over its own overlay and stayed
  * clickable underneath it.
+ *
+ * The frame is exactly one viewport tall and `main` is the scroll container,
+ * rather than the document scrolling behind a sticky bar. That is what lets a
+ * surface ask for the height it has — the inbox is a three-pane console whose
+ * list and transcript scroll independently, which is impossible to build
+ * honestly on a page that is as tall as its longest column.
  */
 export function AppShell() {
   const [isMobile, setIsMobile] = useState(
@@ -90,15 +96,14 @@ export function AppShell() {
     <TooltipProvider>
       <div
         className={cn(
-          'min-h-dvh bg-canvas text-text-primary',
-          !isMobile && 'grid',
+          'grid h-dvh overflow-hidden bg-canvas text-text-primary',
           !isMobile && (collapsed ? 'grid-cols-[var(--spacing-rail-collapsed)_1fr]' : 'grid-cols-[var(--spacing-rail)_1fr]'),
         )}
       >
         {!isMobile ? (
           <aside
             id="app-rail"
-            className="sticky top-0 h-dvh overflow-hidden border-r border-rail-border"
+            className="h-full overflow-hidden border-r border-rail-border"
           >
             <Rail collapsed={collapsed} inboxCount={waiting} />
           </aside>
@@ -114,7 +119,7 @@ export function AppShell() {
           </BaseDialog.Root>
         )}
 
-        <div className="flex min-w-0 flex-col">
+        <div className="flex min-w-0 flex-col overflow-hidden">
           <TopBar
             isMobile={isMobile}
             collapsed={collapsed}
@@ -122,7 +127,9 @@ export function AppShell() {
             onOpenSearch={() => setSearchOpen(true)}
           />
           <ShellBanners />
-          <main id="main" className="min-w-0 flex-1">
+          {/* The scroll container. A routed surface that wants the viewport
+              asks for `h-full`; everything else simply scrolls in here. */}
+          <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto">
             <Outlet />
           </main>
         </div>

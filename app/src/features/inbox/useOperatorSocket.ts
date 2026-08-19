@@ -19,6 +19,7 @@ import {
   reconnectDelay,
   type RosterOperator,
   type VisitorPresence,
+  type SessionEnding,
 } from './liveChatProtocol';
 import { mergeHistoryWithLive, parseHistoryMessage } from './liveChatHelpers';
 import { alertOperator, ensureNotificationPermission } from './notifications';
@@ -37,6 +38,10 @@ export interface OperatorSocketState {
   queue: QueueItem[];
   activeChats: Record<string, ActiveChat>;
   messagesBySession: Record<string, OperatorMessage[]>;
+  /** How a conversation ended, for the ones that are no longer active. */
+  endedBySession: Record<string, SessionEnding>;
+  /** The server's own view of this operator's availability, or null before `init`. */
+  serverOnline: boolean | null;
   typingBySession: Record<string, boolean>;
   presenceBySession: Record<string, VisitorPresence>;
   unreadBySession: Record<string, number>;
@@ -98,6 +103,10 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [activeChats, setActiveChats] = useState<Record<string, ActiveChat>>({});
   const [messagesBySession, setMessagesBySession] = useState<Record<string, OperatorMessage[]>>({});
+  /** How a conversation ended, kept so the board can say so rather than just losing it. */
+  const [endedBySession, setEndedBySession] = useState<Record<string, SessionEnding>>({});
+  /** The server's view of this operator's availability, from `init`. */
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [typingBySession, setTypingBySession] = useState<Record<string, boolean>>({});
   const [presenceBySession, setPresenceBySession] = useState<Record<string, VisitorPresence>>({});
   const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
@@ -153,6 +162,11 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         operatorIdRef.current = msg.operator_id;
         setOperatorId(msg.operator_id);
         setOperatorName(msg.operator_name);
+        // The server's own view of whether this operator is taking chats. It
+        // was typed by the protocol and never read, so availability came only
+        // from a REST poll and the two could disagree indefinitely — the badge
+        // said "Online" while the server had stopped routing to them.
+        if (typeof msg.is_online === 'boolean') setServerOnline(msg.is_online);
         break;
       }
 
@@ -253,21 +267,43 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       case 'chat_transferred':
       case 'chat_closed': {
         const sid = msg.session_id;
-        // Prune the session from EVERY per-session map so a closed conversation
-        // leaves no transcript/metadata behind for the tab's lifetime.
         const dropKey = <T,>(prev: Record<string, T>): Record<string, T> => {
           if (!(sid in prev)) return prev;
           const next = { ...prev };
           delete next[sid];
           return next;
         };
+
+        /*
+          Record HOW the conversation ended, and by whom.
+
+          These two cases used to share one branch and one outcome: the chat
+          simply vanished from the board. An operator who transferred a
+          conversation got no confirmation that it had reached anyone, and
+          `transferred_to` — which the protocol has always carried — was never
+          read. Closing behaved the same way, so a conversation the operator had
+          just resolved disappeared with no way to re-read what was said.
+        */
+        setEndedBySession((prev) => ({
+          ...prev,
+          [sid]: {
+            reason: msg.type === 'chat_transferred' ? 'transferred' : 'closed',
+            transferredTo:
+              msg.type === 'chat_transferred'
+                ? ((msg as { transferred_to?: string }).transferred_to ?? null)
+                : null,
+            at: Date.now(),
+          },
+        }));
+
         setActiveChats(dropKey);
         setPresenceBySession(dropKey);
-        setMessagesBySession(dropKey);
+        // The transcript deliberately survives. An operator who has just closed
+        // or handed off a conversation still needs to read it — to write a note,
+        // to answer a colleague, or to check what they promised.
         setUnreadBySession(dropKey);
         setTypingBySession(dropKey);
         setVisitorReadAtBySession(dropKey);
-        setHasMoreBySession(dropKey);
         setConnectResolutions(dropKey);
         // Refs are not React state - clear them imperatively.
         delete typingSentAtRef.current[sid];
@@ -667,6 +703,8 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     queue,
     activeChats,
     messagesBySession,
+    endedBySession,
+    serverOnline,
     typingBySession,
     presenceBySession,
     unreadBySession,
