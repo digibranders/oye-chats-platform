@@ -250,7 +250,7 @@ export function SourcesTable({
       {/* Search and a type filter, on a table capped at 25 rows a page: a
           workspace with sixty sources paged through three screens with no way to
           find `pricing.pdf`. Both controls are 28px, on one line. */}
-      <Toolbar className="px-cell py-3">
+      <Toolbar className="border-b border-border px-cell py-2.5">
         <div className="w-full sm:w-64">
           <SearchField
             label="Search sources"
