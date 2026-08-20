@@ -31,10 +31,26 @@ backplane flag unset, `WEB_CONCURRENCY=1`, no WS unit, nothing on :8001.
 1. **The soak passed.** Run the verdict tool over the sample CSV; every slope
    flat and both restart counters at zero. A soak that restarted a worker looks
    healthy afterwards *because the leak went with it*.
-2. **The widget's reconnect path is verified in a real browser.** Step 3 restarts
-   the WS process, which drops every open socket. Today a plain
-   `systemctl restart` already does this mid-generation, so it is not a new
-   failure mode — but it has never been done deliberately with sockets held.
+2. ~~**The widget's reconnect path is verified in a real browser.**~~ **DONE
+   2026-08-18.** Built widget, real Chrome, live-chat socket held open against an
+   idle rig node, then the serving process killed underneath it — twice.
+
+   | Outage | What the widget did |
+   |---|---|
+   | `systemctl restart` (~7s) | close `1012`, retried at 1.22s, back open. Recovered in 6.9s. |
+   | `stop`, 30s, `start` | close `1012`, then five refused attempts at **1.2s → 2.9s → 4.9s → 7.9s → 15.9s**, sixth succeeded. Recovered in 34.3s, about 4s after the port reopened. |
+
+   The intervals match `min(1000 * 2^n, 30000)` with the ±10% jitter in
+   `LiveChatMode.jsx`, and the attempt counter never approached its limit of 15.
+   The session id survived both outages, the UI never stuck on a spinner or a
+   dead "disconnected" state, and afterwards a normal question still round-tripped
+   through the RAG path. Failed attempts close `1006`, which is the browser
+   refusing a dead port, not the server rejecting anything.
+
+   **What this means for the window:** sockets come back by themselves, but the
+   backoff is what it is — a visitor whose retry lands just before the port
+   reopens waits out the next interval, up to the 30s cap. Plan for visitors
+   seeing up to ~30s of "reconnecting", not instant recovery.
 3. **A maintenance window.** Short, but sockets do drop.
 4. **`GUNICORN_BIND` is free on 127.0.0.1:8001.** The WS unit binds there; the
    API stays on 8000.
@@ -49,14 +65,34 @@ each other. Do these in order and verify each.
 
 ### 1. Enable the backplane on the API, still one worker
 
+**Do not hand-edit `api/.env`.** `deploy-api.yml` rewrites that file in full on
+every deploy, so an entry added on the box survives exactly until the next one.
+The revert would be silent and badly timed: by then the API is running four
+workers, and the backplane is what carries a frame from the worker that produced
+it to the process holding the socket. Losing it means a visitor and their
+operator stop seeing each other — the exact bug this split exists to prevent —
+days after the deploy that caused it, with nothing in that deploy's diff to
+point at.
+
+Set the repo variable instead, which the workflow reads (defaulting to false):
+
 ```
-# in /opt/oyechats/platform/api/.env
-WS_BACKPLANE_ENABLED=true
+gh variable set WS_BACKPLANE_ENABLED --body true
 ```
+
+Then apply it. Either re-run the deploy, or set it on the box for now and let
+the next deploy carry it:
+
 ```
+grep -q '^WS_BACKPLANE_ENABLED=' /opt/oyechats/platform/api/.env \
+  && sudo sed -i 's/^WS_BACKPLANE_ENABLED=.*/WS_BACKPLANE_ENABLED=true/' /opt/oyechats/platform/api/.env \
+  || echo 'WS_BACKPLANE_ENABLED=true' | sudo tee -a /opt/oyechats/platform/api/.env
 sudo systemctl restart oyechats-api
 journalctl -u oyechats-api -n 50 | grep ws_backplane   # expect "subscriber listening"
 ```
+
+The box edit alone is not enough — set the repo variable too, or the next deploy
+takes it away.
 
 Nothing about routing has changed yet — the API still serves sockets itself and
 is still one worker. This step only proves the subscriber starts cleanly against

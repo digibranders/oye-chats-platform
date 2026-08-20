@@ -96,6 +96,10 @@ jobs:
           # fail at Razorpay's payment step.
           RAZORPAY_SEAT_PLAN_ID_USD: ${{ vars.RAZORPAY_SEAT_PLAN_ID_USD }}
           INTL_PAYMENTS_ENABLED: ${{ vars.INTL_PAYMENTS_ENABLED }}
+          # Repo variable, not a secret: it is a topology switch, not a credential.
+          # Set to true only once oyechats-ws.service is installed and nginx routes
+          # /ws/ to it -- see docs/live-chat-process-split-rollout.md.
+          WS_BACKPLANE_ENABLED: ${{ vars.WS_BACKPLANE_ENABLED }}
           CHECKOUT_TEST_CLIENT_IDS: ${{ vars.CHECKOUT_TEST_CLIENT_IDS }}
           # Frontend URL for Stripe success/cancel and Razorpay return redirects.
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
@@ -135,7 +139,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY,WS_BACKPLANE_ENABLED
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -211,6 +215,17 @@ jobs:
               VAPID_PRIVATE_KEY_FILE_PATH=""
             fi
 
+            # WS_BACKPLANE_ENABLED belongs HERE, not hand-edited on the box.
+            # This block rewrites api/.env in full on every deploy, so a manual
+            # entry survives exactly until the next one. That failure is silent
+            # and badly timed: with the WebSocket process split live, the API
+            # runs several workers and the backplane is what carries a frame
+            # from the worker that produced it to the process holding the
+            # socket. Lose it and a visitor and their operator stop seeing each
+            # other -- the precise bug the split exists to prevent -- days after
+            # the deploy that caused it, with nothing in the diff to point at.
+            # Default false keeps it inert until the rollout sets the variable.
+            #
             # Generate .env from secrets + hardcoded prod values
             printf '%s\n' \
               "DB_URL=${DB_URL}" \
@@ -283,6 +298,7 @@ jobs:
               "VAPID_PRIVATE_KEY_FILE=${VAPID_PRIVATE_KEY_FILE_PATH}" \
               "REOON_API_KEY=${REOON_API_KEY}" \
               "IPAPI_IS_KEY=${IPAPI_IS_KEY}" \
+              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-false}" \
               > api/.env
 
             # Non-root services (audit F06): after the one-time
