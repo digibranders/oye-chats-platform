@@ -51,7 +51,37 @@ EnvironmentFile=/opt/oyechats/platform/api/.env
 # the correct fix for that is async DB work / Redis pub/sub for WebSockets
 # ("Phase 3", see gunicorn.conf.py docstring) — NOT bumping workers while the
 # ConnectionManager is still in-process. Raise this ONLY after that lands.
-Environment=WEB_CONCURRENCY=1
+#
+# THAT HAS NOW LANDED (2026-08-20). /ws/* is served by oyechats-ws.service, a
+# dedicated single-worker process, and nginx routes it there; frames cross
+# process boundaries over the Redis backplane. The reason for the pin is gone,
+# so the API runs more than one worker.
+#
+# Two workers, not four. The rig measured four, but it ran Postgres on a
+# separate node; here everything is co-resident on 2 vCPU / 4 GB. db/session.py
+# documents pool budgets for one and two workers only, and four would be
+# invented math: 4 x 15 = 60 of max_connections=100 before the ARQ worker's 10
+# and this WS process's 5. At today's real load (~0.1 req/s) four buys nothing
+# that two does not. Revisit when traffic, not the rig, asks for it.
+Environment=WEB_CONCURRENCY=2
+
+# The pool budget is DIVIDED across workers, never multiplied: 2 x (3+5) = 16
+# total, matching the two-worker line in db/session.py. Leaving the single-worker
+# default of 5+10 here would reserve 30 connections against a co-resident
+# Postgres.
+Environment=DB_POOL_SIZE=3
+Environment=DB_MAX_OVERFLOW=5
+
+# The chat gate MUST stay below the per-worker pool ceiling, which is now 8
+# rather than 15. The default of 10 would invert that invariant, and the
+# inversion is spectacular but misleading: chat drains the pool, requests queue
+# on pool_timeout, and gunicorn's reaper kills workers while the database sits
+# idle. It reads exactly like a database problem. Measured on the rig with pool
+# 3+2 and the gate left at 10: ten and twelve worker kills in fifteen minutes,
+# 34s p95, Postgres 100% idle throughout. 6 leaves two connections per worker
+# for auth and background queries, and 2 x 6 = 12 concurrent generations against
+# the 10 a single worker allowed before.
+Environment=CHAT_MAX_CONCURRENCY=6
 # Exec the venv entrypoint directly instead of `/root/.local/bin/uv run`:
 # uv lives under /root (unreachable with ProtectHome=true) and `uv run` may
 # try to re-sync the venv, which the unprivileged user must not (and cannot)
