@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Progress, formatNumber } from '../../../ui';
 import { fetchIngestStatus } from './knowledge-api';
@@ -20,6 +20,14 @@ export interface IngestionProgressProps {
   unit?: string;
   /** Fired once, when a polled job reaches a terminal state. */
   onFinished?: () => void;
+  /**
+   * The control that stops this work, seated inside the well.
+   *
+   * It used to sit loose beneath the well in a `space-y-3` while a disabled
+   * "Train on N pages" stayed in the card footer — two action zones on screen at
+   * once, one live and one dead.
+   */
+  action?: ReactNode;
 }
 
 /**
@@ -46,6 +54,7 @@ export function IngestionProgress({
   total = null,
   unit = 'pages',
   onFinished,
+  action,
 }: IngestionProgressProps) {
   const job = useQuery({
     // A literal key, not one from `query/keys.ts`: a job id is ephemeral and
@@ -102,14 +111,17 @@ export function IngestionProgress({
           and naming it in the open — with the percentage beside it when there is
           one — is worth more than the two lines of space it costs. */}
       <Progress value={percent} label={title} hideLabel={false} />
-      <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        {detail ? <p className="min-w-0 truncate text-xs text-text-tertiary">{detail}</p> : null}
-        {done !== undefined ? (
-          <p className="figure text-xs text-text-secondary">
-            {formatNumber(done)}
-            {total !== null && total > 0 ? ` of ${formatNumber(total)}` : ''} {unit}
-          </p>
-        ) : null}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+          {detail ? <p className="min-w-0 truncate text-xs text-text-tertiary">{detail}</p> : null}
+          {done !== undefined ? (
+            <p className="figure text-xs text-text-secondary">
+              {formatNumber(done)}
+              {total !== null && total > 0 ? ` of ${formatNumber(total)}` : ''} {unit}
+            </p>
+          ) : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
       </div>
       {phase.phase === 'unknown' && done === undefined ? (
         <p className="mt-2 text-xs text-text-secondary">

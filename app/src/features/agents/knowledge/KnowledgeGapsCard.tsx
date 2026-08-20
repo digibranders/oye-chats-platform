@@ -68,7 +68,7 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
         eyebrow={gapWindowLabel(window)}
         title="Questions it could not answer"
         titleAs="h2"
-        description="Each of these is a visitor who asked something and was told the chatbot did not know. Add a page or a document that covers it and the gap closes."
+        description="Add a page or document that covers one and the gap closes."
         actions={
           <SegmentedControl<string>
             label="Period for knowledge gaps"
@@ -91,43 +91,45 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
         <CardBody>
           <EmptyState
             title="Not yours to see"
-            description="Your seat can read this chatbot's knowledge but not its conversation history, which is where these questions come from."
+            description="Your seat cannot read this chatbot's conversations."
           />
         </CardBody>
       ) : (
-        <DataTable
-          columns={columns}
-          rows={section.data}
-          rowKey={(row) => row.question}
-          caption={`Questions this chatbot could not answer, ${gapWindowLabel(window).toLowerCase()}`}
-          error={section.error}
-          onRetry={section.retry}
-          defaultSort={{ key: 'count', direction: 'desc' }}
-          empty={
-            <EmptyState
-              icon={CircleCheck}
-              title={
-                window === null
-                  ? 'No unanswered questions on record'
-                  : `Nothing went unanswered in the ${gapWindowLabel(window).toLowerCase()}`
-              }
-              description={
-                window === null
-                  ? 'When a visitor asks something this chatbot cannot answer from its knowledge, it turns up here so you know what to add.'
-                  : 'Try a longer period, or take it as a good sign — this chatbot answered everything it was asked.'
-              }
-            />
-          }
-        />
-      )}
-      {section.data.length >= GAPS_LIMIT ? (
-        <CardBody className="border-t border-border">
-          <p className="text-xs text-text-secondary">
-            Showing the <span className="figure">{GAPS_LIMIT}</span> most-asked. Close these first —
-            they are the ones costing you the most conversations.
-          </p>
+        // Seated, in a flush body: a `DataTable` placed directly inside a `Card`
+        // draws its own `rounded-lg` border concentric with the card's, 0px
+        // apart — a doubled hairline and a visible doubled arc at every corner.
+        <CardBody flush>
+          <DataTable
+            seated
+            columns={columns}
+            rows={section.data}
+            rowKey={(row) => row.question}
+            rowNoun="question"
+            caption={`Questions this chatbot could not answer, ${gapWindowLabel(window).toLowerCase()}`}
+            error={section.error}
+            onRetry={section.retry}
+            defaultSort={{ key: 'count', direction: 'desc' }}
+            // The cap is the table's own row count to state: "1–20 of 20" in the
+            // pager replaces a hand-written aside under a doubled hairline.
+            pageSize={GAPS_LIMIT}
+            empty={
+              <EmptyState
+                icon={CircleCheck}
+                title={
+                  window === null
+                    ? 'No unanswered questions on record'
+                    : `Nothing went unanswered in the ${gapWindowLabel(window).toLowerCase()}`
+                }
+                description={
+                  window === null
+                    ? 'Questions it cannot answer turn up here.'
+                    : 'Try a longer period.'
+                }
+              />
+            }
+          />
         </CardBody>
-      ) : null}
+      )}
     </Card>
   );
 }

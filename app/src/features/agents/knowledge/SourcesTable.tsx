@@ -12,12 +12,13 @@ import {
   MenuSeparator,
   MenuTrigger,
   Tooltip,
+  WorkingDots,
   formatDate,
   formatNumber,
   type Column,
 } from '../../../ui';
 import type { KnowledgeSource } from '../../../types/domain';
-import { isWebsiteSource, sourceUnits, type RecrawlMode } from './knowledge-model';
+import { isWebsiteSource, sourceState, sourceUnits, type RecrawlMode } from './knowledge-model';
 
 export interface SourcesTableProps {
   sources: readonly KnowledgeSource[];
@@ -28,6 +29,12 @@ export interface SourcesTableProps {
   canUseDelta: boolean;
   /** The source a diff is currently being fetched for. */
   busySource: string | null;
+  /**
+   * The registrable domain of the crawl running right now for this chatbot, or
+   * `null`. It is what lets a row say "Training" rather than reporting whatever
+   * it happened to hold when the run started.
+   */
+  crawlingDomain: string | null;
   onViewPages: (source: KnowledgeSource) => void;
   onRecrawl: (source: KnowledgeSource, mode: RecrawlMode) => void;
   onDelete: (source: KnowledgeSource) => Promise<void>;
@@ -39,9 +46,16 @@ export interface SourcesTableProps {
  * Everything this chatbot has learned from.
  *
  * The table answers "what does it know?" before it answers "what did we last
- * do?" — the row's badge reads from the passages it holds, because a source
- * with thousands of indexed passages and one failed refresh is a working
- * chatbot on slightly old information, not a broken one.
+ * do?" — the row's badge reads from the passages it holds, because a source with
+ * thousands of indexed passages and one failed refresh is a working chatbot on
+ * slightly old information, not a broken one.
+ *
+ * **That badge now exists.** The docblock promised it and the only `Badge` on a
+ * row rendered *Website* or *Document* — a type, not a state — so a source that
+ * failed to extract, one still being read, and one fully trained were visually
+ * identical apart from an em dash in the Passages column. The type moved onto
+ * the icon that was already in the Source cell, which reclaims the width, and
+ * the column it vacated carries the state instead. See `sourceState`.
  */
 export function SourcesTable({
   sources,
@@ -50,6 +64,7 @@ export function SourcesTable({
   onRetry,
   canUseDelta,
   busySource,
+  crawlingDomain,
   onViewPages,
   onRecrawl,
   onDelete,
@@ -62,27 +77,45 @@ export function SourcesTable({
       {
         key: 'name',
         header: 'Source',
+        rowHeader: true,
         sortable: (a, b) => a.name.localeCompare(b.name),
         render: (row) => {
           const website = isWebsiteSource(row.name);
           const Icon = website ? Globe : FileText;
           return (
             <span className="flex min-w-0 items-center gap-2.5">
-              <Icon aria-hidden className="h-4 w-4 shrink-0 text-text-tertiary" />
+              {/* The icon carries the kind. It always did — the Kind column beside
+                  it spent 8rem of table restating it in a word. */}
+              <Tooltip content={website ? 'Website' : 'Document'}>
+                <span className="flex shrink-0 items-center">
+                  <Icon aria-hidden className="h-4 w-4 text-text-tertiary" />
+                  <span className="sr-only">{website ? 'Website' : 'Document'}</span>
+                </span>
+              </Tooltip>
               <span className="min-w-0 truncate font-medium text-text-primary">{row.name}</span>
             </span>
           );
         },
       },
       {
-        key: 'kind',
-        header: 'Kind',
-        width: '8rem',
-        secondary: true,
-        sortable: (a, b) => Number(isWebsiteSource(b.name)) - Number(isWebsiteSource(a.name)),
-        render: (row) => (
-          <Badge tone="neutral">{isWebsiteSource(row.name) ? 'Website' : 'Document'}</Badge>
-        ),
+        key: 'state',
+        header: 'State',
+        width: '9rem',
+        sortable: (a, b) =>
+          sourceState(a, crawlingDomain).label.localeCompare(sourceState(b, crawlingDomain).label),
+        render: (row) => {
+          const state = sourceState(row, crawlingDomain);
+          return (
+            <span className="flex items-center gap-2">
+              <Badge tone={state.tone} dot>
+                {state.label}
+              </Badge>
+              {/* In-progress is motion, not hue — this system has no fifth tone
+                  for "working". */}
+              {state.kind === 'training' ? <WorkingDots label="Being read now" /> : null}
+            </span>
+          );
+        },
       },
       {
         key: 'size',
@@ -94,21 +127,26 @@ export function SourcesTable({
       },
       {
         key: 'passages',
-        header: 'Passages',
-        align: 'right',
+        header: (
+          // One tooltip, on the column head, rather than 25 identical ones on a
+          // non-focusable span — hover-only, unreachable by keyboard, invisible
+          // on touch.
+          <Tooltip content="Passages are the pieces this chatbot searches when it answers.">
+            <button type="button" className="rounded-xs underline decoration-dotted underline-offset-4">
+              Passages
+            </button>
+          </Tooltip>
+        ),
+        type: 'number',
         width: '7rem',
         secondary: true,
         sortable: (a, b) => (a.chunk_count ?? 0) - (b.chunk_count ?? 0),
-        render: (row) => (
-          <Tooltip content="Passages are the pieces this chatbot searches when it answers.">
-            <span>{row.chunk_count ? formatNumber(row.chunk_count) : '—'}</span>
-          </Tooltip>
-        ),
+        render: (row) => (row.chunk_count ? formatNumber(row.chunk_count) : '—'),
       },
       {
         key: 'ingested_at',
         header: 'Trained',
-        align: 'right',
+        type: 'number',
         width: '9rem',
         sortable: (a, b) => Date.parse(a.ingested_at ?? '') - Date.parse(b.ingested_at ?? ''),
         render: (row) => (row.ingested_at ? formatDate(row.ingested_at) : '—'),
@@ -130,7 +168,7 @@ export function SourcesTable({
                     aria-label={`Actions for ${row.name}`}
                     loading={busySource === row.name}
                   >
-                    <MoreHorizontal aria-hidden className="h-4 w-4" />
+                    <MoreHorizontal aria-hidden />
                   </Button>
                 }
               />
@@ -168,7 +206,7 @@ export function SourcesTable({
         },
       },
     ],
-    [busySource, canUseDelta, crawlRunning, onRecrawl, onViewPages],
+    [busySource, canUseDelta, crawlRunning, crawlingDomain, onRecrawl, onViewPages],
   );
 
   const confirmingUnits = confirming ? sourceUnits(confirming) : null;
@@ -176,9 +214,11 @@ export function SourcesTable({
   return (
     <>
       <DataTable
+        seated
         columns={columns}
         rows={sources}
         rowKey={(row) => row.name}
+        rowNoun="source"
         caption="Websites and documents this chatbot has learned from"
         loading={loading}
         error={error}
@@ -189,7 +229,7 @@ export function SourcesTable({
           <EmptyState
             icon={BookOpen}
             title="This chatbot has nothing to answer from yet"
-            description="Train it on your website or upload a document. Until then it will tell visitors it does not know — which is honest, and not much use."
+            description="Train it on your website, or upload a document."
           />
         }
       />

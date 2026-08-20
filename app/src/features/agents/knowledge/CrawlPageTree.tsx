@@ -147,6 +147,9 @@ export function canonicalCrawlUrls(urls: readonly string[]): string[] {
   return ordered;
 }
 
+/** One level of nesting, on the 4-base scale. */
+const INDENT_PX = 16;
+
 type CheckState = true | false | 'indeterminate';
 
 function checkState(node: PageNode, selected: ReadonlySet<string>): CheckState {
@@ -184,11 +187,14 @@ function TreeRow({
 
   return (
     <li>
-      {/* `min-h-6` is the 24px minimum target from SC 2.5.8: the checkbox glyph
-          is 16px, and the row is what the pointer actually has to hit. */}
+      {/* The row is 36px regardless — `py-1` around a 28px control or the 28px
+          spacer below — so the SC 2.5.8 target floor is met by the spacer's own
+          height rather than by a `min-h` the layout always exceeded. The indent
+          is computed from a depth, which genuinely cannot be a utility class;
+          the step is a named constant so it stays on the 4-base scale. */}
       <div
-        className="flex min-h-6 items-center gap-1.5 rounded-sm py-1 pr-2 hover:bg-surface-hover"
-        style={{ paddingLeft: `${depth * 16 + 4}px` }}
+        className="flex items-center gap-1.5 rounded-sm py-1 pr-2 hover:bg-surface-hover"
+        style={{ paddingLeft: `${depth * INDENT_PX + 4}px` }}
       >
         {hasChildren ? (
           <Button
@@ -205,6 +211,7 @@ function TreeRow({
             />
           </Button>
         ) : (
+          // 28px, which is what actually sets the row's minimum target.
           <span aria-hidden className="h-control-sm w-control-sm" />
         )}
         <Checkbox
@@ -330,6 +337,14 @@ export function CrawlPageTree({
   );
   const allSelected = allUrls.length > 0 && selectedCount === allUrls.length;
 
+  /** Whether "expand all" would still do anything, so one button can be both. */
+  const anyCollapsed = useMemo(() => {
+    const walk = (node: PageNode): boolean =>
+      node.children.length > 0 &&
+      (!expanded.has(node.id) || node.children.some(walk));
+    return walk(tree);
+  }, [tree, expanded]);
+
   const body = (maxHeight: string, showMaximize: boolean) => (
     <div className="rounded-md border border-border bg-surface">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-sunken px-3 py-2">
@@ -348,11 +363,10 @@ export function CrawlPageTree({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" onClick={() => setAllExpanded(true)}>
-            Expand all
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setAllExpanded(false)}>
-            Collapse all
+          {/* One control with two states, not two controls one of which is
+              always a no-op. */}
+          <Button size="sm" variant="ghost" onClick={() => setAllExpanded(!anyCollapsed)}>
+            {anyCollapsed ? 'Expand all' : 'Collapse all'}
           </Button>
           {showMaximize ? (
             <Button
@@ -384,13 +398,16 @@ export function CrawlPageTree({
 
   return (
     <>
-      {body('max-h-72', true)}
+      {/* Only one copy of the tree is mounted. Rendering the inline body while
+          the dialog is open re-rendered two full trees — 400 rows each on a
+          large site — on every checkbox press. */}
+      {maximized ? null : body('max-h-72', true)}
       <Dialog
         open={maximized}
         onOpenChange={setMaximized}
         size="xl"
         title="Pages found on this website"
-        description="Tick the pages worth training on. You are charged per page, so leaving out what visitors never ask about costs you nothing."
+        description="You are charged per page — leave out what visitors never ask about."
       >
         {body('max-h-[60vh]', false)}
       </Dialog>

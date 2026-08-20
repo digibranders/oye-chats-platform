@@ -1,3 +1,4 @@
+import { formatNumber } from '../../../ui';
 import type { CrawlDiscovery, KnowledgeSource } from '../../../types/domain';
 
 /**
@@ -43,15 +44,62 @@ export function crawlUrlFor(name: string): string {
   return /^https?:\/\//i.test(name) ? name : `https://${name}`;
 }
 
-/** How much a source contributes, in the unit the customer would recognise. */
+/**
+ * How much a source contributes, in the unit the customer would recognise.
+ *
+ * Grouped, because the label lands in a `figure` cell beside correctly-grouped
+ * figures: a 1,204-page website used to read "1204 pages" in the Size column.
+ */
 export function sourceUnits(source: KnowledgeSource): { count: number; label: string } {
   if (isWebsiteSource(source.name)) {
     const count = source.page_count ?? 0;
-    return { count, label: `${count} page${count === 1 ? '' : 's'}` };
+    return { count, label: `${formatNumber(count)} page${count === 1 ? '' : 's'}` };
   }
   const count = source.doc_page_count ?? source.chunk_count ?? 0;
   const unit = source.doc_page_count != null ? 'page' : 'passage';
-  return { count, label: `${count} ${unit}${count === 1 ? '' : 's'}` };
+  return { count, label: `${formatNumber(count)} ${unit}${count === 1 ? '' : 's'}` };
+}
+
+/** What a source is doing, in the four words a customer needs. */
+export type SourceStateKind = 'training' | 'trained' | 'failed';
+
+export interface SourceState {
+  kind: SourceStateKind;
+  label: string;
+  tone: 'neutral' | 'success' | 'danger';
+}
+
+/**
+ * Whether a source is actually answerable.
+ *
+ * The table had no ingestion state at all: its only badge said *Website* or
+ * *Document*, which is a type, so a source that failed to extract, one still
+ * embedding, and one fully trained were visually identical apart from an em dash
+ * in the Passages column. "Did that upload work?" is the central question on
+ * this page and it was unanswerable.
+ *
+ * `KnowledgeSource` carries no status field, so this is derived — and it can be,
+ * exactly. Passages are the only thing that makes a source answerable, so
+ * holding none while having been ingested *is* the failure: extraction found no
+ * readable text, which is what a scanned PDF or a JavaScript-only site does.
+ * The in-flight crawl is passed in rather than read here, because a model
+ * function that reaches for a React context is not testable.
+ */
+export function sourceState(
+  source: KnowledgeSource,
+  crawlingDomain: string | null,
+): SourceState {
+  if (
+    crawlingDomain !== null &&
+    isWebsiteSource(source.name) &&
+    rootDomainOf(source.name) === crawlingDomain
+  ) {
+    return { kind: 'training', label: 'Training', tone: 'neutral' };
+  }
+  if ((source.chunk_count ?? 0) > 0) {
+    return { kind: 'trained', label: 'Trained', tone: 'success' };
+  }
+  return { kind: 'failed', label: 'Not indexed', tone: 'danger' };
 }
 
 export interface KnowledgeSummary {

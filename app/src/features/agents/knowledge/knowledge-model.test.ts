@@ -17,6 +17,7 @@ import {
   recrawlBlockedReason,
   recrawlCost,
   rootDomainOf,
+  sourceState,
   sourceUnits,
   summarise,
   uploadSkipReason,
@@ -88,6 +89,34 @@ describe('sources', () => {
     expect(sourceUnits(source({ name: 'guide.pdf', doc_page_count: 4 })).label).toBe('4 pages');
     // No document page count: fall back to passages rather than showing nothing.
     expect(sourceUnits(source({ name: 'guide.txt', chunk_count: 7 })).label).toBe('7 passages');
+    // Grouped: the label lands in a `figure` cell beside grouped figures, and a
+    // 1,204-page website used to read "1204 pages" next to them.
+    expect(sourceUnits(source({ name: 'https://acme.com', page_count: 1204 })).label).toBe(
+      '1,204 pages',
+    );
+  });
+
+  /**
+   * The table's only badge used to be the source's *type*, so a failed
+   * extraction, a crawl still running and a fully trained source looked
+   * identical. Passages are the only thing that makes a source answerable.
+   */
+  it('derives whether a source is actually answerable', () => {
+    expect(sourceState(source({ name: 'guide.pdf', chunk_count: 130 }), null).kind).toBe('trained');
+    expect(
+      sourceState(source({ name: 'scan.pdf', chunk_count: 0, ingested_at: '2026-08-01' }), null),
+    ).toMatchObject({ kind: 'failed', tone: 'danger', label: 'Not indexed' });
+  });
+
+  it('reads an in-flight crawl of that site as training, whatever it currently holds', () => {
+    const site = source({ name: 'https://www.acme.com/docs', chunk_count: 900 });
+    expect(sourceState(site, 'acme.com')).toMatchObject({ kind: 'training', tone: 'neutral' });
+    // Another site's crawl says nothing about this source.
+    expect(sourceState(site, 'other.com').kind).toBe('trained');
+    // A document is never "training" because a crawl is running.
+    expect(sourceState(source({ name: 'guide.pdf', chunk_count: 0 }), 'acme.com').kind).toBe(
+      'failed',
+    );
   });
 
   it('summarises what a chatbot knows, newest ingest last', () => {

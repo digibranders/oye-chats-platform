@@ -5,9 +5,11 @@ import {
   Alert,
   Button,
   Dialog,
+  Disclosure,
+  FigureList,
+  FigureRow,
   LockedState,
   SegmentedControl,
-  StatTile,
   buttonClass,
   formatNumber,
 } from '../../../ui';
@@ -135,8 +137,9 @@ export function RecrawlDialog({
     >
       {planLocked ? (
         <LockedState
+          size="panel"
           title="Updated-pages-only re-training is on Standard and above"
-          description="It compares your site against what this chatbot already read, then re-trains and charges for only the pages whose content changed. On your plan, re-training reads and charges for every page."
+          description="Standard compares your site and charges only for changed pages. Your plan re-reads and charges for all of them."
           action={
             <Link to="/billing" className={buttonClass('primary', 'md')}>
               See plans
@@ -174,56 +177,52 @@ export function RecrawlDialog({
 
           {diff && !loading && !blockedReason ? (
             <>
-              <div className="grid grid-cols-3 gap-4 rounded-md border border-border bg-surface-sunken px-4 py-3">
-                <StatTile
-                  label="Unchanged"
-                  value={formatNumber(diff.unchanged)}
-                  period={isDelta ? 'Skipped, free' : 'Read again, charged'}
-                />
-                <StatTile label="New" value={formatNumber(diff.newPages)} period="Not read before" />
-                <StatTile
-                  label="Gone"
-                  value={formatNumber(diff.removedPages)}
-                  period={diff.headPartial ? 'At least — see below' : 'No longer on the site'}
-                />
+              {/* One well, four rows. It used to be a three-tile stat block
+                  followed by an `Alert` restating the same arithmetic in prose,
+                  and on a delta run a second `Alert` restating it again. */}
+              <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
+                <FigureList>
+                  <FigureRow
+                    label="Unchanged"
+                    value={formatNumber(diff.unchanged)}
+                    hint={isDelta ? 'Skipped, free' : 'Read again, charged'}
+                  />
+                  <FigureRow
+                    label="New"
+                    value={formatNumber(diff.newPages)}
+                    hint="Not read before"
+                  />
+                  <FigureRow
+                    label="Gone"
+                    value={formatNumber(diff.removedPages)}
+                    hint={
+                      diff.headPartial
+                        ? 'At least this many — we could not check every stored page in time, and nothing is deleted by this preview'
+                        : 'No longer on the site'
+                    }
+                  />
+                  <FigureRow
+                    label={isDelta ? 'Worst case' : 'Cost'}
+                    value={`${formatNumber(cost?.credits ?? 0)} credits`}
+                    hint={
+                      isDelta
+                        ? `The bill depends on which pages actually changed. ${formatNumber(diff.costPerPage)} credits a page · balance ${formatNumber(diff.balance)}`
+                        : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(diff.costPerPage)} credits · balance ${formatNumber(diff.balance)}`
+                    }
+                    emphasis
+                    tone={shortOnCredits ? 'danger' : 'neutral'}
+                  />
+                </FigureList>
               </div>
 
-              {diff.headPartial ? (
-                <Alert tone="neutral">
-                  We could not check every stored page for a response in time, so the &ldquo;gone&rdquo;
-                  count is a floor rather than a total. Nothing is deleted by this preview.
+              {shortOnCredits ? (
+                <Alert tone="plan">
+                  This needs <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>{' '}
+                  credits and you have{' '}
+                  <span className="figure">{formatNumber(diff.balance)}</span>. Nothing has been
+                  charged.
                 </Alert>
               ) : null}
-
-              {isDelta ? (
-                <Alert tone="plan">
-                  The exact bill depends on which pages actually changed, which is only known as
-                  each page is read. At{' '}
-                  <span className="figure">{formatNumber(diff.costPerPage)}</span> credits a page,
-                  the worst case is{' '}
-                  <span className="figure">{formatNumber(cost?.credits ?? 0)}</span> and your balance
-                  is <span className="figure">{formatNumber(diff.balance)}</span>.
-                </Alert>
-              ) : (
-                <Alert tone={shortOnCredits ? 'plan' : 'neutral'}>
-                  {shortOnCredits ? (
-                    <>
-                      This needs <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>{' '}
-                      credits and you have{' '}
-                      <span className="figure">{formatNumber(diff.balance)}</span>. Nothing has been
-                      charged.
-                    </>
-                  ) : (
-                    <>
-                      <span className="figure">{formatNumber(cost?.pages ?? 0)}</span> pages ×{' '}
-                      <span className="figure">{formatNumber(diff.costPerPage)}</span> credits ={' '}
-                      <span className="figure">{formatNumber(cost?.credits ?? 0)}</span> credits,
-                      from a balance of{' '}
-                      <span className="figure">{formatNumber(diff.balance)}</span>.
-                    </>
-                  )}
-                </Alert>
-              )}
 
               {rediscovers ? (
                 <Alert tone="neutral">
@@ -232,7 +231,12 @@ export function RecrawlDialog({
                 </Alert>
               ) : null}
 
-              <div className="space-y-2">
+              {/* Closed by default, so the dialog opens at its decision height.
+                  A modal whose body scrolls internally while the page behind it
+                  also scrolls is the pattern a drawer exists for; the decision
+                  here is three counts and a price, and the per-page browser is
+                  the detail behind it. */}
+              <Disclosure summary="See which pages">
                 <SegmentedControl<Bucket>
                   label="Which pages to list"
                   size="sm"
@@ -244,7 +248,7 @@ export function RecrawlDialog({
                     { value: 'removed', label: `Gone ${formatNumber(diff.removedPages)}` },
                   ]}
                 />
-                <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
+                <ul className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
                   {urls.length === 0 ? (
                     <li className="px-3 py-2.5 text-xs text-text-secondary">
                       No pages in this group.
@@ -270,7 +274,7 @@ export function RecrawlDialog({
                     </li>
                   ) : null}
                 </ul>
-              </div>
+              </Disclosure>
             </>
           ) : null}
 

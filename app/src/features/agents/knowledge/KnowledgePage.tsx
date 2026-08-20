@@ -1,22 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { RefreshCw } from 'lucide-react';
 import {
   Alert,
-  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
+  Columns,
   ErrorState,
   LockedState,
-  Meter,
   Page,
   PageHeader,
-  Section,
   Skeleton,
   Stack,
-  StatTile,
+  StatRow,
   buttonClass,
   formatDate,
   formatNumber,
@@ -27,7 +24,8 @@ import { useCrawl, type StartCrawlOptions } from '../../../context/CrawlContext'
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { agentHealth } from '../../home/agentHealth';
 import type { Bot, KnowledgeSource } from '../../../types/domain';
-import { AddKnowledgePanel } from './AddKnowledgePanel';
+import { AgentHealthStrip } from '../AgentHealthStrip';
+import { AddKnowledgePanel } from './add/AddKnowledgePanel';
 import { AutoRetrainCard } from './AutoRetrainCard';
 import { KnowledgeGapsCard } from './KnowledgeGapsCard';
 import { PagesDrawer } from './PagesDrawer';
@@ -37,7 +35,6 @@ import { errorMessage, fetchRecrawlDiff, isPlanLocked } from './knowledge-api';
 import {
   allowanceOf,
   canUseDeltaRecrawl,
-  charactersAsWords,
   crawlUrlFor,
   orderedUrlsForRecrawl,
   parseGapWindow,
@@ -59,6 +56,22 @@ import { useKnowledgeData } from './useKnowledgeData';
  * source's state as a hardcoded green "Ready" badge on every row regardless of
  * anything the server said.
  *
+ * **Two panes, because the loop on this page is two-way.** The customer looks at
+ * what the chatbot has read, decides what is missing, and adds it — and the
+ * panel that adds sat *above* the table of what exists, roughly 600px away, so
+ * the loop was a scroll each way and on a chatbot with fifteen sources the
+ * table's first row was below the fold on every visit. Sources take the wide
+ * column; the add panel is a form, and a form at 896px puts its label a screen
+ * from its control.
+ *
+ * **"What your plan includes" is gone from here.** It was 70 lines and ~260px of
+ * a full-width card describing *workspace-wide* allowances on a *per-chatbot*
+ * page, with a "See plans" link that appeared twice inside the same card — and
+ * the add panel stated the same document quota twice more, so a customer on this
+ * page read it four times. The three quotas are `Meter`s inside the add panel
+ * now, in the flow that is actually about to spend them; the workspace-wide view
+ * of them belongs under `/billing`.
+ *
  * Four things this closes that the backend has always supported and no screen
  * ever showed: the ingestion job behind an upload (`GET /ingest/status/{id}`,
  * which had no client function at all), the window on the knowledge-gap list,
@@ -77,12 +90,12 @@ export function KnowledgePage() {
   if (loading) {
     return (
       <Page width="wide">
-        <PageHeader title="Knowledge" description="What this chatbot can answer from." />
+        <PageHeader title="Knowledge" />
         <Stack>
           <Card>
-            <CardBody className="space-y-3">
-              <Skeleton className="h-5 w-48" />
-              <Skeleton className="h-3 w-full max-w-md" />
+            <CardBody className="flex items-center gap-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-4 w-64" />
             </CardBody>
           </Card>
           <Card>
@@ -100,6 +113,23 @@ export function KnowledgePage() {
     );
   }
 
+  if (error?.status === 403) {
+    return (
+      <Page width="wide">
+        <PageHeader title="Knowledge" />
+        <LockedState
+          title="This chatbot is not yours to see"
+          description="Ask an owner or admin of this workspace for access."
+          action={
+            <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
+              Back to your chatbots
+            </Link>
+          }
+        />
+      </Page>
+    );
+  }
+
   return (
     <Page width="wide">
       <PageHeader title="Knowledge" />
@@ -109,7 +139,7 @@ export function KnowledgePage() {
           description={
             error
               ? error.message || 'Something went wrong while loading this workspace.'
-              : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
+              : 'This chatbot does not exist in this workspace.'
           }
           onRetry={() => void refresh()}
         />
@@ -121,13 +151,7 @@ export function KnowledgePage() {
 function KnowledgeContent({ agent }: { agent: Bot }) {
   const [params, setParams] = useSearchParams();
   const gapWindow = parseGapWindow(params.get('gaps'));
-  const {
-    entitlements,
-    limitFor,
-    planSlug,
-    planName,
-    loading: planLoading,
-  } = useEntitlements();
+  const { entitlements, limitFor, planSlug, planName, loading: planLoading } = useEntitlements();
   const { crawl, startCrawl } = useCrawl();
   const knowledge = useKnowledgeData(agent.id, gapWindow);
   const { refresh: refreshAgent } = useAgent();
@@ -154,6 +178,12 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
 
   const crawlOwned = crawl.botId === null || crawl.botId === agent.id;
   const crawlRunning = crawlOwned && (crawl.status === 'running' || crawl.status === 'cancelling');
+  /**
+   * The site being read right now, so its row in the table can say "Training"
+   * instead of reporting whatever it held when the run started.
+   */
+  const crawlingDomain =
+    crawlRunning && crawl.rootUrl ? rootDomainOf(crawl.rootUrl) : null;
 
   const setGapWindow = useCallback(
     (next: GapWindow) => {
@@ -187,8 +217,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
 
   const documentAllowance = allowanceOf(usage.documents ?? summary.documents, limitFor('documents'));
   // `page_scraping` usage is never populated server-side (see `_build_usage`),
-  // so it is derived from this chatbot's own crawled pages and labelled as such
-  // rather than invented as a workspace figure.
+  // so it is derived from this chatbot's own crawled pages.
   const pageAllowance = allowanceOf(summary.websitePages, limitFor('page_scraping'));
   // `knowledge_characters` is in the entitlements payload — both the plan limit
   // and a real usage counter — but not in the `LimitKey` union, which lives
@@ -345,10 +374,10 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
   if (knowledge.sources.forbidden) {
     return (
       <Page width="wide">
-        <PageHeader title="Knowledge" description="What this chatbot can answer from." />
+        <PageHeader title="Knowledge" />
         <LockedState
           title="This chatbot's knowledge is not yours to see"
-          description="Your seat does not have access to this chatbot. An owner or an admin of this workspace can open it for you, or change your seat."
+          description="Ask an owner or admin of this workspace for access."
           action={
             <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
               Back to your chatbots
@@ -363,208 +392,137 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
     <Page width="wide">
       <PageHeader
         title="Knowledge"
-        description="What this chatbot can answer from, and what it is still missing."
         actions={
-          <Button
-            disabled={knowledge.refreshing}
-            onClick={refreshEverything}
-            iconLeft={
-              <RefreshCw
-                aria-hidden
-                className={knowledge.refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
-              />
-            }
-          >
+          // `loading` carries both the spinner and `aria-busy`. The hand-rolled
+          // `animate-spin` it replaces froze at 0° under reduced motion.
+          <Button loading={knowledge.refreshing} onClick={refreshEverything}>
             Refresh
           </Button>
         }
       />
 
       <Stack>
-        {/* What it knows, before what was last done to it. */}
-        <Card>
-          <CardBody className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-            <div className="min-w-0">
-              <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold text-text-primary">
-                {health.label}
-                <Badge tone={health.tone} dot>
-                  {health.tone === 'success'
-                    ? 'Healthy'
-                    : health.tone === 'danger'
-                      ? 'Not working'
-                      : health.tone === 'warning'
-                        ? 'Needs you'
-                        : 'In progress'}
-                </Badge>
-              </h2>
-              <p className="mt-1.5 max-w-prose text-prose text-text-secondary">{health.detail}</p>
-            </div>
-          </CardBody>
-          <CardBody className="grid grid-cols-2 gap-6 border-t border-border lg:grid-cols-4">
-            <StatTile
-              label="Passages"
-              value={indexed > 0 ? formatNumber(indexed) : undefined}
-              period="Searchable right now"
-              hint={indexed > 0 ? undefined : 'Nothing indexed yet'}
-            />
-            <StatTile
-              label="Sources"
-              value={summary.total > 0 ? formatNumber(summary.total) : undefined}
-              period={`${formatNumber(summary.websites)} websites · ${formatNumber(summary.documents)} documents`}
-              loading={knowledge.sources.loading}
-            />
-            <StatTile
-              label="Website pages"
-              value={summary.websitePages > 0 ? formatNumber(summary.websitePages) : undefined}
-              period="Read from your sites"
-              loading={knowledge.sources.loading}
-            />
-            <StatTile
-              label="Last trained"
-              value={summary.lastIngestedAt ? formatDate(summary.lastIngestedAt) : undefined}
-              period="Most recent source added"
-              loading={knowledge.sources.loading}
-            />
-          </CardBody>
-          {knowledge.state.data.deactivated ? (
-            <CardBody className="border-t border-border">
-              <Alert
-                tone="plan"
-                title="This knowledge is paused"
-                action={
-                  <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                    See plans
-                  </Link>
-                }
-              >
-                This chatbot still holds{' '}
-                <span className="figure">{formatNumber(knowledge.state.data.inactive_count)}</span>{' '}
-                passages, but they stopped being used for answers when the plan moved to Free. Train
-                it on a website or upload a document to bring it back on Free, or move to a paid plan
-                to restore everything at once.
-              </Alert>
-            </CardBody>
-          ) : null}
-          {actionError ? (
-            <CardBody className="border-t border-border">
-              <Alert tone="danger" live>
-                {actionError}
-              </Alert>
-            </CardBody>
-          ) : null}
-        </Card>
-
-        <AddKnowledgePanel
-          agentId={agent.id}
-          agentName={agent.name ?? 'this chatbot'}
-          agentWebsite={agent.website ?? null}
-          sources={sources}
-          documentAllowance={documentAllowance}
-          pageAllowance={pageAllowance}
-          characterAllowance={characterAllowance}
-          planName={planName}
-          planLoading={planLoading}
-          empty={summary.total === 0}
-          onChanged={refreshEverything}
-        />
-
-        <Section
-          title="Sources"
-          description="Everything this chatbot has read. Removing one takes its answers with it."
-        >
-          <SourcesTable
-            sources={sources}
-            loading={knowledge.sources.loading}
-            error={knowledge.sources.error}
-            onRetry={knowledge.sources.retry}
-            canUseDelta={canUseDeltaRecrawl(planSlug)}
-            busySource={recrawl?.loading ? recrawl.sourceName : null}
-            crawlRunning={crawlRunning}
-            onViewPages={(source) => setDrawerSource(source.name)}
-            onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
-            onDelete={removeSource}
-          />
-        </Section>
-
-        <KnowledgeGapsCard
-          section={knowledge.gaps}
-          window={gapWindow}
-          onWindowChange={setGapWindow}
-        />
-
-        <Card>
-          <CardHeader
-            eyebrow={planName}
-            title="What your plan includes"
-            titleAs="h2"
-            description="Knowledge is capped by plan, not by fault — being full here means you are using what you pay for."
-            actions={
+        {/* A paused knowledge base and a failed delete are page-scope facts, not
+            bands inside a card that has no header to name them. */}
+        {knowledge.state.data.deactivated ? (
+          <Alert
+            tone="plan"
+            title="This knowledge is paused"
+            action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
                 See plans
               </Link>
             }
-          />
-          <CardBody className="grid gap-6 sm:grid-cols-3">
-            <div>
-              <Meter
-                label="Documents"
-                used={documentAllowance.used}
-                limit={documentAllowance.limit}
-              />
-              <p className="mt-1.5 text-2xs text-text-tertiary">
-                Uploaded files, across every chatbot in this workspace.
-              </p>
-            </div>
-            <div>
-              <Meter
-                label="Website pages"
-                used={pageAllowance.used}
-                limit={pageAllowance.limit}
-              />
-              <p className="mt-1.5 text-2xs text-text-tertiary">
-                Counted from this chatbot&apos;s own crawled pages — the server reports no
-                workspace-wide figure.
-              </p>
-            </div>
-            {characterAllowance ? (
-              <div>
-                <Meter
-                  label="Knowledge base size"
-                  used={characterAllowance.used}
-                  limit={characterAllowance.limit}
-                  unit="chars"
-                />
-                <p className="mt-1.5 text-2xs text-text-tertiary">
-                  About{' '}
-                  <span className="figure">
-                    {formatNumber(charactersAsWords(characterAllowance.used))}
-                  </span>{' '}
-                  words of text, across every chatbot in this workspace.
-                </p>
-              </div>
-            ) : null}
+          >
+            <span className="figure">{formatNumber(knowledge.state.data.inactive_count)}</span>{' '}
+            passages stopped being used when your plan moved to Free. Add one new source to
+            reactivate them, or move to a paid plan to restore everything.
+          </Alert>
+        ) : null}
+        {actionError ? (
+          <Alert tone="danger" live>
+            {actionError}
+          </Alert>
+        ) : null}
+
+        <AgentHealthStrip agent={agent} health={health} />
+
+        <Card>
+          <CardHeader size="sm" title="What it knows" titleAs="h2" />
+          <CardBody flush>
+            <StatRow
+              period="Right now"
+              label="Knowledge held"
+              columns={4}
+              items={[
+                {
+                  label: 'Passages',
+                  value: indexed > 0 ? formatNumber(indexed) : undefined,
+                  size: 'lg',
+                  empty: 'Nothing indexed',
+                },
+                {
+                  label: 'Sources',
+                  value: summary.total > 0 ? formatNumber(summary.total) : undefined,
+                  period: `${formatNumber(summary.websites)} websites · ${formatNumber(summary.documents)} documents`,
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+                {
+                  label: 'Website pages',
+                  value: summary.websitePages > 0 ? formatNumber(summary.websitePages) : undefined,
+                  period: 'Read from your sites',
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+                {
+                  label: 'Last trained',
+                  value: summary.lastIngestedAt ? formatDate(summary.lastIngestedAt) : undefined,
+                  period: 'Most recent source added',
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+              ]}
+            />
           </CardBody>
-          {!planLoading &&
-          ((characterAllowance?.nearLimit ?? false) ||
-            documentAllowance.nearLimit ||
-            pageAllowance.nearLimit) ? (
-            <CardBody className="border-t border-border">
-              <Alert
-                tone="plan"
-                action={
-                  <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                    See plans
-                  </Link>
-                }
-              >
-                You are close to what this plan holds. Nothing stops working — you simply cannot add
-                more until you remove something or move up.
-              </Alert>
-            </CardBody>
-          ) : null}
         </Card>
 
-        <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+        {/* Look at what it has read, decide what is missing, add it — one row,
+            not a 600px scroll each way. */}
+        <Columns
+          asideWidth="md"
+          asideLabel="Add knowledge"
+          main={
+            <Card>
+              <CardHeader size="sm" title="Sources" titleAs="h2" />
+              <CardBody flush>
+                <SourcesTable
+                  sources={sources}
+                  loading={knowledge.sources.loading}
+                  error={knowledge.sources.error}
+                  onRetry={knowledge.sources.retry}
+                  canUseDelta={canUseDeltaRecrawl(planSlug)}
+                  busySource={recrawl?.loading ? recrawl.sourceName : null}
+                  crawlRunning={crawlRunning}
+                  crawlingDomain={crawlingDomain}
+                  onViewPages={(source) => setDrawerSource(source.name)}
+                  onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
+                  onDelete={removeSource}
+                />
+              </CardBody>
+            </Card>
+          }
+          aside={
+            <AddKnowledgePanel
+              agentId={agent.id}
+              agentName={agent.name ?? 'this chatbot'}
+              agentWebsite={agent.website ?? null}
+              sources={sources}
+              documentAllowance={documentAllowance}
+              pageAllowance={pageAllowance}
+              characterAllowance={characterAllowance}
+              planName={planName}
+              planLoading={planLoading}
+              empty={summary.total === 0}
+              onChanged={refreshEverything}
+            />
+          }
+        />
+
+        <Columns
+          asideWidth="md"
+          asideLabel="Weekly retrain"
+          main={
+            <KnowledgeGapsCard
+              section={knowledge.gaps}
+              window={gapWindow}
+              onWindowChange={setGapWindow}
+            />
+          }
+          aside={
+            <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+          }
+        />
       </Stack>
 
       <PagesDrawer

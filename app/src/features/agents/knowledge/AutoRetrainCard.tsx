@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  ABSENT,
   Alert,
   Badge,
   Card,
   CardBody,
   CardHeader,
-  CardSection,
   ConfirmDialog,
   DataTable,
   DefinitionList,
@@ -90,11 +90,15 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       header: 'Failed',
       align: 'right',
       width: '8rem',
+      // A `Badge` in one branch and a bare number in the other broke the
+      // column's baseline and its right edge — the cell is `figure text-right`,
+      // and a 20px inline-flex pill is neither. Colour plus the column head
+      // carries the meaning, and an absent value is an em dash, never a zero.
       render: (row) =>
         row.failed > 0 ? (
-          <Badge tone="warning">{formatNumber(row.failed)}</Badge>
+          <span className="text-danger">{formatNumber(row.failed)}</span>
         ) : (
-          formatNumber(0)
+          ABSENT
         ),
     },
   ];
@@ -105,7 +109,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         eyebrow="Weekly"
         title="Keep this knowledge up to date"
         titleAs="h2"
-        description="Once a week we check every trained website and re-read only the pages whose content changed. Unchanged pages cost nothing."
+        description="Only pages that changed are re-read, and only those are charged."
         actions={
           status && status.featureAvailable ? (
             <Switch
@@ -133,7 +137,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         <CardBody>
           <EmptyState
             title="Not yours to change"
-            description="Your seat can read this chatbot's knowledge but not its training schedule. An owner or admin can change it."
+            description="Only an owner or admin can change the schedule."
           />
         </CardBody>
       ) : section.error ? (
@@ -151,10 +155,13 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         </CardBody>
       ) : !status.featureAvailable ? (
         <CardBody>
+          {/* `size="panel"` frames nothing: inside a `CardBody` inside a `Card`,
+              `LockedState`'s own `rounded-lg border` was a second hairline 20px
+              inside the first, with two concentric 10px radii. */}
           <LockedState
-            compact
-            title="Weekly auto-retrain is on Standard and above"
-            description={`Your ${planName} plan re-trains when you ask it to. On Standard and above it happens every week on its own, and only pages that actually changed are read or charged.`}
+            size="panel"
+            title={`Weekly auto-retrain is on Standard and above`}
+            description={`On Standard and above this runs weekly, charging only for pages that changed. Your ${planName} plan re-trains when you ask it to.`}
             action={
               <Link to="/billing" className={buttonClass('primary', 'md')}>
                 See plans
@@ -212,16 +219,29 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             ) : null}
           </CardBody>
 
-          {status.history.length > 0 ? (
-            <CardSection>
-              <DataTable
-                columns={columns}
-                rows={status.history}
-                rowKey={(row) => row.ranAt ?? 'unknown'}
-                caption="Recent weekly retrains"
-              />
-            </CardSection>
-          ) : null}
+          {/* Always rendered, so a newly-enabled schedule does not silently
+              grow by 250px after its first run. `DataTable` ships an `empty`
+              slot precisely so a table can hold its shape. Seated and flush,
+              because a table inside a `CardSection` sits its border 20px inside
+              the card's and its first cell 37px from the card edge, against a
+              header title at 20. */}
+          <CardBody flush>
+            <DataTable
+              seated
+              columns={columns}
+              rows={status.history}
+              rowKey={(row) => row.ranAt ?? 'unknown'}
+              rowNoun="run"
+              caption="Recent weekly retrains"
+              empty={
+                <EmptyState
+                  size="inline"
+                  title="No runs yet"
+                  description="The first weekly check runs in seven days."
+                />
+              }
+            />
+          </CardBody>
         </>
       )}
 
@@ -229,7 +249,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         open={confirmingOff}
         onOpenChange={setConfirmingOff}
         title="Turn off the weekly retrain?"
-        description="This chatbot keeps everything it knows, but stops picking up changes to your website — so its answers drift out of date as your site moves. Turning it back on starts a fresh seven-day countdown."
+        description="It keeps what it knows but stops picking up website changes. Turning it back on restarts the seven-day countdown."
         confirmLabel="Turn it off"
         cancelLabel="Leave it on"
         onConfirm={() => commit(false)}

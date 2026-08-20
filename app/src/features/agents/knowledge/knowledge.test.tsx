@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
-import { AddKnowledgePanel } from './AddKnowledgePanel';
+import { AddKnowledgePanel } from './add/AddKnowledgePanel';
 import { AutoRetrainCard } from './AutoRetrainCard';
 import { CrawlPageTree } from './CrawlPageTree';
 import { IngestionProgress } from './IngestionProgress';
@@ -122,6 +122,7 @@ function sourcesTable(overrides: Partial<Parameters<typeof SourcesTable>[0]> = {
       canUseDelta
       busySource={null}
       crawlRunning={false}
+      crawlingDomain={null}
       onViewPages={vi.fn()}
       onRecrawl={onRecrawl}
       onDelete={onDelete}
@@ -452,7 +453,7 @@ describe('RecrawlDialog — spending credits', () => {
   it('shows the plan lock with what the feature does, not a bare upsell', () => {
     recrawlDialog({ planLocked: true, diff: null });
     expect(screen.getByText(/Standard and above/i)).toBeInTheDocument();
-    expect(screen.getByText(/only the pages whose content changed/i)).toBeInTheDocument();
+    expect(screen.getByText(/charges only for changed pages/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /re-train/i })).not.toBeInTheDocument();
   });
 
@@ -473,7 +474,10 @@ describe('RecrawlDialog — spending credits', () => {
 
   it('warns that a removed-page count is a floor when liveness was partial', () => {
     recrawlDialog({ diff: diff({ headPartial: true }) });
-    expect(screen.getByText(/is a floor rather than a total/i)).toBeInTheDocument();
+    // The caveat now sits on the "Gone" row itself rather than as a fourth
+    // Alert restating the arithmetic beneath the figures.
+    expect(screen.getByText(/At least this many/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing is deleted by this preview/i)).toBeInTheDocument();
   });
 });
 
@@ -527,7 +531,7 @@ describe('AutoRetrainCard', () => {
 
     await user.click(screen.getByRole('switch', { name: /weekly auto-retrain/i }));
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent(/answers drift out of date/i);
+    expect(dialog).toHaveTextContent(/stops picking up website changes/i);
     expect(setAutoRecrawlMock).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: /leave it on/i }));
@@ -644,11 +648,21 @@ const DISCOVERY = {
 };
 
 describe('AddKnowledgePanel — the website flow', () => {
+  /**
+   * As a `Meter`, not a permanent brass `Alert`. A quota 2% spent is ambient
+   * state, and painting it in the one colour the system reserves for "this is a
+   * paid thing" on every render teaches the customer to ignore that colour.
+   */
   it('states the plan allowance before anything is spent', () => {
     addPanel();
-    expect(screen.getByText(/Your Starter plan covers/)).toBeInTheDocument();
-    expect(screen.getByText('500')).toBeInTheDocument();
-    expect(screen.getByText('490')).toBeInTheDocument();
+    const meter = screen.getByRole('meter', { name: 'Website pages' });
+    expect(meter.getAttribute('aria-valuetext')).toContain('10 of 500 used');
+    expect(screen.queryByText(/Your Starter plan covers/)).not.toBeInTheDocument();
+  });
+
+  it('escalates to the reserved tone only once the allowance is nearly gone', () => {
+    addPanel({ pageAllowance: allowanceOf(450, 500) });
+    expect(screen.getByText(/pages left on Starter/i)).toBeInTheDocument();
   });
 
   it('does not claim a limit is reached while the plan is still resolving', () => {
@@ -661,7 +675,7 @@ describe('AddKnowledgePanel — the website flow', () => {
 
   it('locks with the way out once the plan really is spent', () => {
     addPanel({ pageAllowance: allowanceOf(500, 500) });
-    expect(screen.getByText(/website pages are all used/i)).toBeInTheDocument();
+    expect(screen.getByText(/no website pages left/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /see plans/i })).toHaveAttribute('href', '/billing');
   });
 
@@ -686,8 +700,8 @@ describe('AddKnowledgePanel — the website flow', () => {
     await user.click(await screen.findByRole('button', { name: /train on 4 pages/i }));
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent(/charges 20 credits/i);
-    expect(dialog).toHaveTextContent(/5 a page/i);
+    expect(dialog).toHaveTextContent(/4 pages × 5 credits = 20 credits/i);
+    expect(dialog).toHaveTextContent(/balance of 1,000/i);
     expect(startCrawl).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));

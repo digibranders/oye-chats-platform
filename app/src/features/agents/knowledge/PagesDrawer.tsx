@@ -4,6 +4,7 @@ import {
   DataTable,
   Drawer,
   EmptyState,
+  buttonClass,
   formatNumber,
   type Column,
 } from '../../../ui';
@@ -68,7 +69,9 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
           href={row.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex h-6 min-w-6 items-center justify-center rounded-xs text-accent-600 hover:text-accent-700"
+          // 28px, like every other icon action in the app. 24 is the SC 2.5.8
+          // floor exactly, with no padding buffer, in a fifty-row list.
+          className={buttonClass('ghost', 'icon-sm')}
           aria-label={`Open ${row.title || row.url} in a new tab`}
         >
           <ExternalLink aria-hidden className="h-3.5 w-3.5" />
@@ -91,7 +94,11 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
           : 'The pages this chatbot read from this website.'
       }
     >
+      {/* Seated: the drawer body already draws the surface, and the table's own
+          `rounded-lg` border put its first cell 37px from the drawer edge
+          against a title at 20. */}
       <DataTable
+        seated
         columns={columns}
         rows={rows}
         rowKey={(row) => row.url}
@@ -106,11 +113,12 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         }
         onRetry={forbidden ? undefined : () => void pages.refetch()}
         pageSize={50}
+        rowNoun="page"
         empty={
           <EmptyState
             icon={FileSearch}
             title="No pages recorded"
-            description="This source is stored, but we have no per-page record for it. Re-training the website rebuilds the list."
+            description="No per-page record. Re-training the website rebuilds it."
           />
         }
       />
