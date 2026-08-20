@@ -118,7 +118,21 @@ export type CreditActionBucket = (typeof CREDIT_ACTIONS)[number]['bucket'];
  * printing 0 credits beside an action that still charges is exactly the lie
  * this replaces. Callers render an em dash instead.
  */
-export type CreditCosts = Readonly<Record<CreditActionKey, number | null>>;
+export type CreditCosts = Readonly<Record<CreditActionKey, number | null>> & {
+  /**
+   * Words per credit on a document upload, on top of the per-file floor.
+   *
+   * The per-file cost alone understates an upload badly: a 10,000-word document
+   * on the shipped rate costs the floor *plus forty credits*, and a table
+   * showing only the floor tells the customer it costs three. Served by
+   * `GET /credits/balance` from the same `pricing_config` key the deduction
+   * reads, so a super-admin retuning it moves both.
+   *
+   * `null` when the API does not carry it — an older backend. The row then
+   * shows the floor alone rather than inventing a rate.
+   */
+  readonly documentUploadWordsPerCredit: number | null;
+};
 
 function parseCreditCosts(value: unknown): CreditCosts {
   const record = asRecord(value);
@@ -129,7 +143,15 @@ function parseCreditCosts(value: unknown): CreditCosts {
     out[action.key] =
       typeof parsed === 'number' && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
-  return out;
+  const rawRate = record.document_upload_words_per_credit;
+  const rate = typeof rawRate === 'string' ? Number(rawRate) : rawRate;
+  return {
+    ...out,
+    // Strictly positive: a zero or negative rate would divide to nothing and
+    // render as "1 credit per 0 words", which is worse than saying nothing.
+    documentUploadWordsPerCredit:
+      typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null,
+  };
 }
 
 /** "1 credit" / "3 credits" / null when the server declared no cost. */

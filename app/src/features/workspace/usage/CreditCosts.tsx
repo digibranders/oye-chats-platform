@@ -58,13 +58,28 @@ export function CreditCosts({ costs, pool }: { costs: CreditCostsMap; pool: Pool
             {CREDIT_ACTIONS.map((action) => {
               const entry = pool.activity[action.bucket];
               const cost = formatCost(costs[action.key]);
+              // The document row's floor is only half its price: uploads also
+              // charge one credit per N words, so showing the floor alone tells
+              // a customer a 10,000-word file costs three credits when it costs
+              // forty-three. The rate comes from the same pricing key the
+              // deduction reads.
+              const perWord =
+                action.key === 'document_upload' && costs.documentUploadWordsPerCredit !== null
+                  ? costs.documentUploadWordsPerCredit
+                  : null;
               return (
                 <tr key={action.key} className="border-b border-border last:border-b-0">
                   <th scope="row" className="px-5 py-2.5 text-left text-sm font-medium text-text-primary">
                     {action.label}
                   </th>
-                  <td className="figure px-5 py-2.5 text-right text-sm text-text-secondary">
-                    {cost ?? ABSENT}
+                  <td className="px-5 py-2.5 text-right text-sm text-text-secondary">
+                    <span className="figure">{cost ?? ABSENT}</span>
+                    {perWord !== null ? (
+                      <span className="block text-2xs text-text-tertiary">
+                        plus <span className="figure">1</span> credit per{' '}
+                        <span className="figure">{formatNumber(perWord)}</span> words
+                      </span>
+                    ) : null}
                   </td>
                   <td className="figure px-5 py-2.5 text-right text-sm text-text-secondary">
                     {entry.eventCount > 0
