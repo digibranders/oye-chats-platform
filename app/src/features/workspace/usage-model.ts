@@ -230,6 +230,17 @@ export interface LimitUsage {
 export interface PoolCredit {
   /** `null` for the shared account pool; the bot's DB id for a per-agent pool. */
   readonly botId: number | null;
+  /**
+   * False when this agent is paused.
+   *
+   * `GET /credits/balance` used to filter `Bot.is_active`, so a paused agent's
+   * card vanished entirely — no balance, no usage, no expiry warning, for a
+   * ledger the customer is still paying for. The query no longer filters and
+   * discloses the pause on the entry instead, which is the honest shape: show
+   * the money, say why the agent is not answering. Absent on an older backend,
+   * where every entry was active by construction, so it defaults to `true`.
+   */
+  readonly isActive: boolean;
   /** Display name - the agent's name, or a generic label for the account pool. */
   readonly name: string;
   /** The agent's public bot key, when this is a per-agent pool. */
@@ -278,6 +289,7 @@ function poolCredit(
     name: string;
     botKey: string | null;
     planName: string | null;
+    isActive?: boolean;
     planLimits?: PlanLimits | null;
     limitUsage?: LimitUsage | null;
   },
@@ -285,6 +297,7 @@ function poolCredit(
   const planUsed = Math.max(pool.monthlyGrant - pool.planRemaining, 0);
   return {
     botId: identity.botId,
+    isActive: identity.isActive ?? true,
     name: identity.name,
     botKey: identity.botKey,
     planName: identity.planName,
@@ -406,6 +419,10 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
         name: toStringOrNull(botRecord.bot_name) ?? 'Chatbot',
         botKey: toStringOrNull(botRecord.bot_key),
         planName: toStringOrNull(botRecord.plan_name),
+        // Only an explicit `false` is a pause. An older backend omits the field
+        // and every entry it returned was active, so absence must not render a
+        // working agent as switched off.
+        isActive: botRecord.is_active !== false,
         planLimits: parsePlanLimits(botRecord.limits),
         limitUsage: parseLimitUsage(botRecord.limit_usage),
       }),
@@ -416,6 +433,10 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
   // Only surface the account pool as its own card when it's genuinely shared AND
   // per-agent pools exist to break down - otherwise the aggregate hero already
   // answers the whole question.
+  //
+  // The server counts this over paused agents too, deliberately: a paused pooled
+  // agent still has its past usage rolled into the account pool, so hiding the
+  // pool card because its only pooled agent is paused would hide a live balance.
   const accountPoolBotCount = toNumber(record.account_pool_bot_count);
   const accountPool: PoolCredit | null =
     botCredits.length > 0 && accountPoolBotCount > 0
@@ -511,6 +532,9 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     name: 'Shared credits',
     botKey: null,
     planName: null,
+    // The workspace as a whole is never "paused" — individual agents are, and
+    // the sum keeps counting whatever any one of them is doing.
+    isActive: true,
     monthlyGrant: balance.monthlyGrant,
     planRemaining: balance.planRemaining,
     topupRemaining: balance.topupRemaining,
@@ -684,19 +708,47 @@ function parseLedgerRow(raw: unknown, index: number): LedgerRow {
   };
 }
 
+/** A page of credit movements, with the server's total when it sends one. */
+export interface LedgerPage {
+  rows: LedgerRow[];
+  /**
+   * Movements across every page, or `null` from a backend that does not count.
+   *
+   * `null` is why the pager still has a "a full page might mean more" fallback:
+   * without a total there is no honest way to say how many pages exist.
+   */
+  total: number | null;
+}
+
 /**
- * Accepts either a bare array of rows or a `{ history: [...] }` envelope and
- * returns a normalized, render-ready ledger.
+ * Normalise a credit-history response.
+ *
+ * Three shapes, because this endpoint has had three. `{entries, total}` is what
+ * it serves now; `{history: [...]}` and a bare array are older. Reading only
+ * the shapes it *used* to send is how this silently rendered an empty ledger
+ * for every customer the moment the envelope landed — no error, no empty-state
+ * distinction, just "nothing here yet" over a full account.
  */
-export function parseLedger(raw: unknown): LedgerRow[] {
+export function parseLedgerPage(raw: unknown): LedgerPage {
+  const record = asRecord(raw);
   let rows: unknown[] = [];
   if (Array.isArray(raw)) {
     rows = raw;
-  } else {
-    const inner = asRecord(raw).history;
-    if (Array.isArray(inner)) rows = inner;
+  } else if (Array.isArray(record.entries)) {
+    rows = record.entries;
+  } else if (Array.isArray(record.history)) {
+    rows = record.history;
   }
-  return rows.map(parseLedgerRow);
+  const total = record.total;
+  return {
+    rows: rows.map(parseLedgerRow),
+    total: typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : null,
+  };
+}
+
+/** The rows alone, for callers that do not page. */
+export function parseLedger(raw: unknown): LedgerRow[] {
+  return parseLedgerPage(raw).rows;
 }
 
 // ── Formatting ───────────────────────────────────────────────────────────────

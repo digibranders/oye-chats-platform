@@ -4,10 +4,10 @@ import { getCreditBalance, getCreditDaily, getCreditHistory } from '../../servic
 import { keys } from '../../query/keys';
 import {
   parseCreditBalance,
-  parseLedger,
+  parseLedgerPage,
   parseTrend,
   type CreditBalance,
-  type LedgerRow,
+  type LedgerPage,
   type TrendPoint,
 } from './usage-model';
 
@@ -27,17 +27,18 @@ export interface UsageScope {
 /**
  * Rows per page of the credit ledger.
  *
- * `GET /credits/history` offsets by `(page - 1) * limit` and reports no total,
- * so `limit` is also the page stride: asking for one extra row to detect a next
- * page would silently skip a movement at every page boundary. A full page is
- * therefore what tells the pager another page may exist, and the following page
- * says "nothing further back" when it turns out not to.
+ * `GET /credits/history` now reports a `total`, so the pager knows how many
+ * pages exist instead of inferring it. It keeps the full-page heuristic as a
+ * fallback for a backend that predates the count — asking for one extra row to
+ * detect a next page is not an option, because the endpoint offsets by
+ * `(page - 1) * limit` and a stride mismatch would skip a movement at every
+ * boundary.
  */
 export const HISTORY_PAGE_SIZE = 25;
 
 export interface UseUsageDataResult {
   balance: UseQueryResult<CreditBalance>;
-  ledger: UseQueryResult<LedgerRow[]>;
+  ledger: UseQueryResult<LedgerPage>;
   trend: UseQueryResult<TrendPoint[]>;
   refreshAll: () => void;
 }
@@ -65,7 +66,7 @@ export function useUsageData(scope: UsageScope): UseUsageDataResult {
   const ledger = useQuery({
     queryKey: [...keys.billing.creditHistory(scope.botId), scope.page] as const,
     queryFn: async () =>
-      parseLedger(
+      parseLedgerPage(
         await getCreditHistory({
           page: scope.page,
           limit: HISTORY_PAGE_SIZE,

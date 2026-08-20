@@ -7,7 +7,7 @@ import { AttributionSection } from './AttributionSection';
 import { InstallStatusCard } from './InstallStatusCard';
 import { PlatformGuide } from './PlatformGuide';
 import { SessionContinuitySection } from './SessionContinuitySection';
-import { installStatus } from './deployModel';
+import { installStatus, widgetHeartbeat } from './deployModel';
 
 /**
  * What is covered here is what a unit test of the model cannot reach: that the
@@ -27,6 +27,7 @@ function renderWithRouter(ui: React.ReactElement) {
 describe('InstallStatusCard', () => {
   const base = {
     installedAt: null,
+    heartbeat: widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: null }),
     website: 'https://acme.com',
     verifiedNow: false,
     checking: false,
@@ -97,16 +98,70 @@ describe('InstallStatusCard', () => {
     expect(screen.getByRole('button', { name: /Check again/i })).toBeInTheDocument();
   });
 
-  it('captions the stamp as a first sighting rather than a heartbeat', () => {
+  it('keeps the first sighting and the heartbeat as two separate facts', () => {
     render(
       <InstallStatusCard
         {...base}
         installedAt="2026-08-01T09:00:00.000Z"
+        heartbeat={widgetHeartbeat({
+          installedAt: '2026-08-01T09:00:00.000Z',
+          lastSeenAt: '2026-08-19T11:30:00.000Z',
+          lastOrigin: 'www.acme.com',
+        })}
         status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
       />,
     );
     expect(screen.getByRole('heading', { name: 'Live on your website' })).toBeInTheDocument();
     expect(screen.getByText(/First seen/)).toBeInTheDocument();
+    expect(screen.getByText(/Last seen/)).toBeInTheDocument();
+  });
+
+  it('renders an empty heartbeat as "not recorded", never as an outage', () => {
+    render(
+      <InstallStatusCard
+        {...base}
+        installedAt="2026-08-01T09:00:00.000Z"
+        heartbeat={widgetHeartbeat({
+          installedAt: '2026-08-01T09:00:00.000Z',
+          lastSeenAt: null,
+          lastOrigin: null,
+        })}
+        status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
+      />,
+    );
+    // Still "Live on your website": a chatbot installed before the heartbeat
+    // existed has no reading, and reporting that as a fault would send the
+    // customer to debug a working site.
+    expect(screen.getByRole('heading', { name: 'Live on your website' })).toBeInTheDocument();
+    expect(screen.getByText(/does not mean the chatbot is down/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('marks the origin as reported by the browser rather than as proof', () => {
+    render(
+      <InstallStatusCard
+        {...base}
+        installedAt="2026-08-01T09:00:00.000Z"
+        heartbeat={widgetHeartbeat({
+          installedAt: '2026-08-01T09:00:00.000Z',
+          lastSeenAt: '2026-08-19T11:30:00.000Z',
+          lastOrigin: 'shop.acme.com',
+        })}
+        status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
+      />,
+    );
+    expect(screen.getByText('shop.acme.com')).toBeInTheDocument();
+    expect(screen.getByText(/reported by the browser/i)).toBeInTheDocument();
+    expect(screen.getByText(/never proof of anything/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about liveness before the widget has ever been seen', () => {
+    render(
+      <InstallStatusCard
+        {...base}
+        status={installStatus({ installedAt: null, claimed: false, checking: false })}
+      />,
+    );
     expect(screen.queryByText(/Last seen/i)).not.toBeInTheDocument();
   });
 

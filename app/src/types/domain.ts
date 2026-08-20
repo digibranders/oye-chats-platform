@@ -41,6 +41,32 @@ export interface Bot {
   orb_color?: string | null;
   recommended_colors?: string[];
   widget_installed_at?: string | null;
+  /**
+   * Widget liveness heartbeat: the last time this chatbot's bundle bootstrapped
+   * on a real external page. Refreshed at most twice per bot per hour, so it is
+   * a coarse "still out there" signal, never a per-visit clock.
+   *
+   * `null` means "not seen since the heartbeat shipped" — there is no backfill —
+   * so a long-installed chatbot reads null until its widget next loads. Never
+   * render that as an outage.
+   */
+  widget_last_seen_at?: string | null;
+  /**
+   * Hostname of the most recent bootstrap. **Browser-forgeable, so diagnostic
+   * only**: it answers "which domain is it actually running on?" for a support
+   * conversation and must never gate anything. Enforcement is `allowed_domains`.
+   */
+  widget_last_origin?: string | null;
+  /**
+   * False while the chatbot is paused: the widget stops answering and the agent
+   * stops counting against the plan's active-bot allowance. Resuming re-runs the
+   * create gate server-side and can be refused.
+   */
+  is_active?: boolean;
+  /** Seconds a dropped visitor connection is held before the chat auto-closes. */
+  visitor_disconnect_timeout?: number;
+  /** True while the manual lead follow-up email is paused for this chatbot. */
+  followup_sending_paused?: boolean;
   crawl_completed_at?: string | null;
   last_crawl_status?: string | null;
   indexed_chunk_count?: number;

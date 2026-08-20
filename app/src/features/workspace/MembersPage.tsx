@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Power,
   RotateCcw,
   Trash2,
   UserPlus,
@@ -50,6 +51,7 @@ import {
   removeSelfAsOperator,
   resendOperatorInvite,
   revokeOperatorInvite,
+  updateOperator,
 } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -130,6 +132,8 @@ export function MembersPage() {
   const [deletingDepartment, setDeletingDepartment] = useState<Department | null>(null);
   const [joining, setJoining] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [deactivating, setDeactivating] = useState<Operator | null>(null);
+  const [reactivating, setReactivating] = useState<Operator | null>(null);
 
   const roster = rosterFor(team.operators, botId).sort(byPresenceThenName);
   const invites = pendingInvitesFor(team.invites, botId);
@@ -145,6 +149,31 @@ export function MembersPage() {
     onSuccess: (_data, operator) => {
       toast.success(`${operator.name || operator.email} removed from the team`);
       setRemoving(null);
+      invalidate();
+    },
+  });
+
+  /**
+   * Deactivate and reactivate are not symmetrical, and the dialogs say so.
+   *
+   * Deactivating always works: the server hands their live conversations back
+   * to the queue, drops their socket and frees the seat. Reactivating asks for
+   * a seat back, and `invite_service._require_seat_available` can refuse — so
+   * the roster is never flipped optimistically. `ConfirmDialog` keeps itself
+   * open and prints the server's reason when this rejects, which is the only
+   * honest way to render "we could not give them their seat back".
+   */
+  const setActive = useMutation({
+    mutationFn: ({ operator, active }: { operator: Operator; active: boolean }) =>
+      updateOperator(operator.id, { is_active: active }),
+    onSuccess: (_data, { operator, active }) => {
+      toast.success(
+        active
+          ? `${operator.name || operator.email} can answer conversations again`
+          : `${operator.name || operator.email} deactivated`,
+      );
+      setDeactivating(null);
+      setReactivating(null);
       invalidate();
     },
   });
@@ -198,7 +227,13 @@ export function MembersPage() {
     },
   });
 
-  const mutationError = [remove.error, revoke.error, join.error, leave.error, removeDepartment.error]
+  const mutationError = [
+    remove.error,
+    revoke.error,
+    join.error,
+    leave.error,
+    removeDepartment.error,
+  ]
     .filter((error): error is Error => error instanceof Error)
     .map((error) => error.message)[0];
 
@@ -374,14 +409,29 @@ export function MembersPage() {
               >
                 Leave live chat
               </MenuItem>
-            ) : (
+            ) : operator.is_active === false ? (
               <MenuItem
-                destructive
-                icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
-                onSelect={() => setRemoving(operator)}
+                icon={<Power aria-hidden className="h-3.5 w-3.5" />}
+                onSelect={() => setReactivating(operator)}
               >
-                Remove from team
+                Reactivate…
               </MenuItem>
+            ) : (
+              <>
+                <MenuItem
+                  icon={<Power aria-hidden className="h-3.5 w-3.5" />}
+                  onSelect={() => setDeactivating(operator)}
+                >
+                  Deactivate…
+                </MenuItem>
+                <MenuItem
+                  destructive
+                  icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
+                  onSelect={() => setRemoving(operator)}
+                >
+                  Remove from team
+                </MenuItem>
+              </>
             )}
           </MenuContent>
         </MenuRoot>
@@ -730,6 +780,46 @@ export function MembersPage() {
         destructive
         onConfirm={async () => {
           if (removing) await remove.mutateAsync(removing);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deactivating !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeactivating(null);
+        }}
+        title={`Deactivate ${deactivating ? deactivating.name || deactivating.email : 'this person'}?`}
+        description={
+          <>
+            They stop being able to sign in, and any conversation they are handling right now goes
+            back to the queue for somebody else — the visitor is not told why. Their seat is freed
+            immediately. Nothing is deleted: their replies stay in every transcript under their
+            name, and you can reactivate them whenever a seat is free.
+          </>
+        }
+        confirmLabel="Deactivate"
+        destructive
+        onConfirm={async () => {
+          if (deactivating) await setActive.mutateAsync({ operator: deactivating, active: false });
+        }}
+      />
+
+      <ConfirmDialog
+        open={reactivating !== null}
+        onOpenChange={(open) => {
+          if (!open) setReactivating(null);
+        }}
+        title={`Reactivate ${reactivating ? reactivating.name || reactivating.email : 'this person'}?`}
+        description={
+          <>
+            They can sign in and be handed conversations again, with the role and department they
+            had before. This takes one of this chatbot&rsquo;s seats — if none is free, we will say
+            so here and nothing changes.
+          </>
+        }
+        confirmLabel="Reactivate"
+        onConfirm={async () => {
+          if (reactivating) await setActive.mutateAsync({ operator: reactivating, active: true });
         }}
       />
 

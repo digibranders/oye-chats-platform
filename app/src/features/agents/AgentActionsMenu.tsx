@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { ExternalLink, Link2, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { ExternalLink, Link2, MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -87,6 +87,17 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     mutationFn: () => deleteBot(bot.id),
   });
 
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+
+  // `is_active` is optional on the list payload; only an explicit `false` means
+  // paused, so an older response never renders a chatbot as switched off.
+  const paused = bot.is_active === false;
+
+  const setActive = useMutation({
+    mutationFn: (next: boolean) => updateBot(bot.id, { is_active: next }),
+  });
+
   const openRename = useCallback(() => {
     setDraftName(name);
     setNameError(null);
@@ -123,6 +134,30 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     setDeleteOpen(false);
     onChanged();
     toast.success(`${name} deleted`);
+  };
+
+  /**
+   * Pause and resume are asymmetric, and the UI has to be too.
+   *
+   * Pausing is a straight write. Resuming re-runs the server's whole create
+   * gate — deactivating a chatbot frees its billing slot, so bringing it back
+   * is an admission decision that can be refused with a 402 when the plan has
+   * no room any more. Neither direction is flipped optimistically: the switch
+   * only moves once the server has said it moved, and a refusal is shown in
+   * the dialog that asked for it rather than as a toast the reader may miss.
+   */
+  const confirmPause = async () => {
+    await setActive.mutateAsync(false);
+    setPauseOpen(false);
+    onChanged();
+    toast.success(`${name} paused`);
+  };
+
+  const confirmResume = async () => {
+    await setActive.mutateAsync(true);
+    setResumeOpen(false);
+    onChanged();
+    toast.success(`${name} is answering again`);
   };
 
   /**
@@ -178,6 +213,21 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
           <MenuItem icon={<Pencil aria-hidden className="h-3.5 w-3.5" />} onSelect={openRename}>
             Rename…
           </MenuItem>
+          {paused ? (
+            <MenuItem
+              icon={<Play aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setResumeOpen(true)}
+            >
+              Resume chatbot…
+            </MenuItem>
+          ) : (
+            <MenuItem
+              icon={<Pause aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setPauseOpen(true)}
+            >
+              Pause chatbot…
+            </MenuItem>
+          )}
           <MenuItem
             destructive
             icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
@@ -234,6 +284,41 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
           ) : null}
         </form>
       </Dialog>
+
+      <ConfirmDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        title={`Pause ${name}?`}
+        description={
+          <>
+            It stops answering visitors straight away. The launcher may still appear on your site,
+            but anyone who opens it gets an error instead of a reply. Nothing is deleted — its
+            knowledge, leads and conversations are untouched, and live chat is unaffected.
+            <br />
+            <br />
+            A paused chatbot also stops counting against your plan&rsquo;s allowance, so resuming it
+            later has to pass the same check as creating a new one and can be refused if the plan is
+            full by then.
+          </>
+        }
+        confirmLabel="Pause chatbot"
+        onConfirm={confirmPause}
+      />
+
+      <ConfirmDialog
+        open={resumeOpen}
+        onOpenChange={setResumeOpen}
+        title={`Resume ${name}?`}
+        description={
+          <>
+            It starts answering visitors again on every site running its script, and it counts
+            against your plan&rsquo;s chatbot allowance from that moment. If the plan has no room
+            left, we will say so here and nothing changes.
+          </>
+        }
+        confirmLabel="Resume chatbot"
+        onConfirm={confirmResume}
+      />
 
       <ConfirmDialog
         open={deleteOpen}

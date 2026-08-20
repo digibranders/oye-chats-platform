@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
@@ -5,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BehaviourPage } from './BehaviourPage';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import { getClientSettings, updateBot } from '../../../services/api';
+import { getBot, getClientSettings, updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
 
 /*
@@ -20,6 +21,7 @@ vi.setConfig({ testTimeout: 30_000 });
 vi.mock('../../../context/AgentContext', () => ({ useAgent: vi.fn() }));
 vi.mock('../../../hooks/useEntitlements', () => ({ useEntitlements: vi.fn() }));
 vi.mock('../../../services/api', () => ({
+  getBot: vi.fn(),
   getClientSettings: vi.fn(),
   updateBot: vi.fn(),
 }));
@@ -69,7 +71,20 @@ function renderPage() {
     ],
     { initialEntries: ['/chatbots/7/behaviour'] },
   );
-  return { ...render(<RouterProvider router={router} />), router };
+  // The follow-up kill switch reads and writes the chatbot through TanStack
+  // Query rather than through the page's draft, so the page needs a client.
+  // Retries off: a test that waits out a retry schedule is a slow flaky test.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    router,
+  };
 }
 
 async function renderSettled() {
@@ -92,6 +107,7 @@ beforeEach(() => {
   mountAgent(agent);
   mountEntitlements();
   vi.mocked(getClientSettings).mockResolvedValue(SETTINGS);
+  vi.mocked(getBot).mockResolvedValue({ ...agent, followup_sending_paused: false });
   vi.mocked(updateBot).mockResolvedValue({ message: 'ok' });
 });
 
@@ -292,18 +308,34 @@ describe('the dirty / save contract', () => {
   });
 });
 
-describe('capability the API does not expose', () => {
-  it('names each blocked setting rather than omitting it', async () => {
+describe('capability nothing reads', () => {
+  it('names each inert setting rather than omitting it', async () => {
     await renderSettled();
 
     expect(screen.getByRole('heading', { name: 'Not configurable yet' })).toBeInTheDocument();
-    for (const title of [
-      'Routing strategy',
-      'Disconnect grace periods',
-      'Follow-up pause',
-      'Pause this chatbot',
-    ]) {
+    for (const title of ['Routing strategy', 'Operator disconnect grace period']) {
       expect(screen.getAllByText(title).length).toBeGreaterThan(0);
     }
+  });
+
+  it('no longer claims the three settings that became reachable are blocked', async () => {
+    await renderSettled();
+
+    // Each of these is now writable and owned by a real surface. Leaving them
+    // on the "not configurable" list would be the page telling the customer
+    // their own product cannot do something it does.
+    const blocked = screen.getByRole('heading', { name: 'Not configurable yet' }).closest('section');
+    expect(blocked).not.toBeNull();
+    expect(blocked?.textContent).not.toMatch(/visitor_disconnect_timeout/i);
+    expect(blocked?.textContent).not.toMatch(/followup_sending_paused/i);
+    expect(blocked?.textContent).not.toMatch(/Pause this chatbot/i);
+  });
+
+  it('offers the follow-up kill switch the page used to call unreachable', async () => {
+    await renderSettled();
+
+    expect(
+      await screen.findByRole('switch', { name: 'Pause follow-up emails' }),
+    ).toBeInTheDocument();
   });
 });

@@ -13,6 +13,39 @@ function bot(overrides: Partial<Bot>): Bot {
  * and it made one failed recrawl render a fully trained chatbot as broken.
  */
 describe('agentHealth', () => {
+  /**
+   * Pause is now writable, so it is a state every surface reading this function
+   * has to be able to render. It has to outrank the training and install checks
+   * below: a paused chatbot that is trained and installed would otherwise
+   * report "Live" while answering nobody, which is the most expensive wrong
+   * answer this function can give.
+   */
+  it('calls a paused chatbot paused, even when it is trained and installed', () => {
+    const health = agentHealth(
+      bot({
+        is_active: false,
+        indexed_chunk_count: 4200,
+        widget_installed_at: '2026-08-01T00:00:00Z',
+      }),
+    );
+    expect(health.state).toBe('paused');
+    expect(health.label).toBe('Paused');
+    expect(health.detail).toMatch(/not answering visitors/i);
+  });
+
+  it('does not file a pause under "needs attention" — somebody asked for it', () => {
+    const health = agentHealth(bot({ is_active: false, indexed_chunk_count: 4200 }));
+    expect(health.needsAttention).toBe(false);
+    expect(health.tone).toBe('neutral');
+  });
+
+  it('treats a missing is_active as active, so an older payload is never paused', () => {
+    expect(agentHealth(bot({ indexed_chunk_count: 4200 })).state).not.toBe('paused');
+    expect(agentHealth(bot({ is_active: true, indexed_chunk_count: 4200 })).state).not.toBe(
+      'paused',
+    );
+  });
+
   it('keeps a trained, installed chatbot live after a failed recrawl', () => {
     const health = agentHealth(
       bot({ indexed_chunk_count: 4200, widget_installed_at: '2026-08-01T00:00:00Z', last_crawl_status: 'failed' }),

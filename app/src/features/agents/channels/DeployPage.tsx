@@ -21,6 +21,7 @@ import { getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
 import { agentPath } from '../../../shell/nav';
 import { platforms } from '../../../data/platformIntegrations';
 import { useDeployData } from './useDeployData';
+import { widgetHeartbeat } from './deployModel';
 import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
@@ -211,6 +212,11 @@ export function DeployPage() {
         <InstallStatusCard
           status={deploy.status}
           installedAt={bot.widget_installed_at ?? null}
+          heartbeat={widgetHeartbeat({
+            installedAt: bot.widget_installed_at,
+            lastSeenAt: bot.widget_last_seen_at,
+            lastOrigin: bot.widget_last_origin,
+          })}
           website={website}
           verifiedNow={deploy.verifiedNow}
           checking={deploy.checking}

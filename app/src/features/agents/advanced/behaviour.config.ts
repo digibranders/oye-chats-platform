@@ -32,9 +32,14 @@ import {
  * - **`show_branding`** is plan-gated and owned by Experience ▸ Branding. An
  *   ungated toggle here would be a silent no-op on every plan the server forces
  *   it true for.
- * - **Routing strategy, visitor/operator disconnect timeouts, follow-up pause and
- *   the agent pause switch** are columns with no API surface at all. See
- *   `BLOCKED_CAPABILITIES` below.
+ * - **`visitor_disconnect_timeout`** became writable and is owned by Settings ▸
+ *   Team ▸ Routing (`features/workspace/queueSettings.ts`), beside the other
+ *   three live-chat timers, for the same one-field-one-surface reason.
+ * - **`is_active`** (pause / resume this chatbot) is writable and is owned by the
+ *   chatbot's own actions menu, because resuming is an admission decision the
+ *   server can refuse — not a form field.
+ * - **Routing strategy and `operator_disconnect_timeout`** are still columns no
+ *   control can move. See `BLOCKED_CAPABILITIES` below.
  */
 
 // ── Answering scope (relevance_threshold) ────────────────────────────────────
@@ -419,36 +424,32 @@ export interface BlockedCapability {
 }
 
 /**
- * Columns this page would own if they were reachable.
+ * Columns no control can move, listed rather than quietly omitted.
  *
- * Listed in the UI rather than quietly omitted: a customer who has been told
- * "routing strategy is configurable" needs to see that it is not, and the next
- * engineer needs the file and line rather than a second archaeology session.
- * Every one was verified against the API in this pass.
+ * A customer who has been told "routing strategy is configurable" needs to see
+ * that it is not, in the place they would look for it, and the next engineer
+ * needs the file and the line rather than a second archaeology session.
+ *
+ * The list shrank from four to two. Visitor disconnect grace period, the
+ * follow-up pause and the chatbot's own active flag are all writable now and
+ * all have a surface: Settings ▸ Team ▸ Routing, the Lead follow-up section on
+ * this page, and the chatbot's actions menu. Both survivors are here for the
+ * same reason, which is stronger than "unwritable" — the column is **inert**,
+ * so exposing it would ship a setting that saves, persists and changes nothing.
  */
 export const BLOCKED_CAPABILITIES: readonly BlockedCapability[] = [
   {
     title: 'Routing strategy',
     detail:
-      'Bot.live_chat_routing_strategy chooses how a waiting chat picks an operator (least busy, round robin). The routing service reads it; nothing writes it and no response returns it.',
-    reference: 'api/app/db/models.py:412 · absent from UpdateBotRequest and BotResponse',
+      'Bot.live_chat_routing_strategy would choose how a waiting chat picks an operator (least busy, round robin). It is not merely unwritable — it is inert: the only function that reads it, live_chat_routing_service.select_operator, has no caller anywhere in the API. Assignment is operator-pull today, set when someone accepts a waiting chat. A control here would change nothing, so there is deliberately not one.',
+    reference:
+      'api/app/services/live_chat_routing_service.py:85 (select_operator, uncalled) · api/app/db/models.py:437',
   },
   {
-    title: 'Disconnect grace periods',
+    title: 'Operator disconnect grace period',
     detail:
-      'Bot.visitor_disconnect_timeout and Bot.operator_disconnect_timeout decide how long a dropped connection is held open before the chat is closed. Both are read by the live-chat service and neither is in the API schema.',
-    reference: 'api/app/db/models.py:403-404 · absent from UpdateBotRequest and BotResponse',
-  },
-  {
-    title: 'Follow-up pause',
-    detail:
-      'Bot.followup_sending_paused stops lead follow-up emails going out. lead_routes checks it on every send; no endpoint reads or sets it.',
-    reference: 'api/app/db/models.py:303 · read at api/app/api/lead_routes.py:708',
-  },
-  {
-    title: 'Pause this chatbot',
-    detail:
-      'Bot.is_active is returned by GET /bots/{id} and taking it false would stop the widget answering, but UpdateBotRequest has no field for it, so there is no way to set it back either. A switch here would be a control that cannot be undone.',
-    reference: 'api/app/api/bot_routes.py:441-541 (UpdateBotRequest) · read at :217',
+      'Bot.operator_disconnect_timeout would decide how long a dropped operator connection is held before their chats are handed back. The column and its 60-second default exist, but live_chat_service._operator_disconnect_timeout sleeps a class constant and never reads them, so a control here would validate, save and change nothing — rendered next to the visitor-side timer, which does work. The visitor half is configurable, under Settings ▸ Team ▸ Routing.',
+    reference:
+      'api/app/services/live_chat_service.py:607 (_operator_disconnect_timeout sleeps DEFAULT_OPERATOR_DISCONNECT_TIMEOUT) · api/app/db/models.py:429 · deliberately absent from UpdateBotRequest',
   },
 ];

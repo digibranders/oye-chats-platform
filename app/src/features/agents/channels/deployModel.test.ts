@@ -13,6 +13,7 @@ import {
   ownSiteRisk,
   scriptOrigin,
   troubleshootItems,
+  widgetHeartbeat,
 } from './deployModel';
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 
@@ -73,8 +74,63 @@ describe('installStatus', () => {
     expect(new Set(states.map((s) => s.label)).size).toBe(4);
   });
 
-  it('captions the stamp as a start date, because the backend never refreshes it', () => {
+  it('captions the stamp as a start date, because nothing refreshes that column', () => {
     expect(INSTALL_STAMP_CAPTION).toBe('First seen');
+  });
+});
+
+describe('widgetHeartbeat', () => {
+  it('does not read an absent heartbeat as an outage', () => {
+    const beat = widgetHeartbeat({
+      installedAt: '2026-01-04T09:00:00Z',
+      lastSeenAt: null,
+      lastOrigin: null,
+    });
+    expect(beat.seenAt).toBeNull();
+    // The one sentence that matters: there is no backfill, so every install
+    // that predates the heartbeat reads empty and must not be alarmed about.
+    expect(beat.detail).toMatch(/does not mean the chatbot is down/i);
+    expect(beat.detail).not.toMatch(/offline|outage|broken/i);
+  });
+
+  it('says something different when the widget has never been seen at all', () => {
+    const beat = widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: null });
+    expect(beat.detail).toBe('Nothing has loaded your chatbot yet.');
+  });
+
+  it('states the sampling rate, so a quiet reading is not read as low traffic', () => {
+    const beat = widgetHeartbeat({
+      installedAt: '2026-01-04T09:00:00Z',
+      lastSeenAt: '2026-08-19T11:00:00Z',
+      lastOrigin: 'www.acme.com',
+    });
+    expect(beat.seenAt).toBe('2026-08-19T11:00:00Z');
+    expect(beat.detail).toMatch(/twice an hour/i);
+    expect(beat.detail).toMatch(/not how busy/i);
+  });
+
+  it('passes the origin through as data and normalises nothing else about it', () => {
+    expect(
+      widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: '  shop.acme.com  ' })
+        .origin,
+    ).toBe('shop.acme.com');
+    expect(
+      widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: '   ' }).origin,
+    ).toBeNull();
+    expect(
+      widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: undefined }).origin,
+    ).toBeNull();
+  });
+
+  it('never turns the origin into a verdict — it carries no tone, state or flag', () => {
+    const beat = widgetHeartbeat({
+      installedAt: '2026-01-04T09:00:00Z',
+      lastSeenAt: '2026-08-19T11:00:00Z',
+      lastOrigin: 'attacker.example',
+    });
+    // A forged Origin header must not be able to change anything a caller can
+    // branch on. The shape is deliberately three inert fields.
+    expect(Object.keys(beat).sort()).toEqual(['detail', 'origin', 'seenAt']);
   });
 });
 

@@ -100,6 +100,9 @@ const HEALTH_RANK: Record<AgentHealth['state'], number> = {
   ready: 3,
   training: 4,
   live: 5,
+  // Last: a paused chatbot is deliberately silent, so it is the one state
+  // nobody needs shown before a chatbot that is failing by accident.
+  paused: 6,
 };
 
 export const SORT_OPTIONS = [

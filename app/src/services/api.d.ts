@@ -463,6 +463,37 @@ export interface SendFollowUpResult {
   success: boolean;
 }
 export function sendLeadFollowUp(sessionId: string, confirmOverride?: boolean): Promise<SendFollowUpResult>;
+/** One address on a bot's permanent do-not-email list. */
+export interface EmailSuppression {
+  id: number;
+  bot_id: number;
+  bot_name: string | null;
+  email: string;
+  reason: string;
+  created_at: string | null;
+}
+export interface EmailSuppressionsResult {
+  suppressions: EmailSuppression[];
+  total: number;
+  page: number;
+  limit: number;
+}
+export function getEmailSuppressions(params?: {
+  botId?: number | null;
+  page?: number;
+  limit?: number;
+  search?: string | null;
+}): Promise<EmailSuppressionsResult>;
+/**
+ * Suppress an address for one bot. Idempotent. There is no un-suppress: the API
+ * exposes no DELETE because consent, once withdrawn, is not re-granted from an
+ * admin console.
+ */
+export function createEmailSuppression(input: {
+  botId: number;
+  email: string;
+  reason?: 'unsubscribe' | 'hard_bounce' | 'spam_complaint';
+}): Promise<EmailSuppression>;
 /** What the server recomputes after an operator corrects one dimension's score. */
 export interface QualificationOverrideResult {
   session_id: string;

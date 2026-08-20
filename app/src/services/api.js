@@ -1974,6 +1974,47 @@ export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
     }
 };
 
+// ── Email suppressions ──────────────────────────────────────────────────────
+// The per-bot do-not-email list: every address that unsubscribed from a
+// follow-up, plus any the customer records by hand after being asked to stop
+// out of band. Scoped server-side to the caller's own bots.
+//
+// There is deliberately no delete. The model never removes a row, and the API
+// exposes no DELETE: re-enabling mail to somebody who asked for it to stop is a
+// consent decision under India's DPDP Act, not a CRUD operation. Any UI over
+// this has to say so rather than leave the reader hunting for a button.
+export const getEmailSuppressions = async (params = {}) => {
+    try {
+        const query = new URLSearchParams();
+        if (params.botId != null) query.set('bot_id', params.botId);
+        if (params.page) query.set('page', params.page);
+        if (params.limit) query.set('limit', params.limit);
+        if (params.search) query.set('search', params.search);
+        const suffix = query.toString();
+        const response = await api.get(`/leads/suppressions${suffix ? `?${suffix}` : ''}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching email suppressions:', error);
+        throw buildApiError(error, 'Failed to load the unsubscribe list');
+    }
+};
+
+// Suppress an address for one bot. Idempotent: suppressing an already-suppressed
+// address returns the existing row rather than failing.
+export const createEmailSuppression = async ({ botId, email, reason = 'unsubscribe' }) => {
+    try {
+        const response = await api.post('/leads/suppressions', {
+            bot_id: botId,
+            email,
+            reason,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error creating email suppression:', error);
+        throw buildApiError(error, 'Failed to add that address to the unsubscribe list');
+    }
+};
+
 // Correct or reset one qualification dimension's score for a lead (BR-03).
 // The automated extractor never downgrades a dimension, by design, so a single
 // false-positive extraction ("we have a $50k budget approved") otherwise pins a

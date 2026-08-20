@@ -17,11 +17,11 @@ vi.mock('../../ui/overlays/toast', () => ({ toast: { success: vi.fn(), error: vi
 
 const bot: Bot = { id: 17, name: 'Support Concierge', bot_key: 'bot-6a427d4529b9' };
 
-function renderMenu() {
+function renderMenu(overrides: Partial<Bot> = {}) {
   const onChanged = vi.fn();
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <AgentActionsMenu bot={bot} onChanged={onChanged} />
+      <AgentActionsMenu bot={{ ...bot, ...overrides }} onChanged={onChanged} />
     </QueryClientProvider>,
   );
   return onChanged;
@@ -103,6 +103,66 @@ describe('AgentActionsMenu', () => {
 
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
     expect(screen.queryByText('That name is already taken.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Pause and resume, which `PATCH /bots/{id}` only started accepting recently.
+   * The page they replaced said in writing that this could not be done — and
+   * the reason it must confirm is that switching a chatbot off takes a
+   * customer's support down, while switching it back on is a billing decision
+   * the server is allowed to refuse.
+   */
+  it('states what pausing costs before it writes anything', async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateBot).mockResolvedValue({ message: 'ok' });
+    const onChanged = renderMenu();
+    await openMenuItem(user, /pause chatbot/i);
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/stops answering visitors/i);
+    expect(dialog).toHaveTextContent(/Nothing is deleted/i);
+    // The billing consequence, which is the half a customer cannot guess.
+    expect(dialog).toHaveTextContent(/can be refused if the plan is full/i);
+    expect(vi.mocked(updateBot)).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Pause chatbot' }));
+    await waitFor(() =>
+      expect(vi.mocked(updateBot)).toHaveBeenCalledWith(17, { is_active: false }),
+    );
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('offers resume, not pause, on a paused chatbot', async () => {
+    const user = userEvent.setup();
+    renderMenu({ is_active: false });
+    await user.click(screen.getByRole('button', { name: 'Actions for Support Concierge' }));
+
+    expect(await screen.findByRole('menuitem', { name: /resume chatbot/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /pause chatbot/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The dangerous direction. Deactivating frees a billing slot, so the server
+   * re-runs the whole create gate on the way back and answers 402 when the plan
+   * has no room. The console must show that refusal, not assume a resume works.
+   */
+  it('shows the server’s refusal instead of pretending the chatbot resumed', async () => {
+    const user = userEvent.setup();
+    const refusal = Object.assign(
+      new Error('Reactivating this chatbot needs its own paid subscription.'),
+      { status: 402 },
+    );
+    vi.mocked(updateBot).mockRejectedValue(refusal);
+    const onChanged = renderMenu({ is_active: false });
+    await openMenuItem(user, /resume chatbot/i);
+    await user.click(await screen.findByRole('button', { name: 'Resume chatbot' }));
+
+    expect(
+      await screen.findByText('Reactivating this chatbot needs its own paid subscription.'),
+    ).toBeInTheDocument();
+    // Still open, still refusable, and the list is never told anything changed.
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   /**

@@ -56,7 +56,7 @@ function OperatorResponseSectionInner({
           className="max-w-xs"
           label="Time to accept"
           unitLabel="seconds"
-          hint={`What happens after it expires is decided by your routing strategy. The default is ${OPERATOR_TIMEOUT.default} seconds.`}
+          hint={`When it expires the conversation goes back to the queue for anyone else on the roster to pick up. The default is ${OPERATOR_TIMEOUT.default} seconds.`}
           error={operatorTimeoutError(value)}
           value={value}
           min={OPERATOR_TIMEOUT.min}

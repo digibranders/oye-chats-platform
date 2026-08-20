@@ -1,6 +1,13 @@
 import type { Bot } from '../../types/domain';
 
-export type HealthState = 'untrained' | 'training' | 'broken' | 'stale' | 'ready' | 'live';
+export type HealthState =
+  | 'paused'
+  | 'untrained'
+  | 'training'
+  | 'broken'
+  | 'stale'
+  | 'ready'
+  | 'live';
 
 export interface AgentHealth {
   state: HealthState;
@@ -33,6 +40,23 @@ export interface AgentHealth {
  * and that is what it should say.
  */
 export function agentHealth(bot: Bot): AgentHealth {
+  // Paused outranks everything below it. A paused chatbot answers nobody
+  // whatever its knowledge says, so reporting it as "Live" because it is
+  // trained and installed would be the most expensive lie on this list. It is
+  // neutral rather than a warning, and it does not count as needing attention:
+  // somebody chose this, and a state the customer asked for is not a fault.
+  // `is_active` is absent on older payloads, so only an explicit `false` pauses.
+  if (bot.is_active === false) {
+    return {
+      state: 'paused',
+      label: 'Paused',
+      detail:
+        'It is not answering visitors. The widget stays on your site but stays silent until you resume it.',
+      tone: 'neutral',
+      needsAttention: false,
+    };
+  }
+
   const indexed = Number(bot.indexed_chunk_count ?? 0);
   const status = bot.last_crawl_status ?? null;
   const crawlFailed = status === 'failed' || status === 'error';

@@ -267,6 +267,75 @@ describe('top-ups', () => {
   });
 });
 
+describe('a paused chatbot', () => {
+  /**
+   * `GET /credits/balance` used to filter `Bot.is_active`, so a paused agent
+   * with its own subscription lost its card entirely — no balance, no usage, no
+   * expiry warning, for a ledger the customer is still funding. The query no
+   * longer filters and discloses the pause on the entry, so the console must
+   * render it: a card that vanishes is worse than a card that says "paused".
+   */
+  const PAUSED = { ...AGENT_POOL, is_active: false, topup: 400, soonest_expiry: '2026-09-15T00:00:00Z' };
+
+  it('keeps the card and names the pause instead of dropping the agent', async () => {
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
+    renderPage();
+
+    expect(await screen.findAllByText('Acme Support')).not.toHaveLength(0);
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Not answering visitors, so it is spending nothing/i),
+    ).toBeInTheDocument();
+  });
+
+  it('says the subscription and the expiry carry on, so pause is not read as cancelled', async () => {
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
+    renderPage('/billing/usage?chatbot=7');
+
+    expect(await screen.findByText('This chatbot is paused')).toBeInTheDocument();
+    const notice = screen.getByText('This chatbot is paused').closest('div');
+    expect(notice?.textContent).toMatch(/subscription is still active and still billing/i);
+    expect(notice?.textContent).toMatch(/expiry dates, which do not pause/i);
+    // Never the vocabulary of an ended plan.
+    expect(notice?.textContent).not.toMatch(/cancel|expired|broken/i);
+  });
+
+  it('keeps a paused agent selectable, labelled for what it is', async () => {
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
+    renderPage();
+    await screen.findAllByText('Left to spend');
+
+    expect(
+      within(screen.getByRole('combobox', { name: 'Usage scope' })).getByRole('option', {
+        name: 'Acme Support (paused)',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not blame an empty balance on the pause, or the pause on the balance', async () => {
+    api.getCreditBalance.mockResolvedValue({
+      ...BALANCE,
+      bots: [{ ...PAUSED, plan: 0, topup: 0, total: 0 }],
+    });
+    renderPage('/billing/usage?chatbot=7');
+
+    expect(await screen.findByText('This chatbot is paused')).toBeInTheDocument();
+    // Two separate facts, said separately: it is switched off, and it is also
+    // out of credits, so resuming alone would not bring it back.
+    expect(screen.getByText('This chatbot has no credits left either')).toBeInTheDocument();
+  });
+
+  it('still says "stopped answering" for an active agent that ran out', async () => {
+    api.getCreditBalance.mockResolvedValue({
+      ...BALANCE,
+      bots: [{ ...AGENT_POOL, plan: 0, topup: 0, total: 0 }],
+    });
+    renderPage('/billing/usage?chatbot=7');
+
+    expect(await screen.findByText('This chatbot has stopped answering')).toBeInTheDocument();
+  });
+});
+
 describe('running out', () => {
   it('says the chatbot has stopped answering once the balance hits zero', async () => {
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 0, topup: 0, total: 0, bots: [] });

@@ -69,7 +69,7 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
       <CardHeader
         title="Waiting and routing"
         titleAs="h2"
-        description={`How long a visitor waits for one of your team on ${bot.name ?? 'this chatbot'}, and what happens when nobody picks up.`}
+        description={`How long a visitor waits for one of your team on ${bot.name ?? 'this chatbot'}, what happens when nobody picks up, and how long a dropped conversation is held open.`}
       />
       <CardBody className="space-y-5">
         {save.isError ? (
@@ -105,6 +105,20 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
             inputMode="numeric"
             value={draft.waitSeconds}
             onChange={(event) => set('waitSeconds', event.target.value)}
+          />
+        </Field>
+
+        <Field
+          label="Seconds a dropped visitor is held before the chat closes"
+          required
+          hint="If a visitor loses their connection mid-conversation, this is how long their operator keeps the chat open waiting for them to come back. Between 5 seconds and an hour."
+          error={errors.visitorDropSeconds}
+        >
+          <Input
+            className="figure"
+            inputMode="numeric"
+            value={draft.visitorDropSeconds}
+            onChange={(event) => set('visitorDropSeconds', event.target.value)}
           />
         </Field>
 

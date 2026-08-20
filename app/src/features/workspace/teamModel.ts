@@ -26,9 +26,12 @@ export function unwrapList<T>(value: unknown, key: string): T[] {
  * server happily accepted the invite — or, worse, the other way round. The
  * meter counts what the server counts.
  *
- * Only active operators occupy a seat: `DELETE /me/self-operator` flips
- * `is_active` to false and frees one, which is exactly the difference between
- * leaving live chat and being removed from the team.
+ * Only active operators occupy a seat. Three paths reach that state and all
+ * three free a seat: `DELETE /me/self-operator` (the owner leaves live chat),
+ * `PATCH /operators/{id} {"is_active": false}` (an admin deactivates somebody),
+ * and a plan downgrade's `enforce_operator_ceiling`. None of them deletes the
+ * row, which is the difference between deactivating and removing — the
+ * transcripts keep the name of whoever answered.
  */
 export function seatsUsed(operators: readonly Operator[], botId: number | null): number {
   return operators.filter(
@@ -84,10 +87,19 @@ export function availability(operator: Operator): Availability {
   return operator.is_online ? 'online' : 'offline';
 }
 
+/**
+ * `deactivated` reads "Deactivated", not "Left live chat".
+ *
+ * It used to say the latter, when the only way to reach the state was the
+ * owner's own `DELETE /me/self-operator`. `PATCH /operators/{id}` now takes
+ * `is_active`, so the same row can be switched off by an admin who is not that
+ * person — and telling a manager their teammate "left" when the manager
+ * deactivated them describes the wrong actor entirely.
+ */
 export const AVAILABILITY_LABEL: Record<Availability, string> = {
   online: 'Online',
   offline: 'Offline',
-  deactivated: 'Left live chat',
+  deactivated: 'Deactivated',
 };
 
 /** Sorted the way a person reads a roster: online first, then by name. */

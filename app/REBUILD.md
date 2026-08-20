@@ -197,7 +197,7 @@ entries are closed.
 | B7 | `export const httpClient = api` sat above the `axios.create` that defines `api` — a temporal dead zone reference that threw on module evaluation and took down every screen in the app | `services/api.js` |
 | B8 | A checkbox with a visible label had no accessible name outside a `Field`; `Progress` labelled the Track rather than the element carrying `role="progressbar"`; every `CodeBlock` copy button was named "Copy" | `src/ui` |
 | B9 | `normalize_domain_input` strips a leading `www.` before storing but `extract_hostname` does not strip it from the browser's `Origin`, so an allow-list of `acme.com` blocks the customer's own `www.acme.com` homepage | backend · surfaced on Deploy |
-| B10 | `widget_installed_at` is stamped once and never refreshed, and the origin the widget was seen on is read and discarded — so there is no "last seen", only a first-seen date | backend · surfaced on Deploy |
+| B10 ✅ | `widget_installed_at` is stamped once and never refreshed, and the origin the widget was seen on is read and discarded — so there is no "last seen", only a first-seen date | backend · surfaced on Deploy. Closed: `widget_last_seen_at` / `widget_last_origin` now ship on `BotResponse` (≤2 writes/bot/hour) and Deploy renders both — the origin explicitly as a browser-reported diagnostic, and an empty reading explicitly as "not recorded", never as an outage |
 
 ### Orphan endpoints — no client function at all
 `GET/PUT /operators/me/notification-preferences` (per-event push + quiet hours) →
@@ -218,14 +218,25 @@ demo share/open funnel · server-side lead filtering and pagination (200-row
 client cap today) · live credit costs from `/credits/balance` (hard-coded in the
 UI while super-admins can override them) · bot-scoped credit history ·
 `knowledge_characters` quota · crawl limits · `api_access` and `online_support`
-plan flags · branding text/URL editor · operator profile edit · operator
-deactivate vs delete · notification-centre unread filter · per-conversation
-rating and resolution · seed-question re-editing · per-lead visitor journey ·
-meeting bookings · **live-chat audit trail** (written on every transition, read
-by nothing) · queue analytics · email suppression list · follow-up pause · agent
-pause · routing strategy and disconnect timeouts · chat-history pagination in the
-lead transcript · dunning state · per-invoice GST breakdown · plan overage rate
+plan flags · branding text/URL editor · operator profile edit · notification-centre
+unread filter · per-conversation rating and resolution · seed-question re-editing ·
+per-lead visitor journey · meeting bookings · **live-chat audit trail** (written on
+every transition, read by nothing) · queue analytics · chat-history pagination in
+the lead transcript · dunning state · per-invoice GST breakdown · plan overage rate
 and trial days · `max_bots` / `extra_bot_seats`.
+
+**Closed since the API caught up.** Five entries left that list because the
+backend stopped blocking them, and each now has exactly one owner surface:
+*email suppression list* → Leads ▸ Unsubscribes (read + append; there is
+deliberately no delete, and the panel says why) · *follow-up pause* → Agent ▸
+Behaviour ▸ Lead follow-up emails · *agent pause* → the chatbot's actions menu,
+with `agentHealth` carrying a `paused` state to every surface that reads it ·
+*visitor disconnect timeout* → Settings ▸ Team ▸ Routing · *operator deactivate
+vs delete* → Settings ▸ Team ▸ People. What remains genuinely unreachable is
+**routing strategy** and **`operator_disconnect_timeout`**, and neither is a
+missing endpoint: both columns are inert, so they stay named on Behaviour under
+"Not configurable yet" rather than being given a control that would save and
+change nothing.
 
 ### Super-admin ✅
 The console exists: `src/superadmin/`, mounted at `/platform`, with its own

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, BadgeCheck, Bot as BotIcon, CheckCheck, Download, Users } from 'lucide-react';
+import {
+  AlertCircle,
+  BadgeCheck,
+  Bot as BotIcon,
+  CheckCheck,
+  Download,
+  MailX,
+  Users,
+} from 'lucide-react';
 import {
   ABSENT,
   Alert,
@@ -40,6 +48,7 @@ import { buildSelectedLeadsCsv } from './leadsCsv';
 import { LEADS_PAGE_SIZE, useLeads } from './useLeads';
 import { useLeadAnnotations } from './useLeadAnnotations';
 import { LeadDrawer } from './LeadDrawer';
+import { SuppressionsDrawer } from './SuppressionsDrawer';
 import {
   MIN_SCORE_OPTIONS,
   hasActiveFilters,
@@ -271,6 +280,7 @@ export function LeadsPage() {
   }
 
   const [confirmMarkAll, setConfirmMarkAll] = useState(false);
+  const [suppressionsOpen, setSuppressionsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -470,6 +480,16 @@ export function LeadsPage() {
         description="Who asked about buying, and how ready they sounded."
         actions={
           <>
+            {/* The unsubscribe list, one press from the table that raises the
+                question. A follow-up refused with "this email has unsubscribed"
+                had no surface anywhere in the console to check against. */}
+            <Button
+              variant="ghost"
+              iconLeft={<MailX aria-hidden className="h-4 w-4" />}
+              onClick={() => setSuppressionsOpen(true)}
+            >
+              Unsubscribes
+            </Button>
             <Button
               variant="ghost"
               iconLeft={<CheckCheck aria-hidden className="h-4 w-4" />}
@@ -750,6 +770,13 @@ export function LeadsPage() {
         intelligenceLocked={intelligenceLocked}
         visitorIntelligence={visitorIntelligence}
         annotations={annotations}
+      />
+
+      <SuppressionsDrawer
+        open={suppressionsOpen}
+        onOpenChange={setSuppressionsOpen}
+        botId={botId ?? null}
+        bots={bots}
       />
 
       <ConfirmDialog

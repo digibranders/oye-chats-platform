@@ -8,6 +8,7 @@ import { ScopeSection } from './ScopeSection';
 import { WidgetBehaviourSection } from './WidgetBehaviourSection';
 import { OperatorResponseSection } from './OperatorResponseSection';
 import { TimingSection } from './TimingSection';
+import { FollowUpSection } from './FollowUpSection';
 import { BlockedCapabilitiesSection } from './BlockedCapabilitiesSection';
 import {
   type BehaviourDraft,
@@ -129,6 +130,11 @@ function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveC
           config={draft.widgetConfig}
           onChange={setConfigField}
         />
+
+        {/* Its own read and its own write, deliberately outside the draft: a
+            kill switch takes effect when it is pressed, not when a save bar at
+            the bottom of a long page is eventually noticed. */}
+        <FollowUpSection agentId={agentId} />
 
         <BlockedCapabilitiesSection />
 

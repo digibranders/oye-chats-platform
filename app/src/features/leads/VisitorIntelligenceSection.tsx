@@ -85,7 +85,9 @@ function FollowUp({ sessionId, isValidEmail, email }: {
   email: string;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const [state, setState] = useState<'idle' | 'sent' | 'error' | 'needs-override'>('idle');
+  const [state, setState] = useState<'idle' | 'sent' | 'error' | 'needs-override' | 'paused'>(
+    'idle',
+  );
   const [message, setMessage] = useState<string | null>(null);
 
   const blocked = isValidEmail === false;
@@ -102,7 +104,12 @@ function FollowUp({ sessionId, isValidEmail, email }: {
       // 409 is the server asking "are you sure?" — a cooldown that has not
       // elapsed, or an address validation never reached. Both are recoverable
       // with an explicit second confirmation, so offer it rather than a dead end.
-      setState(status === 409 ? 'needs-override' : 'error');
+      //
+      // 423 is Gate 4: follow-ups are paused for the whole chatbot. There is no
+      // override for it and retrying is pointless, so it gets its own state
+      // that names the switch instead of offering a "Send anyway" that the
+      // server would refuse identically.
+      setState(status === 409 ? 'needs-override' : status === 423 ? 'paused' : 'error');
       setMessage(detail);
       setConfirming(false);
     }
@@ -153,6 +160,12 @@ function FollowUp({ sessionId, isValidEmail, email }: {
           }
         >
           {message}
+        </Alert>
+      ) : null}
+      {state === 'paused' && message ? (
+        <Alert tone="warning" live title="Follow-ups are paused for this chatbot">
+          {message} Somebody with access to the chatbot can turn them back on under Behaviour ▸
+          Lead follow-up emails. Nothing is queued in the meantime.
         </Alert>
       ) : null}
       {state === 'error' && message ? (

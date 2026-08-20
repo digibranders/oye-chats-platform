@@ -91,11 +91,73 @@ export function installStatus({ installedAt, claimed, checking }: InstallStatusI
 /**
  * `widget_installed_at` is stamped **once**, by a guarded `UPDATE ... WHERE
  * widget_installed_at IS NULL` in `api/app/api/bot_routes.py`. It is a
- * first-seen timestamp and nothing in the schema ever refreshes it, so labelling
- * it "last seen" would be a lie the customer would act on — they would read a
- * stale date as an outage. It is captioned for what it is.
+ * first-seen timestamp and nothing refreshes it, so labelling it "last seen"
+ * would be a lie the customer would act on — they would read a stale date as an
+ * outage. It is captioned for what it is.
+ *
+ * Liveness is a different column now: `widget_last_seen_at`, refreshed at most
+ * twice per bot per hour. See {@link widgetHeartbeat}, which is careful about
+ * everything that stamp cannot tell you.
  */
 export const INSTALL_STAMP_CAPTION = 'First seen';
+
+/* ---------------------------------------------------------------- heartbeat */
+
+export interface WidgetHeartbeat {
+  /** `null` when the backend has never recorded a bootstrap for this chatbot. */
+  seenAt: string | null;
+  /** What the reader should take from it, including when there is nothing. */
+  detail: string;
+  /** The hostname of the last bootstrap, or `null`. Diagnostic only. */
+  origin: string | null;
+}
+
+/**
+ * What the widget's liveness heartbeat does — and does not — prove.
+ *
+ * `widget_last_seen_at` is rate-limited to at most two writes per bot per hour,
+ * so it answers "is this thing still out there?" and never "how busy is it?". A
+ * missing value is the sharp edge: there is **no backfill**, so a chatbot
+ * installed last year reads `null` until its widget next boots. Rendering that
+ * as "the widget is down" would send a customer to debug a working site, so the
+ * copy for the empty case says what is actually true — we have not recorded one
+ * yet — and carries no alarm.
+ *
+ * `widget_last_origin` is taken from the browser's own `Origin` header, which
+ * anyone can forge with two lines of curl. It is presented as a support
+ * diagnostic and labelled as reported rather than verified, and nothing in this
+ * console may branch on it. Enforcement of where the widget may run is
+ * `allowed_domains` and lives further down the same page.
+ */
+export function widgetHeartbeat({
+  installedAt,
+  lastSeenAt,
+  lastOrigin,
+}: {
+  installedAt: string | null | undefined;
+  lastSeenAt: string | null | undefined;
+  lastOrigin: string | null | undefined;
+}): WidgetHeartbeat {
+  const seenAt = lastSeenAt ?? null;
+  const origin = lastOrigin?.trim() ? lastOrigin.trim() : null;
+
+  if (!seenAt) {
+    return {
+      seenAt: null,
+      origin,
+      detail: installedAt
+        ? 'We have not recorded a load since this check was added. It appears the next time somebody opens a page with your chatbot on it — an empty reading here does not mean the chatbot is down.'
+        : 'Nothing has loaded your chatbot yet.',
+    };
+  }
+
+  return {
+    seenAt,
+    origin,
+    detail:
+      'Recorded at most twice an hour, so it shows that your chatbot is still on your site, not how busy it has been.',
+  };
+}
 
 /* ------------------------------------------------------------------ domains */
 

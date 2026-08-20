@@ -1,5 +1,6 @@
 import { CheckCircle2, ExternalLink, RefreshCw } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Button,
   Card,
@@ -11,12 +12,14 @@ import {
   formatDateTime,
   formatRelative,
 } from '../../../ui';
-import { INSTALL_STAMP_CAPTION, type InstallStatus } from './deployModel';
+import { INSTALL_STAMP_CAPTION, type InstallStatus, type WidgetHeartbeat } from './deployModel';
 
 export interface InstallStatusCardProps {
   status: InstallStatus;
   /** `Bot.widget_installed_at`, or null. */
   installedAt: string | null;
+  /** The liveness reading, already resolved by `widgetHeartbeat`. */
+  heartbeat: WidgetHeartbeat;
   /** The public address the chatbot is configured for, if any. */
   website: string | null;
   /** True only when the transition was observed on this page, just now. */
@@ -48,6 +51,7 @@ export interface InstallStatusCardProps {
 export function InstallStatusCard({
   status,
   installedAt,
+  heartbeat,
   website,
   verifiedNow,
   checking,
@@ -88,6 +92,37 @@ export function InstallStatusCard({
               <span className="figure text-text-primary">{formatDateTime(installedAt)}</span>
               <span className="text-text-tertiary"> · {formatRelative(installedAt)}</span>
             </p>
+          ) : null}
+
+          {/* Liveness, kept visually and verbally apart from the first-seen
+              stamp above: one is "it arrived", the other is "it is still
+              there", and collapsing them is how a stale date gets read as an
+              outage. Only shown once the chatbot has been seen at all — before
+              that the status line above is already the whole story. */}
+          {installedAt ? (
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-text-secondary">
+                {heartbeat.seenAt ? (
+                  <>
+                    Last seen{' '}
+                    <span className="figure text-text-primary">
+                      {formatDateTime(heartbeat.seenAt)}
+                    </span>
+                    <span className="text-text-tertiary"> · {formatRelative(heartbeat.seenAt)}</span>
+                  </>
+                ) : (
+                  <>Last seen {ABSENT}</>
+                )}
+              </p>
+              <p className="text-xs text-text-tertiary">{heartbeat.detail}</p>
+              {heartbeat.origin ? (
+                <p className="text-xs text-text-tertiary">
+                  Loaded from <span className="figure text-text-secondary">{heartbeat.origin}</span>{' '}
+                  — reported by the browser, so useful for support and never proof of anything. What
+                  is actually allowed to run your chatbot is the domain list further down this page.
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
 

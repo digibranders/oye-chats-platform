@@ -128,11 +128,16 @@ export function UsagePage() {
   const geo = useBillingGeo();
   const [toppingUp, setToppingUp] = useState(false);
 
-  // A full page is the only signal the endpoint gives that older movements may
-  // exist. When it turns out none do, the next page says so rather than the
-  // pager having claimed a total it was never told.
-  const pageRows = usage.ledger.data ?? [];
-  const hasOlder = pageRows.length === HISTORY_PAGE_SIZE;
+  // The endpoint now reports a total, so "is there an older page" is a fact
+  // rather than an inference. The full-page heuristic stays as the fallback for
+  // a backend that predates the count: without a total there is no honest way
+  // to say how many pages exist, only whether this one filled up.
+  const pageRows = usage.ledger.data?.rows ?? [];
+  const ledgerTotal = usage.ledger.data?.total ?? null;
+  const hasOlder =
+    ledgerTotal !== null
+      ? page * HISTORY_PAGE_SIZE < ledgerTotal
+      : pageRows.length === HISTORY_PAGE_SIZE;
 
   const balance = usage.balance.data ?? null;
   const pool = balance ? resolveScopedPool(balance, botId) : null;
@@ -143,7 +148,13 @@ export function UsagePage() {
       { value: '', label: 'Whole workspace' },
       ...(balance?.botCredits ?? [])
         .filter((entry) => entry.botId !== null)
-        .map((entry) => ({ value: String(entry.botId), label: entry.name })),
+        // A paused agent stays in the picker and says so in its own label: it
+        // still holds credits that still expire, so it is exactly the scope
+        // somebody needs to be able to open.
+        .map((entry) => ({
+          value: String(entry.botId),
+          label: entry.isActive ? entry.name : `${entry.name} (paused)`,
+        })),
     ],
     [balance],
   );
@@ -278,6 +289,20 @@ export function UsagePage() {
             </Alert>
           ) : null}
 
+          {/* A paused agent is not a cancelled one, and the difference is the
+              customer's money: the subscription is live, the balance is real,
+              and the top-up credits expire on the same schedule they always
+              did. Said before the figures, because it changes how every one of
+              them should be read. */}
+          {botId !== null && !pool.isActive ? (
+            <Alert tone="warning" title="This chatbot is paused">
+              It is not answering visitors, so it is spending nothing. Its subscription is still
+              active and still billing, and the credits below stay exactly as they are — including
+              the expiry dates, which do not pause with the chatbot. Resume it from the chatbot's
+              actions menu.
+            </Alert>
+          ) : null}
+
           <Card>
             <CardHeader
               eyebrow={botId === null ? 'Whole workspace' : pool.name}
@@ -334,9 +359,17 @@ export function UsagePage() {
             </CardSection>
             {pool.totalRemaining <= 0 ? (
               <CardSection>
-                <Alert tone="danger" title="This chatbot has stopped answering">
-                  A chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a
-                  larger plan to restore it immediately.
+                <Alert
+                  tone="danger"
+                  title={
+                    pool.isActive
+                      ? 'This chatbot has stopped answering'
+                      : 'This chatbot has no credits left either'
+                  }
+                >
+                  {pool.isActive
+                    ? 'A chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a larger plan to restore it immediately.'
+                    : 'Resuming it would not bring it back on its own: a chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a larger plan as well as resuming.'}
                 </Alert>
               </CardSection>
             ) : balance.lowBalance ? (
@@ -401,17 +434,29 @@ export function UsagePage() {
                         titleAs="h3"
                         description={entry.planName ?? 'Draws on the shared workspace pool'}
                         actions={
-                          entry.botId !== null ? (
-                            <Link
-                              to={`/billing/usage?chatbot=${entry.botId}`}
-                              className={buttonClass('ghost', 'sm')}
-                            >
-                              Focus
-                            </Link>
-                          ) : undefined
+                          <>
+                            {/* The word, not only a dimmed card: a paused agent
+                                that merely looked quieter would read as one
+                                that had stopped being billed. */}
+                            {entry.isActive ? null : <Badge tone="neutral">Paused</Badge>}
+                            {entry.botId !== null ? (
+                              <Link
+                                to={`/billing/usage?chatbot=${entry.botId}`}
+                                className={buttonClass('ghost', 'sm')}
+                              >
+                                Focus
+                              </Link>
+                            ) : null}
+                          </>
                         }
                       />
                       <CardBody className="space-y-3">
+                        {entry.isActive ? null : (
+                          <p className="text-xs text-text-secondary">
+                            Not answering visitors, so it is spending nothing. Its subscription is
+                            still active and these credits still expire on schedule.
+                          </p>
+                        )}
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xs text-text-secondary">Left to spend</span>
                           <span className="figure text-lg font-semibold text-text-primary">
@@ -476,17 +521,22 @@ export function UsagePage() {
                 </div>
               }
             />
-            {/* `GET /credits/history` pages without reporting a total, so the
-                table is deliberately NOT given `rowCount`: its own pager would
-                have to print "of N" and the only N available would be invented.
-                This says exactly which movements are on screen instead, and
-                offers Older only while a full page came back. */}
+            {/* Still this pager rather than `DataTable`'s, because the scope
+                selector and the Older/Newer wording belong to the card. It now
+                prints a real total when the server sends one, and falls back to
+                naming only the visible range when it does not. */}
             {pageRows.length > 0 || page > 1 ? (
               <CardFooter className="justify-between">
                 <p className="text-xs text-text-secondary">
                   Movements{' '}
                   <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + 1}</span>–
                   <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + pageRows.length}</span>
+                  {ledgerTotal !== null ? (
+                    <>
+                      {' '}
+                      of <span className="figure">{formatNumber(ledgerTotal)}</span>
+                    </>
+                  ) : null}
                   , newest first
                 </p>
                 <span className="flex items-center gap-2">

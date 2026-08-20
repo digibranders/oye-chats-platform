@@ -248,6 +248,107 @@ describe('MembersPage — destructive actions confirm', () => {
   });
 });
 
+describe('MembersPage — deactivating a teammate', () => {
+  /**
+   * `PATCH /operators/{id}` takes `is_active` now. It is deliberately not the
+   * same act as `DELETE`: deleting the row nulls `assigned_operator_id` on
+   * every historical chat, erasing who handled it, while deactivating frees the
+   * seat and leaves the audit trail intact. Both need a confirmation, and they
+   * need different words.
+   */
+  it('says what deactivating costs and what it preserves', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Priya Raman');
+
+    await user.click(screen.getByRole('button', { name: /actions for priya raman/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /deactivate/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/goes back to the queue/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/seat is freed/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Nothing is deleted/i)).toBeInTheDocument();
+    expect(api.updateOperator).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: /^deactivate$/i }));
+    await waitFor(() => expect(api.updateOperator).toHaveBeenCalledWith(7, { is_active: false }));
+  });
+
+  it('offers reactivation, not deactivation, on somebody already switched off', async () => {
+    const user = userEvent.setup();
+    api.getOperators.mockResolvedValue({ operators: [member({ is_active: false })] });
+    renderPage();
+    await screen.findByText('Priya Raman');
+
+    // The roster says the state in a word, because a greyed row is not a signal.
+    expect(screen.getByText('Deactivated')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /actions for priya raman/i }));
+    expect(await screen.findByRole('menuitem', { name: /reactivate/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^deactivate/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The direction that can fail. Reactivating consumes a seat, and
+   * `invite_service._require_seat_available` refuses when the plan has none —
+   * so the roster must not be flipped in anticipation of a yes.
+   */
+  it('shows the seat refusal rather than pretending the teammate is back', async () => {
+    const user = userEvent.setup();
+    api.getOperators.mockResolvedValue({ operators: [member({ is_active: false })] });
+    api.updateOperator.mockRejectedValue(
+      Object.assign(new Error('This chatbot has no operator seats left on its plan.'), {
+        status: 403,
+      }),
+    );
+    renderPage();
+    await screen.findByText('Priya Raman');
+
+    await user.click(screen.getByRole('button', { name: /actions for priya raman/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /reactivate/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: /^reactivate$/i }));
+
+    expect(
+      await within(dialog).findByText('This chatbot has no operator seats left on its plan.'),
+    ).toBeInTheDocument();
+    // Still deactivated, still refusable, and the dialog is still dismissible.
+    expect(screen.getByText('Deactivated')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeEnabled();
+  });
+
+  it('warns that reactivating takes a seat before it asks the server for one', async () => {
+    const user = userEvent.setup();
+    api.getOperators.mockResolvedValue({ operators: [member({ is_active: false })] });
+    renderPage();
+    await screen.findByText('Priya Raman');
+
+    await user.click(screen.getByRole('button', { name: /actions for priya raman/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /reactivate/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/takes one of this chatbot’s seats/i)).toBeInTheDocument();
+    expect(api.updateOperator).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The one row that must not offer it: the server refuses self-deactivation
+   * outright, so offering the action would be an invitation to a 400.
+   */
+  it('never offers to deactivate the signed-in owner’s own seat', async () => {
+    const user = userEvent.setup();
+    api.getOperators.mockResolvedValue({
+      operators: [member({ id: 9, name: 'Owner', linked_client_id: 42 })],
+    });
+    renderPage();
+    await screen.findByText('Owner');
+
+    await user.click(screen.getByRole('button', { name: /actions for owner/i }));
+    expect(await screen.findByRole('menuitem', { name: /leave live chat/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /deactivate/i })).not.toBeInTheDocument();
+  });
+});
+
 describe('MembersPage — the owner’s own seat', () => {
   it('offers a way in, and says it costs a seat before it is spent', async () => {
     const user = userEvent.setup();
@@ -322,6 +423,42 @@ describe('MembersPage — routing', () => {
     expect(await screen.findByText('Waiting and routing')).toBeInTheDocument();
     expect(screen.getByLabelText(/seconds an operator has to accept/i)).toHaveValue('120');
     expect(screen.getByLabelText(/visitors who may wait at once/i)).toHaveValue('10');
+    // The fourth timer. `UpdateBotRequest` accepts it now, and
+    // `handle_visitor_disconnect` really does read the column, so this page
+    // owns it rather than the "not configurable" list on Behaviour.
+    expect(screen.getByLabelText(/seconds a dropped visitor is held/i)).toHaveValue('120');
+  });
+
+  it('saves the visitor grace period with the rest of the queue', async () => {
+    const user = userEvent.setup();
+    renderPage('/settings/team?tab=routing');
+    const field = await screen.findByLabelText(/seconds a dropped visitor is held/i);
+
+    await user.clear(field);
+    await user.type(field, '45');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(api.updateBot).toHaveBeenCalledWith(1, {
+        operator_timeout_seconds: 120,
+        live_chat_queue_timeout_seconds: 20,
+        live_chat_max_queue_size: 10,
+        visitor_disconnect_timeout: 45,
+      }),
+    );
+  });
+
+  it('refuses a grace period the API would refuse, at the field', async () => {
+    const user = userEvent.setup();
+    renderPage('/settings/team?tab=routing');
+    const field = await screen.findByLabelText(/seconds a dropped visitor is held/i);
+
+    await user.clear(field);
+    await user.type(field, '4');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText(/At least 5 seconds/i)).toBeInTheDocument();
+    expect(api.updateBot).not.toHaveBeenCalled();
   });
 
   it('refuses a value the API would refuse, at the field', async () => {

@@ -158,7 +158,7 @@ describe('teamModel', () => {
     const operators = [operator({ id: 1, bot_id: 1, is_active: false })];
     expect(rosterFor(operators, 1)).toHaveLength(1);
     expect(availability(operators[0])).toBe('deactivated');
-    expect(AVAILABILITY_LABEL.deactivated).toBe('Left live chat');
+    expect(AVAILABILITY_LABEL.deactivated).toBe('Deactivated');
   });
 
   it('finds the caller by their linked client id, never by a shared email', () => {
@@ -395,7 +395,14 @@ describe('queueSettings', () => {
       acceptSeconds: '120',
       waitSeconds: '20',
       maxQueue: '10',
+      visitorDropSeconds: '120',
     });
+  });
+
+  it('reads the stored visitor grace period when the row carries one', () => {
+    expect(
+      readQueueSettings({ ...bot, visitor_disconnect_timeout: 45 } as Bot).visitorDropSeconds,
+    ).toBe('45');
   });
 
   it('enforces exactly the bounds the API enforces', () => {
@@ -404,6 +411,12 @@ describe('queueSettings', () => {
     expect(QUEUE_BOUNDS.acceptSeconds).toMatchObject({ min: 5, max: 3600 });
     expect(QUEUE_BOUNDS.waitSeconds).toMatchObject({ min: 5, max: 600 });
     expect(QUEUE_BOUNDS.maxQueue).toMatchObject({ min: 1, max: 100 });
+    // `Field(None, ge=5, le=3600)` on `UpdateBotRequest.visitor_disconnect_timeout`.
+    expect(QUEUE_BOUNDS.visitorDropSeconds).toMatchObject({ min: 5, max: 3600 });
+    expect(validateQueueField('visitorDropSeconds', '5')).toBeNull();
+    expect(validateQueueField('visitorDropSeconds', '3600')).toBeNull();
+    expect(validateQueueField('visitorDropSeconds', '4')).not.toBeNull();
+    expect(validateQueueField('visitorDropSeconds', '3601')).not.toBeNull();
 
     expect(validateQueueField('acceptSeconds', '120')).toBeNull();
     expect(validateQueueField('acceptSeconds', '4')).not.toBeNull();
@@ -415,17 +428,38 @@ describe('queueSettings', () => {
 
   it('reports every bad field at once, so the form fixes them together', () => {
     expect(
-      Object.keys(validateQueueSettings({ acceptSeconds: '1', waitSeconds: '9999', maxQueue: '0' })),
-    ).toEqual(['acceptSeconds', 'waitSeconds', 'maxQueue']);
+      Object.keys(
+        validateQueueSettings({
+          acceptSeconds: '1',
+          waitSeconds: '9999',
+          maxQueue: '0',
+          visitorDropSeconds: '0',
+        }),
+      ),
+    ).toEqual(['acceptSeconds', 'waitSeconds', 'maxQueue', 'visitorDropSeconds']);
     expect(validateQueueSettings(readQueueSettings(bot))).toEqual({});
   });
 
   it('sends numbers, never the raw strings from the inputs', () => {
-    expect(toQueuePatch({ acceptSeconds: '90', waitSeconds: '30', maxQueue: '5' })).toEqual({
+    expect(
+      toQueuePatch({
+        acceptSeconds: '90',
+        waitSeconds: '30',
+        maxQueue: '5',
+        visitorDropSeconds: '45',
+      }),
+    ).toEqual({
       operator_timeout_seconds: 90,
       live_chat_queue_timeout_seconds: 30,
       live_chat_max_queue_size: 5,
+      visitor_disconnect_timeout: 45,
     });
+  });
+
+  it('counts an edited visitor grace period as a change', () => {
+    const settings = readQueueSettings(bot);
+    expect(queueSettingsChanged(settings, { ...settings, visitorDropSeconds: '120 ' })).toBe(false);
+    expect(queueSettingsChanged(settings, { ...settings, visitorDropSeconds: '45' })).toBe(true);
   });
 
   it('does not call a trailing space a change', () => {
