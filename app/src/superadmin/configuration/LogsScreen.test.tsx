@@ -38,7 +38,7 @@ function Probe() {
   return null;
 }
 
-function renderScreen(entry = '/platform/platform?view=logs') {
+function renderScreen(entry = '/platform/platform/logs') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <LogsScreen />
@@ -69,7 +69,7 @@ describe('LogsScreen', () => {
 
   it('requests a bounded number of lines and nothing beyond the cap', async () => {
     httpClient.get.mockResolvedValue({ data: response });
-    renderScreen('/platform/platform?view=logs&lines=99999');
+    renderScreen('/platform/platform/logs?lines=99999');
     await waitFor(() =>
       expect(httpClient.get).toHaveBeenCalledWith('/superadmin/logs', {
         params: { service: 'oyechats-api', lines: 5000 },
@@ -79,7 +79,7 @@ describe('LogsScreen', () => {
 
   it('never asks for a unit outside the allow-list, whatever the URL says', async () => {
     httpClient.get.mockResolvedValue({ data: response });
-    renderScreen('/platform/platform?view=logs&service=postgresql');
+    renderScreen('/platform/platform/logs?service=postgresql');
     await waitFor(() => expect(httpClient.get).toHaveBeenCalled());
     expect(httpClient.get.mock.calls[0][1].params.service).toBe('oyechats-api');
   });

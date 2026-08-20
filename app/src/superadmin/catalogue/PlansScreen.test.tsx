@@ -99,7 +99,7 @@ describe('PlansScreen', () => {
   it('says the account is not permitted, rather than showing an empty catalogue', async () => {
     httpClient.get.mockRejectedValue(rejection(403, 'Read-only super-admin.'));
     renderScreen();
-    expect(await screen.findByText('You cannot read the plan catalogue')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
@@ -145,7 +145,7 @@ describe('PlansScreen', () => {
     httpClient.get.mockResolvedValue({ data: [plan({ is_default: false })] });
     renderScreen();
     expect(
-      await screen.findByText(/None — new accounts fall back to Free limits/),
+      await screen.findByText(/none — new accounts fall back to Free limits/),
     ).toBeInTheDocument();
   });
 });

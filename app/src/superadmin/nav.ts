@@ -18,7 +18,16 @@ export interface PlatformNavItem {
 }
 
 export interface PlatformNavGroup {
-  label: string;
+  /**
+   * Names the group. Omitted for the opening block.
+   *
+   * A label only earns its place over three or more rows: four of the five
+   * groups here introduced a single row each, at roughly 38px of chrome — a
+   * 16px margin, a 16px label and 6px of padding — to present one 36px row.
+   * The header-to-content ratio in a 248px column was worse than 1:1. Linear
+   * and Stripe both flatten below four items and label a group only at three.
+   */
+  label?: string;
   items: PlatformNavItem[];
 }
 
@@ -30,13 +39,16 @@ export const PLATFORM_ROOT = '/platform';
  * Grouped by the job somebody is doing, not by the router file the endpoints
  * happen to live in. There are about a hundred `/superadmin/*` routes and no UI
  * for any of them, so the first decision is what they are *for*: watching the
- * platform, supporting a customer, understanding the money, running billing,
- * shaping the catalogue, looking something up, and configuring the machine.
- * Seven groups, and every endpoint lands in exactly one.
+ * platform, supporting a customer, looking something up, understanding the
+ * money, and configuring the machine.
+ *
+ * One labelled group, not five. It was Watch (1 item), Support (1), Money (3),
+ * Data (1) and Machine (1) — four eyebrows existing to introduce a single row
+ * each, and about 110px of a 248px column spent on headers nobody needed.
+ * Money is the only set of peers here that a reader benefits from seeing named.
  */
 export const PLATFORM_NAV: PlatformNavGroup[] = [
   {
-    label: 'Watch',
     items: [
       {
         to: `${PLATFORM_ROOT}`,
@@ -44,16 +56,17 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
         icon: Activity,
         blurb: 'Live platform state: health, workers, errors and the numbers that move.',
       },
-    ],
-  },
-  {
-    label: 'Support',
-    items: [
       {
         to: `${PLATFORM_ROOT}/customers`,
         label: 'Customers',
         icon: Users,
         blurb: 'Accounts, operators, sign-in identities, and support sessions.',
+      },
+      {
+        to: `${PLATFORM_ROOT}/records`,
+        label: 'Records',
+        icon: Database,
+        blurb: 'Every customer-owned object: chatbots, documents, sessions, leads, feedback.',
       },
     ],
   },
@@ -81,18 +94,6 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: 'Data',
-    items: [
-      {
-        to: `${PLATFORM_ROOT}/records`,
-        label: 'Records',
-        icon: Database,
-        blurb: 'Every customer-owned object: chatbots, documents, sessions, leads, feedback.',
-      },
-    ],
-  },
-  {
-    label: 'Machine',
     items: [
       {
         to: `${PLATFORM_ROOT}/platform`,

@@ -133,8 +133,7 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
 
         {code ? (
           <Alert tone="warning">
-            Renaming a code breaks any link already sharing the old one. Signups already attributed
-            to it stay attributed.
+            Renaming breaks links already using the old code. Existing signups stay attributed.
           </Alert>
         ) : null}
 
@@ -156,7 +155,7 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
           />
         </Field>
 
-        <Field label="Label" hint="Only you see this. Useful when one code is for one campaign.">
+        <Field label="Label" optional hint="Only you see this.">
           <Input
             value={label}
             onChange={(event) => setLabel(event.target.value)}
@@ -183,21 +182,19 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
           </Field>
         </div>
 
-        <div
-          aria-live="polite"
-          className="rounded-md border border-border bg-surface-sunken px-3 py-2.5"
-        >
-          {splitError ? (
-            <p className="text-xs leading-relaxed text-danger">{splitError}</p>
-          ) : (
-            <p className="text-xs leading-relaxed text-text-secondary">
+        {/* `Alert tone="neutral"` already draws a sunken ground with an ink
+            leading rule and takes `live`. The hand-drawn box was the third copy
+            of one unnamed "explainer well" in this scope. */}
+        <Alert tone={splitError ? 'danger' : 'neutral'} live>
+          {splitError ?? (
+            <>
               You keep <span className="figure text-text-primary">{formatPct(mine)}</span>, they
               save <span className="figure text-text-primary">{formatPct(theirs)}</span>, and{' '}
               <span className="figure text-text-primary">{formatPct(remaining)}</span> of your pool
-              is unused — that share simply stays with OyeChats.
-            </p>
+              is unused — that share stays with OyeChats.
+            </>
           )}
-        </div>
+        </Alert>
       </div>
     </Dialog>
   );

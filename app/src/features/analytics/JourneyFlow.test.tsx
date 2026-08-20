@@ -119,6 +119,13 @@ describe('JourneyFlow', () => {
         paths: [{ sequence: ['/', '/help'], sessions: 4, conversion_rate: 0.04 }],
       },
     });
-    expect(screen.getByText(/1 route attributed to live chat/i)).toBeInTheDocument();
+    // The count is a `.figure` span inside the live region now, so the
+    // sentence spans several text nodes and has to be read off the element.
+    const status = screen.getByText(
+      (_content, element) => element?.getAttribute('aria-live') === 'polite',
+    );
+    expect(status.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      '1 route attributed to live chat',
+    );
   });
 });

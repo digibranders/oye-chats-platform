@@ -9,22 +9,28 @@ import {
   Card,
   CardBody,
   CardHeader,
+  CardSection,
+  Columns,
   ErrorState,
+  Eyebrow,
+  Grid,
   LoadingRows,
   LockedState,
   Meter,
+  NavTabs,
   Page,
   PageHeader,
   Select,
   Stack,
-  StatTile,
+  StatRow,
+  StatusDot,
   buttonClass,
   toast,
 } from '../../ui';
 import { cancelScheduledChange, resumeSubscription } from '../../services/api';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { keys } from '../../query/keys';
-import { BillingNav } from './billing/BillingNav';
+import { BILLING_SECTIONS } from './billing/sections';
 import { DunningBanner, ReauthBanner } from './billing/DunningBanner';
 import { PlanSummary } from './billing/PlanSummary';
 import { InvoicesSection } from './billing/InvoicesSection';
@@ -39,8 +45,6 @@ import {
   errorStatus,
   formatCredits,
   formatDate,
-  formatFreeMonths,
-  formatPromotionScope,
   UNLIMITED_LIMIT,
 } from './billingModel';
 import { formatPeriod, resolveScopedPool } from './usage-model';
@@ -100,8 +104,7 @@ export function BillingPage() {
   const resume = useMutation({
     mutationFn: () => resumeSubscription(botId),
     onSuccess: () => announce('Your subscription will continue. Nothing was interrupted.'),
-    onError: (cause) =>
-      toast.error(errorMessage(cause, 'We could not restore your subscription.')),
+    onError: (cause) => toast.error(errorMessage(cause, 'We could not restore your subscription.')),
   });
 
   const dropScheduled = useMutation({
@@ -116,10 +119,13 @@ export function BillingPage() {
   if (billing.core.isError && errorStatus(billing.core.error) === 403) {
     return (
       <Page width="wide">
-        <PageHeader title="Billing" toolbar={<BillingNav />} />
+        <PageHeader
+          title="Billing"
+          toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
+        />
         <LockedState
           title="Billing is only visible to workspace owners and admins"
-          description="Your seat can use the inbox and the leads it produces, but not the workspace's plan, invoices or payment methods. Ask an owner if you need a copy of an invoice."
+          description="Ask an owner if you need a copy of an invoice."
         />
       </Page>
     );
@@ -129,8 +135,7 @@ export function BillingPage() {
     <Page width="wide">
       <PageHeader
         title="Billing"
-        description="Your plan, what it entitles you to, and every charge we have issued."
-        toolbar={<BillingNav />}
+        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
         actions={
           scopeOptions.length > 1 ? (
             <Select
@@ -168,27 +173,43 @@ export function BillingPage() {
         </Card>
       ) : (
         <Stack>
-          {/* Money problems first. A customer whose card failed needs to know
-              that before they read anything else on this page. */}
+          {/* At most two banners. Six could stack here — dunning, reauth, a
+              data-retention deadline, a scheduled change, a pending
+              cancellation and a promotion — at roughly 76px plus a 24px gap
+              each, so 500px of banner could push the plan entirely off screen,
+              with marketing sitting on top of a payment failure. One
+              money-critical notice, first match wins, and one plan-state
+              notice. The promotion belongs in the plan picker, which is where
+              the customer is choosing. */}
           {billing.dunning.data?.pastDue ? (
             <DunningBanner
               dunning={billing.dunning.data}
               onRecheck={() => void billing.dunning.refetch()}
               onChoosePlan={() => setPicking(true)}
             />
-          ) : null}
-
-          {core?.reauth ? (
+          ) : core?.reauth ? (
             <ReauthBanner reauth={core.reauth} onAuthorise={() => setPicking(true)} />
-          ) : null}
-
-          {subscription.dataRetentionUntil ? (
+          ) : subscription.dataRetentionUntil ? (
             <Alert tone="danger" title="Your workspace data is scheduled for deletion">
-              {`Your trial has ended and everything in this workspace is deleted on ${formatDate(subscription.dataRetentionUntil)}. Choose a plan before then to keep your chatbots, documents and conversations.`}
+              {`Everything in this workspace is deleted on ${formatDate(subscription.dataRetentionUntil)}. Choose a plan before then to keep it.`}
             </Alert>
           ) : null}
 
-          {subscription.scheduledChange ? (
+          {subscription.cancelAtPeriodEnd ? (
+            <Alert
+              tone="warning"
+              title="Your subscription is set to end"
+              action={
+                <Button size="sm" onClick={() => resume.mutate()} disabled={resume.isPending}>
+                  {resume.isPending ? 'Working…' : 'Keep my plan'}
+                </Button>
+              }
+            >
+              {subscription.currentPeriodEnd
+                ? `You keep everything until ${formatDate(subscription.currentPeriodEnd)}.`
+                : 'You keep everything until the end of the current period.'}
+            </Alert>
+          ) : subscription.scheduledChange ? (
             <Alert
               tone="neutral"
               title={`Switching to ${subscription.scheduledChange.planName ?? 'another plan'}`}
@@ -204,138 +225,148 @@ export function BillingPage() {
               }
             >
               {subscription.scheduledChange.effectiveAt
-                ? `The change takes effect on ${formatDate(subscription.scheduledChange.effectiveAt)}. Until then nothing about your current plan changes.`
+                ? `The change takes effect on ${formatDate(subscription.scheduledChange.effectiveAt)}.`
                 : 'The change takes effect at the end of your current billing period.'}
             </Alert>
           ) : null}
 
-          {subscription.cancelAtPeriodEnd ? (
-            <Alert
-              tone="warning"
-              title="Your subscription is set to end"
-              action={
-                <Button size="sm" onClick={() => resume.mutate()} disabled={resume.isPending}>
-                  {resume.isPending ? 'Working…' : 'Keep my plan'}
-                </Button>
-              }
-            >
-              {subscription.currentPeriodEnd
-                ? `You keep everything until ${formatDate(subscription.currentPeriodEnd)}, and you can change your mind until then.`
-                : 'You keep everything until the end of the current period, and you can change your mind until then.'}
-            </Alert>
-          ) : null}
-
-          {billing.promotion.data && billing.plans.data ? (
-            <Alert tone="plan" title={billing.promotion.data.name ?? 'Launch offer'}>
-              {`Your first ${formatFreeMonths(billing.promotion.data.freeCycles)} are free on ${formatPromotionScope(billing.promotion.data, billing.plans.data)}. `}
-              {billing.promotion.data.endsAt
-                ? `The offer closes on ${formatDate(billing.promotion.data.endsAt)}.`
-                : ''}
-            </Alert>
-          ) : null}
-
-          <PlanSummary
-            subscription={subscription}
-            plan={plan}
-            geo={billing.geo.data ?? null}
-            agentsUsed={entitlements.usage?.bots ?? 0}
-            seatsUsed={entitlements.usage?.operators ?? 0}
-            onChangePlan={() => setPicking(true)}
-            onManageSeats={() => setManagingSeats(true)}
-            onCancel={() => setCancelling(true)}
-            onResume={() => resume.mutate()}
-            onAddChatbot={() => navigate('/chatbots?new=1')}
-          />
-
-          {/* Credits get a summary here and a page of their own next door. This
-              card exists to answer one question - am I about to run out - and
-              then hand off rather than duplicate the Usage surface. */}
-          <Card>
-            <CardHeader
-              eyebrow="Credits"
-              title="This period"
-              titleAs="h2"
-              description={
-                pool
-                  ? formatPeriod(pool.periodStart, pool.resetsAt)
-                  : 'Your plan allowance and anything you have bought on top of it.'
-              }
-              actions={
-                <Link to="/billing/usage" className={buttonClass('secondary', 'sm')}>
-                  See usage
-                  <ArrowRight aria-hidden className="h-3.5 w-3.5" />
-                </Link>
-              }
-            />
-            {billing.credits.isPending ? (
-              <CardBody>
-                <LoadingRows rows={2} />
-              </CardBody>
-            ) : billing.credits.isError || !pool ? (
-              <ErrorState
-                compact
-                title="We could not read your credit balance"
-                description={errorMessage(billing.credits.error, 'The credits service did not answer.')}
-                onRetry={() => void billing.credits.refetch()}
+          {/* The plan and the credit balance are the two facts a customer opens
+              this page for, so they stand side by side rather than 900px apart
+              in one column of full-width cards. */}
+          <Columns
+            asideWidth="md"
+            asideLabel="Credits this period"
+            main={
+              <PlanSummary
+                subscription={subscription}
+                plan={plan}
+                geo={billing.geo.data ?? null}
+                agentsUsed={entitlements.usage?.bots ?? 0}
+                seatsUsed={entitlements.usage?.operators ?? 0}
+                onChangePlan={() => setPicking(true)}
+                onManageSeats={() => setManagingSeats(true)}
+                onCancel={() => setCancelling(true)}
+                onResume={() => resume.mutate()}
+                onAddChatbot={() => navigate('/chatbots?new=1')}
               />
-            ) : (
-              <CardBody className="grid gap-6 sm:grid-cols-3">
-                <StatTile
-                  label="Credits left"
-                  value={formatCredits(pool.totalRemaining)}
-                  period={formatPeriod(pool.periodStart, pool.resetsAt)}
-                  tone={pool.totalRemaining <= 0 ? 'danger' : balance?.lowBalance ? 'warning' : 'neutral'}
-                  hint={
-                    pool.topupRemaining > 0
-                      ? `${formatCredits(pool.planRemaining)} from your plan, ${formatCredits(pool.topupRemaining)} purchased`
-                      : undefined
-                  }
-                />
-                <StatTile
-                  label="Used this period"
-                  value={formatCredits(pool.periodCreditsUsed)}
-                  period={formatPeriod(pool.periodStart, pool.resetsAt)}
-                />
-                <div className="flex flex-col justify-center">
-                  {pool.monthlyGrant > 0 ? (
-                    <Meter
-                      label="Plan allowance"
-                      used={Math.min(pool.monthlyGrant - pool.planRemaining, pool.monthlyGrant)}
-                      limit={pool.monthlyGrant}
-                      unit="credits"
-                    />
-                  ) : (
-                    <p className="text-xs text-text-secondary">
-                      This scope has no monthly grant, so everything it spends comes from purchased
-                      credits.
-                    </p>
-                  )}
-                </div>
-              </CardBody>
-            )}
-            {balance && balance.lowBalance ? (
-              <CardBody className="border-t border-border">
-                <Alert
-                  tone={pool && pool.totalRemaining <= 0 ? 'danger' : 'warning'}
-                  title={
-                    pool && pool.totalRemaining <= 0
-                      ? 'Your chatbots have stopped answering'
-                      : 'You are close to running out of credits'
-                  }
-                  action={
-                    <Link to="/billing/usage" className={buttonClass('primary', 'sm')}>
-                      <Coins aria-hidden className="h-3.5 w-3.5" />
-                      Buy credits
+            }
+            aside={
+              /* Credits get a summary here and a page of their own next door.
+                 This card answers one question — am I about to run out — and
+                 then hands off rather than duplicating the Usage surface. */
+              <Card>
+                <CardHeader
+                  eyebrow="Credits"
+                  title="This period"
+                  titleAs="h2"
+                  description={pool ? formatPeriod(pool.periodStart, pool.resetsAt) : undefined}
+                  actions={
+                    <Link to="/billing/usage" className={buttonClass('secondary', 'sm')}>
+                      See usage
+                      <ArrowRight aria-hidden />
                     </Link>
                   }
-                >
-                  {pool && pool.totalRemaining <= 0
-                    ? 'A chatbot with no credits cannot reply to a visitor. Buy a top-up or upgrade to restore it immediately.'
-                    : `Less than a fifth of this period's allowance is left. It refills on ${formatDate(pool?.resetsAt ?? null)}.`}
-                </Alert>
-              </CardBody>
-            ) : null}
-          </Card>
+                />
+                {billing.credits.isPending ? (
+                  <CardBody>
+                    <LoadingRows rows={2} />
+                  </CardBody>
+                ) : billing.credits.isError || !pool ? (
+                  <ErrorState
+                    size="panel"
+                    title="We could not read your credit balance"
+                    description={errorMessage(
+                      billing.credits.error,
+                      'The credits service did not answer.',
+                    )}
+                    onRetry={() => void billing.credits.refetch()}
+                  />
+                ) : (
+                  <>
+                    <CardBody flush>
+                      {/* One vocabulary for credits across `/billing` and
+                          `/billing/usage`: the same four `pool` fields were
+                          carrying four different labels on two pages. */}
+                      <StatRow
+                        columns={2}
+                        label="Credits this period"
+                        period={formatPeriod(pool.periodStart, pool.resetsAt)}
+                        items={[
+                          {
+                            label: 'Left to spend',
+                            value: formatCredits(pool.totalRemaining),
+                            size: 'lg',
+                            tone:
+                              pool.totalRemaining <= 0
+                                ? 'danger'
+                                : balance?.lowBalance
+                                  ? 'warning'
+                                  : 'neutral',
+                            hint:
+                              pool.topupRemaining > 0
+                                ? `${formatCredits(pool.planRemaining)} from your plan, ${formatCredits(pool.topupRemaining)} purchased`
+                                : undefined,
+                          },
+                          {
+                            label: 'Spent this period',
+                            value: formatCredits(pool.periodCreditsUsed),
+                            size: 'lg',
+                          },
+                        ]}
+                      />
+                    </CardBody>
+                    <CardSection>
+                      {pool.monthlyGrant > 0 ? (
+                        <>
+                          {/* The eyebrow shares the figures' first baseline.
+                              A vertically centred meter beside two top-aligned
+                              tiles gave three peers in one row three different
+                              first baselines. */}
+                          <Eyebrow>Plan allowance</Eyebrow>
+                          <Meter
+                            className="mt-2"
+                            hideLabel
+                            label="Plan allowance"
+                            used={Math.min(
+                              pool.monthlyGrant - pool.planRemaining,
+                              pool.monthlyGrant,
+                            )}
+                            limit={pool.monthlyGrant}
+                            unit="credits"
+                          />
+                        </>
+                      ) : (
+                        <p className="text-xs text-text-secondary">
+                          No monthly grant — everything this scope spends comes from purchased
+                          credits.
+                        </p>
+                      )}
+                    </CardSection>
+                    {balance?.lowBalance ? (
+                      // A `CardSection`, and the notice rendered flat inside it.
+                      // It used to be `<CardBody className="border-t">` — which
+                      // is what `CardSection` is — wrapping an `Alert`, so the
+                      // card drew a second hairline box 20px inside its own.
+                      <CardSection className="flex flex-wrap items-center justify-between gap-3">
+                        <StatusDot
+                          tone={pool.totalRemaining <= 0 ? 'danger' : 'warning'}
+                          label={
+                            pool.totalRemaining <= 0
+                              ? 'Your chatbots have stopped answering'
+                              : `Nearly out — refills ${formatDate(pool.resetsAt)}`
+                          }
+                        />
+                        <Link to="/billing/usage" className={buttonClass('primary', 'sm')}>
+                          <Coins aria-hidden />
+                          Buy credits
+                        </Link>
+                      </CardSection>
+                    ) : null}
+                  </>
+                )}
+              </Card>
+            }
+          />
 
           {entitlements.limits?.credits === UNLIMITED_LIMIT ? (
             <Alert tone="plan">
@@ -354,24 +385,28 @@ export function BillingPage() {
             onRetry={() => void billing.invoices.refetch()}
           />
 
-          <BillingIdentitySection
-            details={billing.details.data?.view ?? null}
-            raw={billing.details.data?.raw ?? null}
-            loading={billing.details.isPending}
-            error={
-              billing.details.isError
-                ? errorMessage(billing.details.error, 'The billing details did not load.')
-                : null
-            }
-            demandedFields={demandedFields}
-            onDemandCleared={() => setDemandedFields(null)}
-            fallbackCountry={billing.geo.data?.country ?? null}
-          />
+          {/* A five-item definition list and a one-item payment list are two
+              half-width cards, not two full-width ones. */}
+          <Grid cols={2} gap="section">
+            <BillingIdentitySection
+              details={billing.details.data?.view ?? null}
+              raw={billing.details.data?.raw ?? null}
+              loading={billing.details.isPending}
+              error={
+                billing.details.isError
+                  ? errorMessage(billing.details.error, 'The billing details did not load.')
+                  : null
+              }
+              demandedFields={demandedFields}
+              onDemandCleared={() => setDemandedFields(null)}
+              fallbackCountry={billing.geo.data?.country ?? null}
+            />
 
-          <PaymentMethodsSection
-            provider={subscription.paymentProvider}
-            hasPaidPlan={subscription.hasActive && (plan?.isPaid ?? false)}
-          />
+            <PaymentMethodsSection
+              provider={subscription.paymentProvider}
+              hasPaidPlan={subscription.hasActive && (plan?.isPaid ?? false)}
+            />
+          </Grid>
         </Stack>
       )}
 
@@ -409,7 +444,9 @@ export function BillingPage() {
             botId={botId}
             onChanged={(message) => {
               announce(message);
-              void client.invalidateQueries({ queryKey: keys.team.operators() });
+              void client.invalidateQueries({
+                queryKey: keys.team.operators(),
+              });
             }}
           />
         </>

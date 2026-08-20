@@ -1,17 +1,25 @@
+import { ImpersonationBanner } from './ImpersonationBanner';
+
 /**
  * Shell-level banners.
  *
  * These are the messages that must reach the user wherever they are, because
- * they describe the account rather than the page: a failed payment, an
- * unverified email, an impersonated session. The onboarding flow this replaces
- * lived outside the shell entirely, which meant a customer could hand over a
- * card on a screen that was structurally incapable of telling them their last
- * payment had failed.
+ * they describe the account rather than the page: an impersonated session, and
+ * in a later slice a failed payment and an unverified email. The onboarding
+ * flow this replaces lived outside the shell entirely, which meant a customer
+ * could hand over a card on a screen structurally incapable of telling them
+ * their last payment had failed.
  *
- * Deliberately empty for now: the billing and verification surfaces are rebuilt
- * in a later slice, and a banner is only worth rendering once the destination it
- * sends the user to exists. The slot is here so that arrives as one change.
+ * A banner here is a **layout row**, not an overlay. It is rendered above the
+ * top bar as an ordinary flex child, so it pushes the chrome down instead of
+ * painting over it. The impersonation bar used to be `position: fixed` at
+ * `z-70` with a `body { padding-top }` rule compensating for it — and that rule
+ * targeted two attributes the rebuilt shell no longer has, so the bar covered
+ * the top bar and the shell hung 36px below the fold.
+ *
+ * It shares the page gutter, so a banner, the breadcrumb and the page title
+ * stand on one left edge.
  */
 export function ShellBanners() {
-  return null;
+  return <ImpersonationBanner />;
 }

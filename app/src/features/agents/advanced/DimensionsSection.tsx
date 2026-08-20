@@ -8,9 +8,11 @@ import {
   CardBody,
   CardHeader,
   CardSection,
+  Eyebrow,
   Field,
   Input,
   Switch,
+  Tooltip,
   cn,
   formatPercent,
 } from '../../../ui';
@@ -62,7 +64,18 @@ function toInt(raw: string, min: number, max: number): number {
  * they had already been told was applied. It is inline now: one draft, one Save
  * bar, one meaning for "unsaved".
  *
- * The weight readout is the other change. Weights here are **relative**: the
+ * **The row is a set of fixed tracks on one centre line.** It was a
+ * `flex-wrap` line whose middle block stretched to about 1,150px at full width,
+ * putting the "% of the score" figure a third of a screen from the weight box it
+ * describes — with a hardcoded `pt-6` on the switch faking alignment with a
+ * label that could wrap at any moment. "Weight" is a column head printed once,
+ * above the list, so the input beside each row needs no label of its own.
+ *
+ * The 20-word "what it listens for" sentence belongs to the expanded panel, not
+ * to every collapsed row: ten of them made this card about 1,200px tall before
+ * the reader had opened anything.
+ *
+ * The weight readout is the other correction. Weights here are **relative**: the
  * server divides each by the total across enabled dimensions
  * (`calculate_composite_score`), so 25/25/25/25 and 10/10/10/10 score
  * identically. The total is shown because it is the number people reason about,
@@ -86,7 +99,11 @@ function DimensionsSectionInner({
     onChange({ ...model, dimensions: { ...model.dimensions, [key]: { ...current, ...patch } } });
   };
 
-  const patchOption = (key: string, index: number, patch: Partial<{ label: string; score: number }>): void => {
+  const patchOption = (
+    key: string,
+    index: number,
+    patch: Partial<{ label: string; score: number }>,
+  ): void => {
     const dim = model.dimensions[key];
     if (!dim) return;
     patchDimension(key, {
@@ -159,10 +176,9 @@ function DimensionsSectionInner({
       <CardHeader
         title="Scoring dimensions"
         titleAs="h2"
-        description="What the chatbot listens for while it talks, and how much each answer moves the lead's score."
         actions={
           <Button size="sm" variant="secondary" onClick={addDimension} disabled={disabled}>
-            <Plus aria-hidden className="h-3.5 w-3.5" />
+            <Plus aria-hidden />
             Add dimension
           </Button>
         }
@@ -175,10 +191,10 @@ function DimensionsSectionInner({
             <span className="figure">{enabledCount}</span>{' '}
             {enabledCount === 1 ? 'dimension' : 'dimensions'}
           </p>
-          <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
+          <p className="mt-0.5 text-xs text-text-secondary">
             {total === 100
               ? 'Weights total 100, so each weight is also its share of the score.'
-              : 'Weights are relative — the score divides each by this total — so this set works as it is. Balancing to 100 just makes each weight readable as a percentage.'}
+              : 'Weights are relative. Balancing to 100 makes each readable as a percentage.'}
           </p>
         </div>
         {total !== 100 && total > 0 ? (
@@ -200,7 +216,16 @@ function DimensionsSectionInner({
             dimension, or switch back to a framework preset above.
           </Alert>
         </CardBody>
-      ) : null}
+      ) : (
+        <CardSection className="flex items-center gap-3 py-2">
+          <span className="min-w-0 flex-1" />
+          {/* The column head, printed once — so the input on every row needs no
+              label of its own and the row keeps one centre line. */}
+          <Eyebrow className="w-20 shrink-0">Weight</Eyebrow>
+          <Eyebrow className="w-9 shrink-0 text-right">On</Eyebrow>
+          <span aria-hidden className="w-6 shrink-0" />
+        </CardSection>
+      )}
 
       {model.order.map((key) => {
         const dim = model.dimensions[key];
@@ -212,43 +237,40 @@ function DimensionsSectionInner({
 
         return (
           <CardSection key={key}>
-            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
-              <button
-                type="button"
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="-ml-1"
                 onClick={() => toggleExpanded(key)}
                 aria-expanded={isOpen}
-                aria-controls={`dimension-panel-${key}`}
-                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
+                aria-controls={isOpen ? `dimension-panel-${key}` : undefined}
               >
                 <ChevronDown
                   aria-hidden
-                  className={cn('h-4 w-4 transition-transform', isOpen ? 'rotate-0' : '-rotate-90')}
+                  className={cn('transition-transform duration-[var(--dur-fast)]', isOpen ? 'rotate-0' : '-rotate-90')}
                 />
                 <span className="sr-only">
                   {isOpen ? `Collapse ${dim.label}` : `Expand ${dim.label}`}
                 </span>
-              </button>
+              </Button>
 
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-base font-medium text-text-primary">{dim.label}</p>
-                  {isPreset ? null : <Badge tone="neutral">Added by you</Badge>}
-                  {dim.enabled && share !== null ? (
-                    <span className="figure text-xs text-text-secondary">
-                      {formatPercent(share / 100)} of the score
-                    </span>
-                  ) : (
-                    <Badge tone="neutral">Not scored</Badge>
-                  )}
-                </div>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-text-secondary">
-                  {listensFor(key)}
-                </p>
-              </div>
+              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-base font-medium text-text-primary">{dim.label}</span>
+                {isPreset ? null : <Badge tone="neutral">Added by you</Badge>}
+                {dim.enabled && share !== null ? (
+                  <span className="figure text-xs text-text-secondary">
+                    {formatPercent(share / 100)}
+                  </span>
+                ) : (
+                  <Badge tone="neutral">Not scored</Badge>
+                )}
+              </span>
 
-              <div className="w-24 shrink-0">
+              <div className="w-20 shrink-0">
                 <NumberField
-                  label="Weight"
+                  hideLabel
+                  label={`Weight for ${dim.label}`}
                   value={dim.weight}
                   min={0}
                   max={100}
@@ -258,7 +280,7 @@ function DimensionsSectionInner({
                 />
               </div>
 
-              <div className="flex shrink-0 items-center gap-1 pt-6">
+              <span className="flex w-9 shrink-0 justify-end">
                 <Switch
                   checked={dim.enabled}
                   onCheckedChange={(next) => patchDimension(key, { enabled: next })}
@@ -266,139 +288,138 @@ function DimensionsSectionInner({
                   hideLabel
                   disabled={disabled}
                 />
-                {isPreset ? (
-                  // No dimmed, undeleteable trash icon standing in for an
-                  // explanation. Why a framework dimension cannot be removed is
-                  // a sentence, and it is in the panel below where a keyboard
-                  // user actually reaches it.
-                  <span aria-hidden className="h-6 w-6" />
-                ) : (
-                  <button
-                    type="button"
+              </span>
+
+              {isPreset ? (
+                // No dimmed, undeleteable trash icon standing in for an
+                // explanation. Why a framework dimension cannot be removed is a
+                // sentence, and it is in the panel below where a keyboard user
+                // actually reaches it.
+                <span aria-hidden className="w-6 shrink-0" />
+              ) : (
+                <Tooltip content={`Remove ${dim.label}`}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 hover:text-danger"
                     onClick={() => removeDimension(key)}
                     disabled={disabled}
                     aria-label={`Remove ${dim.label}`}
-                    className="flex h-6 w-6 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-danger-tint hover:text-danger disabled:opacity-50"
                   >
-                    <Trash2 aria-hidden className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+                    <Trash2 aria-hidden />
+                  </Button>
+                </Tooltip>
+              )}
             </div>
 
             {error ? (
-              <p
-                role="status"
-                aria-live="polite"
-                className="mt-3 text-xs leading-relaxed text-danger"
-              >
+              <p role="status" aria-live="polite" className="mt-2 text-xs text-danger">
                 {error}
               </p>
             ) : null}
 
-            <div id={`dimension-panel-${key}`} hidden={!isOpen} className="mt-4 space-y-4">
-              {isPreset ? (
-                <p className="max-w-2xl text-xs leading-relaxed text-text-secondary">
-                  {dim.label} belongs to this framework, so it cannot be deleted — the server
-                  restores its own preset dimensions on every read, and a delete here would be a
-                  button that silently did nothing. Switching it off is what stops it being scored.
-                </p>
-              ) : (
-                <Field
-                  label="Dimension name"
-                  hint="Renaming re-keys this dimension. Scores already recorded under the old name stay on their leads."
-                  className="max-w-sm"
-                  disabled={disabled}
-                >
-                  <Input
-                    value={dim.label}
-                    onChange={(event) => patchDimension(key, { label: event.target.value })}
-                    onBlur={() => commitRename(key)}
-                  />
-                </Field>
-              )}
+            {isOpen ? (
+              <div id={`dimension-panel-${key}`} className="mt-4 space-y-4">
+                <p className="max-w-reading text-xs text-text-secondary">{listensFor(key)}</p>
 
-              <div className="space-y-2">
-                <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-                  Answers and what they score
-                </p>
-                <ul className="space-y-2">
-                  {dim.options.map((option, index) => (
-                    <li key={index} className="flex items-end gap-2">
-                      {/* The label is hidden but names the dimension as well as
-                          the row: a column of forty inputs all called "Answer 2"
-                          is unusable on a screen reader. */}
-                      <Field
-                        label={`Answer ${index + 1} for ${dim.label}`}
-                        hideLabel
-                        className="flex-1"
-                        disabled={disabled}
-                      >
-                        <Input
-                          value={option.label}
-                          placeholder="What the visitor said"
-                          onChange={(event) => patchOption(key, index, { label: event.target.value })}
-                        />
-                      </Field>
-                      <Field
-                        label={`Score for answer ${index + 1} of ${dim.label}`}
-                        hideLabel
-                        className="w-20"
-                        disabled={disabled}
-                      >
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          min={0}
-                          max={100}
-                          value={option.score}
-                          onChange={(event) =>
-                            patchOption(key, index, { score: toInt(event.target.value, 0, 100) })
-                          }
-                        />
-                      </Field>
-                      <button
-                        type="button"
-                        onClick={() => removeOption(key, index)}
-                        disabled={disabled}
-                        aria-label={`Remove answer ${index + 1} from ${dim.label}`}
-                        className="mb-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-danger-tint hover:text-danger disabled:opacity-50"
-                      >
-                        <Trash2 aria-hidden className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <Button size="sm" variant="ghost" onClick={() => addOption(key)} disabled={disabled}>
-                  <Plus aria-hidden className="h-3.5 w-3.5" />
-                  Add answer
-                </Button>
-              </div>
-
-              <div className="space-y-3 border-t border-border pt-3">
-                <Switch
-                  checked={dim.cta_enabled}
-                  onCheckedChange={(next) => patchDimension(key, { cta_enabled: next })}
-                  label="Ask the visitor directly"
-                  description="Instead of waiting to infer this from the conversation, offer the answers above as quick-reply chips."
-                  disabled={disabled}
-                />
-                {dim.cta_enabled ? (
+                {isPreset ? (
+                  <p className="max-w-reading text-xs text-text-secondary">
+                    Part of this framework, so it cannot be deleted. Switch it off to stop scoring
+                    it.
+                  </p>
+                ) : (
                   <Field
-                    label="The question to ask"
-                    hint="Keep it short — it is shown above the chips."
-                    className="max-w-lg"
+                    label="Dimension name"
+                    hint="Existing leads keep their old scores."
+                    className="max-w-sm"
                     disabled={disabled}
                   >
                     <Input
-                      value={dim.cta_prompt}
-                      placeholder={`What best describes your ${toLabel(key).toLowerCase()}?`}
-                      onChange={(event) => patchDimension(key, { cta_prompt: event.target.value })}
+                      value={dim.label}
+                      onChange={(event) => patchDimension(key, { label: event.target.value })}
+                      onBlur={() => commitRename(key)}
                     />
                   </Field>
-                ) : null}
+                )}
+
+                <div className="space-y-2">
+                  <Eyebrow>Answers and what they score</Eyebrow>
+                  <ul className="space-y-2">
+                    {dim.options.map((option, index) => (
+                      <li key={index} className="flex items-center gap-2">
+                        {/* The label is hidden but names the dimension as well as
+                            the row: a column of forty inputs all called "Answer 2"
+                            is unusable on a screen reader. */}
+                        <Field
+                          label={`Answer ${index + 1} for ${dim.label}`}
+                          hideLabel
+                          className="flex-1"
+                          disabled={disabled}
+                        >
+                          <Input
+                            value={option.label}
+                            placeholder="What the visitor said"
+                            onChange={(event) =>
+                              patchOption(key, index, { label: event.target.value })
+                            }
+                          />
+                        </Field>
+                        <Field
+                          label={`Score for answer ${index + 1} of ${dim.label}`}
+                          hideLabel
+                          className="w-20"
+                          disabled={disabled}
+                        >
+                          <Input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={100}
+                            value={option.score}
+                            onChange={(event) =>
+                              patchOption(key, index, { score: toInt(event.target.value, 0, 100) })
+                            }
+                          />
+                        </Field>
+                        <Button
+                          variant="ghost"
+                          size="icon-md"
+                          className="shrink-0 hover:text-danger"
+                          onClick={() => removeOption(key, index)}
+                          disabled={disabled}
+                          aria-label={`Remove answer ${index + 1} from ${dim.label}`}
+                        >
+                          <Trash2 aria-hidden />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <Button size="sm" variant="ghost" onClick={() => addOption(key)} disabled={disabled}>
+                    <Plus aria-hidden />
+                    Add answer
+                  </Button>
+                </div>
+
+                <div className="space-y-3 border-t border-border pt-3">
+                  <Switch
+                    checked={dim.cta_enabled}
+                    onCheckedChange={(next) => patchDimension(key, { cta_enabled: next })}
+                    label="Ask the visitor directly"
+                    description="Offer the answers above as quick-reply chips."
+                    disabled={disabled}
+                  />
+                  {dim.cta_enabled ? (
+                    <Field label="The question to ask" className="max-w-lg" disabled={disabled}>
+                      <Input
+                        value={dim.cta_prompt}
+                        placeholder={`What best describes your ${toLabel(key).toLowerCase()}?`}
+                        onChange={(event) => patchDimension(key, { cta_prompt: event.target.value })}
+                      />
+                    </Field>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
           </CardSection>
         );
       })}

@@ -8,7 +8,7 @@ import {
   LoadingRows,
   LockedState,
   Stack,
-  StatTile,
+  StatRow,
   buttonClass,
   formatNumber,
 } from '../../ui';
@@ -57,6 +57,7 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
   if (journey.error) {
     return isPlanGate(journey.error) ? (
       <LockedState
+        size="page"
         title="Visitor journeys are on Standard and above"
         description="Journeys show the pages someone read before they opened the chat and what they did afterwards. Collection is already running on your workspace, so the history appears the moment you upgrade."
         action={
@@ -92,28 +93,27 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
       </Alert>
 
       <Card>
-        <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
-          <StatTile
-            label="Tracked journeys"
-            value={formatNumber(summary.sessions_with_journey)}
+        <CardBody flush>
+          <StatRow
+            label="Journey totals"
             period={label}
-          />
-          <StatTile
-            label="Reached an outcome"
-            value={formatNumber(conversions)}
-            period={label}
-            hint="Booked a meeting, asked for a person, or left a message"
-          />
-          <StatTile
-            label="Left their details"
-            value={formatNumber(summary.leads_captured)}
-            period={label}
-          />
-          <StatTile
-            label="Started on a page"
-            value={formatNumber(preChatSequences.sessions_with_pre_chat)}
-            period={label}
-            hint="Browsed at least one page before opening the chat"
+            items={[
+              {
+                label: 'Tracked journeys',
+                value: formatNumber(summary.sessions_with_journey),
+              },
+              {
+                label: 'Reached an outcome',
+                value: formatNumber(conversions),
+                hint: 'Booked a meeting, asked for a person, or left a message',
+              },
+              { label: 'Left their details', value: formatNumber(summary.leads_captured) },
+              {
+                label: 'Started on a page',
+                value: formatNumber(preChatSequences.sessions_with_pre_chat),
+                hint: 'Browsed at least one page before opening the chat',
+              },
+            ]}
           />
         </CardBody>
       </Card>

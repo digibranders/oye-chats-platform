@@ -24,6 +24,17 @@ import type { UrlState } from './usePlatform';
  * nine thousand rows.
  */
 
+/**
+ * Rows per page, everywhere in this console.
+ *
+ * One number, not six. The console shipped 10, 12, 14, 25 and 50 across its
+ * tables, so a reconciliation table capped at ten rows meant three page clicks
+ * per invariant, six invariants deep, while the invoice book next door showed
+ * fifty. Fifty rows at the dense row height is about a screen and a half of
+ * scroll, which is the right trade for a tool whose job is scanning.
+ */
+export const PAGE_SIZE = 50;
+
 /** `key:asc` / `key:desc`, as carried in the query string. */
 export function parseSort(raw: string): SortState | null {
   if (!raw) return null;
@@ -161,7 +172,7 @@ export interface PagedRowsOptions<T> {
  */
 export function usePagedRows<T>(
   all: readonly T[],
-  { url, pageSize = 25, pageKey = 'page', sortKey = 'sort', filter, comparators = {} }: PagedRowsOptions<T>,
+  { url, pageSize = PAGE_SIZE, pageKey = 'page', sortKey = 'sort', filter, comparators = {} }: PagedRowsOptions<T>,
 ): PagedRows<T> {
   const page = url.getNumber(pageKey, 1);
   const sort = parseSort(url.get(sortKey));

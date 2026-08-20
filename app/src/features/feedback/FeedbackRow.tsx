@@ -1,5 +1,16 @@
-import { Badge, Button, Disclosure, formatDateTime, useClipboard } from '../../ui';
+import {
+  Badge,
+  Button,
+  Disclosure,
+  EYEBROW_CLASS,
+  cn,
+  formatDateTime,
+  useClipboard,
+} from '../../ui';
 import { type FeedbackItem } from './types';
+
+/** A generated visitor handle ("User -3", "anon_8f21") rather than a name. */
+const IDENTIFIER = /^(user|visitor|anon)[\s_-]/i;
 
 export interface FeedbackRowProps {
   item: FeedbackItem;
@@ -46,8 +57,8 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
         open={expanded}
         onOpenChange={onToggle}
         regionLabel={`Full exchange: ${item.question}`}
-        className="px-4 py-1"
-        panelClassName="pb-3"
+        className="px-cell py-1"
+        panelClassName="pb-3 pr-cell"
         summary={
           <span className="flex min-w-0 items-center gap-3">
             <Badge tone={positive ? 'success' : 'danger'} dot>
@@ -60,24 +71,34 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
         }
         trailing={
           <span className="flex items-center gap-3">
-            <span className="figure hidden text-xs text-text-tertiary sm:inline">{item.user}</span>
+            {/* `.figure` only when it really is an id. Mono on "Priya Sharma"
+                is mono on a name, which DESIGN reserves for figures and code.
+                Hidden below `md`: at `sm` the row is already three deep. */}
+            <span
+              className={cn(
+                'hidden max-w-32 truncate text-xs text-text-tertiary md:inline',
+                IDENTIFIER.test(item.user) && 'figure',
+              )}
+            >
+              {item.user}
+            </span>
             <span className="figure text-xs text-text-secondary">
               {formatDateTime(item.created_at)}
             </span>
           </span>
         }
       >
+          {/* A quotation rule, not a fill. A `bg-surface-sunken` block on the
+              card's own `bg-surface` reads as a rendering artefact; the 3px
+              leading rule is the device the visitor panel already uses for
+              "here is what someone said", so the two treatments match. */}
           <dl className="grid gap-3">
-            <div className="rounded-md bg-surface-sunken px-3 py-2.5">
-              <dt className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-                Visitor asked
-              </dt>
+            <div className="border-l-[3px] border-l-border-strong pl-3">
+              <dt className={EYEBROW_CLASS}>Visitor asked</dt>
               <dd className="mt-1 text-prose text-text-primary">{item.question}</dd>
             </div>
-            <div className="rounded-md bg-surface-sunken px-3 py-2.5">
-              <dt className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-                Chatbot answered
-              </dt>
+            <div className="border-l-[3px] border-l-border-strong pl-3">
+              <dt className={EYEBROW_CLASS}>Chatbot answered</dt>
               <dd className="mt-1 text-prose text-text-secondary">{item.answer}</dd>
             </div>
           </dl>

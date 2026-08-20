@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '../../ui';
 import { InvoiceDrawer } from './InvoiceDrawer';
 import type { InvoiceDetail, InvoiceRow } from '../revenue/types';
 
@@ -81,14 +82,33 @@ function mount(
   const full = detail(overrides);
   if (resolve) get.mockResolvedValue({ data: full });
   return render(
-    <MemoryRouter>
-      <InvoiceDrawer
-        invoiceId={full.id}
-        fallback={fallback ? full : null}
-        onOpenChange={vi.fn()}
-      />
-    </MemoryRouter>,
+    <TooltipProvider>
+      <MemoryRouter>
+        <InvoiceDrawer
+          invoiceId={full.id}
+          fallback={fallback ? full : null}
+          onOpenChange={vi.fn()}
+        />
+      </MemoryRouter>
+    </TooltipProvider>,
   );
+}
+
+/**
+ * The reason a disabled action gives for itself.
+ *
+ * A disabled button takes no pointer events, so the tooltip hangs on a
+ * focusable wrapper — which is also how a keyboard user reaches the reason at
+ * all. Focusing it is therefore the honest way to read it back.
+ */
+async function expectReason(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  reason: RegExp,
+): Promise<void> {
+  const wrapper = screen.getByRole('button', { name: label }).parentElement as HTMLElement;
+  await user.hover(wrapper);
+  expect(await screen.findByText(reason)).toBeInTheDocument();
 }
 
 describe('InvoiceDrawer', () => {
@@ -168,10 +188,15 @@ describe('InvoiceDrawer', () => {
       expect(dialog).toHaveTextContent(/marked refunded locally/i);
     });
 
+    /**
+     * The reason travels with the control. It used to be a bullet in an alert at
+     * the bottom of the scrolling body, 600px from the button it explained.
+     */
     it('is unavailable on an already-refunded document, and says why', async () => {
+      const user = userEvent.setup();
       mount({ status: 'refunded' });
       expect(screen.getByRole('button', { name: 'Refund' })).toBeDisabled();
-      expect(await screen.findByText(/Refund — Already refunded/)).toBeInTheDocument();
+      await expectReason(user, 'Refund', /Already refunded/);
     });
 
     it('keeps the confirmation open and shows the server’s refusal', async () => {
@@ -304,15 +329,17 @@ describe('InvoiceDrawer', () => {
     });
 
     it('will not offer to regenerate a legacy row that has no document', async () => {
+      const user = userEvent.setup();
       mount({ invoice_number: null, pdf_url: null });
       expect(screen.getByRole('button', { name: /regenerate pdf/i })).toBeDisabled();
-      expect(await screen.findByText(/Regenerate PDF — Legacy rows/)).toBeInTheDocument();
+      await expectReason(user, 'Regenerate PDF', /Legacy rows/);
     });
 
     it('will not offer to email a document with no rendered PDF', async () => {
+      const user = userEvent.setup();
       mount({ pdf_url: null });
       expect(screen.getByRole('button', { name: /resend email/i })).toBeDisabled();
-      expect(await screen.findByText(/Resend email — There is no rendered PDF/)).toBeInTheDocument();
+      await expectReason(user, 'Resend email', /There is no rendered PDF/);
     });
 
     it('resends the email when there is something to send', async () => {
@@ -343,7 +370,7 @@ describe('InvoiceDrawer', () => {
       }),
     );
     mount({}, { resolve: false });
-    expect(await screen.findByText('You cannot read this document')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
   });
 
   it('explains a failed read and offers the way back', async () => {

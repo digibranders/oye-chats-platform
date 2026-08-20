@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Badge, Card, CardBody, CardHeader, CopyField, buttonClass } from '../../ui';
+import { Badge, CopyField, SettingGroup, SettingRow, buttonClass } from '../../ui';
 import { useEntitlements } from '../../hooks/useEntitlements';
 
 /** Where questions that do not fit a self-serve flow land. */
@@ -19,40 +19,33 @@ export function ContactSection() {
   const priority = hasFeature('online_support');
 
   return (
-    <Card>
-      <CardHeader
-        title="Getting help"
-        titleAs="h2"
-        description="Bespoke integrations, custom pricing, or something that is simply not working."
-        actions={
-          <Badge tone={priority ? 'plan' : 'neutral'}>
-            {priority ? 'Priority support' : 'Email support'}
-          </Badge>
-        }
-      />
-      <CardBody className="space-y-4">
-        <p className="text-prose text-text-secondary">
-          {priority
-            ? 'Your plan includes priority support, so your email is answered ahead of the general queue.'
-            : 'Email support is included on every plan. Paid plans are answered ahead of the general queue.'}
-        </p>
+    <SettingGroup
+      title="Getting help"
+      actions={
+        <Badge tone={priority ? 'plan' : 'neutral'}>
+          {priority ? 'Priority support' : 'Email support'}
+        </Badge>
+      }
+    >
+      <SettingRow label="Support email" controlWidth="auto">
+        <CopyField className="w-64" compact value={CONTACT_EMAIL} label="support email address" />
+      </SettingRow>
 
-        <CopyField value={CONTACT_EMAIL} label="support email address" />
-
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('OyeChats support')}`}
-            className={buttonClass('primary', 'md')}
-          >
-            Email us
-          </a>
+      <SettingRow label="Email us" controlWidth="auto">
+        <div className="flex flex-wrap items-center gap-2">
           {!priority ? (
-            <Link to="/billing" className={buttonClass('secondary', 'md')}>
+            <Link to="/billing" className={buttonClass('ghost', 'sm')}>
               See what a plan includes
             </Link>
           ) : null}
+          <a
+            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('OyeChats support')}`}
+            className={buttonClass('secondary', 'sm')}
+          >
+            Email us
+          </a>
         </div>
-      </CardBody>
-    </Card>
+      </SettingRow>
+    </SettingGroup>
   );
 }

@@ -10,15 +10,15 @@ import {
   DataTable,
   EmptyState,
   LockedState,
+  LoadingRows,
+  PropertyGrid,
   Section,
-  SegmentedControl,
   Stack,
   Switch,
   formatDateTime,
   formatNumber,
   toast,
   type Column,
-  type SegmentedItem,
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
@@ -45,13 +45,6 @@ const PAGE_SIZE = 25;
 
 type View = 'deliveries' | 'registrations' | 'failed' | 'email';
 
-const VIEWS: SegmentedItem<string>[] = [
-  { value: 'deliveries', label: 'Deliveries' },
-  { value: 'registrations', label: 'Registrations' },
-  { value: 'failed', label: 'Failed billing events' },
-  { value: 'email', label: 'Email templates' },
-];
-
 function deliveryTone(delivery: WebhookDelivery): { tone: 'success' | 'warning' | 'danger' | 'neutral'; label: string } {
   if (delivery.delivered_at) return { tone: 'success', label: `Delivered · ${delivery.status_code ?? '2xx'}` };
   if (delivery.next_retry_at) return { tone: 'warning', label: `Retrying · attempt ${delivery.attempt}` };
@@ -60,10 +53,16 @@ function deliveryTone(delivery: WebhookDelivery): { tone: 'success' | 'warning' 
   return { tone: 'neutral', label: `Attempt ${delivery.attempt}` };
 }
 
-export function OutboundScreen() {
+/**
+ * The four outbound surfaces.
+ *
+ * `view` is a route, not a segmented control inside one: these are peers of
+ * Flags and Runtime, not children of a fifth thing, and the console had page
+ * title → tab row → segmented control → toolbar → table before the first row of
+ * data on every one of them.
+ */
+export function OutboundScreen({ view }: { view: View }) {
   const url = useUrlState();
-  const rawView = url.get('outbound', 'deliveries');
-  const view = (VIEWS.some((item) => item.value === rawView) ? rawView : 'deliveries') as View;
   const page = url.getNumber('page', 1);
 
   const deliveries = usePlatformList<WebhookDelivery>('/webhooks', { enabled: view === 'deliveries' });
@@ -137,14 +136,10 @@ export function OutboundScreen() {
     },
     {
       key: 'actions',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (row) => (
-        <Button
-          size="sm"
-          variant="danger"
-          onClick={() => setReplayDelivery(row)}
-        >
+        <Button size="sm" variant="ghost" onClick={() => setReplayDelivery(row)}>
           Replay
         </Button>
       ),
@@ -190,7 +185,7 @@ export function OutboundScreen() {
     },
     {
       key: 'actions',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (row) => (
         <span className="flex items-center justify-end gap-2">
@@ -251,12 +246,12 @@ export function OutboundScreen() {
     },
     {
       key: 'actions',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (row) => (
         <Button
           size="sm"
-          variant="danger"
+          variant="ghost"
           disabled={row.status === 'replayed' || row.provider !== 'razorpay'}
           onClick={() => setReplayFailed(row)}
         >
@@ -290,22 +285,11 @@ export function OutboundScreen() {
 
   return (
     <Stack>
-      <SegmentedControl
-        label="Outbound surface"
-        value={view}
-        onChange={(next) => url.set({ outbound: next === 'deliveries' ? null : next })}
-        items={VIEWS}
-      />
-
       {view === 'deliveries' ? (
         <Section
           title="Outbound deliveries"
-          description="The 500 most recent attempts. Retries run at 30s, 2m, 10m, 1h and 4h on their own."
+          description="The 500 most recent attempts. Retries run at 30s, 2m, 10m, 1h and 4h on their own; a replay is a repeat, and is how a downstream system charges twice."
         >
-          <Alert tone="warning" className="mb-3" title="A replay is a repeat, not a retry">
-            The customer's endpoint has already seen this event if an earlier attempt succeeded. Replaying is
-            how a downstream system charges, emails or provisions twice.
-          </Alert>
           <DataTable
             caption="Webhook delivery attempts"
             columns={deliveryColumns}
@@ -332,7 +316,7 @@ export function OutboundScreen() {
       {view === 'registrations' ? (
         <Section
           title="Customer registrations"
-          description="Endpoints customers registered themselves. The signing secret is never returned by the API, so it cannot be shown or recovered here."
+          description="Registered by customers themselves. The signing secret is never returned by the API."
         >
           <DataTable
             caption="Webhook registrations"
@@ -360,13 +344,8 @@ export function OutboundScreen() {
       {view === 'failed' ? (
         <Section
           title="Dead-lettered billing events"
-          description="Inbound Razorpay events whose processing failed. The raw payload, signature and headers are never returned — only the metadata needed to triage."
+          description="Inbound Razorpay events whose processing failed. Replaying re-runs the money path: idempotency protects our ledger, not what the event triggers elsewhere."
         >
-          <Alert tone="warning" className="mb-3" title="Replaying re-runs the money path">
-            The stored payload is re-verified against the webhook secret and dispatched to the billing
-            handler again. Idempotency on the provider event id protects our ledger from a double write; it
-            does not protect anything the event triggers elsewhere.
-          </Alert>
           <DataTable
             caption="Failed billing webhooks"
             columns={failedColumns}
@@ -393,12 +372,12 @@ export function OutboundScreen() {
       {view === 'email' ? (
         <Section
           title="Transactional email"
-          description="The catalogue is generated from the constants in email_service, so it cannot drift from what the platform actually sends."
+          description="Names and triggers only — the bodies live in Brevo."
         >
           {email.loading && !email.data ? (
             <Card>
               <CardBody>
-                <EmptyState compact title="Loading templates" description="Reading the catalogue from the API." />
+                <LoadingRows rows={5} />
               </CardBody>
             </Card>
           ) : email.error && !email.data ? (
@@ -426,27 +405,24 @@ export function OutboundScreen() {
                     </Badge>
                   }
                 />
-                <CardBody className="grid gap-4 sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs text-text-tertiary">From address</p>
-                    <p className="figure mt-0.5 text-sm text-text-primary">{email.data.from_address ?? '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-text-tertiary">From name</p>
-                    <p className="mt-0.5 text-sm text-text-primary">{email.data.from_name ?? '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-text-tertiary">Templates</p>
-                    <p className="figure mt-0.5 text-sm text-text-primary">
-                      {formatNumber(email.data.templates.length)}
-                    </p>
-                  </div>
-                </CardBody>
-                <CardBody className="border-t border-border">
-                  <p className="text-xs text-text-secondary">
-                    The template bodies live in Brevo, not here — this console can name every template the
-                    platform sends and say what triggers it, but it cannot read or edit the content.
-                  </p>
+                <CardBody>
+                  <PropertyGrid
+                    columns={2}
+                    density="compact"
+                    items={[
+                      {
+                        label: 'From address',
+                        value: <span className="figure">{email.data.from_address}</span>,
+                      },
+                      { label: 'From name', value: email.data.from_name },
+                      {
+                        label: 'Templates',
+                        value: (
+                          <span className="figure">{formatNumber(email.data.templates.length)}</span>
+                        ),
+                      },
+                    ]}
+                  />
                 </CardBody>
               </Card>
 

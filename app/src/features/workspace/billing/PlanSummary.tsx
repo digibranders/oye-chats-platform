@@ -1,6 +1,5 @@
-import { ArrowUpRight, Bot as BotIcon, Users } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import {
-  ABSENT,
   Badge,
   Button,
   Card,
@@ -9,6 +8,8 @@ import {
   CardHeader,
   CardSection,
   Meter,
+  SettingRow,
+  StatRow,
   formatNumber,
 } from '../../../ui';
 import {
@@ -55,6 +56,13 @@ export interface PlanSummaryProps {
  * the overage rate, the trial length, the chatbot allowance, and - when the
  * display currency is not the charge currency - the amount that will actually
  * be debited.
+ *
+ * The four headline figures are a `StatRow`. They used to be four hand-rolled
+ * copies of `StatTile` — the same `mt-1.5`, the same `leading-tight` — but at
+ * `text-2xl` where the credits figures 400px below were `text-xl`, so two
+ * figure sizes shipped for peers on one page. The allowances below are two
+ * `SettingRow`s, not two half-cards each with an icon, an `h3`, a meter, a
+ * 25-word paragraph and a button.
  */
 export function PlanSummary({
   subscription,
@@ -91,11 +99,7 @@ export function PlanSummary({
           </span>
         }
         titleAs="h2"
-        description={
-          plan
-            ? `Billed ${cycle === 'annual' ? 'yearly' : 'monthly'}.`
-            : 'This workspace has no paid subscription.'
-        }
+        description={plan ? undefined : 'This workspace has no paid subscription.'}
         actions={
           <>
             {subscription.cancelAtPeriodEnd ? (
@@ -103,64 +107,60 @@ export function PlanSummary({
                 Keep my plan
               </Button>
             ) : null}
-            <Button size="sm" variant={subscription.cancelAtPeriodEnd ? 'secondary' : 'primary'} onClick={onChangePlan}>
+            <Button
+              size="sm"
+              variant={subscription.cancelAtPeriodEnd ? 'secondary' : 'primary'}
+              onClick={onChangePlan}
+            >
               {plan?.isPaid ? 'Change plan' : 'Choose a plan'}
             </Button>
           </>
         }
       />
 
-      <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <div>
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-            {cycle === 'annual' ? 'Per year' : 'Per month'}
-          </p>
-          <p className="figure mt-1.5 text-2xl font-semibold leading-tight text-text-primary">
-            {price ? formatMoneyMinor(price.displayMinor, price.displayCurrency) : ABSENT}
-          </p>
-          <p className="mt-1 text-xs text-text-tertiary">
-            {price?.crossCurrency
-              ? `Shown in ${price.displayCurrency}, charged in ${price.chargeCurrency}`
-              : `Charged in ${CHARGE_CURRENCY}`}
-          </p>
-        </div>
-        <div>
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-            {renewal.caption}
-          </p>
-          <p className="figure mt-1.5 text-2xl font-semibold leading-tight text-text-primary">
-            {renewal.label}
-          </p>
-          <p className="mt-1 text-xs text-text-tertiary">
-            {subscription.cancelAtPeriodEnd
-              ? 'Then the workspace drops to Free'
-              : trialOffer && subscription.status === 'trialing'
-                ? trialOffer
-                : 'Renews automatically'}
-          </p>
-        </div>
-        <div>
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-            Credits included
-          </p>
-          <p className="figure mt-1.5 text-2xl font-semibold leading-tight text-text-primary">
-            {plan ? formatCredits(plan.creditsPerMonth) : ABSENT}
-          </p>
-          <p className="mt-1 text-xs text-text-tertiary">Granted every month</p>
-        </div>
-        <div>
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-            Extra credits
-          </p>
-          <p className="figure mt-1.5 text-2xl font-semibold leading-tight text-text-primary">
-            {overage ? formatMoneyMinor(plan?.overageRateMinor ?? 0, CHARGE_CURRENCY) : ABSENT}
-          </p>
-          <p className="mt-1 text-xs text-text-tertiary">
-            {overage
-              ? 'Per credit past your allowance'
-              : 'This plan does not bill for overage; buy a top-up instead'}
-          </p>
-        </div>
+      <CardBody flush>
+        <StatRow
+          label="Your plan at a glance"
+          columns={4}
+          period={cycle === 'annual' ? 'Billed yearly' : 'Billed monthly'}
+          items={[
+            {
+              label: 'Price',
+              value: price
+                ? formatMoneyMinor(price.displayMinor, price.displayCurrency)
+                : undefined,
+              period: cycle === 'annual' ? 'Per year' : 'Per month',
+              size: 'lg',
+              // Only when the two currencies genuinely differ. "Charged in INR"
+              // under a price already printed in INR is a line of type carrying
+              // nothing.
+              hint: price?.crossCurrency ? `Charged in ${price.chargeCurrency}` : undefined,
+            },
+            {
+              label: renewal.caption,
+              value: renewal.label,
+              size: 'lg',
+              period: subscription.cancelAtPeriodEnd
+                ? 'Then the workspace drops to Free'
+                : trialOffer && subscription.status === 'trialing'
+                  ? trialOffer
+                  : 'Renews automatically',
+            },
+            {
+              label: 'Credits included',
+              value: plan ? formatCredits(plan.creditsPerMonth) : undefined,
+              size: 'lg',
+            },
+            {
+              label: 'Extra credits',
+              value: overage
+                ? formatMoneyMinor(plan?.overageRateMinor ?? 0, CHARGE_CURRENCY)
+                : undefined,
+              size: 'lg',
+              period: overage ? undefined : 'No overage — buy a top-up',
+            },
+          ]}
+        />
       </CardBody>
 
       {disclosure ? (
@@ -169,82 +169,79 @@ export function PlanSummary({
         </CardSection>
       ) : null}
 
-      <CardSection>
-        <div className="grid gap-6 sm:grid-cols-2">
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <BotIcon aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
-              <h3 className="text-base font-medium text-text-primary">Chatbots</h3>
-            </div>
-            {agentQuota === undefined ? (
-              <p className="text-xs text-text-secondary">
-                This plan declares no chatbot allowance. Contact support before adding another.
-              </p>
-            ) : agentQuota === UNLIMITED_LIMIT ? (
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xs text-text-secondary">In this workspace</span>
-                <span className="figure text-xs font-medium text-text-primary">
-                  {formatNumber(agentsUsed)}{' '}
-                  <span className="text-text-tertiary">of unlimited</span>
-                </span>
-              </div>
-            ) : (
-              <Meter label="Chatbots in use" used={agentsUsed} limit={agentQuota} />
-            )}
-            <p className="mt-2 text-xs leading-snug text-text-secondary">
-              {formatAgentAllowance(plan)} on this plan. Each additional chatbot is funded by its
-              own subscription rather than a seat on this one.
-            </p>
-            <Button size="sm" variant="secondary" className="mt-3" onClick={onAddChatbot}>
-              Add a chatbot
-              <ArrowUpRight aria-hidden className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Users aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
-              <h3 className="text-base font-medium text-text-primary">Operator seats</h3>
-            </div>
-            {seatQuota === UNLIMITED_LIMIT ? (
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xs text-text-secondary">Seats in use</span>
-                <span className="figure text-xs font-medium text-text-primary">
-                  {formatNumber(seatsUsed)} <span className="text-text-tertiary">of unlimited</span>
-                </span>
-              </div>
+      <CardBody flush>
+        <SettingRow
+          label="Chatbots"
+          description={
+            agentQuota === undefined
+              ? 'This plan declares no chatbot allowance — ask support before adding another.'
+              : `${formatAgentAllowance(plan)}. Each extra chatbot has its own subscription.`
+          }
+          controlWidth="auto"
+        >
+          <div className="flex w-full items-center justify-end gap-3">
+            {agentQuota === undefined ? null : agentQuota === UNLIMITED_LIMIT ? (
+              <span className="figure text-sm font-medium text-text-primary">
+                {formatNumber(agentsUsed)} <span className="text-text-tertiary">of unlimited</span>
+              </span>
             ) : (
               <Meter
-                label="Seats in use"
+                className="w-40"
+                label="In use"
+                size="sm"
+                used={agentsUsed}
+                limit={agentQuota}
+              />
+            )}
+            <Button size="sm" variant="secondary" onClick={onAddChatbot}>
+              Add
+              <ArrowUpRight aria-hidden />
+            </Button>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Operator seats"
+          description={
+            plan && plan.extraSeatPriceMinor > 0 && seatQuota !== UNLIMITED_LIMIT
+              ? `${formatSeatAllowance(seatQuota)} included, then ${formatMoneyMinor(plan.extraSeatPriceMinor, CHARGE_CURRENCY)} each per month.`
+              : `${formatSeatAllowance(seatQuota)} included.`
+          }
+          controlWidth="auto"
+        >
+          <div className="flex w-full items-center justify-end gap-3">
+            {seatQuota === UNLIMITED_LIMIT ? (
+              <span className="figure text-sm font-medium text-text-primary">
+                {formatNumber(seatsUsed)} <span className="text-text-tertiary">of unlimited</span>
+              </span>
+            ) : (
+              <Meter
+                className="w-40"
+                label="In use"
+                size="sm"
                 used={seatsUsed}
                 limit={Math.max(subscription.seats, seatQuota)}
               />
             )}
-            <p className="mt-2 text-xs leading-snug text-text-secondary">
-              {formatSeatAllowance(seatQuota)} included
-              {plan && plan.extraSeatPriceMinor > 0 && seatQuota !== UNLIMITED_LIMIT
-                ? `, then ${formatMoneyMinor(plan.extraSeatPriceMinor, CHARGE_CURRENCY)} per extra seat each month.`
-                : '.'}
-            </p>
             <Button
               size="sm"
               variant="secondary"
-              className="mt-3"
               onClick={onManageSeats}
               disabled={!subscription.hasActive}
             >
-              Manage seats
+              Manage
             </Button>
           </div>
-        </div>
-      </CardSection>
+        </SettingRow>
+      </CardBody>
 
       {subscription.hasActive && !subscription.cancelAtPeriodEnd ? (
         <CardFooter className="justify-between">
+          {/* The cancellation consequence lives in `CancelSubscriptionDialog`,
+              with the real date in it. Repeating it here put the same sentence
+              beside the button that opens the dialog that says it. */}
           <p className="text-xs text-text-secondary">
-            {trialOffer && subscription.status === 'trialing'
-              ? `You are on a ${trialOffer.toLowerCase()}. No card has been charged yet.`
-              : 'Cancelling keeps your plan until the end of the period you have paid for.'}
+            {trialOffer && subscription.status === 'trialing' ? 'Trial — no card charged yet.' : ''}
           </p>
           <Button size="sm" variant="danger" onClick={onCancel}>
             Cancel subscription

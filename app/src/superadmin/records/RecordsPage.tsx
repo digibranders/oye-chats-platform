@@ -1,67 +1,74 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { TabPanel, Tabs } from '../../ui';
+import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
-import { useUrlState } from '../usePlatform';
-import { AudienceTab } from './AudienceTab';
+import { PLATFORM_ROOT } from '../nav';
+import { GrowthEventsTab, VisitorsTab } from './AudienceTab';
 import { BotDetailPage, ChatbotsTab } from './ChatbotsTab';
-import { ConversationsTab, SessionDetailPage } from './ConversationsTab';
-import { EngagementTab } from './EngagementTab';
-import { FeedbackTab } from './FeedbackTab';
-import { KnowledgeTab } from './KnowledgeTab';
+import { ConversationsTab, LiveQueueTab, SessionDetailPage } from './ConversationsTab';
+import {
+  LeadsTab,
+  MeetingsTab,
+  OfflineMessagesTab,
+  QualificationTab,
+} from './EngagementTab';
+import { ChatRatingsTab, ProductFeedbackTab } from './FeedbackTab';
+import { CrawlsTab, DocumentsTab } from './KnowledgeTab';
 
+const BASE = `${PLATFORM_ROOT}/records`;
+
+/**
+ * Every record list, in one flat row.
+ *
+ * It used to be six tabs, four of which then drew a `SegmentedControl` for their
+ * own two-to-four sub-views: page title → tab row → segmented control → toolbar
+ * → table was four bands and about 230px of chrome above the first row of data,
+ * on a surface whose entire job is scanning rows. There are thirteen
+ * destinations here and thirteen is a tab row — `NavTabs` scrolls rather than
+ * wraps — so each is one click and one address instead of two of each.
+ */
 const TABS = [
-  { value: 'chatbots', label: 'Chatbots' },
-  { value: 'knowledge', label: 'Knowledge' },
-  { value: 'conversations', label: 'Conversations' },
-  { value: 'engagement', label: 'Leads & follow-up' },
-  { value: 'audience', label: 'Audience' },
-  { value: 'feedback', label: 'Feedback' },
+  { to: BASE, label: 'Chatbots', end: true },
+  { to: `${BASE}/knowledge`, label: 'Documents' },
+  { to: `${BASE}/crawls`, label: 'Crawls' },
+  { to: `${BASE}/conversations`, label: 'Conversations' },
+  { to: `${BASE}/queue`, label: 'Live queue' },
+  { to: `${BASE}/leads`, label: 'Leads' },
+  { to: `${BASE}/offline`, label: 'Offline' },
+  { to: `${BASE}/meetings`, label: 'Meetings' },
+  { to: `${BASE}/qualification`, label: 'Qualification' },
+  { to: `${BASE}/visitors`, label: 'Visitors' },
+  { to: `${BASE}/growth`, label: 'Growth' },
+  { to: `${BASE}/feedback`, label: 'Feedback' },
+  { to: `${BASE}/ratings`, label: 'Ratings' },
 ];
 
-/** Filter keys owned by one tab. Cleared on a tab change so a stale filter cannot follow the reader. */
-const SCOPED_FILTERS = {
-  q: null,
-  view: null,
-  state: null,
-  source: null,
-  status: null,
-  client_id: null,
-  bot_id: null,
-  session_id: null,
-  dimension: null,
-  type: null,
-  area: null,
-  severity: null,
-  rating: null,
-  sort: null,
-};
-
+/**
+ * The records index.
+ *
+ * A route per list rather than a tab in the query string, which also retires the
+ * hand-maintained list of "filter keys owned by one tab" that had to be cleared
+ * on every switch: a link to another view carries no query string, so no filter
+ * can follow the reader into a list it does not belong to.
+ */
 function RecordsIndex() {
-  const url = useUrlState();
-  const tab = url.get('tab', 'chatbots');
-
   return (
-    <PlatformPage
-      title="Records"
-      description="Every object a customer owns: chatbots, the knowledge behind them, and everything their visitors produced."
-    >
-      <Tabs
-        label="Record types"
-        items={TABS}
-        value={tab}
-        onValueChange={(next) => url.set({ ...SCOPED_FILTERS, tab: next })}
-      >
-        {/* Only the selected panel's body is mounted: rendering all six would
-            fire a dozen requests on load for lists nobody is looking at. */}
-        <TabPanel value="chatbots">{tab === 'chatbots' ? <ChatbotsTab /> : null}</TabPanel>
-        <TabPanel value="knowledge">{tab === 'knowledge' ? <KnowledgeTab /> : null}</TabPanel>
-        <TabPanel value="conversations">
-          {tab === 'conversations' ? <ConversationsTab /> : null}
-        </TabPanel>
-        <TabPanel value="engagement">{tab === 'engagement' ? <EngagementTab /> : null}</TabPanel>
-        <TabPanel value="audience">{tab === 'audience' ? <AudienceTab /> : null}</TabPanel>
-        <TabPanel value="feedback">{tab === 'feedback' ? <FeedbackTab /> : null}</TabPanel>
-      </Tabs>
+    <PlatformPage title="Records" toolbarBleed toolbar={<NavTabs label="Record types" items={TABS} />}>
+      <Routes>
+        <Route index element={<ChatbotsTab />} />
+        <Route path="knowledge" element={<DocumentsTab />} />
+        <Route path="crawls" element={<CrawlsTab />} />
+        <Route path="conversations" element={<ConversationsTab />} />
+        <Route path="queue" element={<LiveQueueTab />} />
+        <Route path="leads" element={<LeadsTab />} />
+        <Route path="offline" element={<OfflineMessagesTab />} />
+        <Route path="meetings" element={<MeetingsTab />} />
+        <Route path="qualification" element={<QualificationTab />} />
+        <Route path="visitors" element={<VisitorsTab />} />
+        <Route path="growth" element={<GrowthEventsTab />} />
+        <Route path="feedback" element={<ProductFeedbackTab />} />
+        <Route path="ratings" element={<ChatRatingsTab />} />
+        <Route path="*" element={<Navigate to={BASE} replace />} />
+      </Routes>
     </PlatformPage>
   );
 }
@@ -69,19 +76,19 @@ function RecordsIndex() {
 /**
  * The Data section.
  *
- * Fourteen endpoints, grouped into six by the question they answer rather than
- * by the router file they live in — a rail entry each would have made the
- * navigation longer than the work. Two of them earn their own route because
- * their answer is something one super-admin sends to another: a chatbot, and a
- * conversation.
+ * Fourteen endpoints, grouped by the question they answer rather than by the
+ * router file they live in — a rail entry each would have made the navigation
+ * longer than the work. Two of them earn their own route because their answer is
+ * something one super-admin sends to another: a chatbot, and a conversation.
  */
 export function RecordsPage() {
   return (
     <Routes>
-      <Route index element={<RecordsIndex />} />
       <Route path="bots/:botId" element={<BotDetailPage />} />
       <Route path="sessions/:sessionId" element={<SessionDetailPage />} />
-      <Route path="*" element={<Navigate to="." replace />} />
+      {/* The splat, so the index's own `Routes` resolves against what is left of
+          the path rather than against an already-consumed segment. */}
+      <Route path="*" element={<RecordsIndex />} />
     </Routes>
   );
 }

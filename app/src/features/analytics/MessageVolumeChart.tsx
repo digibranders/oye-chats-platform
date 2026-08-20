@@ -10,10 +10,13 @@ import {
 } from 'recharts';
 import {
   CHART_AXIS,
+  CHART_CURSOR,
   CHART_GRID,
   CHART_MARGIN,
+  ChartDataTable,
   ChartFrame,
   ChartLegend,
+  ChartTooltip,
   formatCompact,
   formatNumber,
 } from '../../ui';
@@ -37,14 +40,14 @@ const PREVIOUS_SERIES = 7;
 function VolumeTooltip({ active, payload, label }: TooltipProps<number, string>) {
   if (!active || !payload || payload.length === 0) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-2.5 py-2 shadow-md">
-      <p className="text-2xs text-text-tertiary">{label}</p>
-      {payload.map((entry) => (
-        <p key={String(entry.dataKey)} className="figure text-xs text-text-primary">
-          {entry.name}: {formatNumber(typeof entry.value === 'number' ? entry.value : null)}
-        </p>
-      ))}
-    </div>
+    <ChartTooltip
+      label={label}
+      rows={payload.map((entry) => ({
+        name: String(entry.name ?? entry.dataKey),
+        value: formatNumber(typeof entry.value === 'number' ? entry.value : null),
+        seriesIndex: entry.dataKey === 'previous' ? PREVIOUS_SERIES : CURRENT_SERIES,
+      }))}
+    />
   );
 }
 
@@ -81,96 +84,30 @@ function buildSummary(props: MessageVolumeChartProps): string {
 export function MessageVolumeChart(props: MessageVolumeChartProps) {
   const { points, comparisonLabel, loading = false, error = null, onRetry } = props;
   const hasComparison = points.some((point) => point.previous !== null);
+  // A `LineChart` with one datum and `dot={false}` draws nothing at all, so a
+  // single-day window used to paint a 260px box of gridlines under a heading
+  // promising a trend. Two points is the floor for a line — the sibling
+  // feedback chart already says so, and the two disagreed.
+  const plottable = points.length >= 2 && props.total > 0;
 
   return (
-    <div>
-      <ChartFrame
-        height={260}
-        loading={loading}
-        error={error}
-        onRetry={onRetry}
-        empty={points.length === 0 || props.total === 0}
-        emptyTitle="No messages in this period"
-        emptyDescription="Nobody sent the chatbot anything in this window. Try a wider period, or check that the widget is still on your site."
-        summary={buildSummary(props)}
-        dataTable={
-          <table className="w-full text-left text-xs">
-            <caption className="sr-only">Messages per day, with the previous period</caption>
-            <thead>
-              <tr className="text-text-tertiary">
-                <th scope="col" className="py-1 pr-4 font-medium">
-                  Day
-                </th>
-                <th scope="col" className="py-1 pr-4 font-medium">
-                  Messages
-                </th>
-                {hasComparison ? (
-                  <th scope="col" className="py-1 font-medium">
-                    Previous period
-                  </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {points.map((point) => (
-                <tr key={point.date} className="border-t border-border">
-                  <th scope="row" className="py-1 pr-4 font-normal text-text-secondary">
-                    {point.label}
-                  </th>
-                  <td className="figure py-1 pr-4 text-text-primary">
-                    {formatNumber(point.messages)}
-                  </td>
-                  {hasComparison ? (
-                    <td className="figure py-1 text-text-secondary">
-                      {formatNumber(point.previous)}
-                    </td>
-                  ) : null}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        }
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={[...points]} margin={CHART_MARGIN}>
-            <CartesianGrid {...CHART_GRID} />
-            <XAxis dataKey="label" {...CHART_AXIS} minTickGap={24} />
-            <YAxis
-              {...CHART_AXIS}
-              width={44}
-              allowDecimals={false}
-              tickFormatter={(value: number) => formatCompact(value)}
-            />
-            <Tooltip content={<VolumeTooltip />} />
-            {hasComparison ? (
-              <Line
-                type="monotone"
-                dataKey="previous"
-                name={comparisonLabel ?? 'Previous period'}
-                stroke={seriesColor(PREVIOUS_SERIES)}
-                strokeDasharray={seriesDash(4)}
-                strokeWidth={1.5}
-                dot={false}
-                connectNulls={false}
-                isAnimationActive={false}
-              />
-            ) : null}
-            <Line
-              type="monotone"
-              dataKey="messages"
-              name="This period"
-              stroke={seriesColor(CURRENT_SERIES)}
-              strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartFrame>
-
-      {points.length > 0 && props.total > 0 ? (
+    <ChartFrame
+      height={260}
+      loading={loading}
+      error={error}
+      onRetry={onRetry}
+      empty={!plottable}
+      emptyTitle={
+        points.length === 1 ? 'Not enough days to plot' : 'No messages in this period'
+      }
+      emptyDescription={
+        points.length === 1
+          ? 'A line needs more than one day. The figures above already state this day’s total.'
+          : 'Nobody sent the chatbot anything in this window. Try a wider period, or check that the widget is still on your site.'
+      }
+      summary={buildSummary(props)}
+      legend={
         <ChartLegend
-          className="mt-3"
           items={
             hasComparison
               ? [
@@ -180,7 +117,61 @@ export function MessageVolumeChart(props: MessageVolumeChartProps) {
               : [{ label: 'This period', seriesIndex: CURRENT_SERIES }]
           }
         />
-      ) : null}
-    </div>
+      }
+      dataTable={
+        <ChartDataTable
+          caption="Messages per day, with the previous period"
+          columns={[
+            { key: 'day', header: 'Day' },
+            { key: 'messages', header: 'Messages', numeric: true },
+            ...(hasComparison
+              ? [{ key: 'previous', header: 'Previous period', numeric: true }]
+              : []),
+          ]}
+          rowKey={(_row, index) => points[index].date}
+          rows={points.map((point) => ({
+            day: point.label,
+            messages: formatNumber(point.messages),
+            previous: formatNumber(point.previous),
+          }))}
+        />
+      }
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={[...points]} margin={CHART_MARGIN}>
+          <CartesianGrid {...CHART_GRID} />
+          <XAxis dataKey="label" {...CHART_AXIS} minTickGap={24} />
+          <YAxis
+            {...CHART_AXIS}
+            width={44}
+            allowDecimals={false}
+            tickFormatter={(value: number) => formatCompact(value)}
+          />
+          <Tooltip content={<VolumeTooltip />} cursor={CHART_CURSOR} />
+          {hasComparison ? (
+            <Line
+              type="monotone"
+              dataKey="previous"
+              name={comparisonLabel ?? 'Previous period'}
+              stroke={seriesColor(PREVIOUS_SERIES)}
+              strokeDasharray={seriesDash(4)}
+              strokeWidth={1.5}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          ) : null}
+          <Line
+            type="monotone"
+            dataKey="messages"
+            name="This period"
+            stroke={seriesColor(CURRENT_SERIES)}
+            strokeWidth={2}
+            dot={points.length < 3}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartFrame>
   );
 }

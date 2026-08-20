@@ -13,7 +13,7 @@ export interface AgentHealth {
   state: HealthState;
   /** One line, in the user's terms. */
   label: string;
-  /** Why it matters, for a surface with room to say so. */
+  /** Why it matters, in one clause, for a surface with room to say so. */
   detail: string;
   /** What to do about it, when there is something to do. */
   action?: { label: string; segment: string };
@@ -50,8 +50,7 @@ export function agentHealth(bot: Bot): AgentHealth {
     return {
       state: 'paused',
       label: 'Paused',
-      detail:
-        'It is not answering visitors. The widget stays on your site but stays silent until you resume it.',
+      detail: 'Not answering visitors.',
       tone: 'neutral',
       needsAttention: false,
     };
@@ -66,7 +65,7 @@ export function agentHealth(bot: Bot): AgentHealth {
     return {
       state: 'training',
       label: 'Training',
-      detail: 'It is reading your site now. This usually takes a few minutes.',
+      detail: 'Reading your site — a few minutes.',
       tone: 'neutral',
       needsAttention: false,
     };
@@ -77,8 +76,7 @@ export function agentHealth(bot: Bot): AgentHealth {
       ? {
           state: 'broken',
           label: 'Training failed',
-          detail:
-            'It could not read your site, so it has nothing to answer from. Try a different page, or upload documents instead.',
+          detail: 'Could not read your site. Nothing to answer from.',
           action: { label: 'Fix training', segment: 'knowledge' },
           tone: 'danger',
           needsAttention: true,
@@ -86,7 +84,7 @@ export function agentHealth(bot: Bot): AgentHealth {
       : {
           state: 'untrained',
           label: 'Nothing to answer from',
-          detail: 'Until it has something to read, it will tell visitors it does not know.',
+          detail: 'It will tell visitors it does not know.',
           action: { label: 'Add knowledge', segment: 'knowledge' },
           tone: 'warning',
           needsAttention: true,
@@ -99,8 +97,7 @@ export function agentHealth(bot: Bot): AgentHealth {
     return {
       state: 'stale',
       label: 'Answers may be out of date',
-      detail:
-        'It is still answering, but the last attempt to refresh its knowledge did not finish.',
+      detail: 'Still answering; the last refresh failed.',
       action: { label: 'Retry training', segment: 'knowledge' },
       tone: 'warning',
       needsAttention: true,
@@ -111,7 +108,7 @@ export function agentHealth(bot: Bot): AgentHealth {
     return {
       state: 'ready',
       label: 'Ready, not installed',
-      detail: 'It is trained and waiting. Visitors will not see it until the script is on your site.',
+      detail: 'Trained. Not on your site yet.',
       action: { label: 'Install it', segment: 'deploy' },
       tone: 'warning',
       needsAttention: true,
@@ -121,7 +118,7 @@ export function agentHealth(bot: Bot): AgentHealth {
   return {
     state: 'live',
     label: 'Live',
-    detail: 'Trained, installed and answering visitors.',
+    detail: 'Answering visitors.',
     tone: 'success',
     needsAttention: false,
   };

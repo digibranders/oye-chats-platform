@@ -1,7 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
-import ImpersonationBanner from '../components/ImpersonationBanner';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
@@ -62,28 +61,22 @@ export function ProtectedLayout() {
   }
 
   return (
-    <>
-      {/* Outside the provider tree: the bar needs no data context, and it must
-          survive a provider-level failure so the super-admin is never left
-          browsing someone else's Account without the warning. */}
-      <ImpersonationBanner />
-      <WorkspaceProvider>
-        <BotProvider>
-          <CrawlProvider>
-            {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
-                render prices in the account's charge currency (INR/USD). */}
-            <CurrencyProvider>
-              <NotificationProvider>
-                <EntitlementsProvider>
-                  <UpgradeModalProvider>
-                    <Outlet />
-                  </UpgradeModalProvider>
-                </EntitlementsProvider>
-              </NotificationProvider>
-            </CurrencyProvider>
-          </CrawlProvider>
-        </BotProvider>
-      </WorkspaceProvider>
-    </>
+    <WorkspaceProvider>
+      <BotProvider>
+        <CrawlProvider>
+          {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
+              render prices in the account's charge currency (INR/USD). */}
+          <CurrencyProvider>
+            <NotificationProvider>
+              <EntitlementsProvider>
+                <UpgradeModalProvider>
+                  <Outlet />
+                </UpgradeModalProvider>
+              </EntitlementsProvider>
+            </NotificationProvider>
+          </CurrencyProvider>
+        </CrawlProvider>
+      </BotProvider>
+    </WorkspaceProvider>
   );
 }

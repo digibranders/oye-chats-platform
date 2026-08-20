@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlanEditor } from './PlanEditor';
 import { UNLIMITED } from './plan-model';
@@ -69,18 +69,20 @@ function plan(overrides: Partial<Plan> = {}): Plan {
   };
 }
 
+/**
+ * A data router: the editor's save bar blocks navigation while the draft is
+ * dirty, and `useBlocker` exists only on one.
+ */
 function renderEditor(target: Plan | null = plan(), onSaved = vi.fn()) {
-  return render(
-    <MemoryRouter>
-      <PlanEditor
-        open
-        plan={target}
-        plans={[plan()]}
-        onOpenChange={vi.fn()}
-        onSaved={onSaved}
-      />
-    </MemoryRouter>,
-  );
+  const router = createMemoryRouter([
+    {
+      path: '/',
+      element: (
+        <PlanEditor open plan={target} plans={[plan()]} onOpenChange={vi.fn()} onSaved={onSaved} />
+      ),
+    },
+  ]);
+  return render(<RouterProvider router={router} />);
 }
 
 beforeEach(() => {
@@ -111,11 +113,20 @@ describe('PlanEditor', () => {
     expect(inputs.every((input) => input.value !== '-1')).toBe(true);
   });
 
-  it('sends nothing at all when nothing was edited', async () => {
+  /**
+   * A clean form offers no save at all. It used to offer one that fired a toast
+   * reading "nothing to save" — a toast confirms, it does not explain, and a
+   * form that looks saveable when it is not is the thing being fixed.
+   */
+  it('offers nothing to save until something is edited', async () => {
     const user = userEvent.setup();
     renderEditor();
-    await user.click(screen.getByRole('button', { name: 'Review and save' }));
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review and save' })).not.toBeInTheDocument();
+
+    const trial = screen.getByLabelText('Trial days');
+    await user.clear(trial);
+    await user.type(trial, '14');
+    expect(await screen.findByRole('button', { name: 'Review and save' })).toBeEnabled();
     expect(httpClient.put).not.toHaveBeenCalled();
   });
 
@@ -152,7 +163,10 @@ describe('PlanEditor', () => {
     await user.click(screen.getByRole('button', { name: 'Review and save' }));
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(await screen.findByText('This plan cannot be saved yet')).toBeInTheDocument();
+    // Named, not "some fields need attention": the reader can act on it without
+    // hunting six sections of a form.
+    expect(await screen.findByText(/Included operator seats —/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review and save' })).toBeDisabled();
     expect(httpClient.put).not.toHaveBeenCalled();
   });
 
@@ -204,7 +218,9 @@ describe('PlanEditor', () => {
 
   it('never offers to type the extra seat price, which the API fixes', () => {
     renderEditor();
-    expect(screen.queryByLabelText(/Extra seat price/i)).not.toBeInTheDocument();
+    // The only control bearing the name is the tooltip that explains why there
+    // is no field; there is no text box to type a seat price into.
+    expect(screen.queryByRole('textbox', { name: /Extra seat price/i })).not.toBeInTheDocument();
     expect(screen.getByText('Extra seat price')).toBeInTheDocument();
   });
 

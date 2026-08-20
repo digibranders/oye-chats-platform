@@ -43,10 +43,14 @@ function Probe() {
   return null;
 }
 
-function renderScreen(entry = '/platform/platform?view=outbound') {
+/** Each outbound surface is its own route now, so the view is a prop. */
+function renderScreen(
+  entry = '/platform/platform/deliveries',
+  view: 'deliveries' | 'registrations' | 'failed' | 'email' = 'deliveries',
+) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
-      <OutboundScreen />
+      <OutboundScreen view={view} />
       <Probe />
     </MemoryRouter>,
   );
@@ -74,7 +78,8 @@ describe('OutboundScreen', () => {
   it('says what a replay actually is, before any control is touched', async () => {
     respond({ '/superadmin/webhooks': [delivery(1)] });
     renderScreen();
-    expect(await screen.findByText('A replay is a repeat, not a retry')).toBeInTheDocument();
+    // One clause on the section, not a standing warning card above the table.
+    expect(await screen.findByText(/a replay is a repeat/)).toBeInTheDocument();
   });
 
   it('never replays on the first click', async () => {
@@ -148,20 +153,23 @@ describe('OutboundScreen', () => {
     respond({
       '/superadmin/webhooks': Array.from({ length: 60 }, (_, index) => delivery(index + 1)),
     });
-    renderScreen('/platform/platform?view=outbound&page=3');
+    renderScreen('/platform/platform/deliveries?page=3');
     expect(await screen.findByRole('navigation', { name: /pages/i })).toHaveTextContent('51–60 of 60');
   });
 
-  it('switches surface through the URL, and fetches only the surface on screen', async () => {
-    const user = userEvent.setup();
+  /**
+   * Each surface is a route, so only the one on screen fetches — the four used
+   * to hide behind a segmented control inside a tab inside a tab row.
+   */
+  it('fetches only the surface on screen', async () => {
     respond({ '/superadmin/webhooks': [delivery(1)], '/superadmin/failed-webhooks': [] });
-    renderScreen();
+    const deliveries = renderScreen();
     await screen.findByText('Outbound deliveries');
     expect(httpClient.get).toHaveBeenCalledWith('/superadmin/webhooks', { params: {} });
     expect(httpClient.get).not.toHaveBeenCalledWith('/superadmin/webhook-registrations', { params: {} });
+    deliveries.unmount();
 
-    await user.click(screen.getByRole('radio', { name: /Registrations/ }));
-    await waitFor(() => expect(currentSearch).toContain('outbound=registrations'));
+    renderScreen('/platform/platform/registrations', 'registrations');
     await waitFor(() =>
       expect(httpClient.get).toHaveBeenCalledWith('/superadmin/webhook-registrations', { params: {} }),
     );

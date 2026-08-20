@@ -7,14 +7,13 @@ import {
   CardHeader,
   EmptyState,
   ErrorState,
-  LoadingRows,
   LockedState,
+  RankedBars,
   buttonClass,
-  cn,
   formatNumber,
   formatPercent,
 } from '../../ui';
-import { funnelHasData, readFunnel, type FunnelStageView } from '../leads/leadModel';
+import { funnelHasData, readFunnel } from '../leads/leadModel';
 import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useQualificationFunnel } from './useAnalyticsData';
 import type { ResolvedRange } from './range';
@@ -27,38 +26,12 @@ import type { ResolvedRange } from './range';
  * empty state, so an outage read as "no funnel activity in this period yet" and
  * the reader had no reason to doubt it. It takes the page's range now, and a
  * failure says so and offers the way back.
+ *
+ * The stages are `RankedBars`, not a hand-drawn bar list. The version this
+ * replaces painted `bg-accent-50` on `bg-surface-sunken` — about 1.05:1, which
+ * means the bar the panel exists for could not be seen at all — at a bar height
+ * and row padding neither of its two neighbouring panels shared.
  */
-
-function FunnelRow({ stage }: { stage: FunnelStageView }) {
-  return (
-    <li className="flex items-center gap-3 border-t border-border px-5 py-3 first:border-t-0">
-      <div className="w-36 shrink-0">
-        <p className="text-sm font-medium text-text-primary">{stage.label}</p>
-        <p className="text-2xs text-text-tertiary">{stage.sublabel}</p>
-      </div>
-      <div className="relative h-6 min-w-0 flex-1 overflow-hidden rounded-sm bg-surface-sunken">
-        <div
-          aria-hidden
-          className="h-full rounded-sm bg-accent-50"
-          style={{ width: `${stage.widthPct}%` }}
-        />
-      </div>
-      <p className="figure w-20 shrink-0 text-right text-sm font-medium text-text-primary">
-        {formatNumber(stage.count)}
-      </p>
-      <p
-        className={cn(
-          'figure w-24 shrink-0 text-right text-xs',
-          stage.conversionFromPrev === null ? 'text-text-tertiary' : 'text-text-secondary',
-        )}
-      >
-        {stage.conversionFromPrev === null
-          ? 'Top of funnel'
-          : `${formatPercent(stage.conversionFromPrev / 100)} of previous`}
-      </p>
-    </li>
-  );
-}
 
 export interface FunnelPanelProps {
   botId: number | null;
@@ -98,12 +71,7 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
         description={`Where people drop off between a first visit and a booked call · ${range.label.toLowerCase()}`}
         actions={
           !planLocked && funnelHasData(stages) ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onExport}
-              iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-            >
+            <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
               Export
             </Button>
           ) : undefined
@@ -111,7 +79,7 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
       />
       {planLocked ? (
         <LockedState
-          compact
+          size="panel"
           title="Lead qualification is on Standard and above"
           description="Standard scores every conversation against budget, authority, need and timing, and this funnel shows you where the ones that matter fall out."
           action={
@@ -120,30 +88,40 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
             </Link>
           }
         />
-      ) : loading ? (
-        <CardBody>
-          <LoadingRows rows={6} />
-        </CardBody>
       ) : error ? (
         <ErrorState
-          compact
+          size="panel"
+          polite
           title="The funnel could not be loaded"
           description={errorMessage(error, 'The request for your qualification funnel failed.')}
           onRetry={() => void refetch()}
         />
-      ) : funnelHasData(stages) ? (
-        <ol>
-          {stages.map((stage) => (
-            <FunnelRow key={stage.key} stage={stage} />
-          ))}
-        </ol>
-      ) : (
+      ) : !loading && !funnelHasData(stages) ? (
         <EmptyState
-          compact
+          size="panel"
           icon={Filter}
           title="No funnel activity in this period"
           description="Nobody reached the chatbot in this window. Try a wider period, or check the widget is still installed."
         />
+      ) : (
+        <CardBody flush>
+          <RankedBars
+            label="Qualification funnel stages"
+            loading={loading}
+            loadingRows={stages.length || 5}
+            max={stages[0]?.count}
+            items={stages.map((stage) => ({
+              id: stage.key,
+              label: stage.label,
+              value: stage.count,
+              display: formatNumber(stage.count),
+              meta:
+                stage.conversionFromPrev === null
+                  ? stage.sublabel
+                  : `${stage.sublabel} · ${formatPercent(stage.conversionFromPrev / 100)} of previous`,
+            }))}
+          />
+        </CardBody>
       )}
     </Card>
   );

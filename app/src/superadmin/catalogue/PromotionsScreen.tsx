@@ -11,12 +11,16 @@ import {
   Drawer,
   EmptyState,
   Field,
+  FieldSet,
+  Grid,
   Input,
   LoadingRows,
   LockedState,
   Section,
+  SettingGroup,
+  SettingRow,
   Stack,
-  StatTile,
+  StatRow,
   Switch,
   formatDateTime,
   formatNumber,
@@ -25,6 +29,7 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
+import { PAGE_SIZE } from '../recordListState';
 import {
   emptyPromotionDraft,
   promotionDraftFrom,
@@ -52,7 +57,7 @@ const STATE_LABEL = {
   inactive: 'Paused',
 } as const;
 
-const PAGE_SIZE = 20;
+
 
 /**
  * Launch promotions.
@@ -225,7 +230,7 @@ export function PromotionsScreen() {
           </Button>
           <Button
             size="sm"
-            variant="danger"
+            variant="ghost"
             onClick={() => {
               setActionError(null);
               setRemoving(promotion);
@@ -288,12 +293,6 @@ export function PromotionsScreen() {
           {actionError}
         </Alert>
       ) : null}
-
-      <Alert tone="neutral" title="Pausing is safer than deleting">
-        Turning a campaign off freezes new redemptions instantly and keeps the per-campaign stats attached to
-        the subscriptions it created. Deleting nulls that link — the subscriptions survive, the attribution
-        does not.
-      </Alert>
 
       <Section
         title="Campaigns"
@@ -375,7 +374,7 @@ export function PromotionsScreen() {
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <Grid cols={2}>
             <Field label="Starts" required error={shown.starts_at} hint="Local time.">
               <Input
                 type="datetime-local"
@@ -413,14 +412,10 @@ export function PromotionsScreen() {
                 onChange={(event) => setDraft({ ...draft, max_redemptions: event.target.value })}
               />
             </Field>
-          </div>
+          </Grid>
 
-          <fieldset className="rounded-md border border-border px-3 py-3">
-            <legend className="px-1 text-base font-medium text-text-primary">Eligible plans</legend>
-            <p className="mb-2 text-xs text-text-secondary">
-              None selected means every plan. A plan id that does not exist is refused by the API.
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
+          <FieldSet legend="Eligible plans" hint="None selected means every plan.">
+            <div className="grid gap-2 @lg/page:grid-cols-2">
               {plans.items.map((plan) => (
                 <Checkbox
                   key={plan.id}
@@ -443,16 +438,18 @@ export function PromotionsScreen() {
                 </p>
               ) : null}
             </div>
-          </fieldset>
+          </FieldSet>
 
-          <div className="rounded-md border border-border bg-surface-sunken px-3 py-3">
-            <Switch
-              label="Active"
-              description="The pause switch. Off freezes new redemptions without touching the subscriptions already on it."
-              checked={draft.is_active}
-              onCheckedChange={(checked) => setDraft({ ...draft, is_active: checked })}
-            />
-          </div>
+          <SettingGroup>
+            <SettingRow label="Active" description="Off freezes new redemptions without touching the subscriptions already on it.">
+              <Switch
+                label="Active"
+                hideLabel
+                checked={draft.is_active}
+                onCheckedChange={(checked) => setDraft({ ...draft, is_active: checked })}
+              />
+            </SettingRow>
+          </SettingGroup>
         </div>
       </Dialog>
 
@@ -486,30 +483,32 @@ export function PromotionsScreen() {
           </Alert>
         ) : detail.data ? (
           <div className="flex flex-col gap-5">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatTile
-                label="Slots claimed"
-                value={formatNumber(detail.data.promotion.slots_claimed)}
-                period="At checkout"
-                hint="Claimed before the mandate authorises, so it leads the subscription count."
-              />
-              <StatTile
-                label="Subscriptions"
-                value={formatNumber(detail.data.promotion.stats?.subscriptions_created ?? 0)}
-                period="All time"
-              />
-              <StatTile
-                label="In the free period"
-                value={formatNumber(detail.data.promotion.stats?.in_free_period ?? 0)}
-                period="Right now"
-              />
-              <StatTile
-                label="Converted"
-                value={formatNumber(detail.data.promotion.stats?.converted ?? 0)}
-                period="All time"
-                hint="Still active and past the free window — a real charge has begun."
-              />
-            </div>
+            {/* One strip. The two hints under two of the four tiles wrapped to
+                a second line and left the row ending at two heights. */}
+            <StatRow
+              label="Campaign performance"
+              period="All time"
+              items={[
+                {
+                  label: 'Slots claimed',
+                  value: formatNumber(detail.data.promotion.slots_claimed),
+                  period: 'At checkout',
+                },
+                {
+                  label: 'Subscriptions',
+                  value: formatNumber(detail.data.promotion.stats?.subscriptions_created ?? 0),
+                },
+                {
+                  label: 'In the free period',
+                  value: formatNumber(detail.data.promotion.stats?.in_free_period ?? 0),
+                  period: 'Right now',
+                },
+                {
+                  label: 'Converted',
+                  value: formatNumber(detail.data.promotion.stats?.converted ?? 0),
+                },
+              ]}
+            />
 
             <DataTable
               caption="Campaign redemptions"
@@ -517,7 +516,7 @@ export function PromotionsScreen() {
               rows={detail.data.redemptions}
               rowKey={(row) => String(row.subscription_id)}
               rowLabel={(row) => row.client_name ?? `Client ${row.client_id}`}
-              pageSize={25}
+              pageSize={PAGE_SIZE}
               empty={
                 <EmptyState
                   title="Nobody has redeemed this yet"

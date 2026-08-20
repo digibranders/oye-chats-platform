@@ -1,6 +1,23 @@
 import { useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, buttonClass, Card, CardBody, CardHeader, ErrorState, Field, LockedState, Page, PageHeader, SaveBar, Select, Skeleton, Stack, Switch } from '../../../ui';
+import {
+  Badge,
+  Card,
+  CardBody,
+  CardHeader,
+  Columns,
+  ErrorState,
+  Field,
+  LockedState,
+  Page,
+  PageHeader,
+  SaveBar,
+  Select,
+  Skeleton,
+  Stack,
+  Switch,
+  buttonClass,
+} from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import {
@@ -15,7 +32,7 @@ import { TierOutcomesSection } from './TierOutcomesSection';
 import { SignalsSection } from './SignalsSection';
 import { LeadEnrichmentSection } from './LeadEnrichmentSection';
 import { FunnelSection } from './FunnelSection';
-import { FRAMEWORK_OPTIONS, frameworkLabel } from './qualification.config';
+import { FRAMEWORK_OPTIONS } from './qualification.config';
 import {
   type QualificationDraft,
   enrichmentChanged,
@@ -30,8 +47,6 @@ import { useTierOutcomes } from './useTierOutcomes';
 import { parseModel, validateModel } from './qualification.model';
 
 const TITLE = 'Qualification';
-const DESCRIPTION =
-  'How this chatbot scores the people it talks to, and what happens when one of them turns out to be worth calling.';
 
 /** The draft plus the server's framework catalog, loaded together. */
 interface QualificationLoad {
@@ -40,21 +55,38 @@ interface QualificationLoad {
   presets: Record<string, unknown>;
 }
 
+/** Two columns, the shape the page actually arrives in. */
 function QualificationSkeleton() {
   return (
-    <Page width="wide">
-      <PageHeader title={TITLE} description={DESCRIPTION} />
-      <Stack>
-        {[0, 1, 2].map((index) => (
-          <Card key={index}>
-            <CardBody className="space-y-3">
-              <Skeleton className="h-5 w-48" />
-              <Skeleton className="h-3 w-full max-w-md" />
-              <Skeleton className="h-16 w-full" />
-            </CardBody>
-          </Card>
-        ))}
-      </Stack>
+    <Page>
+      <PageHeader title={TITLE} />
+      <Columns
+        asideWidth="sm"
+        aside={
+          <Stack>
+            {[0, 1].map((index) => (
+              <Card key={index}>
+                <CardBody className="space-y-3">
+                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="h-24 w-full" />
+                </CardBody>
+              </Card>
+            ))}
+          </Stack>
+        }
+        main={
+          <Stack>
+            {[0, 1, 2].map((index) => (
+              <Card key={index}>
+                <CardBody className="space-y-3">
+                  <Skeleton className="h-5 w-48" />
+                  <Skeleton className="h-16 w-full" />
+                </CardBody>
+              </Card>
+            ))}
+          </Stack>
+        }
+      />
     </Page>
   );
 }
@@ -148,15 +180,14 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
 
   if (state.loadError) {
     return (
-      <Page width="wide">
-        <PageHeader title={TITLE} description={DESCRIPTION} />
-        <Card>
-          <ErrorState
-            title="We could not load this chatbot's qualification settings"
-            description={state.loadError}
-            onRetry={state.retry}
-          />
-        </Card>
+      <Page>
+        <PageHeader title={TITLE} />
+        <ErrorState
+          framed
+          title="We could not load this chatbot's qualification settings"
+          description={state.loadError}
+          onRetry={state.retry}
+        />
       </Page>
     );
   }
@@ -174,125 +205,132 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
   const configDisabled = !draft.enabled;
 
   return (
-    <Page width="wide">
+    <Page>
       <PageHeader
         title={TITLE}
-        description={DESCRIPTION}
-        actions={
-          <Link to="/leads" className={buttonClass('secondary', 'md')}>
-            See scored leads
-          </Link>
+        // The master switch governs the whole page, not one card, so it lives in
+        // the page header — with the state as a word beside it, because a bare
+        // toggle floating at the right of a card header names nothing.
+        description={
+          draft.enabled ? undefined : 'Scoring is off. Leads are still captured, but nothing is scored.'
         }
-      />
-
-      <Stack>
-        <Card>
-          <CardHeader
-            title="Lead scoring"
-            titleAs="h2"
-            description="While the chatbot answers questions it also listens for buying signals, and scores the conversation out of 100."
-            actions={
+        actions={
+          <>
+            {draft.enabled ? null : <Badge tone="neutral">Scoring off</Badge>}
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">{draft.enabled ? 'On' : 'Off'}</span>
               <Switch
                 checked={draft.enabled}
                 onCheckedChange={(next) => setDraft((previous) => ({ ...previous, enabled: next }))}
                 label="Score leads on this chatbot"
                 hideLabel
               />
-            }
-          />
-          <CardBody className="space-y-4">
-            {draft.enabled ? null : (
-              <p className="max-w-2xl text-prose text-text-secondary">
-                Scoring is off. Conversations are still saved and leads are still captured, but
-                nothing is scored, no tier is assigned, and no qualified-lead email or webhook can
-                fire.
-              </p>
-            )}
-            <div>
-              <Field
-                disabled={configDisabled}
-                label="Framework"
-                hint={
-                  FRAMEWORK_OPTIONS.find((option) => option.key === draft.framework)?.summary ??
-                  'Choosing a framework replaces the dimensions below with its recommended starting point.'
-                }
-                className="max-w-md"
-              >
-                <Select
-                  disabled={configDisabled}
-                  value={draft.framework}
-                  options={FRAMEWORK_OPTIONS.map((option) => ({
-                    value: option.key,
-                    label: option.label,
-                  }))}
-                  onChange={(event) => {
-                    const key = event.target.value;
-                    setDraft((previous) => {
-                      const preset = isRecord(value.presets[key])
-                        ? (value.presets[key] as Record<string, unknown>)
-                        : null;
-                      return {
-                        ...previous,
-                        framework: key,
-                        // Switching framework adopts that framework's model. A
-                        // MEDDIC bot keeping BANT's four dimensions would be
-                        // scored against dimensions its own prompt never asks
-                        // about.
-                        model: parseModel(preset, key, preset),
-                      };
-                    });
-                  }}
+            </span>
+            <Link to="/leads" className={buttonClass('secondary', 'sm')}>
+              Scored leads
+            </Link>
+          </>
+        }
+      />
+
+      <Stack>
+        <Columns
+          asideWidth="sm"
+          stickyAside
+          asideLabel="What this scoring produces"
+          main={
+            <Stack>
+              <Card>
+                <CardHeader
+                  title="Lead scoring"
+                  titleAs="h2"
+                  description="Scores each conversation out of 100."
                 />
-              </Field>
-              <p className="mt-3 text-xs text-text-secondary">
-                Currently scoring on <Badge tone="neutral">{frameworkLabel(draft.framework)}</Badge>{' '}
-                with <span className="figure">{draft.model.order.length}</span> dimensions.
-              </p>
-            </div>
-          </CardBody>
-        </Card>
+                <CardBody>
+                  <Field
+                    disabled={configDisabled}
+                    label="Framework"
+                    hint={
+                      FRAMEWORK_OPTIONS.find((option) => option.key === draft.framework)?.summary ??
+                      'Choosing a framework replaces the dimensions below.'
+                    }
+                    className="max-w-md"
+                  >
+                    <Select
+                      disabled={configDisabled}
+                      value={draft.framework}
+                      options={FRAMEWORK_OPTIONS.map((option) => ({
+                        value: option.key,
+                        label: option.label,
+                      }))}
+                      onChange={(event) => {
+                        const key = event.target.value;
+                        setDraft((previous) => {
+                          const preset = isRecord(value.presets[key])
+                            ? (value.presets[key] as Record<string, unknown>)
+                            : null;
+                          return {
+                            ...previous,
+                            framework: key,
+                            // Switching framework adopts that framework's model.
+                            // A MEDDIC bot keeping BANT's four dimensions would
+                            // be scored against dimensions its own prompt never
+                            // asks about.
+                            model: parseModel(preset, key, preset),
+                          };
+                        });
+                      }}
+                    />
+                  </Field>
+                </CardBody>
+              </Card>
 
-        <div className="flex flex-col gap-6">
-          <DimensionsSection
-            model={draft.model}
-            onChange={setModel}
-            validation={validation}
-            presetKeys={presetKeys}
-            disabled={configDisabled}
-          />
+              <DimensionsSection
+                model={draft.model}
+                onChange={setModel}
+                validation={validation}
+                presetKeys={presetKeys}
+                disabled={configDisabled}
+              />
 
-          <ThresholdsSection
-            thresholds={draft.model.thresholds}
-            onChange={setThresholds}
-            validation={validation}
-            disabled={configDisabled}
-          />
+              <ThresholdsSection
+                thresholds={draft.model.thresholds}
+                onChange={setThresholds}
+                validation={validation}
+                disabled={configDisabled}
+              />
 
-          <TierOutcomesSection
-            state={outcomes}
-            agentId={agentId}
-            webhooksAllowed={hasFeature('webhooks')}
-          />
+              <SignalsSection
+                model={draft.model}
+                onDecayChange={setDecay}
+                onBehavioralChange={setBehavioral}
+                validation={validation}
+                disabled={configDisabled}
+              />
+            </Stack>
+          }
+          aside={
+            <Stack>
+              {/* The receipt, beside the thresholds it grades. */}
+              <FunnelSection agentId={agentId} />
 
-          <SignalsSection
-            model={draft.model}
-            onDecayChange={setDecay}
-            onBehavioralChange={setBehavioral}
-            validation={validation}
-            disabled={configDisabled}
-          />
-        </div>
+              <TierOutcomesSection
+                state={outcomes}
+                agentId={agentId}
+                webhooksAllowed={hasFeature('webhooks')}
+              />
 
-        <LeadEnrichmentSection
-          emailVerificationEnabled={draft.emailVerificationEnabled}
-          onToggleEmailVerification={setEmailVerification}
-          emailVerificationPlanAllows={planIncludesEmailVerification(planSlug)}
-          companyLookupEnabled={draft.companyLookupEnabled}
-          onToggleCompanyLookup={setCompanyLookup}
-          companyLookupPlanAllows={planIncludesVisitorIntelligence(planSlug)}
+              <LeadEnrichmentSection
+                emailVerificationEnabled={draft.emailVerificationEnabled}
+                onToggleEmailVerification={setEmailVerification}
+                emailVerificationPlanAllows={planIncludesEmailVerification(planSlug)}
+                companyLookupEnabled={draft.companyLookupEnabled}
+                onToggleCompanyLookup={setCompanyLookup}
+                companyLookupPlanAllows={planIncludesVisitorIntelligence(planSlug)}
+              />
+            </Stack>
+          }
         />
-
-        <FunnelSection agentId={agentId} />
 
         <SaveBar
           dirty={state.dirty}
@@ -321,6 +359,12 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
  * the whole scoring model hidden behind a modal, and it answered none of the
  * three questions a customer actually has: what is the AI listening for, what
  * does a score have to reach, and who finds out when it does.
+ *
+ * **Two columns, because the evidence belongs beside the setting.** As eight
+ * stacked cards it ran about 4,000px, with `FunnelSection` — the receipt for the
+ * thresholds, and the file's own doc comment says so — roughly 2,500px below the
+ * thresholds it grades. You cannot tune a threshold you cannot see the result
+ * of.
  */
 export function QualificationPage() {
   const { agent, loading, error, refresh } = useAgent();
@@ -332,37 +376,38 @@ export function QualificationPage() {
 
   if (!agent) {
     return (
-      <Page width="wide">
+      <Page>
         <PageHeader title={TITLE} />
-        <Card>
-          <ErrorState
-            title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
-            description={
-              error
-                ? error.message || 'Something went wrong while loading this workspace.'
-                : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
-            }
-            onRetry={() => void refresh()}
-          />
-        </Card>
+        <ErrorState
+          framed
+          title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
+          description={
+            error
+              ? error.message || 'Something went wrong while loading this workspace.'
+              : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
+          }
+          onRetry={() => void refresh()}
+        />
       </Page>
     );
   }
 
   if (isFree || !hasFeature('bant')) {
     return (
-      <Page width="wide">
-        <PageHeader title={TITLE} description={DESCRIPTION} />
+      <Page>
+        <PageHeader title={TITLE} />
         <LockedState
           title="Lead scoring is not included on your plan"
-          description={`Your workspace is on ${planName || 'a plan'} without lead qualification, so conversations are saved but never scored. On Standard and above the chatbot works out how urgent a visitor's problem is, whether they can buy, and when — then emails you the ones worth calling.`}
+          description={`Your workspace is on ${planName || 'a plan'} without lead qualification. On Standard and above, the chatbot scores each visitor and emails you the ones worth calling.`}
           action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
               See plans
             </Link>
           }
           preview={
-            <div className="px-5 py-4">
+            // `px-6`, matching `LockedState`'s own body: at `px-5` the preview's
+            // left edge sat 4px inside the lock message's, in one bordered box.
+            <div className="px-6 py-5">
               <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
                 What you would configure
               </p>

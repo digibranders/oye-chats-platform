@@ -1,7 +1,27 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, buttonClass, Card, CardBody, ErrorState, formatNumber, Input, LoadingRows, LockedState, normalizeUrl, PropertyGrid, SaveBar, SettingGroup, SettingRow, Stack, toast, validateUrl, Columns } from '../../ui';
+import {
+  Alert,
+  Badge,
+  buttonClass,
+  Card,
+  CardBody,
+  ErrorState,
+  formatNumber,
+  Input,
+  LoadingRows,
+  LockedState,
+  normalizeUrl,
+  PropertyGrid,
+  SaveBar,
+  SettingGroup,
+  SettingRow,
+  Stack,
+  toast,
+  validateUrl,
+  Columns,
+} from '../../ui';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { keys } from '../../query/keys';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -51,7 +71,11 @@ export function GeneralPage() {
     staleTime: 60_000,
   });
 
-  const draft = useDraft<ProfileFields>({ name: '', company_name: '', website: '' });
+  const draft = useDraft<ProfileFields>({
+    name: '',
+    company_name: '',
+    website: '',
+  });
 
   // Adopt the server's copy exactly once per identity, during render rather
   // than in an effect. React's own "adjust state when a prop changes" pattern:

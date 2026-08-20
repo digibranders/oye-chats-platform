@@ -6,19 +6,17 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
-  CardBody,
-  CardHeader,
+  CardSection,
   CodeBlock,
   ConfirmDialog,
+  Columns,
   CopyField,
   Dialog,
   ErrorState,
   LoadingRows,
   LockedState,
-  PageHeader,
-  Section,
-  Stack,
+  SettingGroup,
+  SettingRow,
   buttonClass,
   toast,
 } from '../../ui';
@@ -83,137 +81,131 @@ export function ApiKeysPage() {
     },
   });
 
-  const header = (
-    <PageHeader
-      title="Developers"
-      description="One key authenticates every request your own software makes to OyeChats."
-    />
-  );
-
   const forbidden = isOperator || (apiKey.isError && statusOf(apiKey.error) === 403);
 
   if (forbidden) {
     return (
-      <>
-        {header}
-        <LockedState
-          title="Only the workspace owner can see the API key"
-          description="The key authenticates as the whole workspace, so it is not shown to team seats. Ask an owner if you need it."
-          action={
-            <Link to="/account" className={buttonClass('primary', 'md')}>
-              Go to your account
-            </Link>
-          }
-        />
-      </>
+      <LockedState
+        title="Only the workspace owner can see the API key"
+        description="The key authenticates as the whole workspace, so it is not shown to team seats."
+        action={
+          <Link to="/account" className={buttonClass('primary', 'md')}>
+            Go to your account
+          </Link>
+        }
+      />
     );
   }
 
   return (
     <>
-      {header}
-      <Stack>
-        <Card>
-          <CardHeader
-            eyebrow="Secret"
+      <Columns
+        asideWidth="sm"
+        asideLabel="On your plan"
+        main={
+          <SettingGroup
             title="Workspace API key"
-            titleAs="h2"
-            description="Send it as an X-API-Key header. Treat it like a password — anyone holding it can read and change everything in this workspace."
             actions={
               <Button
+                size="sm"
                 variant="secondary"
                 onClick={() => setConfirming(true)}
                 disabled={apiKey.isPending || apiKey.isError}
-                iconLeft={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}
+                iconLeft={<RefreshCw aria-hidden />}
               >
                 Rotate key
               </Button>
             }
-          />
-          <CardBody>
+          >
             {apiKey.isPending ? (
-              <LoadingRows rows={1} />
+              <div className="px-cell py-4">
+                <LoadingRows rows={1} />
+              </div>
             ) : apiKey.isError ? (
               <ErrorState
-                compact
+                size="panel"
                 title="We could not load your API key"
                 description={apiKey.error instanceof Error ? apiKey.error.message : undefined}
                 onRetry={() => void apiKey.refetch()}
               />
             ) : (
-              <>
+              <SettingRow
+                label="Current key"
+                description="Stored as a hash — rotate to get a new one."
+                controlWidth="auto"
+              >
                 {/* Deliberately not a `CopyField`: this is the mask, and the
                     only honest thing to do with a mask is show it. */}
-                <p className="text-xs text-text-secondary">Currently in use</p>
-                <p className="figure mt-1 text-base text-text-primary">
+                <span className="figure text-base text-text-primary">
                   {apiKey.data.api_key_masked}
-                </p>
-                <p className="mt-3 text-xs leading-relaxed text-text-secondary">
-                  We only ever store a hash of what you see here, so the full key cannot be shown
-                  again. If you have lost it, rotate it and copy the new one.
-                </p>
-              </>
+                </span>
+              </SettingRow>
             )}
-          </CardBody>
-        </Card>
 
-        <Section
-          title="Making a request"
-          description="Every endpoint takes the same header. There is nothing else to set up."
-        >
-          <Card>
-            <CardBody className="space-y-4">
-              <div>
-                <p className="text-base font-medium text-text-primary">Base URL</p>
-                <CopyField className="mt-1.5" value={getApiBaseUrl()} label="API base URL" />
-              </div>
+            <SettingRow label="Base URL" controlWidth="auto">
+              <CopyField className="w-64" compact value={getApiBaseUrl()} label="API base URL" />
+            </SettingRow>
+
+            <CardSection className="space-y-4">
               <CodeBlock
                 label="example request"
                 caption="Replace <endpoint> and paste your key"
                 code={`curl ${getApiBaseUrl()}/<endpoint> \\\n  -H "X-API-Key: <your-api-key>"`}
               />
+              {/* A genuine security note, and a band of the card that owns the
+                  code block rather than the sole content of a card body. */}
               <Alert tone="neutral">
-                A key belongs to the workspace, not to you. Rotating it is how you revoke access for
-                someone who has left — removing them from the team does not invalidate a key they
-                already copied.
+                Treat it like a password. Rotating is how you revoke access for someone who has left
+                — removing them from the team does not invalidate a key they already copied.
               </Alert>
-            </CardBody>
-          </Card>
-        </Section>
-
-        <Section
-          title="On your plan"
-          description="What the plan says about programmatic access and support."
-        >
-          <Card>
-            <CardBody className="space-y-3">
-              <PlanRow
-                label="API access"
-                included={hasFeature('api_access')}
-                includedText="Included. Build against the REST API with the key above."
-                excludedText="Not included on your plan. The key above still authenticates this dashboard, and the endpoints are not currently blocked — but API access is not something we support on this plan, so treat it as unsupported until you upgrade."
-              />
-              <PlanRow
-                label="Priority support"
-                included={hasFeature('online_support')}
-                includedText="Included. Your questions are answered ahead of the general queue."
-                excludedText="Not included on your plan. Email support is still available to everyone."
-              />
-              <PlanRow
-                label="Webhooks"
-                included={hasFeature('webhooks')}
-                includedText="Included. Register endpoints under Integrations to receive events."
-                excludedText="Not included on your plan. Webhooks are how you get told about a lead without polling."
-              />
-              <div className="pt-1">
-                <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                  Compare plans
-                </Link>
-              </div>
-            </CardBody>
-          </Card>
-        </Section>
-      </Stack>
+            </CardSection>
+          </SettingGroup>
+        }
+        aside={
+          <SettingGroup
+            title="On your plan"
+            actions={
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                Compare
+              </Link>
+            }
+          >
+            <SettingRow
+              label="API access"
+              description={
+                hasFeature('api_access')
+                  ? 'Build against the REST API with the key above.'
+                  : 'Unsupported on this plan.'
+              }
+              controlWidth="auto"
+            >
+              <PlanBadge included={hasFeature('api_access')} />
+            </SettingRow>
+            <SettingRow
+              label="Priority support"
+              description={
+                hasFeature('online_support')
+                  ? 'Answered ahead of the general queue.'
+                  : 'Email support is included on every plan.'
+              }
+              controlWidth="auto"
+            >
+              <PlanBadge included={hasFeature('online_support')} />
+            </SettingRow>
+            <SettingRow
+              label="Webhooks"
+              description={
+                hasFeature('webhooks')
+                  ? 'Register endpoints under Integrations.'
+                  : 'Push leads to your CRM without polling.'
+              }
+              controlWidth="auto"
+            >
+              <PlanBadge included={hasFeature('webhooks')} />
+            </SettingRow>
+          </SettingGroup>
+        }
+      />
 
       <ConfirmDialog
         open={confirming}
@@ -221,11 +213,9 @@ export function ApiKeysPage() {
         title="Rotate the workspace API key?"
         description={
           <>
-            The current key stops working immediately. Every script, integration and server that
-            sends it will start getting 401s until you paste the new one in. This dashboard uses the
-            same key, so we will update it here for you and keep you signed in — but any{' '}
-            <strong>other</strong> tab or device you are signed in on will be signed out. The new
-            key is shown once, and cannot be shown again.
+            Every script and server sending the old key will start getting 401s until you paste the
+            new one in. Any <strong>other</strong> tab or device you are signed in on is signed out.
+            The new key is shown once.
           </>
         }
         confirmLabel="Rotate key"
@@ -246,12 +236,11 @@ export function ApiKeysPage() {
       >
         <div className="space-y-4">
           <Alert tone="warning" live>
-            Once you close this, the key becomes a mask. If you lose it you will have to rotate
-            again and update every integration a second time.
+            Once you close this, the key becomes a mask.
           </Alert>
           {revealed ? <CopyField value={revealed} label="new API key" /> : null}
           <p className="text-xs leading-relaxed text-text-secondary">
-            <KeyRound aria-hidden className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
+            <KeyRound aria-hidden className="mr-1 inline h-icon-sm w-icon-sm align-[-3px]" />
             Store it in your server's secret manager, not in source control.
           </p>
         </div>
@@ -260,31 +249,17 @@ export function ApiKeysPage() {
   );
 }
 
-function PlanRow({
-  label,
-  included,
-  includedText,
-  excludedText,
-}: {
-  label: string;
-  included: boolean;
-  includedText: string;
-  excludedText: string;
-}) {
+/** The entitlement's state, as a word. */
+function PlanBadge({ included }: { included: boolean }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
-      <div className="min-w-0 flex-1">
-        <p className="text-base font-medium text-text-primary">{label}</p>
-        <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-          {included ? includedText : excludedText}
-        </p>
-      </div>
-      <Badge tone={included ? 'success' : 'neutral'}>{included ? 'Included' : 'Not included'}</Badge>
-    </div>
+    <Badge tone={included ? 'success' : 'neutral'}>{included ? 'Included' : 'Not included'}</Badge>
   );
 }
 
 function statusOf(error: unknown): number | undefined {
-  const withResponse = error as { response?: { status?: number }; status?: number } | null;
+  const withResponse = error as {
+    response?: { status?: number };
+    status?: number;
+  } | null;
   return withResponse?.response?.status ?? withResponse?.status;
 }

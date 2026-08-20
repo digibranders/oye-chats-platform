@@ -2,16 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, UserPlus } from 'lucide-react';
 import {
-  Alert,
   Badge,
   Button,
   Drawer,
   EmptyState,
   LockedState,
+  SplitPane,
   Spinner,
   Switch,
   buttonClass,
-  cn,
   toast,
   useMediaQuery,
 } from '../../ui';
@@ -101,8 +100,14 @@ interface ConsoleProps {
 function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) {
   const socket = useInboxSocket();
   const [params, setParams] = useSearchParams();
-  const wide = useMediaQuery('(min-width: 1280px)');
-  const compact = useMediaQuery('(max-width: 767px)');
+  // `SplitPane` shows its third pane at 1152px of split width, which beside the
+  // 248px rail is a 1400px viewport. The console used to promise three panes at
+  // 1280 and could not honour it: at exactly 1280 the transcript was 392px wide.
+  //
+  // A collapsed rail widens the split, so the pane can appear a little before
+  // this says so — which offers the drawer as well as the pane for a moment,
+  // rather than neither. That is the right way round for the error to fall.
+  const wide = useMediaQuery('(min-width: 1400px)');
 
   const view = parseView(params.get('view'));
   const selectedId = params.get('c');
@@ -117,6 +122,17 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
 
   const offline = useOfflineMessages(botId);
   const qualified = useQualifiedSessions(liveChat, socket.qualifiedVersion);
+
+  // Connection trouble is announced, not laid out. Three `Alert`s used to render
+  // between the header and the grid, so a reconnect resized the transcript and
+  // the composer while the operator was typing into them.
+  useEffect(() => {
+    if (operator.error) toast.error(operator.error);
+  }, [operator.error]);
+
+  useEffect(() => {
+    if (socket.lastError) toast.warning(socket.lastError);
+  }, [socket.lastError]);
 
   // ── One clock, so wait times count up without a timer per row ──
   useEffect(() => {
@@ -180,14 +196,26 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     [waiting, yours, messages, qualifiedItems],
   );
 
+  // One quantity: open conversations in the scope. It used to be *unread
+  // messages* when anything was unread and *open conversations* otherwise, so
+  // the number changed meaning without telling anyone. Unread is a separate
+  // signal, carried as a dot on the switcher.
   const counts: Record<InboxView, number> = useMemo(
     () => ({
       waiting: waiting.length,
-      yours: yours.reduce((total, item) => total + item.unread, 0) || yours.length,
+      yours: yours.length,
       messages: offline.total,
       qualified: qualifiedItems.length,
     }),
-    [waiting.length, yours, offline.total, qualifiedItems.length],
+    [waiting.length, yours.length, offline.total, qualifiedItems.length],
+  );
+
+  const unread: Partial<Record<InboxView, boolean>> = useMemo(
+    () => ({
+      yours: yours.some((item) => item.unread > 0),
+      messages: messages.some((item) => item.unread > 0),
+    }),
+    [yours, messages],
   );
 
   const items = byView[view];
@@ -313,7 +341,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
             description: 'Add yourself as an operator on this workspace to see and answer live conversations.',
             action: (
               <Button onClick={() => void joinLiveChat()} loading={joining} disabled={joining}>
-                <UserPlus aria-hidden className="h-4 w-4" />
+                <UserPlus aria-hidden />
                 Add me as an operator
               </Button>
             ),
@@ -336,11 +364,12 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       view={view}
       onViewChange={(next) => setSelection(next, null)}
       counts={counts}
+      unread={unread}
       items={liveChat || view === 'messages' ? items : []}
       selectedId={selectedId}
       onSelect={(item) => {
         setSelection(view, item.id);
-        if (compact) setDetailsOpen(false);
+        setDetailsOpen(false);
       }}
       query={query}
       onQueryChange={setQuery}
@@ -419,7 +448,6 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
             await offline.remove(id);
             setSelection(view, null);
           }}
-          onBack={compact ? () => setSelection(view, null) : undefined}
         />
       );
     }
@@ -433,26 +461,26 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         onManageSnippets={() => setSnippetsOpen(true)}
         now={now}
         onLeft={() => setSelection(view, null)}
-        onBack={compact ? () => setSelection(view, null) : undefined}
         onShowDetails={wide ? undefined : () => setDetailsOpen(true)}
       />
     );
   })();
 
-  const visitorPane = (
-    <VisitorPanel
-      profile={profile}
-      sessionId={selected && selected.kind !== 'offline' ? sessionId : null}
-      loading={details.loading}
-      error={details.error}
-      onRetry={details.reload}
-    />
-  );
+  const visitorProps = {
+    profile,
+    sessionId: selected && selected.kind !== 'offline' ? sessionId : null,
+    loading: details.loading,
+    error: details.error,
+    onRetry: details.reload,
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-4 py-2.5 md:px-6">
-        <h1 className="text-lg font-semibold text-text-primary">Inbox</h1>
+      {/* A status strip, not a title bar. The shell's breadcrumb already renders
+          "Inbox" in the 56px top bar; a second bordered bar under it repeating
+          the word cost ~100px of chrome before any conversation. */}
+      <header className="flex h-row shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-cell">
+        <h1 className="sr-only">Inbox</h1>
         {liveChat && !operator.unavailable ? (
           <Badge tone={connection.tone} dot>
             {connection.label}
@@ -465,8 +493,14 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               Add live chat
             </Link>
           ) : operator.unavailable ? (
-            <Button size="sm" onClick={() => void joinLiveChat()} loading={joining} disabled={joining}>
-              <UserPlus aria-hidden className="h-4 w-4" />
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => void joinLiveChat()}
+              loading={joining}
+              disabled={joining}
+            >
+              <UserPlus aria-hidden />
               Add me as an operator
             </Button>
           ) : (
@@ -480,50 +514,31 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         </div>
       </header>
 
-      {operator.error ? (
-        <Alert tone="danger" live className="mx-4 mt-3 md:mx-6">
-          {operator.error}
-        </Alert>
-      ) : null}
-      {socket.status === 'duplicate' ? (
-        <Alert tone="warning" live className="mx-4 mt-3 md:mx-6" title="The inbox is open in another tab">
-          Only one tab can hold your live-chat connection. Close the other tab, or take over by turning yourself off
-          and on again here.
-        </Alert>
-      ) : null}
-      {socket.lastError ? (
-        <Alert tone="warning" className="mx-4 mt-3 md:mx-6">
-          {socket.lastError}
-        </Alert>
-      ) : null}
-
-      <div
-        className={cn(
-          'grid min-h-0 flex-1',
-          compact
-            ? 'grid-cols-1'
-            : wide
-              ? 'grid-cols-[20rem_minmax(0,1fr)_20rem]'
-              : 'grid-cols-[18rem_minmax(0,1fr)]',
-        )}
-      >
-        {/* On a phone the list and the conversation are the same column: one is
-            shown at a time, which is what the back control in the pane header is
-            for. Rendering both and hiding one keeps scroll positions and drafts. */}
-        <div className={cn('min-h-0', compact && selected && 'hidden')}>{listPane}</div>
-        <div className={cn('min-h-0', compact && !selected && 'hidden')}>{centrePane}</div>
-        {wide ? <div className="min-h-0">{visitorPane}</div> : null}
-      </div>
+      {/* `SplitPane` keeps both panes mounted when the layout stacks, so a
+          half-typed reply and a scroll position survive going back and forth —
+          and it lets the operator drag the split and remembers where they put
+          it. The duplicate-tab `Alert` that used to sit here is gone: the badge
+          above already says "Open in another tab", and rendering a banner
+          between the header and the grid resized the transcript and the
+          composer under an operator who was mid-sentence. */}
+      <SplitPane
+        list={listPane}
+        detail={centrePane}
+        inspector={<VisitorPanel {...visitorProps} />}
+        selected={Boolean(selected)}
+        onBack={() => setSelection(view, null)}
+        backLabel="Conversations"
+        listWidth="md"
+        resizable
+        storageKey="oyechats.inbox.list-width"
+        listLabel="Conversations"
+        detailLabel="Conversation"
+        inspectorLabel="Visitor"
+      />
 
       {!wide ? (
-        <Drawer
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
-          title="Visitor details"
-          width="sm"
-          className="p-0"
-        >
-          {visitorPane}
+        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title="Visitor details" width="sm">
+          <VisitorPanel {...visitorProps} variant="drawer" />
         </Drawer>
       ) : null}
 

@@ -1,7 +1,26 @@
 import { useMemo } from 'react';
-import { ABSENT, Alert, Badge, Button, Card, CardBody, DataTable, EmptyState, formatDate, formatNumber, LockedState, Section, Stack, StatTile, type Column } from '../../ui';
+import {
+  ABSENT,
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  DataTable,
+  EmptyState,
+  LockedState,
+  Section,
+  Stack,
+  StatRow,
+  Tooltip,
+  formatDate,
+  formatNumber,
+  type Column,
+} from '../../ui';
 import { usePlatformResource } from '../usePlatform';
-import { docMoneyWithCode } from '../revenue/money';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
+import { PAGE_SIZE } from '../recordListState';
+import { docMoneyWithCode } from '../money';
 import { atRiskByCurrency, cadenceSummary, sortByUrgency, urgencyLabel, urgencyTone } from './dunning';
 import type { DunningItem, DunningResponse } from './types';
 
@@ -89,7 +108,13 @@ export function DunningTab() {
     },
     {
       key: 'at_risk',
-      header: 'Cycle at risk',
+      header: (
+        <Tooltip content="Razorpay does not re-attempt the missed charge when a halted subscription returns to active, so a recovery still leaves this cycle uncollected. It is charged from the Razorpay dashboard.">
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            Cycle at risk
+          </span>
+        </Tooltip>
+      ),
       align: 'right',
       width: '12rem',
       render: (row) => (
@@ -124,10 +149,7 @@ export function DunningTab() {
 
   if (dunning.forbidden) {
     return (
-      <LockedState
-        title="You cannot read dunning"
-        description="Your super-admin account is not permitted to read failing subscriptions. Nothing was loaded."
-      />
+      <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription('failing subscriptions')} />
     );
   }
 
@@ -143,45 +165,41 @@ export function DunningTab() {
 
       <Section title="What is at stake">
         <Card>
-          <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
-              label="Failing now"
-              size="lg"
-              loading={dunning.loading && !dunning.data}
-              value={dunning.data ? formatNumber(dunning.data.count) : undefined}
+          <CardBody flush>
+            <StatRow
+              label="Dunning exposure"
               period="Right now"
-              tone={dunning.data && dunning.data.count > 0 ? 'danger' : 'neutral'}
-              hint="Subscriptions in past_due."
-            />
-            <StatTile
-              label="Grace period"
-              size="lg"
               loading={dunning.loading && !dunning.data}
-              value={dunning.data ? `${dunning.data.grace_days} days` : undefined}
-              period="Platform setting"
-              hint="From PAYMENT_FAILED_GRACE_DAYS on the API."
+              items={[
+                {
+                  label: 'Failing now',
+                  size: 'hero',
+                  value: dunning.data ? formatNumber(dunning.data.count) : undefined,
+                  tone: dunning.data && dunning.data.count > 0 ? 'danger' : 'neutral',
+                  period: 'Subscriptions in past_due',
+                },
+                {
+                  label: 'Grace period',
+                  value: dunning.data ? `${dunning.data.grace_days} days` : undefined,
+                  period: 'Platform setting',
+                },
+                ...(totals.length === 0
+                  ? [{ label: 'At risk', value: undefined, period: 'Nothing failing' }]
+                  : totals.map((total) => ({
+                      label: `At risk (${total.currency})`,
+                      value: docMoneyWithCode(total.minor, total.currency),
+                      // Per currency: the API's own total adds paise to cents.
+                      period: "One month's plan price",
+                    }))),
+              ]}
             />
-            {totals.length === 0 ? (
-              <StatTile label="At risk" size="lg" value={undefined} period="Nothing failing" />
-            ) : (
-              totals.map((total) => (
-                <StatTile
-                  key={total.currency}
-                  label={`At risk (${total.currency})`}
-                  size="lg"
-                  value={docMoneyWithCode(total.minor, total.currency)}
-                  period="One month's plan price"
-                  hint="Totalled per currency — the API's own total adds paise to cents."
-                />
-              ))
-            )}
           </CardBody>
         </Card>
       </Section>
 
       <Section
         title="Who to call, in order"
-        description="Least grace remaining first. Rows with no recorded past-due date sort last: they cannot be scheduled, so they should not head the queue."
+        description="Least grace remaining first. Rows with no past-due date sort last — they cannot be scheduled."
         actions={
           <Button size="sm" variant="secondary" onClick={dunning.reload} loading={dunning.loading}>
             Refresh
@@ -193,24 +211,19 @@ export function DunningTab() {
           columns={columns}
           rows={items}
           rowKey={(row) => String(row.subscription_id)}
+          rowNoun="subscription"
           loading={dunning.loading && !dunning.data}
           error={dunning.error && !dunning.data ? dunning.error : null}
           onRetry={dunning.reload}
-          pageSize={25}
+          pageSize={PAGE_SIZE}
           empty={
             <EmptyState
               title="Nobody is failing payment"
-              description="No subscription is in past_due. This list is empty in a healthy month, which is what it should look like."
+              description="No subscription is in past_due. This list is empty in a healthy month."
             />
           }
         />
       </Section>
-
-      <Alert tone="neutral" title="A recovered subscription still owes one cycle">
-        Razorpay does not re-attempt the missed charge when a halted subscription returns to active,
-        so every recovery leaves one uncollected cycle unless somebody charges it manually. There is
-        no console action for that — it is done in the Razorpay dashboard.
-      </Alert>
     </Stack>
   );
 }

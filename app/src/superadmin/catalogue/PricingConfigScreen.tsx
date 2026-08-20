@@ -2,26 +2,26 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Alert,
-  Badge,
   Button,
-  Card,
-  CardBody,
-  CardHeader,
+  DataTable,
   Dialog,
   EmptyState,
   Field,
   Input,
-  LoadingRows,
   LockedState,
+  PropertyGrid,
   Section,
   Stack,
   Textarea,
+  Tooltip,
   buttonClass,
   formatDateTime,
   toast,
+  type Column,
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import {
   formatConfigValue,
   parseConfigValue,
@@ -46,6 +46,87 @@ import type { JsonValue, PricingConfigRow } from './types';
  * they are listed here as pointers rather than as editable rows.
  */
 
+/**
+ * The price list, as a table.
+ *
+ * "What it does" is truncated with the whole sentence on a tooltip: it is a
+ * caveat a reader needs once, and it was costing three of the five lines every
+ * row spent.
+ */
+function moneyColumns(onEdit: (row: PricingConfigRow) => void): readonly Column<PricingConfigRow>[] {
+  return [
+    {
+      key: 'label',
+      header: 'Key',
+      rowHeader: true,
+      render: (row) => {
+        const spec = specFor(row.key);
+        const note = spec?.description
+          ? `${spec.description} Read by ${spec.readBy}`
+          : 'Undocumented key. Nothing in this console knows what reads it.';
+        return (
+          <Tooltip content={note}>
+            <span className="cursor-help font-medium underline decoration-dotted underline-offset-2">
+              {spec?.label ?? row.key}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    { key: 'key', header: 'Stored as', type: 'id', secondary: true, render: (row) => row.key },
+    {
+      key: 'value',
+      header: 'Value',
+      align: 'right',
+      render: (row) => <span className="figure font-medium">{formatConfigValue(row.value)}</span>,
+    },
+    {
+      key: 'unit',
+      header: 'Unit',
+      secondary: true,
+      render: (row) => specFor(row.key)?.unit ?? null,
+    },
+    {
+      key: 'updated_at',
+      header: 'Changed',
+      secondary: true,
+      render: (row) => (row.updated_at ? formatDateTime(row.updated_at) : null),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      render: (row) => (
+        <Button size="sm" variant="ghost" onClick={() => onEdit(row)}>
+          Change
+        </Button>
+      ),
+    },
+  ];
+}
+
+function unknownColumns(onEdit: (row: PricingConfigRow) => void): readonly Column<PricingConfigRow>[] {
+  return [
+    { key: 'key', header: 'Key', rowHeader: true, type: 'id', render: (row) => row.key },
+    {
+      key: 'value',
+      header: 'Value',
+      align: 'right',
+      render: (row) => <span className="figure">{formatConfigValue(row.value)}</span>,
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      render: (row) => (
+        <Button size="sm" variant="ghost" onClick={() => onEdit(row)}>
+          Edit raw
+        </Button>
+      ),
+    },
+  ];
+}
+
 interface EditTarget {
   key: string;
   spec?: PricingKeySpec;
@@ -66,6 +147,8 @@ export function PricingConfigScreen() {
   const [saving, setSaving] = useState(false);
 
   const parts = useMemo(() => partitionConfig(config.items), [config.items]);
+  const moneyCols = useMemo(() => moneyColumns(openEditor), []);
+  const unknownCols = useMemo(() => unknownColumns(openEditor), []);
 
   function openEditor(row: PricingConfigRow): void {
     const spec = specFor(row.key);
@@ -99,8 +182,8 @@ export function PricingConfigScreen() {
   if (config.forbidden) {
     return (
       <LockedState
-        title="You cannot read the pricing configuration"
-        description="Your super-admin account is not permitted to load these keys. Nothing was changed."
+        title={FORBIDDEN_TITLE}
+        description={forbiddenDescription('the pricing configuration')}
       />
     );
   }
@@ -119,64 +202,24 @@ export function PricingConfigScreen() {
         title="Credit costs and balance behaviour"
         description="Every key the credit ledger reads, with the path that reads it."
       >
-        <Card>
-          {loading ? (
-            <CardBody>
-              <LoadingRows rows={6} />
-            </CardBody>
-          ) : config.error ? (
-            <CardBody>
-              <Alert tone="danger" title="These keys could not be loaded" action={<Button size="sm" onClick={config.reload}>Try again</Button>}>
-                {config.error}
-              </Alert>
-            </CardBody>
-          ) : parts.money.length === 0 ? (
+        {/* A price list is a table. It was a `<ul>` of five-line rows at about
+            110px each, so ten keys were an 1,100px scroll. */}
+        <DataTable
+          caption="Credit pricing keys"
+          columns={moneyCols}
+          rows={parts.money}
+          rowKey={(row) => row.key}
+          rowNoun="key"
+          loading={loading}
+          error={config.error}
+          onRetry={config.reload}
+          empty={
             <EmptyState
               title="No pricing keys are stored"
-              description="Every read falls back to the hardcoded defaults in credit_service. Run scripts/seed_pricing_config.py --apply to make the live prices explicit."
+              description="Every read falls back to the hardcoded defaults. Seed them to make the live prices explicit."
             />
-          ) : (
-            <ul>
-              {parts.money.map((row) => {
-                const spec = specFor(row.key);
-                return (
-                  <li key={row.key} className="border-b border-border px-5 py-4 last:border-b-0">
-                    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-base font-medium text-text-primary">{spec?.label ?? row.key}</p>
-                        <p className="figure mt-0.5 text-2xs text-text-tertiary">{row.key}</p>
-                        <p className="mt-1.5 text-xs leading-relaxed text-text-secondary">
-                          {spec?.description ?? 'Undocumented key. Nothing in this console knows what reads it.'}
-                        </p>
-                        {spec ? (
-                          <p className="mt-1 text-xs leading-relaxed text-text-tertiary">
-                            Read by {spec.readBy}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3">
-                        <div className="text-right">
-                          <p className="figure text-lg font-semibold text-text-primary">
-                            {formatConfigValue(row.value)}
-                            {spec?.unit ? (
-                              <span className="ml-1 text-xs font-normal text-text-tertiary">{spec.unit}</span>
-                            ) : null}
-                          </p>
-                          <p className="text-2xs text-text-tertiary">
-                            {row.updated_at ? `Changed ${formatDateTime(row.updated_at)}` : 'Never changed here'}
-                          </p>
-                        </div>
-                        <Button size="sm" onClick={() => openEditor(row)}>
-                          Change
-                        </Button>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Card>
+          }
+        />
 
         {parts.missingMoneyKeys.length > 0 ? (
           <Alert tone="warning" className="mt-3" title="Some documented keys have no row">
@@ -195,85 +238,33 @@ export function PricingConfigScreen() {
           title="Undocumented keys"
           description="Rows in the table this console has no description for. They are shown rather than hidden, and edited as raw JSON."
         >
-          <Card>
-            <ul>
-              {parts.unknown.map((row) => (
-                <li
-                  key={row.key}
-                  className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"
-                >
-                  <span className="figure min-w-0 text-sm text-text-primary">{row.key}</span>
-                  <span className="flex items-center gap-3">
-                    <span className="figure text-xs text-text-secondary">{formatConfigValue(row.value)}</span>
-                    <Button size="sm" variant="ghost" onClick={() => openEditor(row)}>
-                      Edit raw
-                    </Button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
+          <DataTable
+            caption="Undocumented pricing keys"
+            columns={unknownCols}
+            rows={parts.unknown}
+            rowKey={(row) => row.key}
+            rowNoun="key"
+          />
         </Section>
       ) : null}
 
-      <Section
-        title="Also in this table, owned elsewhere"
-        description="pricing_config is one key/value store doing several jobs. These keys have a screen that validates them; editing them raw here would bypass it."
-      >
-        <div className="grid gap-3 md:grid-cols-3">
-          <Card>
-            <CardHeader
-              titleAs="h3"
-              title="Switches"
-              description="Booleans that turn behaviour off platform-wide."
-            />
-            <CardBody>
-              <p className="text-xs text-text-secondary">
-                {parts.switches.length > 0
-                  ? parts.switches.map((row) => row.key).join(', ')
-                  : 'None stored — every switch is at its default.'}
-              </p>
-              <Link className={`${buttonClass('link')} mt-2`} to="/platform/platform?view=flags">
-                Configuration → Flags
-              </Link>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader
-              titleAs="h3"
-              title="Model and RAG"
-              description="Written by the model-config endpoint, which cross-validates them."
-            />
-            <CardBody>
-              <p className="text-xs text-text-secondary">
-                {parts.runtime.length > 0
-                  ? `${parts.runtime.length} key${parts.runtime.length === 1 ? '' : 's'} stored.`
-                  : 'None stored — the runtime is on its environment defaults.'}
-              </p>
-              <Link className={`${buttonClass('link')} mt-2`} to="/platform/platform?view=runtime">
-                Configuration → Runtime
-              </Link>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader
-              titleAs="h3"
-              title="Pricing page copy"
-              description="Rendered on the public site. Edited through the validated content endpoint."
-            />
-            <CardBody>
-              <p className="text-xs text-text-secondary">
-                {parts.content.length > 0
-                  ? parts.content.map((row) => row.key).join(', ')
-                  : 'None stored — the pricing page renders its own defaults.'}
-              </p>
-              <Link className={`${buttonClass('link')} mt-2`} to="/platform/catalogue?view=content">
-                Pricing page copy
-              </Link>
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
+      {/* One hairline row, not three cards of chrome carrying one link each. */}
+      <p className="text-xs text-text-tertiary">
+        pricing_config is one key/value store doing several jobs, and the rest of it is validated
+        elsewhere: <span className="figure">{parts.switches.length}</span> switches in{' '}
+        <Link className={buttonClass('link')} to="/platform/platform">
+          Flags
+        </Link>
+        , <span className="figure">{parts.runtime.length}</span> in{' '}
+        <Link className={buttonClass('link')} to="/platform/platform/runtime">
+          Runtime
+        </Link>{' '}
+        and <span className="figure">{parts.content.length}</span> in{' '}
+        <Link className={buttonClass('link')} to="/platform/catalogue/content">
+          Pricing page copy
+        </Link>
+        .
+      </p>
 
       <Dialog
         open={target !== null}
@@ -282,7 +273,11 @@ export function PricingConfigScreen() {
         }}
         dismissible={!saving}
         title={target?.spec?.label ?? target?.key ?? 'Change value'}
-        description={target?.key}
+        description={
+          target?.spec
+            ? `${target.key} — read by ${target.spec.readBy} The save clears the pricing cache, so the next charge uses the new value.`
+            : `${target?.key ?? ''} — nothing here knows what reads it.`
+        }
         footer={
           <>
             <Button variant="ghost" disabled={saving} onClick={() => setTarget(null)}>
@@ -296,22 +291,21 @@ export function PricingConfigScreen() {
       >
         {target ? (
           <div className="flex flex-col gap-4">
-            <Alert tone="warning" title="This takes effect immediately">
-              {target.spec
-                ? `Read by ${target.spec.readBy} The save clears the pricing cache, so the next charge uses the new value.`
-                : 'Nothing in this console knows what reads this key. Whatever does will pick the new value up within a minute.'}
-            </Alert>
-
-            <div className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
-              <p className="text-2xs uppercase tracking-eyebrow text-text-tertiary">Currently</p>
-              <p className="figure mt-0.5 text-sm text-text-primary">{formatConfigValue(target.current)}</p>
-            </div>
+            <PropertyGrid
+              density="compact"
+              items={[
+                {
+                  label: 'Currently',
+                  value: <span className="figure">{formatConfigValue(target.current)}</span>,
+                },
+              ]}
+            />
 
             {target.spec?.kind === 'json' || target.spec === undefined ? (
               <Field
                 label="New value (JSON)"
                 error={error}
-                hint="Stored verbatim. The endpoint accepts any JSON, so a wrong shape is only discovered by whatever reads it."
+                hint="Stored verbatim — a wrong shape is only discovered by whatever reads it."
               >
                 <Textarea rows={10} className="figure" value={text} onChange={(event) => setText(event.target.value)} />
               </Field>
@@ -331,9 +325,10 @@ export function PricingConfigScreen() {
             )}
 
             {target.spec?.key === 'topup_packs' ? (
-              <Badge tone="warning">
-                A pack must appear in this list to be purchasable at all — removing one withdraws it from sale.
-              </Badge>
+              <Alert tone="warning">
+                A pack must appear in this list to be purchasable at all — removing one withdraws it
+                from sale.
+              </Alert>
             ) : null}
           </div>
         ) : null}

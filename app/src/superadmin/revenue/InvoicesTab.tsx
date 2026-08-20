@@ -6,17 +6,16 @@ import {
   Checkbox,
   DataTable,
   EmptyState,
-  LockedState,
   SearchField,
   Section,
   Select,
   Stack,
   Toolbar,
   formatDate,
-  formatNumber,
   type Column,
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { InvoiceDrawer } from '../billing-ops/InvoiceDrawer';
 import {
   invoiceStatusLabel,
@@ -24,7 +23,7 @@ import {
   invoiceTypeLabel,
   pdfStatus,
 } from '../billing-ops/invoice';
-import { docMoney, normaliseCurrency } from './money';
+import { docMoney, normaliseCurrency } from '../money';
 import type { InvoiceRow } from './types';
 
 /**
@@ -160,24 +159,26 @@ export function InvoicesTab() {
     <Stack>
       <Section
         title="Invoices"
-        description="Tax invoices, credit notes and receipts, newest first. Amounts are shown exactly as issued — nothing on this tab is converted."
+        description="Newest first. Amounts are shown exactly as issued — nothing here is converted."
       >
-        <Toolbar className="mb-3">
+        <Toolbar sticky className="mb-3">
           <SearchField
             label="Search invoices by number, customer name or email"
             placeholder="Invoice number, name or email"
-            className="w-64"
+            className="w-72"
             size="sm"
             value={search}
             onValueChange={(next) => url.set({ q: next || null })}
           />
-          <Select
-            size="sm"
-            aria-label="Filter by document type"
-            options={TYPE_OPTIONS}
-            value={invoiceType}
-            onChange={(event) => url.set({ type: event.target.value })}
-          />
+          <div className="w-48">
+            <Select
+              size="sm"
+              aria-label="Filter by document type"
+              options={TYPE_OPTIONS}
+              value={invoiceType}
+              onChange={(event) => url.set({ type: event.target.value })}
+            />
+          </div>
           {/* `aria-label` as well as `label`: outside a `Field` the primitive has
               no id to hang `htmlFor` on, so the visible text alone would not
               name the control for assistive tech. */}
@@ -196,57 +197,55 @@ export function InvoicesTab() {
               Clear filters
             </Button>
           ) : null}
-          <span className="figure ml-auto text-xs text-text-tertiary">
-            {list.loading ? 'Loading…' : `${formatNumber(list.total)} documents`}
-          </span>
         </Toolbar>
 
         {includeLegacy ? (
           <Alert tone="neutral" className="mb-3" title="Legacy rows are included">
-            Legacy rows mirror a payment; they carry no invoice number and are not legal documents.
-            They cannot be re-rendered or re-sent, and marking one paid stamps its paid date to now.
+            They mirror a payment, carry no invoice number, and cannot be re-rendered or re-sent.
           </Alert>
         ) : null}
 
-        {list.forbidden ? (
-          <LockedState
-            title="You cannot read invoices"
-            description="Your super-admin account is not permitted to read issued documents. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Issued documents, newest first"
-            columns={columns}
-            rows={list.items}
-            rowKey={(row) => String(row.id)}
-            rowLabel={(row) => row.invoice_number ?? `payment row ${row.id}`}
-            loading={list.loading}
-            error={list.error}
-            onRetry={list.reload}
-            onRowClick={setOpen}
-            pageSize={PAGE_SIZE}
-            page={page}
-            rowCount={list.total}
-            onPageChange={(next) => url.set({ page: next })}
-            empty={
-              <EmptyState
-                title={filtered ? 'Nothing matched' : 'No documents issued yet'}
-                description={
-                  filtered
-                    ? 'No document matches that search or type. Legacy payment rows are excluded unless you tick the box above.'
-                    : 'No tax invoice, credit note or receipt has been issued. If customers have been charged, they may be sitting as un-numbered legacy rows — tick “Include legacy payment rows”, and check the seller profile is saved.'
-                }
-                action={
-                  filtered ? (
-                    <Button size="sm" onClick={() => url.set({ q: null, type: null })}>
-                      Clear filters
-                    </Button>
-                  ) : undefined
-                }
-              />
-            }
-          />
-        )}
+        <DataTable
+          caption="Issued documents, newest first"
+          columns={columns}
+          rows={list.items}
+          rowKey={(row) => String(row.id)}
+          rowNoun="document"
+          rowLabel={(row) => row.invoice_number ?? `payment row ${row.id}`}
+          loading={list.loading}
+          // Forbidden wins over the error it arrived as: a 403 comes back
+          // through the same failure path as an outage, and "we could not load
+          // this" would send an operator hunting one that is not there.
+          error={list.forbidden ? null : list.error}
+          forbidden={
+            list.forbidden
+              ? { title: FORBIDDEN_TITLE, description: forbiddenDescription('issued documents') }
+              : null
+          }
+          onRetry={list.reload}
+          onRowClick={setOpen}
+          pageSize={PAGE_SIZE}
+          page={page}
+          rowCount={list.total}
+          onPageChange={(next) => url.set({ page: next })}
+          empty={
+            <EmptyState
+              title={filtered ? 'Nothing matched' : 'No documents issued yet'}
+              description={
+                filtered
+                  ? 'No document matches that search or type. Legacy rows are excluded unless the box above is ticked.'
+                  : 'Nothing has been issued. If customers have been charged, they may be un-numbered legacy rows — check the seller profile is saved.'
+              }
+              action={
+                filtered ? (
+                  <Button size="sm" onClick={() => url.set({ q: null, type: null })}>
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+            />
+          }
+        />
       </Section>
 
       <InvoiceDrawer

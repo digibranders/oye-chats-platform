@@ -4,7 +4,10 @@ import { BarChart3, RefreshCw } from 'lucide-react';
 import {
   Button,
   Card,
+  CardBody,
   EmptyState,
+  ErrorState,
+  LoadingRows,
   Page,
   PageHeader,
   SegmentedControl,
@@ -41,13 +44,15 @@ import { FeedbackTab } from './FeedbackTab';
  * take a calendar month and nothing else — so that tab swaps the range control
  * for a month picker rather than pretending a ninety-day window is a month.
  *
- * Journey is also no longer a top-level destination. It was admitted to be a
- * temporary extra, and it is analytics: it is a tab here, and
- * `/analytics/journey` still resolves to it so every link already sent keeps
- * working.
+ * The tab row wants to be `NavTabs` — these are routes, not panels, so a
+ * `tablist` is a promise the surface cannot keep. `NavTabs` matches the active
+ * tab on the *pathname*, and four of the five tabs here are distinguished only
+ * by `?tab=`, so adopting it needs each tab to become a real child route under
+ * `/analytics` in `src/app/routes.tsx` — outside this pass's scope. Flagged, not
+ * patched around.
  */
 export function AnalyticsPage() {
-  const { bots, selectedBot, loading: botsLoading } = useBotContext();
+  const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -63,7 +68,6 @@ export function AnalyticsPage() {
   const months = useMemo(() => monthOptions(), []);
 
   const botId = selectedBot?.id ?? null;
-  const botName = selectedBot?.name ?? 'this chatbot';
 
   function setParam(key: string, value: string, fallback: string) {
     const next = new URLSearchParams(params);
@@ -77,14 +81,19 @@ export function AnalyticsPage() {
 
   const rangeControl =
     tab === 'journey' ? (
-      <div className="w-48">
-        <Select
-          size="sm"
-          aria-label="Journey month"
-          options={months}
-          value={month}
-          onChange={(event) => setParam('month', event.target.value, months[0]?.value ?? month)}
-        />
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-tertiary" id="journey-month-label">
+          Month
+        </span>
+        <div className="w-40">
+          <Select
+            size="sm"
+            aria-labelledby="journey-month-label"
+            options={months}
+            value={month}
+            onChange={(event) => setParam('month', event.target.value, months[0]?.value ?? month)}
+          />
+        </div>
       </div>
     ) : (
       <SegmentedControl<RangeKey>
@@ -96,15 +105,57 @@ export function AnalyticsPage() {
       />
     );
 
-  // No chatbots, so nothing has been measured yet. This is the one state that
-  // replaces the whole page rather than one panel.
-  if (!botsLoading && bots.length === 0) {
+  const actions = (
+    <>
+      {/* One slot, one width, so Refresh does not slide sideways when the
+          period control swaps for the journey month picker. */}
+      <div className="flex w-[19rem] justify-end">{rangeControl}</div>
+      {/* In the header, so it exists in every state. The old one was rendered
+          only once the page had already loaded, which is the one state in
+          which nobody needs it. */}
+      <Button size="sm" onClick={refresh} iconLeft={<RefreshCw aria-hidden />}>
+        Refresh
+      </Button>
+    </>
+  );
+
+  // The chatbot list is still in flight, so `botId` is null and every query on
+  // every tab is disabled — which used to render the whole page as a permanent
+  // skeleton, and a *failed* bot list as a permanent skeleton forever.
+  if (botsLoading) {
     return (
       <Page width="wide">
-        <PageHeader
-          title="Analytics"
-          description="How your chatbot is doing, over a period you choose."
-        />
+        <PageHeader title="Analytics" />
+        <Card>
+          <CardBody>
+            <LoadingRows rows={4} />
+          </CardBody>
+        </Card>
+      </Page>
+    );
+  }
+
+  if (botsError) {
+    return (
+      <Page width="wide">
+        <PageHeader title="Analytics" />
+        <Card>
+          <ErrorState
+            title="Your chatbots could not be loaded"
+            description="Analytics is scoped to one chatbot, and the list of them did not arrive."
+            onRetry={() => void refreshBots()}
+          />
+        </Card>
+      </Page>
+    );
+  }
+
+  // No chatbots, so nothing has been measured yet. This is the one state that
+  // replaces the whole page rather than one panel.
+  if (bots.length === 0) {
+    return (
+      <Page width="wide">
+        <PageHeader title="Analytics" />
         <Card>
           <EmptyState
             icon={BarChart3}
@@ -123,21 +174,11 @@ export function AnalyticsPage() {
 
   return (
     <Page width="wide">
-      <PageHeader
-        title="Analytics"
-        description={`How ${botName} is doing, and how that compares with before.`}
-        actions={
-          <>
-            {rangeControl}
-            {/* In the header, so it exists in every state. The old one was
-                rendered only once the page had already loaded, which is the
-                one state in which nobody needs it. */}
-            <Button size="sm" onClick={refresh} iconLeft={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}>
-              Refresh
-            </Button>
-          </>
-        }
-      />
+      {/* No description. The title says "Analytics", the tab row names the five
+          views, the breadcrumb names the workspace and the control beside it
+          states the period — a sentence restating all four was a fourth copy
+          of one fact. */}
+      <PageHeader title="Analytics" actions={actions} />
 
       <Tabs
         items={ANALYTICS_TABS}

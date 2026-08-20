@@ -1,7 +1,7 @@
-import { Route, Routes } from 'react-router-dom';
-import { TabPanel, Tabs, type TabItem } from '../../ui';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
-import { useUrlState } from '../usePlatform';
+import { PLATFORM_ROOT } from '../nav';
 import { CouponsScreen } from './CouponsScreen';
 import { PlansScreen } from './PlansScreen';
 import { PricingConfigScreen } from './PricingConfigScreen';
@@ -14,74 +14,40 @@ import { PromotionsScreen } from './PromotionsScreen';
  * Five screens, in the order the money flows: what a plan grants, what a credit
  * costs, what the pricing page says about both, and the two discount objects.
  *
- * They are tabs held in the query string rather than nested paths, for one
- * reason. The tab row is `Tabs` from the design system, whose panels give each
- * screen a real `tabpanel` with the arrow-key, Home/End and manual-activation
- * contract already correct, and whose inactive panels unmount, so only the
- * visible screen fetches. Driving the same row from nested routes would mean
- * either re-implementing that contract over links or rendering tabs whose
- * `aria-controls` points at panels that do not exist. The query string still
- * deep-links, which is the property that actually mattered: a filtered screen in
- * this console exists to be sent to a colleague.
- *
- * The section is still mounted at `catalogue/*`, so a stale sub-path renders the
- * section rather than an empty splat.
+ * Each is a route, and the row above them is `NavTabs`. The console had five
+ * sub-navigation mechanisms and two query-parameter names for one control, so a
+ * colleague could not be sent a link by pattern and nobody could predict whether
+ * the view was in the path or the query. It is always the path now.
  */
 
-const TABS: TabItem[] = [
-  { value: 'plans', label: 'Plans' },
-  { value: 'pricing', label: 'Credit pricing' },
-  { value: 'content', label: 'Pricing page copy' },
-  { value: 'coupons', label: 'Coupons' },
-  { value: 'promotions', label: 'Promotions' },
+const BASE = `${PLATFORM_ROOT}/catalogue`;
+
+const TABS = [
+  { to: BASE, label: 'Plans', end: true },
+  { to: `${BASE}/pricing`, label: 'Credit pricing' },
+  { to: `${BASE}/content`, label: 'Pricing page copy' },
+  { to: `${BASE}/coupons`, label: 'Coupons' },
+  { to: `${BASE}/promotions`, label: 'Promotions' },
 ];
-
-const DESCRIPTIONS: Record<string, string> = {
-  plans: 'What each tier grants and charges. Editing a plan changes what live customers may do.',
-  pricing: 'The credit economics every metered action is billed against.',
-  content: 'The copy the public pricing page renders — marketing, not entitlements.',
-  coupons: 'Recorded discounts. There is no online redemption path for them.',
-  promotions: 'Time-boxed free-cycle offers, resolved live at checkout.',
-};
-
-function CatalogueSection() {
-  const url = useUrlState();
-  const raw = url.get('view', 'plans');
-  const view = TABS.some((tab) => tab.value === raw) ? raw : 'plans';
-
-  return (
-    <PlatformPage eyebrow="Money" title="Catalogue" description={DESCRIPTIONS[view]}>
-      <Tabs
-        label="Catalogue sections"
-        items={TABS}
-        value={view}
-        onValueChange={(next) => url.set({ view: next === 'plans' ? null : next })}
-      >
-        <TabPanel value="plans">
-          <PlansScreen />
-        </TabPanel>
-        <TabPanel value="pricing">
-          <PricingConfigScreen />
-        </TabPanel>
-        <TabPanel value="content">
-          <PricingContentScreen />
-        </TabPanel>
-        <TabPanel value="coupons">
-          <CouponsScreen />
-        </TabPanel>
-        <TabPanel value="promotions">
-          <PromotionsScreen />
-        </TabPanel>
-      </Tabs>
-    </PlatformPage>
-  );
-}
 
 export function CataloguePage() {
   return (
-    <Routes>
-      <Route path="/" element={<CatalogueSection />} />
-      <Route path="*" element={<CatalogueSection />} />
-    </Routes>
+    <PlatformPage
+      title="Catalogue"
+      // Forms and switch tables, not record books: capped at the page measure
+      // so a field does not stretch to 1,800px on a wide monitor.
+      width="page"
+      toolbarBleed
+      toolbar={<NavTabs label="Catalogue sections" items={TABS} />}
+    >
+      <Routes>
+        <Route index element={<PlansScreen />} />
+        <Route path="pricing" element={<PricingConfigScreen />} />
+        <Route path="content" element={<PricingContentScreen />} />
+        <Route path="coupons" element={<CouponsScreen />} />
+        <Route path="promotions" element={<PromotionsScreen />} />
+        <Route path="*" element={<Navigate to={BASE} replace />} />
+      </Routes>
+    </PlatformPage>
   );
 }

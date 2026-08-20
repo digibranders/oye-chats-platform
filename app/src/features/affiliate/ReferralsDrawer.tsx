@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { Users } from 'lucide-react';
 import {
-  DefinitionList,
+  ABSENT,
+  DataTable,
   Drawer,
   EmptyState,
   ErrorState,
+  FigureList,
   FigureRow,
   LoadingRows,
+  PropertyGrid,
   formatDate,
   formatNumber,
 } from '../../ui';
@@ -70,8 +73,13 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
         <div className="space-y-6">
           <section>
             <h3 className="mb-2 text-base font-semibold text-text-primary">How each bill splits</h3>
-            <DefinitionList
+            {/* One geometry for the drawer's three lists. This was a stacked
+                `DefinitionList`, a bordered `dl` and a bordered `ul` — three
+                paddings and two `--color-border` container boxes inside a
+                480px pane. */}
+            <PropertyGrid
               columns={2}
+              label="How each bill splits"
               items={[
                 {
                   label: 'You earn',
@@ -80,7 +88,9 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
                 {
                   label: 'They save',
                   value: (
-                    <span className="figure">{formatPct(detail.breakdown.customerDiscountPct)}</span>
+                    <span className="figure">
+                      {formatPct(detail.breakdown.customerDiscountPct)}
+                    </span>
                   ),
                 },
                 {
@@ -107,8 +117,11 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
               </h3>
               {/* A real `dl`: `FigureRow` emits `dt`/`dd`, and a screen reader
                   only pairs them with each other inside a description list. */}
-              <dl className="rounded-md border border-border px-3 py-1">
-                <FigureRow label="Total billed" value={formatInrMinor(distribution.monthlyTotalMinor)} />
+              <FigureList>
+                <FigureRow
+                  label="Total billed"
+                  value={formatInrMinor(distribution.monthlyTotalMinor)}
+                />
                 <FigureRow
                   label="You earn"
                   value={formatInrMinor(distribution.monthlyAffiliateMinor)}
@@ -119,11 +132,8 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
                   label="They save"
                   value={formatInrMinor(distribution.monthlyCustomerSavedMinor)}
                 />
-              </dl>
-              <p className="mt-2 text-xs text-text-secondary">
-                Estimated at today's plan prices. Annual plans are shown as their monthly
-                equivalent, so this is a run rate rather than an amount already earned.
-              </p>
+              </FigureList>
+              <p className="mt-2 text-xs text-text-secondary">A run rate at today's prices.</p>
             </section>
           ) : null}
 
@@ -136,39 +146,68 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
             </h3>
             {detail.referrals.length === 0 ? (
               <EmptyState
-                compact
+                size="panel"
                 icon={Users}
                 title="Nobody yet"
-                description="Share this code's link. Anyone who subscribes after clicking it appears here."
+                description="Anyone who subscribes after clicking this code's link appears here."
               />
             ) : (
               <>
-                <ul className="overflow-hidden rounded-md border border-border">
-                  {detail.referrals.map((customer) => (
-                    <li
-                      key={customer.clientId}
-                      className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-3 py-2.5 first:border-t-0"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-text-primary">
-                          {customer.name ?? 'A customer'}
-                        </p>
-                        <p className="figure truncate text-xs text-text-secondary">
-                          {customer.email ?? '—'}
-                        </p>
-                      </div>
-                      <span className="text-xs text-text-tertiary">
-                        {customer.planSlug || 'No plan'} · {formatDate(customer.attributedAt)}
-                      </span>
-                      <span className="figure w-24 text-right text-sm text-success">
-                        {formatInrMinor(customer.affiliateEarnsMinor)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <DataTable
+                  caption={`Customers who signed up through ${code?.code ?? 'this code'}`}
+                  rows={detail.referrals}
+                  rowKey={(customer) => String(customer.clientId)}
+                  rowNoun="referral"
+                  stickyHeader={false}
+                  defaultSort={{ key: 'earns', direction: 'desc' }}
+                  columns={[
+                    {
+                      key: 'customer',
+                      header: 'Customer',
+                      rowHeader: true,
+                      width: '12rem',
+                      sortable: (a, b) => (a.name ?? '').localeCompare(b.name ?? ''),
+                      render: (customer) => (
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium text-text-primary">
+                            {customer.name ?? 'A customer'}
+                          </span>
+                          <span className="figure truncate text-xs text-text-secondary">
+                            {customer.email ?? ABSENT}
+                          </span>
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'plan',
+                      header: 'Plan',
+                      secondary: true,
+                      render: (customer) => (
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate text-text-secondary">
+                            {customer.planSlug || ABSENT}
+                          </span>
+                          <span className="figure truncate text-xs text-text-tertiary">
+                            {formatDate(customer.attributedAt)}
+                          </span>
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'earns',
+                      header: 'You earn',
+                      type: 'number',
+                      sortable: (a, b) => a.affiliateEarnsMinor - b.affiliateEarnsMinor,
+                      render: (customer) => (
+                        <span className="text-success">
+                          {formatInrMinor(customer.affiliateEarnsMinor)}
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
                 <p className="mt-2 text-xs text-text-secondary">
-                  Email addresses are partly hidden on purpose — we tell you who converted without
-                  handing over their contact details.
+                  Addresses are partly hidden on purpose.
                 </p>
               </>
             )}

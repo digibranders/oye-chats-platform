@@ -3,6 +3,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  CardSection,
   EmptyState,
   ErrorState,
   LoadingRows,
@@ -23,29 +24,26 @@ const PERIODS = [
 type Period = (typeof PERIODS)[number]['value'];
 
 /**
- * What the current thresholds have actually produced.
+ * The reading itself, keyed by request.
  *
- * Every other panel on this page is a promise; this one is the receipt. Tuning
- * an MQL threshold without seeing how many conversations cleared it is guessing,
- * and `GET /analytics/qualification-funnel` has supported a period since it was
- * written without anything in the console ever passing one.
+ * Split out so the parent can remount it with `key={agentId:period:reload}`
+ * rather than clearing its own state during render. The old version wrote
+ * `setStages(null)` in the render body behind a request comparison; it worked,
+ * but a render-phase side effect is the sort of thing the next reader has to
+ * reason about under StrictMode double-invocation, and a key achieves the same
+ * paint for free.
  */
-function FunnelSectionInner({ agentId }: { agentId: number }) {
-  const [period, setPeriod] = useState<Period>('30d');
+function FunnelBody({
+  agentId,
+  period,
+  retry,
+}: {
+  agentId: number;
+  period: Period;
+  retry: () => void;
+}) {
   const [stages, setStages] = useState<FunnelStage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  // Clear during render rather than inside the effect, so changing the period
-  // shows the skeleton on the same paint instead of leaving last period's bars
-  // on screen under the new label for a frame.
-  const request = `${agentId}:${period}:${reloadKey}`;
-  const [loadedRequest, setLoadedRequest] = useState(request);
-  if (request !== loadedRequest) {
-    setLoadedRequest(request);
-    setStages(null);
-    setError(null);
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -66,58 +64,69 @@ function FunnelSectionInner({ agentId }: { agentId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [agentId, period, reloadKey]);
+  }, [agentId, period]);
 
-  const retry = useCallback(() => setReloadKey((key) => key + 1), []);
   const total = stages?.[0]?.count ?? 0;
+
+  if (error) {
+    return (
+      <ErrorState size="panel" title="We could not load the funnel" description={error} onRetry={retry} />
+    );
+  }
+  if (stages === null) return <LoadingRows rows={6} />;
+  if (total === 0) {
+    return <EmptyState size="panel" title="Nothing scored in this period" />;
+  }
+
+  return (
+    <RankedBars
+      label="Qualification funnel"
+      max={total}
+      items={stages.map((stage) => ({
+        id: stage.key,
+        label: stage.label,
+        value: stage.count,
+        display: formatNumber(stage.count),
+        meta: total > 0 ? `${Math.round((stage.count / total) * 100)}%` : undefined,
+      }))}
+    />
+  );
+}
+
+/**
+ * What the current thresholds have actually produced.
+ *
+ * Every other panel on this page is a promise; this one is the receipt — which
+ * is why it sits in the right column, beside the thresholds it grades, rather
+ * than 2,500px below them at the bottom of the page. Tuning an MQL threshold
+ * without seeing how many conversations cleared it is guessing, and
+ * `GET /analytics/qualification-funnel` has supported a period since it was
+ * written without anything in the console ever passing one.
+ */
+function FunnelSectionInner({ agentId }: { agentId: number }) {
+  const [period, setPeriod] = useState<Period>('30d');
+  const [reloadKey, setReloadKey] = useState(0);
+  const retry = useCallback(() => setReloadKey((key) => key + 1), []);
 
   return (
     <Card>
       <CardHeader
         title="What this scoring has produced"
         titleAs="h2"
-        description="How far conversations actually got under the thresholds above."
-        actions={
-          <SegmentedControl
-            label="Reporting period"
-            size="sm"
-            value={period}
-            onChange={(next) => setPeriod(next as Period)}
-            items={PERIODS.map((option) => ({ value: option.value, label: option.label }))}
-          />
-        }
+        description="How far conversations actually got under these thresholds."
       />
+      <CardSection>
+        <SegmentedControl
+          label="Reporting period"
+          size="sm"
+          fill
+          value={period}
+          onChange={(next) => setPeriod(next as Period)}
+          items={PERIODS.map((option) => ({ value: option.value, label: option.label }))}
+        />
+      </CardSection>
       <CardBody>
-        {error ? (
-          <ErrorState
-            compact
-            title="We could not load the funnel"
-            description={error}
-            onRetry={retry}
-          />
-        ) : stages === null ? (
-          <LoadingRows rows={6} />
-        ) : total === 0 ? (
-          <EmptyState
-            compact
-            title="No conversations in this period"
-            description="Nothing has been scored yet, so there is nothing to compare your thresholds against. Widen the period, or come back once visitors have used the chatbot."
-          />
-        ) : (
-          <RankedBars
-            label="Qualification funnel"
-            tone="ink"
-            max={total}
-            items={stages.map((stage) => ({
-              id: stage.key,
-              label: stage.label,
-              value: stage.count,
-              display: formatNumber(stage.count),
-              meta:
-                total > 0 ? `${Math.round((stage.count / total) * 100)}% of conversations` : undefined,
-            }))}
-          />
-        )}
+        <FunnelBody key={`${agentId}:${period}:${reloadKey}`} agentId={agentId} period={period} retry={retry} />
       </CardBody>
     </Card>
   );

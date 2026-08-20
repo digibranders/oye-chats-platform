@@ -13,6 +13,8 @@ import {
   LockedState,
   SegmentedControl,
   Section,
+  SettingGroup,
+  SettingRow,
   Stack,
   Switch,
   formatDate,
@@ -23,6 +25,7 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import {
   couponCreatePayload,
   couponDiscount,
@@ -224,7 +227,7 @@ export function CouponsScreen() {
     },
     {
       key: 'actions',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (coupon) => (
         <span className="flex justify-end gap-1.5">
@@ -233,7 +236,7 @@ export function CouponsScreen() {
           </Button>
           <Button
             size="sm"
-            variant="danger"
+            variant="ghost"
             onClick={() => {
               setActionError(null);
               setRemoving(coupon);
@@ -248,21 +251,12 @@ export function CouponsScreen() {
 
   if (coupons.forbidden) {
     return (
-      <LockedState
-        title="You cannot read coupons"
-        description="Your super-admin account is not permitted to load them. Nothing was created or changed."
-      />
+      <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription('coupons')} />
     );
   }
 
   return (
     <Stack>
-      <Alert tone="warning" title="Coupons are not redeemable online">
-        There is no redemption path in checkout. A customer entering a valid code is refused with "contact
-        us" and an invalid one is refused as invalid — never charged full price while believing a discount
-        applied. A coupon created here is a record of an offer somebody applies to an account by hand.
-      </Alert>
-
       {actionError ? (
         <Alert tone="danger" live title="That did not work">
           {actionError}
@@ -271,7 +265,7 @@ export function CouponsScreen() {
 
       <Section
         title="Coupons"
-        description="Newest first, as the endpoint returns them."
+        description="Recorded here and honoured by hand; there is no online redemption."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedControl
@@ -412,14 +406,16 @@ export function CouponsScreen() {
           </Field>
 
           {!isCreate ? (
-            <div className="rounded-md border border-border bg-surface-sunken px-3 py-3">
-              <Switch
-                label="Active"
-                description="A deactivated coupon is refused even when its window is still open."
-                checked={draft.is_active}
-                onCheckedChange={(checked) => setDraft({ ...draft, is_active: checked })}
-              />
-            </div>
+            <SettingGroup>
+              <SettingRow label="Active" description="A deactivated coupon is refused even when its window is still open.">
+                <Switch
+                  label="Active"
+                  hideLabel
+                  checked={draft.is_active}
+                  onCheckedChange={(checked) => setDraft({ ...draft, is_active: checked })}
+                />
+              </SettingRow>
+            </SettingGroup>
           ) : null}
         </div>
       </Dialog>

@@ -133,9 +133,15 @@ describe('support session state', () => {
 /* ----------------------------------------------------------- impersonation */
 
 describe('Impersonation', () => {
-  it('states that the endpoint stores no reason instead of showing a field that goes nowhere', () => {
+  /**
+   * There is no reason field, because the endpoint accepts none. The fact is a
+   * tooltip on the row rather than a sentence set as a value — and the value
+   * itself is the em dash rule 10 asks for an absent one.
+   */
+  it('offers no reason field, and says the endpoint accepts none', () => {
     render(withProvider(<ImpersonateCard client={CLIENT} />));
-    expect(screen.getByText('Not accepted by this endpoint. Nothing is stored.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /reason/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'About Reason' })).toBeInTheDocument();
   });
 
   it('holds the confirmation until the account’s own email is typed', async () => {
@@ -216,7 +222,7 @@ describe('Impersonation', () => {
   it('says nothing is listed that this console did not mint', () => {
     render(withProvider(<SupportSessionsPanel />));
     expect(screen.getByText('No support session opened from here')).toBeInTheDocument();
-    expect(screen.getByText(/exposes no endpoint that lists impersonation tokens/)).toBeInTheDocument();
+    expect(screen.getByText(/lists no impersonation tokens/)).toBeInTheDocument();
   });
 });
 
@@ -280,7 +286,7 @@ describe('Access controls', () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Rotate API key' }));
+    await user.click(screen.getByRole('button', { name: 'Rotate' }));
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('stops authenticating');
     expect(dialog).toHaveTextContent('never returned in full');
@@ -307,7 +313,7 @@ describe('Access controls', () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Suspend account' }));
+    await user.click(screen.getByRole('button', { name: 'Suspend' }));
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('restoring access reverses this exactly');
     await user.click(within(dialog).getByRole('button', { name: 'Suspend account' }));

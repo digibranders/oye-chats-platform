@@ -88,13 +88,8 @@ export function LogsScreen() {
 
   return (
     <Stack>
-      <Alert tone="warning" title="These lines contain customer data">
-        A journal carries whatever the platform logged, which includes identifiers and, in an exception
-        trace, message content. Read it as you would read a database — and trim before it goes into a ticket.
-      </Alert>
-
-      <Toolbar>
-        <Field label="Service" hideLabel className="w-56">
+      <Toolbar sticky>
+        <Field label="Service" hideLabel className="w-48">
           <Select
             size="sm"
             options={SERVICE_OPTIONS}
@@ -102,7 +97,7 @@ export function LogsScreen() {
             onChange={(event) => url.set({ service: event.target.value })}
           />
         </Field>
-        <Field label="Lines" hideLabel className="w-36">
+        <Field label="Lines" hideLabel className="w-48">
           <Select
             size="sm"
             options={LINE_OPTIONS}
@@ -110,7 +105,7 @@ export function LogsScreen() {
             onChange={(event) => url.set({ lines: event.target.value })}
           />
         </Field>
-        <Field label="Level" hideLabel className="w-40">
+        <Field label="Level" hideLabel className="w-48">
           <Select
             size="sm"
             options={LEVEL_OPTIONS}
@@ -138,7 +133,7 @@ export function LogsScreen() {
 
       <Section
         title={`${service}.service`}
-        description="Read once, on request. Nothing on this page polls."
+        description="Read once, on request. These lines carry customer data — trim before pasting into a ticket."
       >
         <Card>
           <CardHeader

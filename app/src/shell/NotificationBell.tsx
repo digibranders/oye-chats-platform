@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Bell, Check, Inbox } from 'lucide-react';
 import {
   Button,
@@ -12,6 +13,7 @@ import {
   formatRelative,
 } from '../ui';
 import { useNotifications } from '../context/NotificationContext';
+import { formatBadgeCount } from './badgeCount';
 
 /**
  * The notification bell.
@@ -22,7 +24,20 @@ import { useNotifications } from '../context/NotificationContext';
  *
  * The unread badge shows a count, not a dot: "you have things waiting" and "you
  * have eleven things waiting" are different facts, and an operator deciding
- * whether to stop what they are doing needs the second one.
+ * whether to stop what they are doing needs the second one. It caps at 99, the
+ * same as the rail's — the bell used to cap at 9 while the rail printed the raw
+ * number, so fourteen waiting conversations read as "9+" in one place and "14"
+ * in the other.
+ *
+ * **Only the list scrolls.** `PopoverContent` is already a bounded column, and
+ * putting `max-h-96 overflow-y-auto` on the `<ul>` inside it made two nested
+ * scrollers: on a short viewport the outer one engaged and the header and the
+ * filter — the two controls that must stay put — scrolled out of the panel.
+ *
+ * **Unread is weight, not a tint.** The rows were painted `bg-accent-50`, which
+ * `tokens.css` reserves for selection, so one fact carried two blue signals and
+ * one of them was borrowed from another meaning. The dot stays; the panel now
+ * has exactly one blue thing in it and it means unread.
  */
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -40,39 +55,27 @@ export function NotificationBell() {
             'text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary',
           )}
         >
-          <Bell aria-hidden className="h-4 w-4" />
+          <Bell aria-hidden className="h-icon-md w-icon-md" />
           {unreadCount > 0 ? (
             <span
               aria-hidden
               className="figure absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-2xs font-medium text-text-inverse"
             >
-              {unreadCount > 9 ? '9+' : unreadCount}
+              {formatBadgeCount(unreadCount)}
             </span>
           ) : null}
         </PopoverTrigger>
       </Tooltip>
 
       <PopoverContent align="end" className="w-80">
-        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <p className="text-base font-semibold text-text-primary">Notifications</p>
-          {unreadCount > 0 ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void markAllRead()}
-              iconLeft={<Check aria-hidden className="h-3.5 w-3.5" />}
-            >
-              Mark all read
-            </Button>
-          ) : null}
-        </div>
-
-        {/* Filters what is loaded, not what exists — the popover holds the
-            latest thirty. Saying so is the difference between a filter and a
-            claim about the account. */}
-        <div className="border-b border-border px-3 py-2">
+        {/* One row, not two bands. A title, a filter and an action used to cost
+            88px above the first notification in a 320px panel — and the title
+            said what the bell's own accessible name already says. */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <SegmentedControl
             size="sm"
+            fill
+            className="min-w-0 flex-1"
             label="Which notifications to show"
             value={showUnreadOnly ? 'unread' : 'all'}
             onChange={(next) => setShowUnreadOnly(next === 'unread')}
@@ -81,11 +84,23 @@ export function NotificationBell() {
               { value: 'unread', label: 'Unread', count: items.filter((item) => !item.is_read).length },
             ]}
           />
+          {unreadCount > 0 ? (
+            <Tooltip content="Mark all read">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Mark all read"
+                onClick={() => void markAllRead()}
+              >
+                <Check aria-hidden />
+              </Button>
+            </Tooltip>
+          ) : null}
         </div>
 
         {visible.length === 0 ? (
           <EmptyState
-            compact
+            size="panel"
             icon={Inbox}
             title={showUnreadOnly ? 'Nothing unread' : 'Nothing new'}
             description={
@@ -97,7 +112,7 @@ export function NotificationBell() {
             }
           />
         ) : (
-          <ul className="max-h-96 overflow-y-auto py-1">
+          <ul className="min-h-0 flex-1 overflow-y-auto py-1">
             {visible.map((item) => (
               <li key={item.id}>
                 <button
@@ -106,25 +121,31 @@ export function NotificationBell() {
                     if (!item.is_read) void markRead(item.id);
                     setOpen(false);
                   }}
-                  className={cn(
-                    'flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors',
-                    'hover:bg-surface-hover',
-                    !item.is_read && 'bg-accent-50',
-                  )}
+                  className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-hover"
                 >
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                      item.is_read ? 'bg-transparent' : 'bg-accent-500',
-                    )}
-                  />
+                  {/* A 20px box matching the title's line box, so the dot is
+                      optically centred on the first line whatever rung it is. */}
+                  <span aria-hidden className="flex h-5 w-1.5 shrink-0 items-center">
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 rounded-full',
+                        item.is_read ? 'bg-transparent' : 'bg-accent-500',
+                      )}
+                    />
+                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-text-primary">{item.title}</span>
+                    <span
+                      className={cn(
+                        'block text-sm',
+                        item.is_read
+                          ? 'font-normal text-text-secondary'
+                          : 'font-semibold text-text-primary',
+                      )}
+                    >
+                      {item.title}
+                    </span>
                     {item.body ? (
-                      <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
-                        {item.body}
-                      </span>
+                      <span className="mt-0.5 block text-xs text-text-secondary">{item.body}</span>
                     ) : null}
                     <span className="mt-1 block text-2xs text-text-tertiary">
                       {formatRelative(item.created_at)}
@@ -135,6 +156,17 @@ export function NotificationBell() {
             ))}
           </ul>
         )}
+
+        {/* The panel holds the latest thirty and used to say so only inside the
+            empty state, so a reader with a full panel had no idea there was a
+            boundary and nowhere to go past it. */}
+        <Link
+          to="/inbox"
+          onClick={() => setOpen(false)}
+          className="block shrink-0 border-t border-border px-3 py-2 text-center text-xs text-accent-600 transition-colors hover:bg-surface-hover"
+        >
+          Open the inbox
+        </Link>
       </PopoverContent>
     </PopoverRoot>
   );

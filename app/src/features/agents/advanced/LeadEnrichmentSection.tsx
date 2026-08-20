@@ -1,12 +1,17 @@
 import { memo } from 'react';
-import { Badge, Card, CardHeader, CardSection, Switch } from '../../../ui';
+import { Badge, SettingGroup, SettingRow, Switch } from '../../../ui';
 
 interface EnrichmentRowProps {
   readonly title: string;
   readonly description: string;
-  /** The charge, phrased as the condition under which it is levied. */
+  /** The charge, as a figure — the one fact that decides whether this goes on. */
   readonly cost: string;
-  /** Named, so a locked row says WHICH plan rather than just "upgrade". */
+  /**
+   * The shortest plan name that includes it.
+   *
+   * One word, because `Badge` is `whitespace-nowrap` and "the Standard and
+   * Professional plans" rendered as a ~290px unbreakable pill.
+   */
   readonly planName: string;
   readonly planAllows: boolean;
   readonly enabled: boolean;
@@ -23,7 +28,20 @@ function EnrichmentRow({
   onToggle,
 }: EnrichmentRowProps) {
   return (
-    <CardSection>
+    <SettingRow
+      label={title}
+      description={description}
+      badge={
+        planAllows ? (
+          // The price is the fact that decides this, so it is a figure beside
+          // the name rather than the tail of a 12px sentence.
+          <span className="figure text-xs text-text-secondary">{cost}</span>
+        ) : (
+          <Badge tone="plan">{planName}</Badge>
+        )
+      }
+      controlWidth="auto"
+    >
       <Switch
         // `planAllows && enabled` deliberately: on a plan without the feature
         // the switch reads OFF whatever is stored, because it does nothing. The
@@ -33,18 +51,9 @@ function EnrichmentRow({
         onCheckedChange={onToggle}
         disabled={!planAllows}
         label={title}
-        description={
-          <>
-            {description} {cost}
-          </>
-        }
+        hideLabel
       />
-      {!planAllows ? (
-        <p className="mt-2">
-          <Badge tone="plan">Included on {planName}</Badge>
-        </p>
-      ) : null}
-    </CardSection>
+    </SettingRow>
   );
 }
 
@@ -84,34 +93,33 @@ function LeadEnrichmentSectionInner({
   companyLookupPlanAllows,
 }: LeadEnrichmentSectionProps) {
   return (
-    <Card>
-      <CardHeader
-        title="Lead enrichment"
-        titleAs="h2"
-        description="Extra detail added to the leads this chatbot captures. Both are off until you turn them on, because both spend credits."
-      />
+    <SettingGroup
+      title="Lead enrichment"
+      titleAs="h2"
+      description="Both spend credits, so both are off by default."
+    >
       <EnrichmentRow
         title="Email verification"
-        description="When a visitor leaves an email, check in real time that it can actually receive mail."
-        cost="Costs 10 credits per verified lead."
-        planName="the Standard and Professional plans"
+        description="Check the address can receive mail."
+        cost="10 credits / verified lead"
+        planName="Standard"
         planAllows={emailVerificationPlanAllows}
         enabled={emailVerificationEnabled}
         onToggle={onToggleEmailVerification}
       />
       <EnrichmentRow
         title="Company lookup"
-        description="Identify the company a visitor is browsing from, using their IP address."
+        description="Identify the company from the visitor’s IP."
         // Stated as a condition, not a flat price. Most visitors arrive on home
         // or mobile connections that name no employer, and those cost nothing —
         // a bare "10 credits" would read as 10 per visitor.
-        cost="Costs 10 credits only when a company is found."
-        planName="the Professional plan"
+        cost="10 credits only when a company is found"
+        planName="Professional"
         planAllows={companyLookupPlanAllows}
         enabled={companyLookupEnabled}
         onToggle={onToggleCompanyLookup}
       />
-    </Card>
+    </SettingGroup>
   );
 }
 

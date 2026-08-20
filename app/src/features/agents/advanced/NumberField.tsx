@@ -17,6 +17,8 @@ export interface NumberFieldProps {
    * milliseconds a factor of a thousand apart.
    */
   unitLabel?: string;
+  /** Hide the label visually, for a `SettingRow` whose own label names the control. */
+  hideLabel?: boolean;
   step?: number;
   min?: number;
   max?: number;
@@ -42,6 +44,7 @@ export function NumberField({
   error,
   value,
   unitLabel,
+  hideLabel = false,
   step = 1,
   min = 0,
   max,
@@ -54,6 +57,7 @@ export function NumberField({
   return (
     <Field
       label={unitLabel ? `${label} (${unitLabel})` : label}
+      hideLabel={hideLabel}
       hint={hint}
       error={error ?? null}
       disabled={disabled}

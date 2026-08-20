@@ -1,6 +1,15 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Card, CardBody, CardHeader, Field, Input, SaveBar, toast, validateEmail } from '../../ui';
+import {
+  Alert,
+  Avatar,
+  Input,
+  SaveBar,
+  SettingGroup,
+  SettingRow,
+  toast,
+  validateEmail,
+} from '../../ui';
 import { updateClientProfile, updateOperator } from '../../services/api';
 import { keys } from '../../query/keys';
 import type { CurrentUser } from '../../types/domain';
@@ -29,6 +38,7 @@ const OPERATOR_LABELS = { name: 'Name', email: 'Email' } as const;
  * through the verified change flow below, never through this form.
  */
 export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
+  const fieldId = useId();
   const queryClient = useQueryClient();
   const isOperator = user.kind === 'operator';
 
@@ -90,66 +100,69 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Profile"
-        titleAs="h2"
-        description={
-          isOperator
-            ? 'Your name is what visitors see when you take a conversation over from the chatbot.'
-            : 'How you appear to your team.'
-        }
-      />
-      <CardBody className="space-y-5">
-        {save.isError ? (
+    <SettingGroup title="Profile">
+      {save.isError ? (
+        <div className="px-cell pt-4">
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        ) : null}
-
-        <div className="flex items-center gap-3">
-          <Avatar name={draft.values.name || user.email || 'You'} size="lg" src={user.avatar_url} />
-          <p className="text-xs text-text-secondary">
-            Your picture comes from the account you signed in with. There is nothing to upload
-            here.
-          </p>
         </div>
+      ) : null}
 
-        <Field label="Name" required error={draft.errors.name}>
+      <SettingRow
+        label="Picture"
+        description="From the account you signed in with."
+        controlWidth="auto"
+      >
+        <Avatar name={draft.values.name || user.email || 'You'} size="lg" src={user.avatar_url} />
+      </SettingRow>
+
+      <SettingRow
+        label="Name"
+        htmlFor={`${fieldId}-name`}
+        description={isOperator ? 'Visitors see this beside your messages.' : undefined}
+        error={draft.errors.name}
+      >
+        <Input
+          id={`${fieldId}-name`}
+          required
+          aria-invalid={draft.errors.name ? true : undefined}
+          value={draft.values.name}
+          onChange={(event) => draft.set('name', event.target.value)}
+          autoComplete="name"
+          placeholder="Priya Sharma"
+        />
+      </SettingRow>
+
+      {isOperator ? (
+        <SettingRow
+          label="Email"
+          htmlFor={`${fieldId}-email`}
+          description="Only you can change this."
+          error={draft.errors.email}
+        >
           <Input
-            value={draft.values.name}
-            onChange={(event) => draft.set('name', event.target.value)}
-            autoComplete="name"
-            placeholder="Priya Sharma"
-          />
-        </Field>
-
-        {isOperator ? (
-          <Field
-            label="Email"
+            id={`${fieldId}-email`}
+            type="email"
             required
-            hint="Where your sign-in link goes. Only you can change it — not an admin, and not the workspace owner."
-            error={draft.errors.email}
-          >
-            <Input
-              type="email"
-              value={draft.values.email ?? ''}
-              onChange={(event) => draft.set('email', event.target.value)}
-              autoComplete="email"
-            />
-          </Field>
-        ) : null}
-      </CardBody>
+            aria-invalid={draft.errors.email ? true : undefined}
+            value={draft.values.email ?? ''}
+            onChange={(event) => draft.set('email', event.target.value)}
+            autoComplete="email"
+          />
+        </SettingRow>
+      ) : null}
+
       <SaveBar
-          variant="footer"
+        variant="footer"
         dirty={draft.isDirty}
         summary={describeDirty(draft.dirty, isOperator ? OPERATOR_LABELS : CLIENT_LABELS)}
         saving={save.isPending}
         onSave={submit}
         onDiscard={draft.reset}
       />
-    </Card>
+    </SettingGroup>
   );
 }

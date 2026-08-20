@@ -4,13 +4,14 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
-import { Eye, EyeOff, Lock, Mail } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Checkbox, Field, Input, validateEmail } from '../ui';
 import { loginAdmin, loginOperator } from '../services/api';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
+import { useGoogleAuthAvailable } from './auth/useGoogleAuth';
 import {
   currentSessionDoor,
   errorMessage,
@@ -38,11 +39,11 @@ const UNAUTHORIZED = 401;
 
 const DOOR_PROMPT: Record<SignInDoor, { hint: string; action: string }> = {
   client: {
-    hint: 'If you were invited to a workspace as a team member, your password lives on the team sign-in.',
+    hint: 'Invited as a team member? Your password is on the team sign-in.',
     action: 'Team sign-in',
   },
   operator: {
-    hint: 'If this is the account that owns the workspace, use the owner sign-in instead.',
+    hint: 'Own the workspace? Use the owner sign-in.',
     action: 'Owner sign-in',
   },
 };
@@ -81,6 +82,10 @@ export default function Login() {
     () => Boolean(getAuthItem('admin_token')) && !isSessionExpired(),
   );
   const [door, setDoor] = useState<SignInDoor>(readPreferredDoor);
+  // The button renders nothing on a deployment with no OAuth client, so the
+  // divider above it has to ask the same question rather than always drawing a
+  // rule with the word OR and nothing over it.
+  const googleAvailable = useGoogleAuthAvailable();
   const [revealPassword, setRevealPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
@@ -180,7 +185,6 @@ export default function Login() {
   return (
     <AuthShell
       title="Sign in"
-      description="Your chatbots, your inbox and your leads."
       footer={
         <>
           New to OyeChats?{' '}
@@ -196,13 +200,21 @@ export default function Login() {
         next={postAuthDestination({ next, affiliateToken, door: 'client' })}
       />
 
-      <AuthDivider />
+      {googleAvailable ? <AuthDivider /> : null}
 
       {signIn.isError ? (
+        // Two lines, one of them scannable. It used to glue two sentences into
+        // one 160-character run with a literal leading space, while `Alert`'s
+        // own `title` slot sat unused.
         <Alert
           tone="danger"
           live
           className="mb-4"
+          title={
+            failedCredentials
+              ? 'Email or password is incorrect'
+              : undefined
+          }
           action={
             failedCredentials ? (
               <Button size="sm" onClick={retryOtherDoor} loading={signIn.isPending}>
@@ -211,8 +223,9 @@ export default function Login() {
             ) : undefined
           }
         >
-          {errorMessage(signIn.error, 'We could not sign you in. Please try again.')}
-          {failedCredentials ? <> {DOOR_PROMPT[door].hint}</> : null}
+          {failedCredentials
+            ? DOOR_PROMPT[door].hint
+            : errorMessage(signIn.error, 'We could not sign you in. Please try again.')}
         </Alert>
       ) : null}
 
@@ -226,7 +239,6 @@ export default function Login() {
             autoComplete="email"
             autoFocus={!invitedEmail}
             placeholder="you@company.com"
-            leading={<Mail aria-hidden className="h-4 w-4" />}
             {...form.register('email')}
           />
         </Field>
@@ -237,7 +249,6 @@ export default function Login() {
               type={revealPassword ? 'text' : 'password'}
               autoComplete="current-password"
               placeholder="Your password"
-              leading={<Lock aria-hidden className="h-4 w-4" />}
               trailing={
                 <button
                   type="button"
@@ -269,8 +280,7 @@ export default function Login() {
         <Checkbox
           checked={rememberMe}
           onCheckedChange={(checked) => setRememberMe(checked === true)}
-          label="Keep me signed in for 30 days"
-          description="Leave this off on a shared computer — the session then lasts a day."
+          label="Stay signed in"
         />
 
         <Button type="submit" variant="primary" size="lg" block loading={signIn.isPending}>

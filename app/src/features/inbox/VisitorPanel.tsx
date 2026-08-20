@@ -1,21 +1,25 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, Star } from 'lucide-react';
+import { ExternalLink, UserRound } from 'lucide-react';
 import {
-  ABSENT,
+  Alert,
   Avatar,
-  Badge,
   Button,
-  DefinitionList,
+  Disclosure,
+  EmptyState,
   ErrorState,
-  Separator,
+  Eyebrow,
+  PaneHeader,
+  PropertyGrid,
   Skeleton,
   Textarea,
   TagInput,
+  Tooltip,
   cn,
   formatDateTime,
   formatNumber,
   formatRelative,
   toast,
+  type PropertyItem,
 } from '../../ui';
 import { useLeadAnnotations } from '../leads/useLeadAnnotations';
 import type { VisitorProfile } from './visitorProfile';
@@ -27,18 +31,22 @@ const BANT_LABEL: Record<keyof NonNullable<VisitorProfile['bant']>, string> = {
   timeline: 'Timeline',
 };
 
-function Rating({ value }: { value: number }) {
-  return (
-    <span className="flex items-center gap-0.5" aria-label={`Rated ${value} out of 5`}>
-      {[1, 2, 3, 4, 5].map((step) => (
-        <Star
-          key={step}
-          aria-hidden
-          className={cn('h-3.5 w-3.5', step <= value ? 'fill-warning text-warning' : 'text-border-strong')}
-        />
-      ))}
-    </span>
-  );
+/**
+ * A URL, short enough to read.
+ *
+ * `break-all` on a UTM-tagged page URL inside a 288px column renders five or
+ * six lines of mid-word breaks — the single ugliest block on this surface. The
+ * host and path are what a reader recognises; the whole string is on the
+ * tooltip and in the link itself.
+ */
+function prettyUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const path = `${url.pathname}${url.search}`.replace(/\/$/, '');
+    return `${url.host.replace(/^www\./, '')}${path}`;
+  } catch {
+    return raw.replace(/^https?:\/\/(www\.)?/, '');
+  }
 }
 
 /**
@@ -47,7 +55,11 @@ function Rating({ value }: { value: number }) {
  * There is no server API for either, so they live in this browser under the
  * session id — the same store the Leads surface reads, which is what makes a
  * note written mid-conversation still there when the lead is followed up a week
- * later. It says so on screen rather than implying the team can see it.
+ * later. It says so inside the disclosure, where it will actually be read,
+ * rather than in an 11px caption above a form.
+ *
+ * Collapsed by default: the pane's contract is read-only fact about the
+ * visitor, and 200px of editable chrome under eleven facts is not that.
  */
 function PrivateNotes({ sessionId }: { sessionId: string }) {
   const store = useLeadAnnotations();
@@ -59,44 +71,48 @@ function PrivateNotes({ sessionId }: { sessionId: string }) {
   const dirty = note.trim() !== (controller.note?.text ?? '');
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-eyebrow text-text-tertiary">Private notes</h3>
-        <span className="text-2xs text-text-tertiary">Only in this browser</span>
-      </div>
-      <Textarea
-        rows={3}
-        aria-label="Private note about this visitor"
-        placeholder="Context for later — what they need, who to loop in…"
-        value={note}
-        onChange={(event) => setNote(event.target.value)}
-      />
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-2xs text-text-tertiary">
-          {controller.note ? `Edited ${formatRelative(controller.note.ts)}` : 'Not saved yet'}
-        </span>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!dirty}
-          onClick={() => {
+    <Disclosure
+      headingLevel={3}
+      summary={<span className="text-sm font-medium text-text-primary">Private notes</span>}
+      regionLabel="Private notes about this visitor"
+      trailing={
+        controller.note ? (
+          <span className="text-2xs text-text-tertiary">
+            Edited {formatRelative(controller.note.ts)}
+          </span>
+        ) : null
+      }
+    >
+      <div className="space-y-2.5">
+        <Alert tone="neutral">
+          These notes and tags stay in this browser. Nobody else on your team can see them.
+        </Alert>
+        <Textarea
+          rows={3}
+          aria-label="Private note about this visitor"
+          placeholder="Context for later — what they need, who to loop in…"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          // Saved on blur rather than by a button: this console has a `SaveBar`
+          // for real forms, and a manual save on a browser-local scratchpad is
+          // one more thing to forget.
+          onBlur={() => {
+            if (!dirty) return;
             controller.saveNote(note);
             toast.success('Note saved');
           }}
-        >
-          Save note
-        </Button>
+        />
+        <TagInput
+          label="Tags"
+          values={tags}
+          onValuesChange={(next) => {
+            setTags(next);
+            controller.saveTags(next.join(', '));
+          }}
+          placeholder="Add a tag…"
+        />
       </div>
-      <TagInput
-        label="Tags"
-        values={tags}
-        onValuesChange={(next) => {
-          setTags(next);
-          controller.saveTags(next.join(', '));
-        }}
-        placeholder="Add a tag…"
-      />
-    </div>
+    </Disclosure>
   );
 }
 
@@ -106,6 +122,16 @@ export interface VisitorPanelProps {
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  /**
+   * Where it is mounted.
+   *
+   * `pane` is the third column: its own left hairline, its own `PaneHeader`,
+   * its own scroller and its own gutter. `drawer` is the same content inside
+   * `Drawer`, which already draws all four — the panel used to render every one
+   * of them a second time, so fields sat 36px from the edge behind a doubled
+   * border with two scrollbars, the inner of which never reached the footer.
+   */
+  variant?: 'pane' | 'drawer';
   className?: string;
 }
 
@@ -116,6 +142,10 @@ export interface VisitorPanelProps {
  * tooltip, a modal and a separate details tab. Everything here is read-only fact
  * about the visitor, so it never competes with the conversation's own actions —
  * those stay in the conversation header, where the thing they act on is.
+ *
+ * The facts are a `PropertyGrid`, label left and value right on a hairline row.
+ * Stacked label-above-value, eleven fields cost about 600px in a 320px pane —
+ * two screens of scrolling for eleven values that are mostly `—`.
  */
 export function VisitorPanel({
   profile,
@@ -123,152 +153,226 @@ export function VisitorPanel({
   loading = false,
   error = null,
   onRetry,
+  variant = 'pane',
   className,
 }: VisitorPanelProps) {
-  const identity = useMemo(
+  const pane = variant === 'pane';
+  const identity = useMemo<PropertyItem[]>(
     () =>
       profile
         ? [
-            { label: 'Email', value: profile.email ?? ABSENT },
-            { label: 'Phone', value: profile.phone ?? ABSENT },
-            { label: 'Company', value: profile.company ?? ABSENT },
-            { label: 'Location', value: profile.location ?? ABSENT },
-            { label: 'Device', value: profile.device ?? ABSENT },
+            { label: 'Email', value: profile.email },
+            { label: 'Phone', value: profile.phone },
+            { label: 'Company', value: profile.company },
+            { label: 'Location', value: profile.location },
+            { label: 'Device', value: profile.device },
           ]
         : [],
     [profile],
   );
 
-  const context = useMemo(
+  const source = useMemo<PropertyItem[]>(() => {
+    if (!profile) return [];
+    const rows: PropertyItem[] = [];
+    if (profile.pageUrl) {
+      rows.push({
+        label: 'On page',
+        value: (
+          <Tooltip content={profile.pageUrl}>
+            <a
+              href={profile.pageUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="flex min-w-0 items-center gap-1.5 text-accent-600 underline-offset-2 hover:underline"
+            >
+              <span className="min-w-0 truncate">{prettyUrl(profile.pageUrl)}</span>
+              <ExternalLink aria-hidden className="h-3 w-3 shrink-0" />
+            </a>
+          </Tooltip>
+        ),
+      });
+    }
+    if (profile.referrer) {
+      rows.push({
+        label: 'Referred by',
+        value: (
+          <Tooltip content={profile.referrer}>
+            <span className="block min-w-0 truncate">{prettyUrl(profile.referrer)}</span>
+          </Tooltip>
+        ),
+      });
+    }
+    return rows;
+  }, [profile]);
+
+  const context = useMemo<PropertyItem[]>(
     () =>
       profile
         ? [
-            { label: 'Chatbot', value: profile.botName ?? ABSENT },
-            { label: 'Department', value: profile.departmentName ?? ABSENT },
-            { label: 'Assigned to', value: profile.operatorName ?? ABSENT },
-            { label: 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : ABSENT },
-            { label: 'Last active', value: profile.lastActiveAt ? formatRelative(profile.lastActiveAt) : ABSENT },
+            { label: 'Chatbot', value: profile.botName },
+            { label: 'Department', value: profile.departmentName },
+            { label: 'Assigned to', value: profile.operatorName },
+            { label: 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
+            {
+              label: 'Last active',
+              value: profile.lastActiveAt ? formatRelative(profile.lastActiveAt) : null,
+            },
             {
               label: 'Messages',
-              value: profile.messageCount != null ? formatNumber(profile.messageCount) : ABSENT,
+              value: profile.messageCount != null ? formatNumber(profile.messageCount) : null,
+            },
+            {
+              label: 'Rated this chat',
+              value:
+                profile.rating != null ? (
+                  <>
+                    <span className="figure">{profile.rating.toFixed(1)}</span>
+                    <span className="text-text-tertiary"> out of 5</span>
+                  </>
+                ) : null,
             },
           ]
         : [],
     [profile],
   );
 
+  // A badge as the *label* of a paragraph made "Budget" green whenever a value
+  // existed — colour carrying "has a value", which no other badge in the system
+  // means. These are facts, so they are a property list, and `—` already says
+  // "not established".
+  const bant = useMemo<PropertyItem[]>(
+    () =>
+      profile?.bant
+        ? (Object.keys(BANT_LABEL) as Array<keyof typeof BANT_LABEL>).map((key) => ({
+            label: BANT_LABEL[key],
+            value: profile.bant?.[key],
+          }))
+        : [],
+    [profile],
+  );
+
+  const body = (() => {
+    if (loading && !profile) {
+      // The shape that arrives: an avatar and a title, then a run of 32px
+      // property rows. Four naked bars made the pane jump on every selection.
+      return (
+        <div aria-busy className={cn(pane && 'p-cell')}>
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-10 rounded-full" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 8 }, (_, index) => (
+              <Skeleton key={index} className="h-3 w-full" />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (error && !profile) {
+      return <ErrorState size="panel" polite description={error} onRetry={onRetry} />;
+    }
+
+    if (!profile) {
+      return (
+        <EmptyState
+          size="panel"
+          icon={UserRound}
+          title="No conversation open"
+          description="Pick a conversation to see who is on the other end."
+        />
+      );
+    }
+
+    return (
+      <div className={cn('space-y-4', pane && 'p-cell')}>
+        {/* Stale figures with a failed refetch behind them. The pane used to
+            show them silently — `onRetry` was only reachable with no profile. */}
+        {error ? (
+          <Alert
+            tone="warning"
+            action={
+              onRetry ? (
+                <Button size="sm" onClick={onRetry}>
+                  Try again
+                </Button>
+              ) : undefined
+            }
+          >
+            These details may be out of date.
+          </Alert>
+        ) : null}
+
+        <div className="flex items-center gap-3">
+          <Avatar size="lg" name={profile.name} />
+          <div className="min-w-0">
+            <p className="truncate text-base font-semibold text-text-primary">{profile.name}</p>
+            {profile.email ? (
+              <a
+                href={`mailto:${profile.email}`}
+                className="block truncate text-xs text-accent-600 underline-offset-2 hover:underline"
+              >
+                {profile.email}
+              </a>
+            ) : (
+              <p className="text-xs text-text-tertiary">No contact details captured</p>
+            )}
+          </div>
+        </div>
+
+        {profile.handoffReason ? (
+          <div className="border-l-[3px] border-l-border-strong pl-3">
+            <Eyebrow>Why they wanted a person</Eyebrow>
+            <p className="mt-0.5 text-xs text-text-primary">{profile.handoffReason}</p>
+          </div>
+        ) : null}
+
+        <PropertyGrid label="Contact details" density="compact" items={identity} />
+
+        {source.length > 0 ? (
+          <div>
+            <Eyebrow>Where they came from</Eyebrow>
+            <PropertyGrid density="compact" items={source} className="mt-1" />
+          </div>
+        ) : null}
+
+        <div>
+          <Eyebrow>This conversation</Eyebrow>
+          <PropertyGrid density="compact" items={context} className="mt-1" />
+        </div>
+
+        {bant.length > 0 ? (
+          <div>
+            <Eyebrow>What the AI learned</Eyebrow>
+            <PropertyGrid density="compact" items={bant} className="mt-1" />
+          </div>
+        ) : null}
+
+        {sessionId ? <PrivateNotes key={sessionId} sessionId={sessionId} /> : null}
+      </div>
+    );
+  })();
+
   return (
     <aside
       aria-label="Visitor details"
-      className={cn('flex h-full min-h-0 flex-col overflow-y-auto border-l border-border bg-surface', className)}
+      className={cn(
+        'flex min-h-0 flex-col',
+        pane && 'h-full border-l border-border bg-surface',
+        className,
+      )}
     >
-      {loading && !profile ? (
-        <div className="space-y-3 p-4">
-          <Skeleton className="h-10 w-10 rounded-full" />
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-3 w-3/4" />
-        </div>
-      ) : error && !profile ? (
-        <ErrorState compact description={error} onRetry={onRetry} />
-      ) : !profile ? (
-        <p className="p-4 text-xs text-text-tertiary">Select a conversation to see who is on the other end.</p>
+      {pane ? (
+        <>
+          <PaneHeader title="Details" />
+          <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
+        </>
       ) : (
-        <div className="space-y-5 p-4">
-          <div className="flex items-center gap-3">
-            <Avatar size="lg" name={profile.name} />
-            <div className="min-w-0">
-              <p className="truncate text-base font-semibold text-text-primary">{profile.name}</p>
-              {profile.email ? (
-                <a
-                  href={`mailto:${profile.email}`}
-                  className="truncate text-xs text-accent-600 underline-offset-2 hover:underline"
-                >
-                  {profile.email}
-                </a>
-              ) : (
-                <p className="text-xs text-text-tertiary">No contact details captured</p>
-              )}
-            </div>
-          </div>
-
-          {profile.rating != null ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-tertiary">Rated this chat</span>
-              <Rating value={profile.rating} />
-            </div>
-          ) : null}
-
-          {profile.handoffReason ? (
-            <div className="rounded-md border-l-[3px] border-l-ink bg-surface-sunken px-3 py-2">
-              <p className="text-2xs uppercase tracking-eyebrow text-text-tertiary">Why they wanted a person</p>
-              <p className="mt-0.5 text-xs text-text-primary">{profile.handoffReason}</p>
-            </div>
-          ) : null}
-
-          <DefinitionList items={identity} />
-
-          {profile.pageUrl || profile.referrer ? (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-eyebrow text-text-tertiary">
-                  Where they came from
-                </h3>
-                {profile.pageUrl ? (
-                  <a
-                    href={profile.pageUrl}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="flex items-center gap-1.5 break-all text-xs text-accent-600 underline-offset-2 hover:underline"
-                  >
-                    <ExternalLink aria-hidden className="h-3 w-3 shrink-0" />
-                    {profile.pageUrl}
-                  </a>
-                ) : null}
-                {profile.referrer ? (
-                  <p className="break-all text-2xs text-text-secondary">Referred by {profile.referrer}</p>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-
-          <Separator />
-          <DefinitionList items={context} />
-
-          {profile.bant ? (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-eyebrow text-text-tertiary">
-                  What the AI learned
-                </h3>
-                <div className="space-y-2">
-                  {(Object.keys(BANT_LABEL) as Array<keyof typeof BANT_LABEL>).map((key) => {
-                    const value = profile.bant?.[key];
-                    return (
-                      <div key={key} className="flex items-start gap-2">
-                        <Badge tone={value ? 'success' : 'neutral'} className="mt-0.5 shrink-0">
-                          {BANT_LABEL[key]}
-                        </Badge>
-                        <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-secondary">
-                          {value ?? 'Not established yet'}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          ) : null}
-
-          {sessionId ? (
-            <>
-              <Separator />
-              <PrivateNotes key={sessionId} sessionId={sessionId} />
-            </>
-          ) : null}
-        </div>
+        body
       )}
     </aside>
   );

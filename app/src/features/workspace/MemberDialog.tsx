@@ -8,6 +8,7 @@ import {
   Dialog,
   Field,
   Input,
+  RadioCards,
   Select,
   buttonClass,
   toast,
@@ -106,11 +107,7 @@ export function MemberDialog({
   if (!member) return null;
 
   const roleChanged = role !== member.role;
-  const selected = roleDefinition(role);
-  const options = assignableRoles(callerRole).map((definition) => ({
-    value: definition.value,
-    label: definition.label,
-  }));
+  const options = assignableRoles(callerRole);
 
   function attemptSave() {
     const parsed = validateConcurrentChats(capacity);
@@ -169,7 +166,7 @@ export function MemberDialog({
             hint={
               isSelf
                 ? 'Yours to change, on your account page.'
-                : 'Only this person can change their own name and email — we cannot change where their sign-in link goes.'
+                : 'Only this person can change their own email.'
             }
           >
             <Input value={member.email} readOnly disabled />
@@ -181,41 +178,27 @@ export function MemberDialog({
             </Link>
           ) : null}
 
-          <div>
-            <Field label="Role" required hint={selected?.summary}>
-              <Select
-                value={role}
-                options={options}
-                onChange={(event) => setRole(event.target.value as WorkspaceRole)}
-              />
-            </Field>
-            {/* What the choice actually grants, beside the control, before it is
-                made. `aria-live` because the list changes as the select changes
-                and a screen-reader user would otherwise hear only the role name.
-                It sits outside `Field` rather than in its hint: a hint renders
-                inside a `<p>`, and a list inside a paragraph is invalid markup
-                that browsers silently reflow. */}
-            {selected ? (
-              <div
-                aria-live="polite"
-                className="mt-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5"
-              >
-                <p className="text-xs font-medium text-text-primary">
-                  {selected.label} can:
-                </p>
-                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-text-secondary">
-                  {selected.can.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
+          {/* Every role's summary, visible at once. This was a `Select` with a
+              live region beside it printing the selected role's capabilities —
+              the workaround `RadioCards`' own docstring names verbatim. It
+              forced the reader to change the value in order to read what each
+              value meant, so they could not compare before choosing. The
+              consequence of the change still lands in the confirmation. */}
+          <Field label="Role" required>
+            <RadioCards
+              label="Role"
+              columns={1}
+              value={role}
+              onChange={setRole}
+              items={options.map((definition) => ({
+                value: definition.value,
+                label: definition.label,
+                description: definition.summary,
+              }))}
+            />
+          </Field>
 
-          <Field
-            label="Department"
-            hint="Used to route a conversation to the right group. Optional."
-          >
+          <Field label="Department" optional hint="Routes a conversation to a group.">
             {/* An explicit "no department" option rather than a placeholder:
                 a placeholder renders a *disabled* option, so once a department
                 was chosen the user could never take it away again. */}
@@ -235,7 +218,7 @@ export function MemberDialog({
           <Field
             label="Live chats at once"
             required
-            hint="How many conversations they can be handed simultaneously. Between 1 and 100."
+            hint="Between 1 and 100."
             error={capacityError}
           >
             <Input

@@ -3,14 +3,14 @@ import {
   Alert,
   Button,
   Card,
-  DataTable,
+  CardBody,
+  Combobox,
   EmptyState,
-  Input,
+  LoadingBars,
   LockedState,
   RankedBars,
   Section,
   SegmentedControl,
-  Skeleton,
   Stack,
   Toolbar,
   formatDateTime,
@@ -18,7 +18,10 @@ import {
   type Column,
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
-import { bpsLabel } from './money';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
+import { RecordList } from '../RecordList';
+import { byDate, byNumber, usePagedRows } from '../recordListState';
+import { bpsLabel } from '../money';
 import type { BotGrowthEventRow, FunnelStage, ReferralConversionRow } from './types';
 
 /**
@@ -41,6 +44,25 @@ const RANGES = [
   { value: '365', label: '1 year' },
 ];
 
+/**
+ * The distinct `{id, name}` pairs in a list, as combobox options.
+ *
+ * The applied value is kept even when nothing in the current response carries
+ * it, so a filtered list still shows what it is filtered by.
+ */
+function distinctOptions(
+  rows: readonly { id: number | null; name: string | null }[],
+  applied: string,
+): { value: string; label: string }[] {
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    if (row.id == null) continue;
+    seen.set(String(row.id), row.name ?? `#${row.id}`);
+  }
+  if (applied && !seen.has(applied)) seen.set(applied, `#${applied}`);
+  return [...seen].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
 export function GrowthTab() {
   const url = useUrlState();
   const days = RANGES.some((range) => range.value === url.get('days')) ? url.get('days') : '30';
@@ -54,6 +76,36 @@ export function GrowthTab() {
   const growth = usePlatformList<BotGrowthEventRow>('/bot-growth-events', {
     params: botId ? { bot_id: botId } : undefined,
   });
+
+  const referralsPaged = usePagedRows(referrals.items, {
+    url,
+    pageKey: 'rpage',
+    sortKey: 'rsort',
+    comparators: {
+      created: byDate((row) => row.created_at),
+      commission: byNumber((row) => row.commission_bps),
+      discount: byNumber((row) => row.customer_discount_bps),
+    },
+  });
+
+  const growthPaged = usePagedRows(growth.items, {
+    url,
+    pageKey: 'gpage',
+    sortKey: 'gsort',
+    comparators: { created: byDate((row) => row.created_at) },
+  });
+
+  // Both filters are exact-match server filters on an integer id, and nobody
+  // knows one. The options are read out of the rows that came back, plus
+  // whatever is already applied, which is the only source the API offers.
+  const affiliateOptions = distinctOptions(
+    referrals.items.map((row) => ({ id: row.affiliate_id, name: row.affiliate_name })),
+    affiliateId,
+  );
+  const botOptions = distinctOptions(
+    growth.items.map((row) => ({ id: row.bot_id, name: row.bot_name })),
+    botId,
+  );
 
   const baseline = funnel.items[0]?.value ?? 0;
   const bars = useMemo(
@@ -74,7 +126,7 @@ export function GrowthTab() {
       header: 'Converted',
       pinned: true,
       width: '12rem',
-      sortable: (a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDateTime(row.created_at)}</span>,
     },
     {
@@ -108,7 +160,7 @@ export function GrowthTab() {
       header: 'Commission',
       align: 'right',
       width: '9rem',
-      sortable: (a, b) => a.commission_bps - b.commission_bps,
+      sortable: true,
       // Snapshotted at conversion time: the affiliate's terms today may differ,
       // and this is what was agreed then.
       render: (row) => <span className="figure">{bpsLabel(row.commission_bps)}</span>,
@@ -119,7 +171,7 @@ export function GrowthTab() {
       align: 'right',
       width: '11rem',
       secondary: true,
-      sortable: (a, b) => a.customer_discount_bps - b.customer_discount_bps,
+      sortable: true,
       render: (row) => <span className="figure">{bpsLabel(row.customer_discount_bps)}</span>,
     },
   ];
@@ -130,7 +182,7 @@ export function GrowthTab() {
       header: 'When',
       pinned: true,
       width: '12rem',
-      sortable: (a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDateTime(row.created_at)}</span>,
     },
     {
@@ -141,10 +193,10 @@ export function GrowthTab() {
     },
     {
       key: 'bot',
-      header: 'Agent',
+      header: 'Chatbot',
       render: (row) => (
         <span className="text-sm text-text-secondary">
-          {row.bot_name ?? `agent #${row.bot_id}`}
+          {row.bot_name ?? `chatbot #${row.bot_id}`}
         </span>
       ),
     },
@@ -154,7 +206,7 @@ export function GrowthTab() {
     <Stack>
       <Section
         title="Visitor to customer"
-        description="Each stage as a share of the first, over the trailing window. Rows are counted from the session's own created date, so a long-running conversation stays in the window it started in."
+        description="Each stage as a share of the first, counted from the session's own created date."
         actions={
           <SegmentedControl
             size="sm"
@@ -167,19 +219,18 @@ export function GrowthTab() {
       >
         {funnel.forbidden ? (
           <LockedState
-            title="You cannot read the funnel"
-            description="Your super-admin account is not permitted to read conversion data. Nothing was loaded."
+            size="panel"
+            title={FORBIDDEN_TITLE}
+            description={forbiddenDescription('conversion data')}
           />
         ) : (
           <Card>
             {funnel.loading && funnel.items.length === 0 ? (
-              <div className="space-y-2 p-4">
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-              </div>
+              <CardBody>
+                <LoadingBars rows={4} />
+              </CardBody>
             ) : funnel.error ? (
-              <div className="p-4">
+              <CardBody>
                 <Alert
                   tone="danger"
                   live
@@ -192,15 +243,17 @@ export function GrowthTab() {
                 >
                   {funnel.error}
                 </Alert>
-              </div>
+              </CardBody>
             ) : baseline === 0 ? (
               <EmptyState
                 compact
                 title="No sessions in this window"
-                description="Every stage is measured as a share of sessions, and there were none — so the funnel has no denominator rather than being all zeroes. Widen the range."
+                description="Every stage is a share of sessions and there were none, so the funnel has no denominator. Widen the range."
               />
             ) : (
-              <RankedBars label="Visitor to paying customer funnel" items={bars} max={baseline} tone="ink" />
+              <CardBody>
+                <RankedBars label="Visitor to paying customer funnel" items={bars} max={baseline} />
+              </CardBody>
             )}
           </Card>
         )}
@@ -208,116 +261,98 @@ export function GrowthTab() {
 
       <Section
         title="Referral conversions"
-        description="Commission and discount terms as they stood at the moment each referral converted. Later changes to an affiliate's terms do not rewrite these."
+        description="Terms as they stood when each referral converted. Later changes do not rewrite these."
       >
-        <Toolbar className="mb-3">
-          <Input
-            size="sm"
-            type="number"
-            min={1}
-            inputMode="numeric"
-            aria-label="Filter referral conversions by affiliate id"
-            placeholder="Affiliate id"
-            className="w-36"
-            value={affiliateId}
-            onChange={(event) => url.set({ affiliate: event.target.value })}
-          />
+        <Toolbar sticky className="mb-3">
+          <div className="w-48">
+            <Combobox
+              size="sm"
+              label="Filter referral conversions by affiliate"
+              value={affiliateId || null}
+              onValueChange={(next) => url.set({ affiliate: next })}
+              options={affiliateOptions}
+              placeholder="Every affiliate"
+              clearable
+            />
+          </div>
           {affiliateId ? (
             <Button size="sm" variant="ghost" onClick={() => url.set({ affiliate: null })}>
               Show every affiliate
             </Button>
           ) : null}
         </Toolbar>
-        {referrals.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="Truncated at 500 conversions">
-            The endpoint returns at most {SERVER_CAP} rows and does not paginate. Filter by affiliate
-            id to read one affiliate's history in full.
-          </Alert>
-        ) : null}
-        {referrals.forbidden ? (
-          <LockedState
-            title="You cannot read referral conversions"
-            description="Your super-admin account is not permitted to read affiliate conversions. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Referral conversions, newest first"
-            columns={referralColumns}
-            rows={referrals.items}
-            rowKey={(row) => String(row.id)}
-            loading={referrals.loading}
-            error={referrals.error}
-            onRetry={referrals.reload}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={affiliateId ? 'No conversions for that affiliate' : 'No referral conversions yet'}
-                description={
-                  affiliateId
-                    ? 'That affiliate id has never had a referral convert.'
-                    : 'No account has signed up through a referral code. Affiliate codes exist independently of this — a code with no conversions still shows nothing here.'
-                }
-              />
-            }
-          />
-        )}
+        <RecordList
+          caption="Referral conversions, newest first"
+          columns={referralColumns}
+          paged={referralsPaged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="conversion"
+          what="affiliate conversions"
+          loading={referrals.loading}
+          error={referrals.error}
+          forbidden={referrals.forbidden}
+          onRetry={referrals.reload}
+          loaded={referrals.items.length}
+          cap={SERVER_CAP}
+          empty={
+            <EmptyState
+              title={affiliateId ? 'No conversions for that affiliate' : 'No referral conversions yet'}
+              description={
+                affiliateId
+                  ? 'That affiliate has never had a referral convert.'
+                  : 'No account has signed up through a referral code.'
+              }
+            />
+          }
+        />
       </Section>
 
       <Section
-        title="Agent growth events"
-        description="Demo-link distribution telemetry, one row per event. Newest first."
+        title="Chatbot growth events"
+        description="Demo-link distribution telemetry, newest first."
       >
-        <Toolbar className="mb-3">
-          <Input
-            size="sm"
-            type="number"
-            min={1}
-            inputMode="numeric"
-            aria-label="Filter growth events by agent id"
-            placeholder="Agent id"
-            className="w-36"
-            value={botId}
-            onChange={(event) => url.set({ bot: event.target.value })}
-          />
+        <Toolbar sticky className="mb-3">
+          <div className="w-48">
+            <Combobox
+              size="sm"
+              label="Filter growth events by chatbot"
+              value={botId || null}
+              onValueChange={(next) => url.set({ bot: next })}
+              options={botOptions}
+              placeholder="Every chatbot"
+              clearable
+            />
+          </div>
           {botId ? (
             <Button size="sm" variant="ghost" onClick={() => url.set({ bot: null })}>
-              Show every agent
+              Show every chatbot
             </Button>
           ) : null}
         </Toolbar>
-        {growth.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="Truncated at 500 events">
-            The endpoint returns at most {SERVER_CAP} rows and does not paginate. Filter by agent id
-            to read one agent's events in full.
-          </Alert>
-        ) : null}
-        {growth.forbidden ? (
-          <LockedState
-            title="You cannot read growth events"
-            description="Your super-admin account is not permitted to read agent growth telemetry. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Agent growth events, newest first"
-            columns={growthColumns}
-            rows={growth.items}
-            rowKey={(row) => String(row.id)}
-            loading={growth.loading}
-            error={growth.error}
-            onRetry={growth.reload}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={botId ? 'No events for that agent' : 'No growth events recorded'}
-                description={
-                  botId
-                    ? 'That agent id has no demo-link events on record.'
-                    : 'No agent has recorded a demo-link event. The telemetry is written when a demo link is shared or opened.'
-                }
-              />
-            }
-          />
-        )}
+        <RecordList
+          caption="Chatbot growth events, newest first"
+          columns={growthColumns}
+          paged={growthPaged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="event"
+          what="chatbot growth telemetry"
+          loading={growth.loading}
+          error={growth.error}
+          forbidden={growth.forbidden}
+          onRetry={growth.reload}
+          loaded={growth.items.length}
+          cap={SERVER_CAP}
+          empty={
+            <EmptyState
+              title={botId ? 'No events for that chatbot' : 'No growth events recorded'}
+              description={
+                botId
+                  ? 'That chatbot has no demo-link events on record.'
+                  : 'The telemetry is written when a demo link is shared or opened.'
+              }
+            />
+          }
+        />
       </Section>
     </Stack>
   );

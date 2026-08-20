@@ -86,7 +86,12 @@ const PremiumOrb = ({ color, size = 48, className = '', style = {} }) => {
                     display: 'inline-block',
                     flexShrink: 0,
                     borderRadius: '50%',
-                    background: `radial-gradient(circle at 40% 40%, ${safe}, ${safe}22 70%, transparent 100%)`,
+                    // Flat, not a radial gradient. DESIGN.md §6.5 bans gradient
+                    // chrome, and a second visual identity that appears only
+                    // when the GPU path fails is one nobody has reviewed. The
+                    // hex-with-alpha arithmetic went with it.
+                    background: safe,
+                    opacity: 0.9,
                     ...style,
                 }}
                 aria-hidden="true"

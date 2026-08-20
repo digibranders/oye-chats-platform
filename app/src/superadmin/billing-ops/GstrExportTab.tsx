@@ -6,8 +6,9 @@ import {
   Card,
   CardBody,
   CardHeader,
-  DefinitionList,
+  Disclosure,
   Field,
+  PropertyGrid,
   Section,
   Select,
   Stack,
@@ -161,45 +162,45 @@ export function GstrExportTab() {
         </Alert>
       ) : null}
 
-      <Section title="What is in the file">
-        <Card>
-          <CardBody>
-            <DefinitionList
-              columns={2}
-              items={[
-                {
-                  label: 'Denomination',
-                  value:
-                    'Rupees, to two decimals. The API works in minor units everywhere else; the return does not.',
-                },
-                {
-                  label: 'Document currency',
-                  value:
-                    'Carried separately in doc_currency, doc_gross_value, doc_taxable_value and doc_total_tax — what the customer actually holds, alongside the rupee figures that go on the return.',
-                },
-                {
-                  label: 'FX',
-                  value:
-                    'fx_rate is the Rule 34(2) rate at the time of supply, stored on the document. It is not recomputed at export time.',
-                },
-                {
-                  label: 'Blank cells',
-                  value:
-                    'A blank money column means the figure could not be derived, not zero. A zero-value supply prints 0.00.',
-                },
-                {
-                  label: 'Encoding',
-                  value: 'UTF-8 with a byte-order mark, so Excel opens non-ASCII legal names correctly.',
-                },
-                {
-                  label: 'Period basis',
-                  value: `IST calendar month. Today is in ${monthLabel(toMonthKey(new Date()))}.`,
-                },
-              ]}
-            />
-          </CardBody>
-        </Card>
-      </Section>
+      {/* Reference material, read once and then never again. It was ~90 words
+          permanently on screen above a two-control form. */}
+      <Disclosure summary="What is in the file" headingLevel={2}>
+        <div className="pt-2">
+          <PropertyGrid
+            columns={2}
+            items={[
+              {
+                label: 'Denomination',
+                value:
+                  'Rupees, to two decimals. The API works in minor units everywhere else; the return does not.',
+              },
+              {
+                label: 'Document currency',
+                value:
+                  'Carried separately in doc_currency, doc_gross_value, doc_taxable_value and doc_total_tax — what the customer actually holds, alongside the rupee figures that go on the return.',
+              },
+              {
+                label: 'FX',
+                value:
+                  'fx_rate is the Rule 34(2) rate at the time of supply, stored on the document. It is not recomputed at export time.',
+              },
+              {
+                label: 'Blank cells',
+                value:
+                  'A blank money column means the figure could not be derived, not zero. A zero-value supply prints 0.00.',
+              },
+              {
+                label: 'Encoding',
+                value: 'UTF-8 with a byte-order mark, so Excel opens non-ASCII legal names correctly.',
+              },
+              {
+              label: 'Period basis',
+              value: `IST calendar month. Today is in ${monthLabel(toMonthKey(new Date()))}.`,
+              },
+            ]}
+          />
+        </div>
+      </Disclosure>
     </Stack>
   );
 }

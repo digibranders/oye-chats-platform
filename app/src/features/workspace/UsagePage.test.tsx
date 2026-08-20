@@ -55,7 +55,11 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock('../../hooks/useEntitlements', () => ({
-  useEntitlements: () => ({ entitlements: state.entitlements, hasFeature: () => true, limitFor: () => 0 }),
+  useEntitlements: () => ({
+    entitlements: state.entitlements,
+    hasFeature: () => true,
+    limitFor: () => 0,
+  }),
 }));
 
 const AGENT_POOL = {
@@ -134,7 +138,11 @@ beforeEach(() => {
   api.getInvoices.mockResolvedValue([]);
   api.getBillingDetails.mockResolvedValue({});
   api.getActivePromotion.mockResolvedValue({ active: false });
-  api.getBillingGeo.mockResolvedValue({ country: 'IN', display_currency: 'INR', display_rate: 94.67 });
+  api.getBillingGeo.mockResolvedValue({
+    country: 'IN',
+    display_currency: 'INR',
+    display_rate: 94.67,
+  });
   api.getPaymentRecovery.mockResolvedValue({ past_due: false });
   api.getTopupPacks.mockResolvedValue([]);
 });
@@ -183,7 +191,9 @@ describe('credit costs', () => {
     // The seeded default is 1 credit; this workspace has been retuned to 2 and
     // the UI must say 2.
     expect(chatRow.textContent).toContain('2 credits');
-    expect(within(table).getByRole('row', { name: /Page crawled/i }).textContent).toContain('5 credits');
+    expect(within(table).getByRole('row', { name: /Page crawled/i }).textContent).toContain(
+      '5 credits',
+    );
   });
 
   it('shows an em dash, never zero, for an action the pricing does not declare', async () => {
@@ -275,17 +285,22 @@ describe('a paused chatbot', () => {
    * longer filters and discloses the pause on the entry, so the console must
    * render it: a card that vanishes is worse than a card that says "paused".
    */
-  const PAUSED = { ...AGENT_POOL, is_active: false, topup: 400, soonest_expiry: '2026-09-15T00:00:00Z' };
+  const PAUSED = {
+    ...AGENT_POOL,
+    is_active: false,
+    topup: 400,
+    soonest_expiry: '2026-09-15T00:00:00Z',
+  };
 
   it('keeps the card and names the pause instead of dropping the agent', async () => {
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
     renderPage();
 
+    // The row survives and names the pause in a word. It used to be a card per
+    // chatbot; it is a row in the per-chatbot table now, and the fact that has
+    // to reach the reader is the same one: this is paused, not gone.
     expect(await screen.findAllByText('Acme Support')).not.toHaveLength(0);
     expect(screen.getByText('Paused')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Not answering visitors, so it is spending nothing/i),
-    ).toBeInTheDocument();
   });
 
   it('says the subscription and the expiry carry on, so pause is not read as cancelled', async () => {
@@ -294,8 +309,8 @@ describe('a paused chatbot', () => {
 
     expect(await screen.findByText('This chatbot is paused')).toBeInTheDocument();
     const notice = screen.getByText('This chatbot is paused').closest('div');
-    expect(notice?.textContent).toMatch(/subscription is still active and still billing/i);
-    expect(notice?.textContent).toMatch(/expiry dates, which do not pause/i);
+    expect(notice?.textContent).toMatch(/subscription still bills/i);
+    expect(notice?.textContent).toMatch(/credits still expire on schedule/i);
     // Never the vocabulary of an ended plan.
     expect(notice?.textContent).not.toMatch(/cancel|expired|broken/i);
   });

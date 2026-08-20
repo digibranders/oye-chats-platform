@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, CopyField, Dialog, Field, Input, toast } from '../../../ui';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  CopyField,
+  Dialog,
+  Field,
+  FieldSet,
+  Input,
+  toast,
+} from '../../../ui';
 import { createWebhook, updateWebhook } from '../../../services/api';
 import type { Webhook } from '../../../types/domain';
 import { DEFAULT_EVENTS, WEBHOOK_EVENTS, validateWebhookUrl } from './webhookModel';
@@ -22,13 +32,7 @@ export interface WebhookDialogProps {
  * dialog staying open until the user says they have it. The previous console
  * rendered it into a paragraph beside a copy button that copied the mask.
  */
-export function WebhookDialog({
-  open,
-  onOpenChange,
-  webhook,
-  botId,
-  onSaved,
-}: WebhookDialogProps) {
+export function WebhookDialog({ open, onOpenChange, webhook, botId, onSaved }: WebhookDialogProps) {
   const [url, setUrl] = useState('');
   const [events, setEvents] = useState<string[]>([...DEFAULT_EVENTS]);
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -109,8 +113,8 @@ export function WebhookDialog({
       {secret ? (
         <div className="space-y-4">
           <Alert tone="warning" live title="Copy this signing secret now">
-            It is shown once. Every delivery carries an HMAC signature computed with it — without
-            it your endpoint cannot tell our requests from anyone else's.
+            It is shown once. Every delivery carries an HMAC signature computed with it — without it
+            your endpoint cannot tell our requests from anyone else's.
           </Alert>
           <CopyField value={secret} label="signing secret" />
         </div>
@@ -142,12 +146,8 @@ export function WebhookDialog({
             />
           </Field>
 
-          <fieldset className="min-w-0">
-            <legend className="text-base font-medium text-text-primary">Events</legend>
-            <p className="mt-1 text-xs text-text-secondary">
-              Only the ones you tick are sent. Everything else is ignored.
-            </p>
-            <div className="mt-2.5 space-y-2.5">
+          <FieldSet legend="Events" hint="Only ticked events are sent.">
+            <div className="space-y-2.5">
               {WEBHOOK_EVENTS.map((event) => (
                 <Checkbox
                   key={event.value}
@@ -170,7 +170,7 @@ export function WebhookDialog({
                 {eventsError}
               </p>
             ) : null}
-          </fieldset>
+          </FieldSet>
         </div>
       )}
     </Dialog>

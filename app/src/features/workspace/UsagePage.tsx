@@ -2,33 +2,39 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Coins, History } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
-  CardFooter,
   CardSection,
   DataTable,
+  EmptyState,
   ErrorState,
+  Eyebrow,
+  Grid,
   LoadingRows,
+  LockedState,
   Meter,
+  NavTabs,
   Page,
   PageHeader,
   Section,
   SegmentedControl,
   Select,
   Stack,
-  StatTile,
+  StatRow,
   buttonClass,
+  cn,
   formatDateTime,
   formatNumber,
   toast,
   type Column,
 } from '../../ui';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import { BillingNav } from './billing/BillingNav';
+import { BILLING_SECTIONS } from './billing/sections';
 import { ConsumptionTrend } from './usage/ConsumptionTrend';
 import { CreditCosts } from './usage/CreditCosts';
 import { TopupDialog } from './usage/TopupDialog';
@@ -64,7 +70,7 @@ function parseWindow(raw: string | null): TrendWindow {
     : DEFAULT_TREND_WINDOW;
 }
 
-function PlanLimitsCard({ pool }: { pool: PoolCredit }) {
+function PlanLimits({ pool }: { pool: PoolCredit }) {
   if (!pool.planLimits || !pool.limitUsage) return null;
   const rows = AGENT_LIMITS.map((limit) => ({
     ...limit,
@@ -77,29 +83,25 @@ function PlanLimitsCard({ pool }: { pool: PoolCredit }) {
 
   if (rows.length === 0) return null;
 
+  // A `CardSection` of the credits card rather than a seventh full-width card:
+  // three meters do not need an eyebrow, a title and 20 words of period
+  // arithmetic above them.
   return (
-    <Card>
-      <CardHeader
-        eyebrow="Plan limits"
-        title={`${pool.name} allowances`}
-        titleAs="h3"
-        description={`On ${pool.planName ?? 'its plan'}. Counts cover ${formatPeriod(pool.periodStart, pool.resetsAt).toLowerCase()}.`}
-      />
-      <CardBody className="space-y-4">
-        {rows.map((row) =>
-          row.limit === UNLIMITED_LIMIT ? (
-            <div key={row.key} className="flex items-baseline justify-between gap-2">
-              <span className="text-xs text-text-secondary">{row.label}</span>
-              <span className="figure text-xs font-medium text-text-primary">
-                {formatNumber(row.used)} <span className="text-text-tertiary">of unlimited</span>
-              </span>
-            </div>
-          ) : (
-            <Meter key={row.key} label={row.label} used={row.used} limit={row.limit as number} />
-          ),
-        )}
-      </CardBody>
-    </Card>
+    <CardSection className="space-y-4">
+      <Eyebrow>{`${pool.name} allowances`}</Eyebrow>
+      {rows.map((row) =>
+        row.limit === UNLIMITED_LIMIT ? (
+          <div key={row.key} className="flex items-baseline justify-between gap-2">
+            <span className="text-xs text-text-secondary">{row.label}</span>
+            <span className="figure text-xs font-medium text-text-primary">
+              {formatNumber(row.used)} <span className="text-text-tertiary">of unlimited</span>
+            </span>
+          </div>
+        ) : (
+          <Meter key={row.key} label={row.label} used={row.used} limit={row.limit as number} />
+        ),
+      )}
+    </CardSection>
   );
 }
 
@@ -181,7 +183,9 @@ export function UsagePage() {
       render: (row) => (
         <span className="flex min-w-0 flex-col">
           <span className="truncate text-sm text-text-primary">{row.label}</span>
-          {row.note ? <span className="truncate text-xs text-text-tertiary">{row.note}</span> : null}
+          {row.note ? (
+            <span className="truncate text-xs text-text-tertiary">{row.note}</span>
+          ) : null}
         </span>
       ),
     },
@@ -191,7 +195,9 @@ export function UsagePage() {
       width: '8rem',
       secondary: true,
       render: (row) => (
-        <Badge tone={row.tone === 'credit' ? 'success' : row.tone === 'expiry' ? 'warning' : 'neutral'}>
+        <Badge
+          tone={row.tone === 'credit' ? 'success' : row.tone === 'expiry' ? 'warning' : 'neutral'}
+        >
           {row.tone === 'credit' ? 'Added' : row.tone === 'expiry' ? 'Expired' : 'Spent'}
         </Badge>
       ),
@@ -199,14 +205,15 @@ export function UsagePage() {
     {
       key: 'delta',
       header: 'Credits',
-      align: 'right',
+      type: 'number',
       width: '8rem',
       render: (row) => (
-        <span
-          className={`figure text-sm font-medium ${row.delta > 0 ? 'text-success' : 'text-text-primary'}`}
-        >
-          {row.delta > 0 ? '+' : ''}
-          {formatNumber(row.delta)}
+        // A true minus sign, not the ASCII hyphen `formatNumber` emits: U+2212
+        // is the same advance width as `+` in Geist Mono, so the column keeps
+        // one optical edge.
+        <span className={cn('text-sm font-medium', row.delta > 0 && 'text-success')}>
+          {row.delta > 0 ? '+' : row.delta < 0 ? '\u2212' : ''}
+          {formatNumber(Math.abs(row.delta))}
         </span>
       ),
     },
@@ -215,13 +222,17 @@ export function UsagePage() {
   if (usage.balance.isError && errorStatus(usage.balance.error) === 403) {
     return (
       <Page width="wide">
-        <PageHeader title="Usage" toolbar={<BillingNav />} />
-        <Card>
-          <ErrorState
-            title="Your seat cannot read this workspace's usage"
-            description="Credit balances and spend are visible to owners and admins. Ask one of them if you need the numbers."
-          />
-        </Card>
+        <PageHeader
+          title="Usage"
+          toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
+        />
+        {/* Forbidden, not failed: a seat that may not read the workspace's
+            money is a plan/permission state, and `ErrorState` told the customer
+            something had gone wrong. */}
+        <LockedState
+          title="Your seat cannot read this workspace's usage"
+          description="Ask an owner or admin if you need the numbers."
+        />
       </Page>
     );
   }
@@ -230,28 +241,17 @@ export function UsagePage() {
     <Page width="wide">
       <PageHeader
         title="Usage"
-        description="What your chatbots are spending, on what, and how much of your allowance is left."
-        toolbar={<BillingNav />}
+        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
         actions={
-          <>
-            {scopeOptions.length > 1 ? (
-              <Select
-                aria-label="Usage scope"
-                size="sm"
-                options={scopeOptions}
-                value={scopeParam ?? ''}
-                onChange={(event) => setParam('chatbot', event.target.value || null)}
-              />
-            ) : null}
-            <Button
+          scopeOptions.length > 1 ? (
+            <Select
+              aria-label="Usage scope"
               size="sm"
-              onClick={() => setToppingUp(true)}
-              disabled={!entitlements.features?.topup_allowed}
-            >
-              <Coins aria-hidden className="h-4 w-4" />
-              Buy credits
-            </Button>
-          </>
+              options={scopeOptions}
+              value={scopeParam ?? ''}
+              onChange={(event) => setParam('chatbot', event.target.value || null)}
+            />
+          ) : undefined
         }
       />
 
@@ -284,8 +284,8 @@ export function UsagePage() {
                 </Link>
               }
             >
-              You can still spend the credits your plan grants each month. Buying extra credits
-              outright is available from the paid plans upwards.
+              You keep the credits your plan grants each month. Buying extra outright starts at the
+              paid plans.
             </Alert>
           ) : null}
 
@@ -296,10 +296,8 @@ export function UsagePage() {
               them should be read. */}
           {botId !== null && !pool.isActive ? (
             <Alert tone="warning" title="This chatbot is paused">
-              It is not answering visitors, so it is spending nothing. Its subscription is still
-              active and still billing, and the credits below stay exactly as they are — including
-              the expiry dates, which do not pause with the chatbot. Resume it from the chatbot's
-              actions menu.
+              It is spending nothing, but its subscription still bills and its credits still expire
+              on schedule. Resume it from the chatbot's actions menu.
             </Alert>
           ) : null}
 
@@ -309,37 +307,67 @@ export function UsagePage() {
               title="Credits"
               titleAs="h2"
               description={formatPeriod(pool.periodStart, pool.resetsAt)}
+              actions={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setToppingUp(true)}
+                  disabled={!entitlements.features?.topup_allowed}
+                >
+                  <Coins aria-hidden />
+                  Buy credits
+                </Button>
+              }
             />
-            <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              <StatTile
-                label="Left to spend"
-                value={formatCredits(pool.totalRemaining)}
+            <CardBody flush>
+              {/* The low-balance state rides on the tile it is about. It used to
+                  be a `CardSection` wrapping an `Alert` — a card inside a card —
+                  appended after a second `CardSection` holding one meter. */}
+              <StatRow
+                label="Credits this period"
+                columns={4}
                 period={formatPeriod(pool.periodStart, pool.resetsAt)}
-                tone={
-                  pool.totalRemaining <= 0 ? 'danger' : balance.lowBalance ? 'warning' : 'neutral'
-                }
-                size="lg"
-              />
-              <StatTile
-                label="From your plan"
-                value={formatCredits(pool.planRemaining)}
-                period={
-                  pool.resetsAt ? `Refills ${formatDate(pool.resetsAt)}` : 'No refill date on record'
-                }
-              />
-              <StatTile
-                label="Purchased"
-                value={formatCredits(pool.topupRemaining)}
-                period={
-                  pool.soonestExpiry
-                    ? `Earliest expiry ${formatDate(pool.soonestExpiry)}`
-                    : 'Bought outright'
-                }
-              />
-              <StatTile
-                label="Spent this period"
-                value={formatCredits(pool.periodCreditsUsed)}
-                period={formatPeriod(pool.periodStart, pool.resetsAt)}
+                items={[
+                  {
+                    label: 'Left to spend',
+                    value: formatCredits(pool.totalRemaining),
+                    size: 'hero',
+                    tone:
+                      pool.totalRemaining <= 0
+                        ? 'danger'
+                        : balance.lowBalance
+                          ? 'warning'
+                          : 'neutral',
+                    hint:
+                      pool.totalRemaining <= 0
+                        ? !pool.isActive
+                          ? 'This chatbot has no credits left either'
+                          : botId === null
+                            ? 'Your chatbots have stopped answering'
+                            : 'This chatbot has stopped answering'
+                        : balance.lowBalance
+                          ? `Under a fifth left${pool.resetsAt ? `, refills ${formatDate(pool.resetsAt)}` : ''}`
+                          : undefined,
+                  },
+                  {
+                    label: 'From your plan',
+                    value: formatCredits(pool.planRemaining),
+                    period: pool.resetsAt
+                      ? `Refills ${formatDate(pool.resetsAt)}`
+                      : 'No refill date on record',
+                  },
+                  {
+                    label: 'Purchased',
+                    value: formatCredits(pool.topupRemaining),
+                    period: pool.soonestExpiry
+                      ? `Earliest expiry ${formatDate(pool.soonestExpiry)}`
+                      : 'Bought outright',
+                  },
+                  {
+                    label: 'Spent this period',
+                    value: formatCredits(pool.periodCreditsUsed),
+                  },
+                ]}
               />
             </CardBody>
             <CardSection>
@@ -352,53 +380,35 @@ export function UsagePage() {
                 />
               ) : (
                 <p className="text-xs text-text-secondary">
-                  This scope has no monthly grant. Everything it spends comes from purchased
-                  credits.
+                  No monthly grant — everything this scope spends comes from purchased credits.
                 </p>
               )}
             </CardSection>
-            {pool.totalRemaining <= 0 ? (
-              <CardSection>
-                <Alert
-                  tone="danger"
-                  title={
-                    pool.isActive
-                      ? 'This chatbot has stopped answering'
-                      : 'This chatbot has no credits left either'
-                  }
-                >
-                  {pool.isActive
-                    ? 'A chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a larger plan to restore it immediately.'
-                    : 'Resuming it would not bring it back on its own: a chatbot with no credits cannot reply to a visitor. Buy a top-up or move to a larger plan as well as resuming.'}
-                </Alert>
-              </CardSection>
-            ) : balance.lowBalance ? (
-              <CardSection>
-                <Alert tone="warning" title="Running low">
-                  Less than a fifth of the allowance is left
-                  {pool.resetsAt ? ` and it refills on ${formatDate(pool.resetsAt)}` : ''}.
-                </Alert>
-              </CardSection>
-            ) : null}
+            {botId !== null ? <PlanLimits pool={pool} /> : null}
           </Card>
 
-          <Section
-            title="Consumption"
-            description={`Credits spent per day in ${scopeLabel}. Grants, top-ups and refunds are movements in the ledger but they are not spend, so they are left out.`}
-            actions={
-              <SegmentedControl
-                label="Trend window"
-                size="sm"
-                value={String(days)}
-                onChange={(next) => setParam('window', next)}
-                items={TREND_WINDOWS.map((value) => ({
-                  value: String(value),
-                  label: `${value} days`,
-                }))}
-              />
-            }
-          >
+          {/* The trend and the rate table cover the same period and the reader
+              checks one against the other, so they stand side by side rather
+              than 400px apart in one column. */}
+          <Grid cols={2} gap="section" align="start">
             <Card>
+              <CardHeader
+                eyebrow="Consumption"
+                title={`Credits spent per day in ${scopeLabel}`}
+                titleAs="h2"
+                actions={
+                  <SegmentedControl
+                    label="Trend window"
+                    size="sm"
+                    value={String(days)}
+                    onChange={(next) => setParam('window', next)}
+                    items={TREND_WINDOWS.map((value) => ({
+                      value: String(value),
+                      label: `${value} days`,
+                    }))}
+                  />
+                }
+              />
               <CardBody>
                 <ConsumptionTrend
                   points={usage.trend.data ?? []}
@@ -414,75 +424,117 @@ export function UsagePage() {
                 />
               </CardBody>
             </Card>
-          </Section>
 
-          <CreditCosts costs={balance.costs} pool={pool} />
-
-          {botId !== null ? <PlanLimitsCard pool={pool} /> : null}
+            <CreditCosts costs={balance.costs} pool={pool} />
+          </Grid>
 
           {botId === null && balance.botCredits.length > 0 ? (
             <Section
               title="Per-chatbot balances"
-              description="Each chatbot with its own subscription keeps its own credits. One running out does not touch the others."
+              description="A chatbot with its own subscription keeps its own credits."
             >
-              <div className="grid gap-4 sm:grid-cols-2">
-                {[...balance.botCredits, ...(balance.accountPool ? [balance.accountPool] : [])].map(
-                  (entry) => (
-                    <Card key={entry.botId ?? 'account'}>
-                      <CardHeader
-                        title={entry.name}
-                        titleAs="h3"
-                        description={entry.planName ?? 'Draws on the shared workspace pool'}
-                        actions={
-                          <>
-                            {/* The word, not only a dimmed card: a paused agent
-                                that merely looked quieter would read as one
-                                that had stopped being billed. */}
-                            {entry.isActive ? null : <Badge tone="neutral">Paused</Badge>}
-                            {entry.botId !== null ? (
-                              <Link
-                                to={`/billing/usage?chatbot=${entry.botId}`}
-                                className={buttonClass('ghost', 'sm')}
-                              >
-                                Focus
-                              </Link>
-                            ) : null}
-                          </>
-                        }
-                      />
-                      <CardBody className="space-y-3">
-                        {entry.isActive ? null : (
-                          <p className="text-xs text-text-secondary">
-                            Not answering visitors, so it is spending nothing. Its subscription is
-                            still active and these credits still expire on schedule.
-                          </p>
-                        )}
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="text-xs text-text-secondary">Left to spend</span>
-                          <span className="figure text-lg font-semibold text-text-primary">
-                            {formatCredits(entry.totalRemaining)}
-                          </span>
-                        </div>
-                        {entry.monthlyGrant > 0 ? (
-                          <Meter
-                            label="Plan allowance used"
-                            used={Math.min(
-                              entry.monthlyGrant - entry.planRemaining,
-                              entry.monthlyGrant,
-                            )}
-                            limit={entry.monthlyGrant}
-                            unit="credits"
-                          />
-                        ) : null}
-                        <p className="text-xs text-text-tertiary">
-                          {formatPeriod(entry.periodStart, entry.resetsAt)} ·{' '}
-                          {formatCredits(entry.periodCreditsUsed)} spent
-                        </p>
-                      </CardBody>
-                    </Card>
-                  ),
-                )}
-              </div>
+              {/* One table, not one card per chatbot. Six chatbots were six
+                  cards of about 200px each — 1,200px of mini-cards reproducing
+                  the card above them — and there was no way to sort by
+                  remaining balance, which is the only question this block
+                  answers. */}
+              <DataTable
+                caption="Credit balance for each chatbot"
+                rows={[
+                  ...balance.botCredits,
+                  ...(balance.accountPool ? [balance.accountPool] : []),
+                ]}
+                rowKey={(entry) => String(entry.botId ?? 'account')}
+                rowNoun="chatbot"
+                defaultSort={{ key: 'remaining', direction: 'desc' }}
+                columns={[
+                  {
+                    key: 'name',
+                    header: 'Chatbot',
+                    pinned: true,
+                    width: '16rem',
+                    rowHeader: true,
+                    sortable: (a, b) => a.name.localeCompare(b.name),
+                    render: (entry) => (
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium text-text-primary">{entry.name}</span>
+                        <span className="truncate text-xs text-text-secondary">
+                          {entry.planName ?? 'Draws on the shared workspace pool'}
+                        </span>
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    width: '8rem',
+                    // The word, not only a dimmed row: a paused chatbot that
+                    // merely looked quieter would read as one that had stopped
+                    // being billed.
+                    render: (entry) =>
+                      entry.isActive ? (
+                        <Badge tone="success" dot>
+                          Active
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">Paused</Badge>
+                      ),
+                  },
+                  {
+                    key: 'remaining',
+                    header: 'Left to spend',
+                    type: 'number',
+                    sortable: (a, b) => a.totalRemaining - b.totalRemaining,
+                    render: (entry) => formatCredits(entry.totalRemaining),
+                  },
+                  {
+                    key: 'allowance',
+                    header: 'Allowance',
+                    width: '10rem',
+                    secondary: true,
+                    render: (entry) =>
+                      entry.monthlyGrant > 0 ? (
+                        <Meter
+                          className="w-24"
+                          size="sm"
+                          hideLabel
+                          label={`${entry.name} plan allowance used`}
+                          used={Math.min(
+                            entry.monthlyGrant - entry.planRemaining,
+                            entry.monthlyGrant,
+                          )}
+                          limit={entry.monthlyGrant}
+                          unit="credits"
+                        />
+                      ) : (
+                        ABSENT
+                      ),
+                  },
+                  {
+                    key: 'spent',
+                    header: 'Spent this period',
+                    type: 'number',
+                    secondary: true,
+                    sortable: (a, b) => a.periodCreditsUsed - b.periodCreditsUsed,
+                    render: (entry) => formatCredits(entry.periodCreditsUsed),
+                  },
+                  {
+                    key: 'focus',
+                    header: <span className="sr-only">Focus</span>,
+                    align: 'right',
+                    width: '6rem',
+                    render: (entry) =>
+                      entry.botId !== null ? (
+                        <Link
+                          to={`/billing/usage?chatbot=${entry.botId}`}
+                          className={buttonClass('ghost', 'sm')}
+                        >
+                          Focus
+                        </Link>
+                      ) : null,
+                  },
+                ]}
+              />
             </Section>
           ) : null}
 
@@ -491,80 +543,53 @@ export function UsagePage() {
               eyebrow="Ledger"
               title={botId === null ? 'Credit history' : `Credit history for ${pool.name}`}
               titleAs="h2"
-              description="Every movement, newest first. Grants, purchases, spend, refunds and expiries."
+              description="Newest first."
             />
-            <DataTable
-              columns={ledgerColumns}
-              rows={pageRows}
-              rowKey={(row) => row.id}
-              caption={`Credit ledger for ${scopeLabel}, page ${page}`}
-              loading={usage.ledger.isPending}
-              error={
-                usage.ledger.isError
-                  ? errorMessage(usage.ledger.error, 'The credit history did not load.')
-                  : null
-              }
-              onRetry={() => void usage.ledger.refetch()}
-              empty={
-                <div className="px-6 py-14 text-center">
-                  <span className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-surface-sunken">
-                    <History aria-hidden className="h-4.5 w-4.5 text-text-tertiary" />
-                  </span>
-                  <p className="text-base font-medium text-text-primary">
-                    {page > 1 ? 'Nothing further back' : 'No credit movements yet'}
-                  </p>
-                  <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-text-secondary">
-                    {page > 1
-                      ? 'You have reached the end of the ledger for this scope.'
-                      : `Nothing in ${scopeLabel} has granted or spent a credit yet. The first reply your chatbot sends will appear here.`}
-                  </p>
-                </div>
-              }
-            />
-            {/* Still this pager rather than `DataTable`'s, because the scope
-                selector and the Older/Newer wording belong to the card. It now
-                prints a real total when the server sends one, and falls back to
-                naming only the visible range when it does not. */}
-            {pageRows.length > 0 || page > 1 ? (
-              <CardFooter className="justify-between">
-                <p className="text-xs text-text-secondary">
-                  Movements{' '}
-                  <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + 1}</span>–
-                  <span className="figure">{(page - 1) * HISTORY_PAGE_SIZE + pageRows.length}</span>
-                  {ledgerTotal !== null ? (
-                    <>
-                      {' '}
-                      of <span className="figure">{formatNumber(ledgerTotal)}</span>
-                    </>
-                  ) : null}
-                  , newest first
-                </p>
-                <span className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={page <= 1}
-                    onClick={() => setParam('page', page > 2 ? String(page - 1) : null)}
-                  >
-                    Newer
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={!hasOlder}
-                    onClick={() => setParam('page', String(page + 1))}
-                  >
-                    Older
-                  </Button>
-                </span>
-              </CardFooter>
-            ) : null}
-          </Card>
+            <CardBody flush>
+              {/* `DataTable`'s own pager. This card shipped a hand-rolled
+                  `CardFooter` with secondary Newer/Older buttons while the
+                  invoices table beside it used the system pager's ghost icon
+                  buttons — two pager vocabularies on one surface. Server paging
+                  is what the table gained for exactly this.
 
-          <p className="text-xs text-text-tertiary">
-            Balances refresh a few seconds after a purchase. If a figure still looks wrong once they
-            have, that is a bug rather than a delay, and we would like to hear about it.
-          </p>
+                  `rowCount` falls back to a lower bound when a backend that
+                  predates the count sends none, so "Older" stays reachable
+                  rather than silently disappearing. */}
+              <DataTable
+                seated
+                columns={ledgerColumns}
+                rows={pageRows}
+                rowKey={(row) => row.id}
+                caption={`Credit ledger for ${scopeLabel}`}
+                rowNoun="movement"
+                pageSize={HISTORY_PAGE_SIZE}
+                page={page}
+                onPageChange={(next) => setParam('page', next === 1 ? null : String(next))}
+                rowCount={
+                  ledgerTotal ??
+                  (page - 1) * HISTORY_PAGE_SIZE + pageRows.length + (hasOlder ? 1 : 0)
+                }
+                loading={usage.ledger.isPending}
+                error={
+                  usage.ledger.isError
+                    ? errorMessage(usage.ledger.error, 'The credit history did not load.')
+                    : null
+                }
+                onRetry={() => void usage.ledger.refetch()}
+                empty={
+                  <EmptyState
+                    icon={History}
+                    title={page > 1 ? 'Nothing further back' : 'No credit movements yet'}
+                    description={
+                      page > 1
+                        ? 'You have reached the end of the ledger for this scope.'
+                        : `The first reply your chatbot sends in ${scopeLabel} appears here.`
+                    }
+                  />
+                }
+              />
+            </CardBody>
+          </Card>
         </Stack>
       )}
 

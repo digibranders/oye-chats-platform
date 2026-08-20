@@ -1,11 +1,16 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Check, Mail, Trash2 } from 'lucide-react';
+import { Check, Mail, Trash2 } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Avatar,
   Badge,
   Button,
+  Card,
+  CardBody,
   ConfirmDialog,
+  DefinitionList,
+  PaneHeader,
   Select,
   Textarea,
   buttonClass,
@@ -21,8 +26,6 @@ export interface MessagePaneProps {
   onManageSnippets: () => void;
   onStatusChange: (id: number, status: OfflineStatus) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
-  /** Present only when the list is not on screen beside this pane. */
-  onBack?: () => void;
 }
 
 /** Substitute `{name}` in a saved reply with the visitor's first name. */
@@ -30,6 +33,9 @@ function applyTemplate(body: string, visitorName: string | null | undefined): st
   const first = (visitorName ?? '').trim().split(/\s+/)[0] || 'there';
   return body.replace(/\{name\}/g, first);
 }
+
+/** The picker's last option, which opens the manager rather than inserting. */
+const MANAGE_OPTION = '__manage__';
 
 const STATUS_TONE = {
   new: 'warning',
@@ -51,7 +57,6 @@ export function MessagePane({
   onManageSnippets,
   onStatusChange,
   onDelete,
-  onBack,
 }: MessagePaneProps) {
   const name = message.visitor_name?.trim() || message.visitor_email?.trim() || 'Visitor';
   const status = ((message.status ?? 'new').toLowerCase() as OfflineStatus) ?? 'new';
@@ -85,58 +90,73 @@ export function MessagePane({
 
   return (
     <section aria-label={`Message from ${name}`} className="flex h-full min-h-0 flex-col bg-canvas">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface px-4 py-3 md:px-6">
-        {onBack ? (
-          <Button size="icon-sm" variant="ghost" aria-label="Back to the list" onClick={onBack}>
-            <ArrowLeft aria-hidden className="h-4 w-4" />
-          </Button>
-        ) : null}
-        <Avatar size="md" name={name} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-lg font-semibold text-text-primary">{name}</h2>
-            <Badge tone={STATUS_TONE[status] ?? 'neutral'}>
-              {status === 'new' ? 'New' : status === 'read' ? 'Read' : 'Replied'}
-            </Badge>
-          </div>
-          <p className="figure truncate text-2xs text-text-tertiary">
-            {message.created_at ? formatDateTime(message.created_at) : 'Time unknown'}
-            {message.bot_name ? ` · ${message.bot_name}` : ''}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          disabled={busy || status === 'replied'}
-          onClick={() => void setStatus(status === 'new' ? 'read' : 'replied')}
-        >
-          <Check aria-hidden className="h-4 w-4" />
-          {status === 'new' ? 'Mark read' : 'Mark replied'}
-        </Button>
-        <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)}>
-          <Trash2 aria-hidden className="h-4 w-4" />
-          Delete
-        </Button>
-      </header>
+      <PaneHeader
+        titleAs="h2"
+        title={
+          <span className="flex min-w-0 items-center gap-2">
+            <Avatar size="md" name={name} className="shrink-0" />
+            <span className="min-w-0">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 truncate">{name}</span>
+                <Badge tone={STATUS_TONE[status] ?? 'neutral'}>
+                  {status === 'new' ? 'New' : status === 'read' ? 'Read' : 'Replied'}
+                </Badge>
+              </span>
+              <span className="figure block truncate text-2xs font-normal text-text-tertiary">
+                {message.created_at ? formatDateTime(message.created_at) : 'Time unknown'}
+                {message.bot_name ? ` · ${message.bot_name}` : ''}
+              </span>
+            </span>
+          </span>
+        }
+        actions={
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || status === 'replied'}
+              onClick={() => void setStatus(status === 'new' ? 'read' : 'replied')}
+            >
+              <Check aria-hidden />
+              {status === 'new' ? 'Mark read' : 'Mark replied'}
+            </Button>
+            {/* Destructive actions are `danger` outline. As a ghost this was
+                indistinguishable in weight from "Mark read" beside it. */}
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={busy}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 aria-hidden />
+              Delete
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
-        <Alert tone="danger" live className="mx-4 mt-3 md:mx-6">
+        <Alert tone="danger" live className="mx-cell mt-3">
           {error}
         </Alert>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
-        <div className="max-w-reading space-y-5">
-          <article className="rounded-lg border border-border bg-surface p-4">
-            <p className="whitespace-pre-wrap break-words text-prose text-text-primary">
-              {message.message_body?.trim() || 'This message had no body.'}
-            </p>
-          </article>
+      <div className="min-h-0 flex-1 overflow-y-auto px-cell py-4">
+        <div className="mx-auto max-w-reading space-y-5">
+          <Card>
+            <CardBody>
+              <p className="whitespace-pre-wrap break-words text-prose text-text-primary">
+                {message.message_body?.trim() || 'This message had no body.'}
+              </p>
+            </CardBody>
+          </Card>
 
-          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-            <div>
-              <dt className="text-xs text-text-tertiary">Email</dt>
-              <dd className="mt-0.5 break-words text-sm text-text-primary">
-                {message.visitor_email ? (
+          <DefinitionList
+            columns={2}
+            items={[
+              {
+                label: 'Email',
+                value: message.visitor_email ? (
                   <a
                     href={`mailto:${message.visitor_email}`}
                     className="text-accent-600 underline-offset-2 hover:underline"
@@ -144,39 +164,51 @@ export function MessagePane({
                     {message.visitor_email}
                   </a>
                 ) : (
-                  'Not given'
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-text-tertiary">Phone</dt>
-              <dd className="mt-0.5 text-sm text-text-primary">{message.visitor_phone || 'Not given'}</dd>
-            </div>
-          </dl>
+                  ABSENT
+                ),
+              },
+              { label: 'Phone', value: message.visitor_phone || ABSENT },
+            ]}
+          />
 
           <section aria-labelledby="reply-heading" className="space-y-2.5">
             <div className="flex flex-wrap items-end justify-between gap-2">
-              <h3 id="reply-heading" className="text-lg font-semibold text-text-primary">
+              {/* `text-base`, not `text-lg`: the visitor's name above it is the
+                  section this sits inside, and two headings at one rung told
+                  the reader they were peers. */}
+              <h3 id="reply-heading" className="text-base font-semibold text-text-primary">
                 Reply
               </h3>
-              <div className="flex items-center gap-2">
-                {snippets.length > 0 ? (
-                  <Select
-                    size="sm"
-                    aria-label="Insert a saved reply"
-                    value=""
-                    onChange={(event) => {
-                      const snippet = snippets.find((entry) => String(entry.id) === event.target.value);
-                      if (snippet) setReply(applyTemplate(snippet.content, message.visitor_name));
-                    }}
-                    placeholder="Saved reply…"
-                    options={snippets.map((snippet) => ({ value: String(snippet.id), label: snippet.title }))}
-                  />
-                ) : null}
+              {/* One picker, one label. "Manage" was a second affordance for the
+                  same drawer, under a second name. */}
+              {snippets.length > 0 ? (
+                <Select
+                  size="sm"
+                  aria-label="Saved replies"
+                  value=""
+                  onChange={(event) => {
+                    const chosen = event.target.value;
+                    if (chosen === MANAGE_OPTION) {
+                      onManageSnippets();
+                      return;
+                    }
+                    const snippet = snippets.find((entry) => String(entry.id) === chosen);
+                    if (snippet) setReply(applyTemplate(snippet.content, message.visitor_name));
+                  }}
+                  placeholder="Saved replies…"
+                  options={[
+                    ...snippets.map((snippet) => ({
+                      value: String(snippet.id),
+                      label: snippet.title,
+                    })),
+                    { value: MANAGE_OPTION, label: 'Manage saved replies…' },
+                  ]}
+                />
+              ) : (
                 <Button size="sm" variant="ghost" onClick={onManageSnippets}>
-                  Manage
+                  Saved replies
                 </Button>
-              </div>
+              )}
             </div>
 
             <Textarea
@@ -191,7 +223,7 @@ export function MessagePane({
               <div className="flex flex-wrap items-center gap-2">
                 <a
                   href={mailto ?? '#'}
-                  className={buttonClass('primary')}
+                  className={buttonClass('primary', 'sm')}
                   onClick={() => {
                     if (status !== 'replied') void setStatus('replied');
                     toast.info('Opening your email app', {
@@ -199,7 +231,7 @@ export function MessagePane({
                     });
                   }}
                 >
-                  <Mail aria-hidden className="h-4 w-4" />
+                  <Mail aria-hidden />
                   Open in your email app
                 </a>
                 <p className="text-2xs text-text-tertiary">

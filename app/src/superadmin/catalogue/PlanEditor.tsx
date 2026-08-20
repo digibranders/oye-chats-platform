@@ -1,17 +1,20 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Alert,
-  Badge,
-  Button,
   ConfirmDialog,
   Drawer,
   Field,
+  Grid,
   Input,
+  Measure,
+  PropertyGrid,
+  SaveBar,
   Section,
   Select,
+  SettingGroup,
+  SettingRow,
   Switch,
   Textarea,
-  cn,
   formatNumber,
   toast,
 } from '../../ui';
@@ -60,6 +63,23 @@ import {
  *   subscriptions currently sitting on the plan.
  */
 
+/**
+ * A validation key's human name, for the save bar's blocking reason.
+ *
+ * The keys are either a plain draft field or `limits.<key>`, and the limit
+ * labels already exist on `LIMIT_FIELDS` — so the only thing to write here is
+ * the sentence-casing of the rest.
+ */
+function fieldLabel(key: string): string {
+  if (key === 'seats') return 'Included operator seats';
+  const limit = key.startsWith('limits.')
+    ? LIMIT_FIELDS.find((field) => field.key === key.slice('limits.'.length))
+    : undefined;
+  if (limit) return limit.label;
+  const words = key.replace(/_cents$/, '').replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 interface PlanEditorProps {
   open: boolean;
   /** `null` opens the create form. */
@@ -86,7 +106,7 @@ function LimitControl({
   onChange: (next: LimitDraft) => void;
 }) {
   return (
-    <div className="rounded-md border border-border bg-surface-sunken px-3 py-3">
+    <div className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
       {/* The switch sits outside the Field on purpose: every control inside one
           is handed the same id, so a second one would duplicate it and the
           label would name whichever rendered last. */}
@@ -171,18 +191,6 @@ function MoneyField({
   );
 }
 
-function ReadOnlyRow({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-border py-2 last:border-b-0">
-      <div className="min-w-0">
-        <p className="text-xs text-text-secondary">{label}</p>
-        {hint ? <p className="mt-0.5 text-2xs leading-snug text-text-tertiary">{hint}</p> : null}
-      </div>
-      <div className="figure shrink-0 text-right text-sm text-text-primary">{value}</div>
-    </div>
-  );
-}
-
 export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEditorProps) {
   const isCreate = plan === null;
   // Keyed off the plan id so reopening the drawer on another row starts from
@@ -216,6 +224,17 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
   );
   const changes = useMemo(() => (plan ? describePlanChanges(payload, plan) : []), [payload, plan]);
   const warnings = useMemo(() => planWarnings(draft, plan), [draft, plan]);
+
+  // A new plan is always pending; an existing one is pending only where the
+  // payload differs. `changes` is what the confirm dialog lists, so the bar and
+  // the dialog cannot disagree about what is about to happen.
+  const dirty = isCreate || Object.keys(payload).length > 0;
+  const changeSummary = isCreate
+    ? 'a new plan'
+    : changes.map((change) => change.label).join(', ');
+  const blockingKey = Object.keys(errors)[0];
+  const blockedReason =
+    showErrors && blockingKey ? `${fieldLabel(blockingKey)} — ${errors[blockingKey]}` : null;
 
   const saving = annualSavingPercent(
     parseIntegerField(draft.monthly_price_cents),
@@ -280,24 +299,12 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
             ? 'A new plan is live as soon as it is listed. Nothing here is a draft.'
             : `Entitlements resolve from this row with a 60-second cache, so a save reaches ${formatNumber(affected)} live subscription${affected === 1 ? '' : 's'} within a minute.`
         }
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={attemptSave}>
-              {isCreate ? 'Create plan' : 'Review and save'}
-            </Button>
-          </>
-        }
       >
-        <div className="flex flex-col gap-6">
-          {saveError ? (
-            <Alert tone="danger" live title="The plan was not saved">
-              {saveError}
-            </Alert>
-          ) : null}
-
+        {/* `Measure` re-declares `@container/page`, so every `Grid` below asks how
+            wide the *drawer* is. Without it they query the page behind the
+            overlay and a three-up grid renders three 230px columns in a 728px
+            panel — which is what `lg:grid-cols-3` was doing here. */}
+        <Measure width="full" className="flex flex-col gap-6">
           {resultWarnings.length > 0 ? (
             <Alert tone="warning" live title="Saved, with warnings">
               <ul className="list-disc space-y-1 pl-4">
@@ -305,12 +312,6 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
-            </Alert>
-          ) : null}
-
-          {showErrors && errorCount > 0 ? (
-            <Alert tone="danger" live title="This plan cannot be saved yet">
-              {errorCount === 1 ? 'One field needs attention.' : `${errorCount} fields need attention.`}
             </Alert>
           ) : null}
 
@@ -325,7 +326,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
           ) : null}
 
           <Section title="Identity" description="How the plan is named, ordered and listed.">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <Grid cols={2}>
               <Field label="Name" required error={shown.name} hint="Shown on the pricing page and the invoice.">
                 <Input value={draft.name} onChange={(event) => update({ name: event.target.value })} />
               </Field>
@@ -335,8 +336,8 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                 error={shown.slug}
                 hint={
                   isCreate
-                    ? 'Lowercase identifier. Entitlements and the gateway mapping resolve against it.'
-                    : 'Fixed after creation — entitlement lookups and gateway mappings point at it.'
+                    ? 'Lowercase. Entitlements resolve against it.'
+                    : 'Fixed after creation.'
                 }
               >
                 <Input
@@ -346,7 +347,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   onChange={(event) => update({ slug: event.target.value })}
                 />
               </Field>
-              <Field label="Description" className="sm:col-span-2" hint="One line, shown under the plan name.">
+              <Field label="Description" className="@3xl/page:col-span-2" hint="One line, under the plan name.">
                 <Textarea
                   rows={2}
                   value={draft.description}
@@ -368,35 +369,36 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   onChange={(event) => update({ sort_order: event.target.value })}
                 />
               </Field>
-              <div className="rounded-md border border-border bg-surface-sunken px-3 py-3 sm:col-span-2">
+            </Grid>
+            <SettingGroup className="mt-4">
+              <SettingRow label="Listed" description="On the public pricing page, and selectable at checkout.">
                 <Switch
                   label="Listed"
-                  description="Visible on the public pricing page and selectable at checkout."
+                  hideLabel
                   checked={draft.is_active}
                   onCheckedChange={(checked) => update({ is_active: checked })}
                 />
-                <div className="mt-3 border-t border-border pt-3">
-                  <Switch
-                    label="Default plan"
-                    description="Every new account lands here. Exactly one plan holds this; saving moves it."
-                    checked={draft.is_default}
-                    onCheckedChange={(checked) => update({ is_default: checked })}
-                  />
-                  {shown.is_default ? (
-                    <p role="status" className="mt-1.5 text-xs text-danger">
-                      {shown.is_default}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            </div>
+              </SettingRow>
+              <SettingRow
+                label="Default plan"
+                description="Every new account lands here. Exactly one plan holds it."
+                error={shown.is_default}
+              >
+                <Switch
+                  label="Default plan"
+                  hideLabel
+                  checked={draft.is_default}
+                  onCheckedChange={(checked) => update({ is_default: checked })}
+                />
+              </SettingRow>
+            </SettingGroup>
           </Section>
 
           <Section
             title="Entitlements — limits"
             description="Numeric caps. plan_entitlements_service reads these directly; an unknown key resolves to zero, which is why a limit is never simply deleted."
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Grid cols={3} align="start">
               {LIMIT_FIELDS.map((field) => (
                 <LimitControl
                   key={field.key}
@@ -408,25 +410,22 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   onChange={(next) => update({ limits: { ...draft.limits, [field.key]: next } })}
                 />
               ))}
-            </div>
+            </Grid>
             {extraLimitKeys.length > 0 ? (
-              <div className="mt-3 rounded-md border border-border bg-surface px-3 py-3">
-                <p className="text-xs font-medium text-text-primary">
-                  Other limit keys on this plan
-                </p>
-                <p className="mt-0.5 text-xs text-text-secondary">
-                  This editor does not model them. A save merges key by key, so they are left exactly as
-                  they are.
-                </p>
-                <dl className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {extraLimitKeys.map((entry) => (
-                    <div key={entry.key} className="flex items-baseline justify-between gap-3">
-                      <dt className="figure text-xs text-text-secondary">{entry.key}</dt>
-                      <dd className="figure text-xs text-text-primary">{JSON.stringify(entry.value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
+              <Section
+                className="mt-4"
+                title="Other limit keys on this plan"
+                description="Not modelled here. A save merges key by key, so they are left as they are."
+              >
+                <PropertyGrid
+                  columns={2}
+                  density="compact"
+                  items={extraLimitKeys.map((entry) => ({
+                    label: entry.key,
+                    value: <span className="figure">{JSON.stringify(entry.value)}</span>,
+                  }))}
+                />
+              </Section>
             ) : null}
           </Section>
 
@@ -434,20 +433,20 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
             title="Entitlements — features"
             description="Boolean gates. has_feature defaults an unknown feature to false, so turning one off locks the surface immediately for everyone on this plan."
           >
-            <div className="rounded-md border border-border bg-surface">
+            <SettingGroup>
               {FEATURE_FIELDS.map((field) => (
-                <div key={field.key} className="border-b border-border px-3 py-3 last:border-b-0">
+                <SettingRow key={field.key} label={field.label} description={field.description}>
                   <Switch
                     label={field.label}
-                    description={field.description}
+                    hideLabel
                     checked={draft.features[field.key]}
                     onCheckedChange={(checked) =>
                       update({ features: { ...draft.features, [field.key]: checked } })
                     }
                   />
-                </div>
+                </SettingRow>
               ))}
-            </div>
+            </SettingGroup>
             <div className="mt-3">
               <Field
                 label="Integrations"
@@ -461,17 +460,16 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
               </Field>
             </div>
             {extraFeatureKeys.length > 0 ? (
-              <div className="mt-3 rounded-md border border-border bg-surface px-3 py-3">
-                <p className="text-xs font-medium text-text-primary">Other feature keys on this plan</p>
-                <dl className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {extraFeatureKeys.map((entry) => (
-                    <div key={entry.key} className="flex items-baseline justify-between gap-3">
-                      <dt className="figure text-xs text-text-secondary">{entry.key}</dt>
-                      <dd className="figure text-xs text-text-primary">{JSON.stringify(entry.value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
+              <Section className="mt-4" title="Other feature keys on this plan">
+                <PropertyGrid
+                  columns={2}
+                  density="compact"
+                  items={extraFeatureKeys.map((entry) => ({
+                    label: entry.key,
+                    value: <span className="figure">{JSON.stringify(entry.value)}</span>,
+                  }))}
+                />
+              </Section>
             ) : null}
           </Section>
 
@@ -479,7 +477,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
             title="Commercials"
             description="Plans are INR-primary: the *_cents columns are paise and are what Razorpay debits. The USD columns are the international rail."
           >
-            <div className="grid gap-4 sm:grid-cols-2">
+            <Grid cols={2} align="start">
               <MoneyField
                 label="Monthly price (INR paise)"
                 hint="Charged monthly."
@@ -527,7 +525,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
               <Field
                 label="Credits per month"
                 error={shown.credits_per_month}
-                hint="The allowance granted each period. Keep it equal to the credits limit above — the public catalogue serialises that copy."
+                hint="Keep it equal to the credits limit above."
               >
                 <Input
                   inputMode="numeric"
@@ -548,75 +546,103 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   onChange={(event) => update({ overage_rate_cents: event.target.value })}
                 />
               </Field>
-              <div>
-                <LimitControl
-                  label="Included operator seats"
-                  hint="Seats the price already covers. Unlimited is the only meaningful non-positive value; zero is rejected."
-                  error={shown.seats}
-                  allowsUnlimited
-                  draft={draft.seats}
-                  onChange={(next) => update({ seats: next })}
-                />
-              </div>
-            </div>
+              <LimitControl
+                label="Included operator seats"
+                hint="Unlimited is the only meaningful non-positive value; zero is rejected."
+                error={shown.seats}
+                allowsUnlimited
+                draft={draft.seats}
+                onChange={(next) => update({ seats: next })}
+              />
+            </Grid>
 
-            <div className="mt-4 rounded-md border border-border bg-surface px-3 py-3">
-              <ReadOnlyRow
-                label="Annual saving"
-                hint="Derived from the two INR prices, never stored from this form. Sending a different figure is refused with a 422."
-                value={saving > 0 ? `${saving}%` : 'No annual saving'}
-              />
-              <ReadOnlyRow
-                label="Extra seat price"
-                hint="Fixed by the Razorpay seat add-on in the environment. The API accepts only that amount or zero, and serves neither, so this form never writes it."
-                value={
-                  plan
-                    ? `${formatInr(plan.extra_seat_price_cents)} · ${formatUsd(plan.extra_seat_price_usd_cents)}`
-                    : seatPrices.inr == null
-                      ? 'Set by the API on create'
-                      : `${formatInr(seatPrices.inr)} · ${formatUsd(seatPrices.usd)}`
-                }
-              />
-              <ReadOnlyRow
-                label="Currency"
-                hint="Plans are INR-primary. A non-INR value is refused with a 422."
-                value="INR"
-              />
-            </div>
+            {/* Derived, never written. The reasons each one is read-only ride as
+                tooltips rather than as a paragraph under every row. */}
+            <PropertyGrid
+              className="mt-4"
+              label="Derived commercials"
+              items={[
+                {
+                  label: 'Annual saving',
+                  note: 'Derived from the two INR prices. Sending a different figure is refused with a 422.',
+                  value: (
+                    <span className="figure">
+                      {saving > 0 ? `${saving}%` : 'No annual saving'}
+                    </span>
+                  ),
+                },
+                {
+                  label: 'Extra seat price',
+                  note: 'Fixed by the Razorpay seat add-on in the environment; the API accepts only that amount or zero.',
+                  value: (
+                    <span className="figure">
+                      {plan
+                        ? `${formatInr(plan.extra_seat_price_cents)} · ${formatUsd(plan.extra_seat_price_usd_cents)}`
+                        : seatPrices.inr == null
+                          ? 'Set by the API on create'
+                          : `${formatInr(seatPrices.inr)} · ${formatUsd(seatPrices.usd)}`}
+                    </span>
+                  ),
+                },
+                {
+                  label: 'Currency',
+                  note: 'Plans are INR-primary. A non-INR value is refused with a 422.',
+                  value: <span className="figure">INR</span>,
+                },
+              ]}
+            />
           </Section>
 
           <Section
             title="Gateway"
             description="Razorpay plans are immutable, so these are minted by the API when a price changes and cannot be typed in here."
           >
-            <div className="rounded-md border border-border bg-surface px-3 py-3">
-              <ReadOnlyRow
-                label="Monthly plan id (INR)"
-                value={plan?.razorpay_plan_id_monthly ?? 'Not wired'}
-              />
-              <ReadOnlyRow
-                label="Annual plan id (INR)"
-                value={plan?.razorpay_plan_id_annual ?? 'Not wired'}
-              />
-              <ReadOnlyRow
-                label="USD plan ids"
-                hint="GET /superadmin/plans does not return them, so this console cannot show them."
-                value="Not served"
-              />
-            </div>
+            <PropertyGrid
+              label="Gateway identifiers"
+              items={[
+                {
+                  label: 'Monthly plan id (INR)',
+                  value: <span className="figure">{plan?.razorpay_plan_id_monthly ?? 'Not wired'}</span>,
+                },
+                {
+                  label: 'Annual plan id (INR)',
+                  value: <span className="figure">{plan?.razorpay_plan_id_annual ?? 'Not wired'}</span>,
+                },
+                {
+                  label: 'USD plan ids',
+                  note: 'GET /superadmin/plans does not return them, so this console cannot show them.',
+                  value: <span className="figure">Not served</span>,
+                },
+              ]}
+            />
           </Section>
 
           <Section title="Marketing" description="Copy rendered on the public pricing card.">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <Grid cols={2}>
               <Field label="Tagline" hint="One sentence under the plan name.">
                 <Input value={draft.tagline} onChange={(event) => update({ tagline: event.target.value })} />
               </Field>
-              <Field label="Badge" hint='A ribbon, e.g. "Most Popular". Blank removes it on the next save.'>
+              <Field label="Badge" hint='A ribbon, e.g. "Most Popular". Blank removes it.'>
                 <Input value={draft.badge} onChange={(event) => update({ badge: event.target.value })} />
               </Field>
-            </div>
+            </Grid>
           </Section>
-        </div>
+
+          <SaveBar
+            dirty={dirty}
+            saveError={saveError}
+            blockedReason={blockedReason}
+            summary={changeSummary}
+            saveLabel={isCreate ? 'Create plan' : 'Review and save'}
+            onSave={attemptSave}
+            onDiscard={() => {
+              setDraft(draftFromPlan(plan));
+              setShowErrors(false);
+              setSaveError(null);
+            }}
+            guard={isCreate ? 'this new plan' : 'this plan'}
+          />
+        </Measure>
       </Drawer>
 
       <ConfirmDialog
@@ -645,24 +671,22 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
               )}
             </p>
             {changes.length > 0 ? (
-              <dl className="max-h-56 overflow-y-auto rounded-md border border-border">
-                {changes.map((change) => (
-                  <div
-                    key={change.key}
-                    className={cn(
-                      'flex items-baseline justify-between gap-3 border-b border-border px-3 py-1.5',
-                      'last:border-b-0',
-                    )}
-                  >
-                    <dt className="min-w-0 text-xs text-text-secondary">{change.label}</dt>
-                    <dd className="figure shrink-0 text-xs text-text-primary">
-                      <span className="text-text-tertiary">{change.before}</span>
-                      {' → '}
-                      <span className="font-medium">{change.after}</span>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              <div className="max-h-56 overflow-y-auto">
+                <PropertyGrid
+                  label="What changes"
+                  density="compact"
+                  items={changes.map((change) => ({
+                    label: change.label,
+                    value: (
+                      <span className="figure">
+                        <span className="text-text-tertiary">{change.before}</span>
+                        {' → '}
+                        <span className="font-medium">{change.after}</span>
+                      </span>
+                    ),
+                  }))}
+                />
+              </div>
             ) : null}
             {isCreate ? (
               <p className="text-xs">
@@ -671,9 +695,9 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
               </p>
             ) : null}
             {warnings.length > 0 ? (
-              <Badge tone="warning">
-                {warnings.length} warning{warnings.length === 1 ? '' : 's'} above
-              </Badge>
+              <p className="text-xs text-warning">
+                {warnings.length} warning{warnings.length === 1 ? '' : 's'} above.
+              </p>
             ) : null}
           </div>
         }

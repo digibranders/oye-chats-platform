@@ -48,7 +48,18 @@ describe('RevenuePage', () => {
 
   it('opens on the overview', async () => {
     mount();
-    expect(await screen.findByRole('tab', { name: 'Overview', selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Overview', current: 'page' })).toBeInTheDocument();
+  });
+
+  /**
+   * The views are links, not tabs. A `tablist` promises a panel per tab and a
+   * routed section only ever has the current one, so the other five carried
+   * `aria-controls` pointing at ids that were never in the document.
+   */
+  it('renders its views as navigation, not as a tablist', async () => {
+    mount();
+    await screen.findByRole('navigation', { name: 'Revenue views' });
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
   /**
@@ -60,23 +71,23 @@ describe('RevenuePage', () => {
     const user = userEvent.setup();
     mount();
 
-    await user.click(await screen.findByRole('tab', { name: 'Invoices' }));
+    await user.click(await screen.findByRole('link', { name: 'Invoices' }));
 
     await waitFor(() =>
       expect(screen.getByTestId('url').textContent).toBe('/platform/revenue/invoices'),
     );
-    expect(screen.getByRole('tab', { name: 'Invoices', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Invoices', current: 'page' })).toBeInTheDocument();
   });
 
   it('selects the tab named by the URL on first paint', async () => {
     mount('/platform/revenue/growth');
-    expect(await screen.findByRole('tab', { name: 'Growth', selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Growth', current: 'page' })).toBeInTheDocument();
   });
 
   it('sends a mistyped sub-path to the section’s first screen rather than a dead page', async () => {
     mount('/platform/revenue/nonsense');
     await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/platform/revenue'));
-    expect(screen.getByRole('tab', { name: 'Overview', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Overview', current: 'page' })).toBeInTheDocument();
   });
 
   it('states once, prominently, that its aggregates are converted', async () => {

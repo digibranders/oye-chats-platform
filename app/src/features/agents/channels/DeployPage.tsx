@@ -5,6 +5,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Columns,
   CopyField,
   EmptyState,
   ErrorState,
@@ -13,6 +14,8 @@ import {
   PageHeader,
   Skeleton,
   Stack,
+  TabPanel,
+  Tabs,
   buttonClass,
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
@@ -26,36 +29,42 @@ import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
 import { TroubleshootSection } from './TroubleshootSection';
-import { AllowedDomainsSection } from './AllowedDomainsSection';
-import { SessionContinuitySection } from './SessionContinuitySection';
-import { AttributionSection } from './AttributionSection';
 
-const TROUBLESHOOT_ID = 'deploy-troubleshooting';
+type HelpTab = 'platform' | 'troubleshoot';
 
 /** The page while the chatbot is still being fetched. Shaped like what arrives. */
 function DeploySkeleton() {
   return (
-    <Stack>
-      <Card>
-        <CardBody className="space-y-3">
-          <Skeleton className="h-5 w-56" />
-          <Skeleton className="h-3.5 w-80" />
-        </CardBody>
-      </Card>
-      <Card>
-        <CardBody className="space-y-3">
-          <Skeleton className="h-3 w-24" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-24 w-full rounded-md" />
-        </CardBody>
-      </Card>
-      <Card>
-        <CardBody className="space-y-3">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-8 w-64" />
-        </CardBody>
-      </Card>
-    </Stack>
+    <Columns
+      asideWidth="sm"
+      aside={
+        <Stack>
+          <Card>
+            <CardBody className="space-y-3">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-control-sm w-32" />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardBody className="space-y-3">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-control-md w-full" />
+            </CardBody>
+          </Card>
+        </Stack>
+      }
+      main={
+        <Card>
+          <CardBody className="space-y-3">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-control-md w-full" />
+            <Skeleton className="h-32 w-full rounded-md" />
+            <Skeleton className="h-control-md w-72" />
+          </CardBody>
+        </Card>
+      }
+    />
   );
 }
 
@@ -68,17 +77,30 @@ function DeploySkeleton() {
  * "Channels", it was a plural noun over exactly one channel, and it opened on a
  * grid of platform logos rather than on whether the thing was working.
  *
- * So the order is: **the answer, the snippet, how to place it, and what to do
- * when it does not show up** — then the two settings that govern where the
- * widget is allowed to run. Nothing on this page is a wizard step and nothing
- * blocks: the customer can copy the snippet, hand it to a developer, close the
- * tab, and come back in a week to a page that still tells them the truth.
+ * **Two regions, not eight cards.** The page used to be a 1440px column of eight
+ * stacked cards — 4,081px of scroll, with roughly 850px spent on card chrome
+ * before a single control, and a first fold of prose around one snippet that
+ * ended by telling the reader to scroll further down the page. What Intercom,
+ * Crisp and Chatbase all do instead is put the artefact and the verification
+ * state on screen together: the snippet on the left, the install status pinned
+ * on the right, and everything else behind one tabbed help card.
+ *
+ * **The settings that were here are not install steps.** The origin allow-list
+ * and the session-continuity parent are on Behaviour ▸ Access now, under that
+ * page's single draft and single save bar; the in-widget credit line is on
+ * Experience ▸ Branding, which already owned its on/off switch. Deploy carries
+ * no save state of its own at all.
+ *
+ * Nothing on this page is a wizard step and nothing blocks: the customer can
+ * copy the snippet, hand it to a developer, close the tab, and come back in a
+ * week to a page that still tells them the truth.
  */
 export function DeployPage() {
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   const [platformId, setPlatformId] = useState<string | null>(null);
+  const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
 
   // The snippet variant is entitlement-driven and keys off the plan, not off the
   // chatbot's own `show_branding` flag: a paid customer who chooses to keep the
@@ -92,16 +114,16 @@ export function DeployPage() {
   const header = (
     <PageHeader
       title="Deploy"
-      description="Put this chatbot on your website, and check that it is really answering."
+      eyebrow={agent?.name}
       actions={
         bot?.bot_key ? (
           <a
             href={getBotDemoUrl(bot.bot_key)}
             target="_blank"
             rel="noopener noreferrer"
-            className={buttonClass('secondary', 'md')}
+            className={buttonClass('secondary', 'sm')}
           >
-            <ExternalLink aria-hidden className="h-4 w-4" />
+            <ExternalLink aria-hidden />
             Try it now
             <span className="sr-only"> (opens a hosted preview in a new tab)</span>
           </a>
@@ -120,7 +142,7 @@ export function DeployPage() {
         {header}
         <LockedState
           title="This chatbot is not in your workspace"
-          description="It may belong to another workspace, or it may have been deleted. Open one of your own chatbots to deploy it."
+          description="It may belong to another workspace."
           action={
             <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
               See your chatbots
@@ -136,13 +158,12 @@ export function DeployPage() {
     return (
       <Page>
         {header}
-        <Card>
-          <ErrorState
-            title="We could not load this chatbot"
-            description={deploy.failure.message}
-            onRetry={deploy.retry}
-          />
-        </Card>
+        <ErrorState
+          framed
+          title="We could not load this chatbot"
+          description={deploy.failure.message}
+          onRetry={deploy.retry}
+        />
       </Page>
     );
   }
@@ -164,17 +185,15 @@ export function DeployPage() {
     return (
       <Page>
         {header}
-        <Card>
-          <EmptyState
-            title="No chatbot open"
-            description="Deploy configures one chatbot at a time. Open one to get its snippet."
-            action={
-              <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
-                See your chatbots
-              </Link>
-            }
-          />
-        </Card>
+        <EmptyState
+          framed
+          title="No chatbot open"
+          action={
+            <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
+              See your chatbots
+            </Link>
+          }
+        />
       </Page>
     );
   }
@@ -183,17 +202,16 @@ export function DeployPage() {
     return (
       <Page>
         {header}
-        <Card>
-          <EmptyState
-            title="This chatbot has no embed key yet"
-            description="An embed key is issued when a chatbot finishes being created. If this one was interrupted, open it again from the list and finish setting it up."
-            action={
-              <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
-                See your chatbots
-              </Link>
-            }
-          />
-        </Card>
+        <EmptyState
+          framed
+          title="This chatbot has no embed key yet"
+          description="Open it from the list and finish setting it up."
+          action={
+            <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
+              See your chatbots
+            </Link>
+          }
+        />
       </Page>
     );
   }
@@ -204,136 +222,133 @@ export function DeployPage() {
   const botKey = bot.bot_key;
   const website = bot.website ?? null;
   const demoUrl = getBotDemoUrl(botKey);
+  const domains = bot.allowed_domains ?? [];
+
+  // A broken install opens on the checklist; everyone else opens on the steps
+  // for their own stack. The reader's own choice always wins once they make one.
+  const activeHelpTab: HelpTab =
+    helpTab ?? (deploy.status.state === 'not-detected' ? 'troubleshoot' : 'platform');
 
   return (
     <Page>
       {header}
+
       <Stack>
-        <InstallStatusCard
-          status={deploy.status}
-          installedAt={bot.widget_installed_at ?? null}
-          heartbeat={widgetHeartbeat({
-            installedAt: bot.widget_installed_at,
-            lastSeenAt: bot.widget_last_seen_at,
-            lastOrigin: bot.widget_last_origin,
-          })}
-          website={website}
-          verifiedNow={deploy.verifiedNow}
-          checking={deploy.checking}
-          onStartVerifying={deploy.startVerifying}
-          onStopVerifying={deploy.stopVerifying}
-          troubleshootHref={`#${TROUBLESHOOT_ID}`}
+        <Columns
+          asideWidth="sm"
+          stickyAside
+          asideLabel="Install status"
+          main={
+            <SnippetSection
+              botKey={botKey}
+              botName={bot.name || 'OyeChats'}
+              botId={agentId}
+              env={deploy.env}
+              apiBaseUrl={deploy.apiBaseUrl}
+              platform={platform}
+              attribution={attribution}
+              resolving={entitlementsLoading}
+            />
+          }
+          aside={
+            <Stack>
+              <InstallStatusCard
+                status={deploy.status}
+                installedAt={bot.widget_installed_at ?? null}
+                heartbeat={widgetHeartbeat({
+                  installedAt: bot.widget_installed_at,
+                  lastSeenAt: bot.widget_last_seen_at,
+                  lastOrigin: bot.widget_last_origin,
+                })}
+                website={website}
+                domains={domains}
+                accessHref={agentPath(agentId, 'behaviour')}
+                verifiedNow={deploy.verifiedNow}
+                checking={deploy.checking}
+                onStartVerifying={deploy.startVerifying}
+                onStopVerifying={deploy.stopVerifying}
+                onTroubleshoot={() => setHelpTab('troubleshoot')}
+              />
+
+              {/* A hosted page that runs this chatbot, for a customer whose site
+                  is not ready — or who wants a colleague to try it before it
+                  goes live. The share and open counts land on this chatbot's
+                  Overview, where every other figure about it already lives. */}
+              <Card>
+                <CardHeader size="sm" titleAs="h2" title="Share a link instead" />
+                <CardBody className="space-y-2">
+                  <CopyField value={demoUrl} label="demo link" compact />
+                  <div className="flex flex-wrap items-center gap-1">
+                    <a
+                      href={demoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonClass('ghost', 'sm')}
+                      onClick={() => {
+                        // Attribution is best-effort and deliberately unawaited:
+                        // a failed count must never stand between the customer
+                        // and the link they just clicked.
+                        void trackDemoShareClick(agentId).catch(() => undefined);
+                      }}
+                    >
+                      Open
+                      <span className="sr-only"> the demo (opens in a new tab)</span>
+                    </a>
+                    <Link
+                      to={agentPath(agentId, 'overview')}
+                      className={buttonClass('ghost', 'sm')}
+                    >
+                      Opens
+                    </Link>
+                  </div>
+                </CardBody>
+              </Card>
+            </Stack>
+          }
         />
 
-        <SnippetSection
-          botKey={botKey}
-          botName={bot.name || 'OyeChats'}
-          botId={agentId}
-          env={deploy.env}
-          apiBaseUrl={deploy.apiBaseUrl}
-          platform={platform}
-          attribution={attribution}
-          resolving={entitlementsLoading}
-        />
-
-        <PlatformGuide
-          botKey={botKey}
-          env={deploy.env}
-          platformId={platformId}
-          onPlatformChange={setPlatformId}
-          attribution={attribution}
-          resolving={entitlementsLoading}
-        />
-
-        <TroubleshootSection
-          id={TROUBLESHOOT_ID}
-          botKey={botKey}
-          env={deploy.env}
-          apiBaseUrl={deploy.apiBaseUrl}
-          website={website}
-          domains={bot.allowed_domains ?? []}
-          domainsConfigured={(bot.allowed_domains ?? []).length}
-          domainCheckEnabled={Boolean(bot.domain_check_enabled)}
-        />
-
-        {/* A hosted page that runs this chatbot, for a customer whose site is
-            not ready — or who wants a colleague to try it before it goes live.
-            The share and open counts land on this chatbot's Overview, which is
-            where every other figure about it already lives; duplicating them
-            here would be a fourth definition of the same number. */}
-        <Card>
-          <CardHeader
-            eyebrow="No website yet?"
-            titleAs="h2"
-            title="Share a link instead"
-            description="A hosted page running this exact chatbot. Send it to a colleague, or use it while your site is still being built."
-          />
-          <CardBody className="space-y-3">
-            <CopyField value={demoUrl} label="demo link" />
-            <div className="flex flex-wrap items-center gap-2">
-              <a
-                href={demoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={buttonClass('secondary', 'sm')}
-                onClick={() => {
-                  // Attribution is best-effort and deliberately unawaited: a
-                  // failed count must never stand between the customer and the
-                  // link they just clicked.
-                  void trackDemoShareClick(agentId).catch(() => undefined);
-                }}
-              >
-                <ExternalLink aria-hidden className="h-3.5 w-3.5" />
-                Open the demo
-                <span className="sr-only"> (opens in a new tab)</span>
-              </a>
-              <Link
-                to={agentPath(agentId, 'overview')}
-                className={buttonClass('ghost', 'sm')}
-              >
-                See how many people opened it
-              </Link>
-            </div>
-          </CardBody>
-        </Card>
-
-        <AllowedDomainsSection
-          key={`domains-${agentId}`}
-          website={website}
-          initialDomains={bot.allowed_domains ?? []}
-          initialEnabled={Boolean(bot.domain_check_enabled)}
-          saving={deploy.saving}
-          onSave={async ({ allowed_domains, domain_check_enabled }) => {
-            const fresh = await deploy.save({ allowed_domains, domain_check_enabled });
-            return {
-              allowed_domains: fresh.allowed_domains ?? [],
-              domain_check_enabled: Boolean(fresh.domain_check_enabled),
-            };
-          }}
-        />
-
-        <SessionContinuitySection
-          key={`session-${agentId}`}
-          website={website}
-          initialShareDomain={bot.session_share_domain ?? null}
-          saving={deploy.saving}
-          onSave={async (patch) => {
-            const fresh = await deploy.save(patch);
-            return fresh.session_share_domain ?? null;
-          }}
-        />
-
-        <AttributionSection
-          key={`branding-${agentId}`}
-          entitled={hasFeature('branding_removable')}
-          entitlementsLoading={entitlementsLoading}
-          initialText={bot.branding_text ?? null}
-          initialUrl={bot.branding_url ?? null}
-          saving={deploy.saving}
-          onSave={async (patch) => {
-            await deploy.save(patch);
-          }}
-        />
+        {/* Help, only when wanted: two tabs over one card, instead of two more
+            full-width cards the reader has to scroll past to reach anything.
+            A broken install opens on the checklist. */}
+        <Tabs
+          label="Install help"
+          value={activeHelpTab}
+          onValueChange={(next) => setHelpTab(next as HelpTab)}
+          items={[
+            { value: 'platform', label: 'Instructions for your platform' },
+            { value: 'troubleshoot', label: 'Not showing up' },
+          ]}
+        >
+          <TabPanel value="platform">
+            <Card>
+              <CardBody>
+                <PlatformGuide
+                  botKey={botKey}
+                  env={deploy.env}
+                  platformId={platformId}
+                  onPlatformChange={setPlatformId}
+                  attribution={attribution}
+                  resolving={entitlementsLoading}
+                />
+              </CardBody>
+            </Card>
+          </TabPanel>
+          <TabPanel value="troubleshoot">
+            <Card>
+              <CardBody flush>
+                <TroubleshootSection
+                  botKey={botKey}
+                  env={deploy.env}
+                  apiBaseUrl={deploy.apiBaseUrl}
+                  website={website}
+                  domains={domains}
+                  domainsConfigured={domains.length}
+                  domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                />
+              </CardBody>
+            </Card>
+          </TabPanel>
+        </Tabs>
       </Stack>
     </Page>
   );

@@ -1,14 +1,50 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { getDashboardStats, getLeadStats, getOfflineMessages } from '../../services/api';
+import { getDashboardStats, getLeadStats, getLeads, getOfflineMessages } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { keys } from '../../query/keys';
 import { agentHealth, type AgentHealth } from './agentHealth';
-import type { Bot } from '../../types/domain';
+import type { TrendDirection } from '../../ui';
+import type { Bot, Lead } from '../../types/domain';
 
 export interface HomeAgent {
   bot: Bot;
   health: AgentHealth;
   conversations: number;
+  /** This row's figure is still in flight. The page does not wait for it. */
+  conversationsLoading: boolean;
+}
+
+/** The window every figure on Home covers, stated once by the `StatRow`. */
+export const HOME_WINDOW_DAYS = 30;
+
+/** How many recent leads the activity card shows. Eight fills the rail exactly. */
+const RECENT_LIMIT = 8;
+
+export interface HomeDelta {
+  value: string;
+  direction: TrendDirection;
+  label: string;
+}
+
+/**
+ * The change between this window and the one before it.
+ *
+ * `null` when there is nothing to compare against — a workspace in its first
+ * month has no previous thirty days, and an arrow drawn from zero would read as
+ * infinite growth. A figure with no honest comparison ships without one.
+ */
+function delta(current: number, previous: number): HomeDelta | null {
+  if (previous <= 0) return null;
+  const change = Math.round(((current - previous) / previous) * 100);
+  return {
+    value: `${change > 0 ? '+' : ''}${change}%`,
+    direction: change > 0 ? 'up' : change < 0 ? 'down' : 'flat',
+    label: `vs previous ${HOME_WINDOW_DAYS} days`,
+  };
+}
+
+function conversationsIn(data: Record<string, unknown> | undefined): number {
+  return Number(data?.total_conversations ?? 0);
 }
 
 /**
@@ -19,6 +55,18 @@ export interface HomeAgent {
  * asks for per-chatbot statistics once per chatbot and nothing else, and every
  * response is cached and shared with the pages that need the same numbers, so
  * navigating Home → a chatbot → Home does not refetch any of it.
+ *
+ * **The headline figures do not come from the fan-out.** They are two
+ * workspace-level roll-ups — `/analytics/dashboard` with no `bot_id`, once for
+ * the trailing thirty days and once for sixty — which is what makes the
+ * conversation figure both *anchored to a window* and *comparable to the window
+ * before it*. Summing the per-chatbot responses could only ever produce an
+ * unanchored all-time counter with nothing to compare it against.
+ *
+ * **`loading` covers the chatbot list and nothing else.** It used to be
+ * `some(isPending)` across the fan-out, so a twenty-chatbot workspace held the
+ * whole page in a skeleton until its slowest per-chatbot request landed. Each
+ * row now resolves its own figure and says so.
  *
  * A failing statistics call yields `null` rather than zero. The previous version
  * caught the error and coerced it to `0`, so a broken chatbot rendered as a
@@ -36,6 +84,18 @@ export function useHomeData() {
     })),
   });
 
+  const currentWindow = useQuery({
+    queryKey: keys.analytics.dashboard(null, HOME_WINDOW_DAYS),
+    queryFn: () => getDashboardStats(undefined, HOME_WINDOW_DAYS),
+    staleTime: 60_000,
+  });
+
+  const priorWindow = useQuery({
+    queryKey: keys.analytics.dashboard(null, HOME_WINDOW_DAYS * 2),
+    queryFn: () => getDashboardStats(undefined, HOME_WINDOW_DAYS * 2),
+    staleTime: 60_000,
+  });
+
   const leadStats = useQuery({
     queryKey: keys.leads.stats(null),
     queryFn: () => getLeadStats(),
@@ -50,26 +110,50 @@ export function useHomeData() {
     retry: false,
   });
 
+  // The events half of the page. A 403 here is a plan boundary, not a fault, so
+  // it retries nothing and the card simply does not render.
+  const recent = useQuery({
+    queryKey: keys.leads.list({ botId: null, page: 1, limit: RECENT_LIMIT }),
+    queryFn: () => getLeads(undefined, { page: 1, limit: RECENT_LIMIT }),
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const agents: HomeAgent[] = bots.map((bot, index) => ({
     bot,
     health: agentHealth(bot),
     conversations: Number(statQueries[index]?.data?.total_conversations ?? 0),
+    conversationsLoading: statQueries[index]?.isPending ?? false,
   }));
 
   // A partial failure is reported as a partial failure. Rolling it into the
   // totals is what let a broken chatbot read as a quiet one.
   const statsIncomplete = statQueries.some((query) => query.isError);
 
+  const conversations = conversationsIn(currentWindow.data);
+  const previousConversations = Math.max(conversationsIn(priorWindow.data) - conversations, 0);
+  const live = agents.filter((agent) => agent.health.state === 'live').length;
+
   return {
     agents,
-    loading: botsLoading || statQueries.some((query) => query.isPending),
+    loading: botsLoading,
     error: botsError,
     statsIncomplete,
     retry: refreshBots,
-    conversations: agents.reduce((total, agent) => total + agent.conversations, 0),
+    windowDays: HOME_WINDOW_DAYS,
+    conversations,
+    conversationsLoading: currentWindow.isPending,
+    conversationsDelta:
+      currentWindow.isPending || priorWindow.isPending ? null : delta(conversations, previousConversations),
     qualifiedLeads: Number(leadStats.data?.qualified ?? leadStats.data?.total ?? 0),
     leadsLocked: leadStats.isError,
+    leadsLoading: leadStats.isPending,
     unreadMessages: Number(offline.data?.total ?? 0),
+    unreadLoading: offline.isPending,
+    live,
     needsAttention: agents.filter((agent) => agent.health.needsAttention),
+    recentLeads: (recent.data?.leads ?? []) as Lead[],
+    recentLoading: recent.isPending,
+    recentAvailable: !recent.isError,
   };
 }

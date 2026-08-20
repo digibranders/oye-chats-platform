@@ -102,9 +102,7 @@ describe('IntegrationsPage — the four states', () => {
   it('answers a plan boundary with what the feature is for', async () => {
     entitlements.hasFeature = (key: string) => key !== 'webhooks';
     renderPage('/settings/integrations?tab=webhooks');
-    expect(
-      await screen.findByText('Webhooks are not included on your plan'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Webhooks are not included on your plan')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /see plans/i })).toBeInTheDocument();
     expect(api.getWebhooks).not.toHaveBeenCalled();
   });
@@ -126,7 +124,7 @@ describe('IntegrationsPage — webhooks', () => {
     await user.click(await screen.findByRole('menuitem', { name: /delete/i }));
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/stops working, silently, at the far end/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/stops working, silently/i)).toBeInTheDocument();
     expect(api.deleteWebhook).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: /delete endpoint/i }));
@@ -162,9 +160,7 @@ describe('IntegrationsPage — webhooks', () => {
     await user.paste('https://localhost:3000/hook');
     await user.click(within(dialog).getByRole('button', { name: /add endpoint/i }));
 
-    expect(
-      await within(dialog).findByText(/only exists on your own machine/i),
-    ).toBeInTheDocument();
+    expect(await within(dialog).findByText(/only exists on your own machine/i)).toBeInTheDocument();
     expect(api.createWebhook).not.toHaveBeenCalled();
   });
 
@@ -220,9 +216,7 @@ describe('IntegrationsPage — email routing', () => {
   it('tells a restricted plan what it can and cannot route', async () => {
     entitlements.entitlements = { features: { integrations: 'reply_to_only' } };
     renderPage('/settings/integrations?tab=email');
-    expect(
-      await screen.findByText('Recipient routing is not on your plan'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Recipient routing is not on your plan')).toBeInTheDocument();
     // The reply-to field is the part that still works, so it stays enabled.
     expect(screen.getByLabelText(/reply-to address/i)).toBeEnabled();
   });

@@ -95,7 +95,7 @@ describe('SubscriptionsTab', () => {
   it('says so when the endpoint has truncated the list', async () => {
     get.mockResolvedValue({ data: Array.from({ length: 200 }, (_, index) => subscription({ id: index })) });
     mount();
-    expect(await screen.findByText('This is a truncated list')).toBeInTheDocument();
+    expect(await screen.findByText(/Most recent/)).toBeInTheDocument();
   });
 
   it('does not claim truncation on a short list', async () => {
@@ -155,7 +155,7 @@ describe('SubscriptionsTab', () => {
 
     const dialog = await openOverride(user);
     expect(within(dialog).getByLabelText(/extend trial/i)).toBeDisabled();
-    expect(within(dialog).getByText(/the server ignores a trial extension entirely/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/No trial end date/i)).toBeInTheDocument();
   });
 
   it('allows the trial extension when there is a trial end date', async () => {
@@ -237,7 +237,9 @@ describe('SubscriptionsTab', () => {
       }),
     );
     mount();
-    expect(await screen.findByText('You cannot read subscriptions')).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
+    // The column heads stay so the reader can see what they are locked out of;
+    // no subscription row is rendered.
+    expect(screen.queryAllByRole('cell')).toHaveLength(1);
   });
 });

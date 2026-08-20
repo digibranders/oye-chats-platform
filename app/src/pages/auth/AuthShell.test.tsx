@@ -33,9 +33,11 @@ describe('AuthShell', () => {
     const panel = container.querySelector('aside');
     expect(panel).not.toBeNull();
     expect(panel).toHaveClass('bg-rail');
-    // Hidden below `lg` rather than stacked: a phone must not scroll past a
-    // marketing panel to reach a password field.
-    expect(panel).toHaveClass('hidden', 'lg:flex');
+    // Hidden below `xl` rather than stacked: a phone must not scroll past a
+    // marketing panel to reach a password field, and at `lg` (1024) neither half
+    // had room — the card sat in 44px gutters and the headline wrapped to three
+    // lines.
+    expect(panel).toHaveClass('hidden', 'xl:flex');
   });
 
   /**
@@ -53,7 +55,7 @@ describe('AuthShell', () => {
     // text, so assistive technology is told about the brand once.
     const named = screen.getAllByAltText('OyeChats');
     expect(named).toHaveLength(1);
-    expect(named[0]).toHaveClass('lg:hidden');
+    expect(named[0]).toHaveClass('xl:hidden');
     expect(container.querySelectorAll('img')).toHaveLength(2);
   });
 

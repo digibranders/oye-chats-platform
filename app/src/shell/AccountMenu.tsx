@@ -1,11 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { HelpCircle, LogOut, MessageSquarePlus, Settings, User } from 'lucide-react';
+import { HelpCircle, LogOut, MessageSquarePlus, User } from 'lucide-react';
 import {
   Avatar,
   MenuContent,
   MenuItem,
-  MenuLabel,
   MenuRoot,
   MenuSeparator,
   MenuTrigger,
@@ -14,6 +13,7 @@ import {
 import { getCurrentUser } from '../services/api';
 import { keys } from '../query/keys';
 import { clearAuthStorage } from '../utils/authStorage';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 /**
  * The account menu, anchored at the foot of the rail.
@@ -22,9 +22,19 @@ import { clearAuthStorage } from '../utils/authStorage';
  * app it replaces called that endpoint from ten independent places with no cache
  * between them, so navigating Home → Settings → Members fired it three more
  * times and each surface could show a different answer.
+ *
+ * It opens to the **right**, like the workspace switcher: a `bottom` menu on a
+ * trigger pinned to the bottom of the viewport is collision-flipped every time,
+ * and its panel sat flush against the rail's edge with its shadow bleeding onto
+ * the canvas.
+ *
+ * The trigger is a `--spacing-row` identity row, the one deliberate exception to
+ * the rail's 36px item height — but it shares the item's 10px inset, so the
+ * avatar's left edge lands on the icon column rather than two pixels inside it.
  */
 export function AccountMenu({ collapsed }: { collapsed: boolean }) {
   const navigate = useNavigate();
+  const { currentWorkspaceName, effectiveRole } = useWorkspace();
   const { data } = useQuery({
     queryKey: keys.session.me(),
     queryFn: getCurrentUser,
@@ -34,6 +44,9 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
 
   const name = (data?.name as string | undefined) ?? (data?.email as string | undefined) ?? 'Account';
   const email = data?.email as string | undefined;
+  // The trigger already carries the name and the email on two lines, so the
+  // menu's group label is the one fact it does not: which seat you hold, where.
+  const seat = [effectiveRole, currentWorkspaceName].filter(Boolean).join(' · ');
 
   function signOut() {
     clearAuthStorage();
@@ -45,8 +58,8 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
       <MenuTrigger
         aria-label="Account"
         className={cn(
-          'flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
-          'transition-colors duration-[var(--dur-fast)] hover:bg-rail-hover',
+          'flex h-row w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left',
+          'transition-colors duration-[var(--dur-fast)] hover:bg-rail-hover focus-visible:outline-rail-accent',
           collapsed && 'justify-center px-0',
         )}
       >
@@ -61,32 +74,28 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
         ) : null}
       </MenuTrigger>
 
-      <MenuContent align="start" className="w-60">
-        <MenuLabel>{email ?? 'Signed in'}</MenuLabel>
-        <MenuItem icon={<User aria-hidden className="h-3.5 w-3.5" />} onSelect={() => navigate('/account')}>
-          Your profile
-        </MenuItem>
-        <MenuItem
-          icon={<Settings aria-hidden className="h-3.5 w-3.5" />}
-          onSelect={() => navigate('/account/preferences')}
-        >
-          Preferences
+      <MenuContent side="right" align="end" className="w-64">
+        {seat ? <p className="px-2 pb-1 pt-1.5 text-2xs text-text-tertiary">{seat}</p> : null}
+        <MenuItem icon={<User aria-hidden />} onSelect={() => navigate('/account')}>
+          Account settings
         </MenuItem>
         <MenuSeparator />
         <MenuItem
-          icon={<MessageSquarePlus aria-hidden className="h-3.5 w-3.5" />}
-          onSelect={() => navigate('/feedback')}
+          icon={<MessageSquarePlus aria-hidden />}
+          onSelect={() =>
+            window.open('https://www.oyechats.com/contact', '_blank', 'noopener')
+          }
         >
           Send feedback
         </MenuItem>
         <MenuItem
-          icon={<HelpCircle aria-hidden className="h-3.5 w-3.5" />}
+          icon={<HelpCircle aria-hidden />}
           onSelect={() => window.open('https://www.oyechats.com/docs', '_blank', 'noopener')}
         >
           Help and docs
         </MenuItem>
         <MenuSeparator />
-        <MenuItem icon={<LogOut aria-hidden className="h-3.5 w-3.5" />} onSelect={signOut}>
+        <MenuItem icon={<LogOut aria-hidden />} onSelect={signOut}>
           Sign out
         </MenuItem>
       </MenuContent>

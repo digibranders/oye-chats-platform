@@ -212,7 +212,7 @@ describe('DunningTab', () => {
       }),
     );
     mount();
-    expect(await screen.findByText('You cannot read dunning')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 });

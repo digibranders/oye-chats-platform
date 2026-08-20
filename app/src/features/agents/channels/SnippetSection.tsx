@@ -7,10 +7,11 @@ import {
   Card,
   CardBody,
   CardHeader,
+  CardSection,
   CodeBlock,
   CopyField,
-  Eyebrow,
   Skeleton,
+  Tooltip,
   buttonClass,
   useClipboard,
 } from '../../../ui';
@@ -50,7 +51,9 @@ export interface SnippetSectionProps {
  * visitor clicks the launcher, so its in-widget badge is invisible to every
  * crawler — non-rendering crawlers run no JS, and rendering ones never click.
  * A customer who finds that out later, from their SEO agency, is a customer we
- * have lost.
+ * have lost. It is one alert of 24 words now, not 58 plus a 44-word twin for the
+ * plans that do not get it — the `CodeBlock`'s own caption already says which
+ * snippet this is.
  */
 export function SnippetSection({
   botKey,
@@ -89,39 +92,27 @@ export function SnippetSection({
   return (
     <Card>
       <CardHeader
-        eyebrow="The snippet"
+        eyebrow="Snippet"
         titleAs="h2"
         title="Add this to your website"
-        description="One tag, on every page. It goes in the shared layout or footer template so it loads site-wide — you only ever paste it once."
+        description="One tag, in your site’s shared layout."
       />
       <CardBody className="space-y-5">
-        <div className="space-y-1.5">
-          <Eyebrow>Embed key</Eyebrow>
-          {/* Not masked. The key is a public identifier — it is visible in the
-              page source of every site that runs the widget, and it is safe to
-              commit — so hiding it behind a reveal control would teach the
-              customer to treat it as a secret and be afraid to paste it. */}
-          <CopyField value={botKey} label="embed key" />
-          <p className="text-xs text-text-secondary">
-            Public and safe to commit. Requests are still checked against the domains you allow
-            below.
-          </p>
-        </div>
-
         {resolving ? (
           <div aria-busy aria-label="Working out which snippet your plan needs" className="space-y-2">
             <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-24 w-full rounded-md" />
+            <Skeleton className="h-32 w-full rounded-md" />
           </div>
         ) : (
-          <div className="space-y-2">
-            <Eyebrow>Paste immediately before &lt;/body&gt;</Eyebrow>
-            <CodeBlock
-              code={snippet}
-              label="embed snippet"
-              caption={attribution ? 'Both lines — the script and the credit link' : 'Your plan removes the credit link'}
-            />
-          </div>
+          <CodeBlock
+            code={snippet}
+            label="embed snippet"
+            caption={
+              attribution
+                ? 'Paste before </body> — both lines, the script and the credit link'
+                : 'Paste before </body> — your plan removes the credit link'
+            }
+          />
         )}
 
         {!resolving && attribution ? (
@@ -134,67 +125,66 @@ export function SnippetSection({
               </Link>
             }
           >
-            It is a normal visible link with <code className="figure">rel="nofollow"</code>, and it
-            has to stay in the HTML your server sends — hiding it with CSS breaks Google&rsquo;s
-            policy against <em>your</em> domain, not ours. The badge inside the chat window does not
-            count: the widget renders in a shadow root only after a visitor clicks, so no crawler
-            ever sees it. Plans with white-label branding get a snippet without this line.
+            It is a visible <code className="figure">nofollow</code> link and has to stay in the
+            HTML your server sends. White-label plans get a snippet without it.
           </Alert>
         ) : null}
 
-        {!resolving && !attribution ? (
-          <Alert tone="neutral" title="No credit link on your plan">
-            Your plan includes white-label branding, so the snippet above is the script tag alone.
-            If an older “{ATTRIBUTION_TEXT}” link is already on your site, removing it is up to you
-            — we never touch what is already there.
-          </Alert>
-        ) : null}
+        <div>
+          {/* Not masked. The key is a public identifier — it is visible in the
+              page source of every site that runs the widget, and it is safe to
+              commit — so hiding it behind a reveal control would teach the
+              customer to treat it as a secret and be afraid to paste it. */}
+          <CopyField value={botKey} label="embed key" />
+          <p className="mt-1.5 text-xs text-text-secondary">Public and safe to commit.</p>
+        </div>
+      </CardBody>
 
-        {/* The buyer is very often not the installer. For an SMB the person who
-            signs up frequently cannot edit the website at all, so handing the
-            job to whoever can is a first-class path, not a fallback. */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+      {/* The buyer is very often not the installer. For an SMB the person who
+          signs up frequently cannot edit the website at all, so handing the job
+          to whoever can is a first-class path, not a fallback. */}
+      <CardSection className="flex flex-wrap items-center gap-2">
+        <Tooltip content="Carries the snippet above, the platform steps, and the two Content-Security-Policy origins the widget needs">
           <a
             href={email.href}
-            className={buttonClass('secondary', 'md')}
+            className={buttonClass('secondary', 'sm')}
             onClick={() => {
               setEmailed(true);
               void recordActivationEvent('install_snippet_copied', { botId });
             }}
           >
             {emailed ? (
-              <Check aria-hidden className="h-4 w-4 text-success" />
+              <Check aria-hidden className="text-success" />
             ) : (
-              <Mail aria-hidden className="h-4 w-4" />
+              <Mail aria-hidden />
             )}
             Email this to my developer
           </a>
+        </Tooltip>
+        <Tooltip content="The same briefing, written for a coding agent">
           <Button
             variant="secondary"
+            size="sm"
             onClick={() => void copyPrompt()}
             disabled={resolving}
             iconLeft={
               prompt.state === 'copied' ? (
-                <Check aria-hidden className="h-4 w-4 text-success" />
+                <Check aria-hidden className="text-success" />
               ) : (
-                <BotIcon aria-hidden className="h-4 w-4" />
+                <BotIcon aria-hidden />
               )
             }
           >
             {prompt.state === 'copied' ? 'Prompt copied' : 'Copy a prompt for a coding agent'}
           </Button>
-          <span role="status" aria-live="polite" className="sr-only">
-            {prompt.state === 'copied' ? 'Install prompt copied' : ''}
-            {prompt.state === 'failed'
-              ? 'Could not copy the prompt. Use the email option instead.'
-              : ''}
-          </span>
-        </div>
-        <p className="text-xs text-text-secondary">
-          The email and the agent prompt both carry the exact snippet above, the platform steps you
-          pick below, and the two Content-Security-Policy origins the widget needs.
-        </p>
-      </CardBody>
+        </Tooltip>
+        <span role="status" aria-live="polite" className="sr-only">
+          {prompt.state === 'copied' ? 'Install prompt copied' : ''}
+          {prompt.state === 'failed'
+            ? 'Could not copy the prompt. Use the email option instead.'
+            : ''}
+        </span>
+      </CardSection>
     </Card>
   );
 }

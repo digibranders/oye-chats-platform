@@ -5,8 +5,9 @@ import {
   Card,
   CardBody,
   ErrorState,
+  Grid,
   Stack,
-  StatTile,
+  StatRow,
   buttonClass,
   formatNumber,
   formatPercent,
@@ -87,55 +88,55 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
   return (
     <Stack>
       <Card>
-        <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
-          <StatTile
-            label="Conversations"
-            value={formatNumber(headline.totals?.totalConversations ?? null)}
+        <CardBody flush>
+          <StatRow
+            label="Headline figures"
             period={range.label}
-            delta={
-              conversationDelta
-                ? { value: conversationDelta.value, direction: conversationDelta.direction }
-                : undefined
-            }
-            hint={
-              range.comparisonLabel && !conversationDelta
-                ? `Nothing in ${range.comparisonLabel} to compare with`
-                : undefined
-            }
-            loading={headline.loading}
-          />
-          <StatTile
-            label="Messages"
-            value={formatNumber(current.total)}
-            period={range.label}
-            delta={
-              messageDelta
-                ? { value: messageDelta.value, direction: messageDelta.direction }
-                : undefined
-            }
-            loading={messages.loading}
-          />
-          <StatTile
-            label="Qualified leads"
-            value={leads.locked ? undefined : formatNumber(leads.leads?.sql ?? null)}
-            period="All time"
-            hint={
-              leads.locked
-                ? 'Lead scoring is on Standard and above'
-                : 'Lead totals are not reported by period'
-            }
-            loading={leads.loading}
-          />
-          <StatTile
-            label="Answers rated helpful"
-            value={
-              headline.totals
-                ? formatPercent(headline.totals.positiveFeedbackRate / 100)
-                : undefined
-            }
-            period="All time"
-            hint="Of every answer a visitor rated"
-            loading={headline.loading}
+            items={[
+              {
+                label: 'Conversations',
+                value: formatNumber(headline.totals?.totalConversations ?? null),
+                delta: conversationDelta
+                  ? {
+                      value: conversationDelta.value,
+                      direction: conversationDelta.direction,
+                      label: range.comparisonLabel ? `vs ${range.comparisonLabel}` : undefined,
+                    }
+                  : undefined,
+                hint:
+                  range.comparisonLabel && !conversationDelta
+                    ? `Nothing in ${range.comparisonLabel} to compare with`
+                    : undefined,
+                loading: headline.loading,
+              },
+              {
+                label: 'Messages',
+                value: formatNumber(current.total),
+                delta: messageDelta
+                  ? {
+                      value: messageDelta.value,
+                      direction: messageDelta.direction,
+                      label: range.comparisonLabel ? `vs ${range.comparisonLabel}` : undefined,
+                    }
+                  : undefined,
+                loading: messages.loading,
+              },
+              {
+                label: 'Qualified leads',
+                value: leads.locked ? undefined : formatNumber(leads.leads?.sql ?? null),
+                period: 'All time',
+                hint: leads.locked ? 'Lead scoring is on Standard and above' : undefined,
+                loading: leads.loading,
+              },
+              {
+                label: 'Answers rated helpful',
+                value: headline.totals
+                  ? formatPercent(headline.totals.positiveFeedbackRate / 100)
+                  : undefined,
+                period: 'All time',
+                loading: headline.loading,
+              },
+            ]}
           />
         </CardBody>
       </Card>
@@ -164,8 +165,12 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
         </div>
       ) : null}
 
-      <FunnelPanel botId={botId} range={range} unlocked={hasFeature('bant')} />
-      <SatisfactionPanel botId={botId} />
+      {/* Peers: both answer "is this working?" at the same altitude, and a
+          reader compares them. Stacked full-width they were two screens apart. */}
+      <Grid cols={2} gap="section" align="start">
+        <FunnelPanel botId={botId} range={range} unlocked={hasFeature('bant')} />
+        <SatisfactionPanel botId={botId} />
+      </Grid>
     </Stack>
   );
 }

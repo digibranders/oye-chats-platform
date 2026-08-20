@@ -1,5 +1,5 @@
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { TabPanel, Tabs } from '../../ui';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { OverviewTab } from './OverviewTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
@@ -7,7 +7,7 @@ import { InvoicesTab } from './InvoicesTab';
 import { UsageCreditsTab } from './UsageCreditsTab';
 import { PaymentsTab } from './PaymentsTab';
 import { GrowthTab } from './GrowthTab';
-import { REVENUE_BASE, REVENUE_TABS, revenueTabFor, revenueTabPath } from './tabs';
+import { REVENUE_BASE, REVENUE_TABS, revenueTabPath } from './tabs';
 
 /**
  * Revenue — the money as it is *reported*.
@@ -29,43 +29,37 @@ import { REVENUE_BASE, REVENUE_TABS, revenueTabFor, revenueTabPath } from './tab
  * so there is exactly one place in the console where money moves.
  */
 export function RevenuePage() {
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const current = revenueTabFor(pathname);
-
   return (
     <PlatformPage
-      eyebrow="Money"
       title="Revenue"
-      description="Subscriptions, invoices, credits and the funnels behind them."
+      toolbarBleed
+      toolbar={
+        // Links, not tabs. Every one of these views is a different route, so a
+        // `tablist` would stamp `aria-controls` on six tabs while only one
+        // panel is ever in the document — and the five dead references were
+        // there until this line replaced them.
+        <NavTabs
+          label="Revenue views"
+          items={REVENUE_TABS.map((tab) => ({
+            to: revenueTabPath(tab.value) ?? REVENUE_BASE,
+            label: tab.label,
+            end: tab.path === '',
+          }))}
+        />
+      }
     >
-      <Tabs
-        label="Revenue views"
-        value={current}
-        onValueChange={(next) => {
-          const path = revenueTabPath(next);
-          if (path) navigate(path);
-        }}
-        items={REVENUE_TABS.map(({ value, label }) => ({ value, label }))}
-      >
-        {/* One panel, for the tab that is showing. The others have no panel to
-            control because their content is a different route entirely — which
-            is also what makes the browser's back button work here. */}
-        <TabPanel value={current}>
-          <Routes>
-            <Route index element={<OverviewTab />} />
-            <Route path="subscriptions" element={<SubscriptionsTab />} />
-            <Route path="invoices" element={<InvoicesTab />} />
-            <Route path="usage" element={<UsageCreditsTab />} />
-            <Route path="payments" element={<PaymentsTab />} />
-            <Route path="growth" element={<GrowthTab />} />
-            {/* A mistyped sub-path is a wrong URL, not an error state: send it
-                to the section's own first screen rather than showing a dead
-                page inside a working section. */}
-            <Route path="*" element={<Navigate to={REVENUE_BASE} replace />} />
-          </Routes>
-        </TabPanel>
-      </Tabs>
+      <Routes>
+        <Route index element={<OverviewTab />} />
+        <Route path="subscriptions" element={<SubscriptionsTab />} />
+        <Route path="invoices" element={<InvoicesTab />} />
+        <Route path="usage" element={<UsageCreditsTab />} />
+        <Route path="payments" element={<PaymentsTab />} />
+        <Route path="growth" element={<GrowthTab />} />
+        {/* A mistyped sub-path is a wrong URL, not an error state: send it to
+            the section's own first screen rather than showing a dead page
+            inside a working section. */}
+        <Route path="*" element={<Navigate to={REVENUE_BASE} replace />} />
+      </Routes>
     </PlatformPage>
   );
 }

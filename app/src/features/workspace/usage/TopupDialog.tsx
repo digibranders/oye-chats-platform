@@ -4,10 +4,12 @@ import { Zap } from 'lucide-react';
 import {
   Alert,
   Badge,
+  Button,
   Dialog,
   EmptyState,
   ErrorState,
   LoadingRows,
+  Spinner,
   cn,
   formatNumber,
 } from '../../../ui';
@@ -131,7 +133,9 @@ export function TopupDialog({
     setError(null);
     setNotice(null);
     try {
-      const order = (await initiateTopup(amount, { botId: botId ?? undefined })) as Record<string, unknown>;
+      const order = (await initiateTopup(amount, {
+        botId: botId ?? undefined,
+      })) as Record<string, unknown>;
       if (!order.key_id || !order.order_id || !order.amount) {
         setError('Checkout is temporarily unavailable. Please try again in a moment.');
         return;
@@ -180,9 +184,17 @@ export function TopupDialog({
         void recordBillingEvent('payment_failed', 'topup', { amount });
       }
       const detail =
-        (cause as { detail?: unknown; response?: { data?: { detail?: unknown } } })?.response?.data
-          ?.detail ?? (cause as { detail?: unknown })?.detail;
-      if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'billing_details_required') {
+        (
+          cause as {
+            detail?: unknown;
+            response?: { data?: { detail?: unknown } };
+          }
+        )?.response?.data?.detail ?? (cause as { detail?: unknown })?.detail;
+      if (
+        detail &&
+        typeof detail === 'object' &&
+        (detail as { code?: string }).code === 'billing_details_required'
+      ) {
         onOpenChange(false);
         onBillingDetailsRequired((detail as { missing?: string[] }).missing ?? []);
         return;
@@ -206,17 +218,18 @@ export function TopupDialog({
       // Never dismissible mid-purchase.
       dismissible={!busy}
       title={botName ? `Top up ${botName}` : 'Buy credits'}
-      description={
+      description={`${
         botName
-          ? "A one-time purchase that lands in this chatbot's own balance, on top of its plan."
+          ? `A one-time purchase that lands in ${botName}'s own balance, on top of its plan.`
           : 'A one-time purchase, on top of your plan allowance.'
-      }
+      } Paid through Razorpay by UPI, card, NetBanking or wallet.${expiryNote ? ` ${expiryNote}` : ''}`}
       size="lg"
+      // The two sentences are in the description, not alone on the sunken
+      // button bar the footer slot paints — a bar with no control in it.
       footer={
-        <p className="mr-auto text-xs text-text-secondary">
-          Paid through Razorpay by UPI, card, NetBanking or wallet.
-          {expiryNote ? ` ${expiryNote}` : ''}
-        </p>
+        <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+          Done
+        </Button>
       }
     >
       <div className="space-y-4">
@@ -235,14 +248,14 @@ export function TopupDialog({
           <LoadingRows rows={2} />
         ) : packs.isError ? (
           <ErrorState
-            compact
+            size="panel"
             title="We could not load the credit packs"
             description={errorMessage(packs.error, 'The pricing service did not answer.')}
             onRetry={() => void packs.refetch()}
           />
         ) : (packs.data?.length ?? 0) === 0 ? (
           <EmptyState
-            compact
+            size="panel"
             icon={Zap}
             title="No credit packs are available right now"
             description="This is usually temporary. If it persists, contact support and we will arrange a top-up manually."
@@ -260,12 +273,14 @@ export function TopupDialog({
                     type="button"
                     onClick={() => void buy(pack)}
                     disabled={busy}
+                    aria-busy={isBusy || undefined}
                     className={cn(
                       'w-full rounded-lg border bg-surface p-4 text-left transition-colors',
+                      'hover:border-border-strong hover:bg-surface-hover',
                       'disabled:cursor-not-allowed disabled:opacity-60',
                       index === featured
-                        ? 'border-border-strong hover:bg-surface-hover'
-                        : 'border-border hover:bg-surface-hover',
+                        ? 'border-plan shadow-[inset_0_0_0_1px_var(--color-plan)]'
+                        : 'border-border',
                     )}
                   >
                     <span className="flex items-baseline justify-between gap-2">
@@ -282,6 +297,11 @@ export function TopupDialog({
                       </span>
                     ) : null}
                     <span className="mt-2 flex flex-wrap items-center gap-1.5 text-base text-text-secondary">
+                      {/* No pseudo-CTA. A blue "Pay securely" that is neither a
+                          link nor focusable, inside a card that *is* the button,
+                          makes blue mean "the thing around me is interactive" —
+                          the collision DESIGN.md §2 exists to prevent. */}
+                      {isBusy ? <Spinner /> : null}
                       <span className="figure font-semibold text-text-primary">
                         {formatNumber(pack.credits)}
                       </span>
@@ -289,9 +309,6 @@ export function TopupDialog({
                       {(pack.bonus_pct ?? 0) > 0 ? (
                         <Badge tone="success">+{pack.bonus_pct}% bonus</Badge>
                       ) : null}
-                    </span>
-                    <span className="mt-3 block text-xs font-medium text-accent-600">
-                      {isBusy ? 'Opening checkout…' : 'Pay securely'}
                     </span>
                   </button>
                 </li>

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Badge, Card, CardBody, CardHeader, CardSection } from '../../../ui';
+import { ABSENT, Badge, Card, CardBody, CardHeader, CardSection, Eyebrow, Grid, Tooltip } from '../../../ui';
 import { NumberField } from './NumberField';
 import { TIERS } from './qualification.config';
 import { bandsFor, type QualThresholds, type QualValidation } from './qualification.model';
@@ -18,6 +18,11 @@ export interface ThresholdsSectionProps {
  * whole space: a threshold above 100, or out of order, produces a tier that can
  * never fire. Both are refused at save with the specific reason on the specific
  * field, rather than a 422 the customer has to decode after the fact.
+ *
+ * No per-field hints. `Field` renders a hint *below* its control, so three
+ * fields whose hints were six, four and six words made a three-column grid with
+ * visibly ragged bottoms and the next row's labels starting at three different
+ * heights. Each tier's meaning is a `Tooltip` on its own band below instead.
  */
 function ThresholdsSectionInner({
   thresholds,
@@ -29,48 +34,59 @@ function ThresholdsSectionInner({
 
   return (
     <Card>
-      <CardHeader
-        title="Tier thresholds"
-        titleAs="h2"
-        description="Where a lead's score has to reach before it is promoted. The score is always between 0 and 100."
-      />
-      <CardBody className="grid gap-4 sm:grid-cols-3">
-        {TIERS.map((tier) => (
-          <NumberField
-            key={tier.key}
-            label={`${tier.label} at`}
-            hint={tier.meaning}
-            error={validation.thresholds[tier.key] ?? null}
-            value={thresholds[tier.key]}
-            min={0}
-            max={100}
-            step={1}
-            disabled={disabled}
-            onChange={(raw) => {
-              const parsed = Math.round(Number(raw));
-              onChange({
-                ...thresholds,
-                [tier.key]: Number.isFinite(parsed) ? parsed : thresholds[tier.key],
-              });
-            }}
-          />
-        ))}
+      <CardHeader title="Tier thresholds" titleAs="h2" description="The score to reach. Always 0–100." />
+      <CardBody>
+        <Grid cols={3}>
+          {TIERS.map((tier) => (
+            <NumberField
+              key={tier.key}
+              label={`${tier.label} at`}
+              error={validation.thresholds[tier.key] ?? null}
+              value={thresholds[tier.key]}
+              min={0}
+              max={100}
+              step={1}
+              disabled={disabled}
+              onChange={(raw) => {
+                const parsed = Math.round(Number(raw));
+                onChange({
+                  ...thresholds,
+                  [tier.key]: Number.isFinite(parsed) ? parsed : thresholds[tier.key],
+                });
+              }}
+            />
+          ))}
+        </Grid>
       </CardBody>
       <CardSection className="bg-surface-sunken">
-        <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-          What that produces
-        </p>
+        <Eyebrow>What that produces</Eyebrow>
         <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
-          {bands.map((band) => (
-            <li key={band.label} className="flex items-center gap-2">
-              <Badge tone={band.tone} dot>
-                {band.label}
-              </Badge>
-              <span className="figure text-xs text-text-secondary">
-                {band.to < band.from ? 'unreachable' : `${band.from}–${band.to}`}
-              </span>
-            </li>
-          ))}
+          {bands.map((band) => {
+            const unreachable = band.to < band.from;
+            const meaning = TIERS.find((tier) => tier.label === band.label)?.meaning;
+            return (
+              <li key={band.label} className="flex items-center gap-2">
+                {meaning ? (
+                  <Tooltip content={meaning}>
+                    <Badge tone={band.tone} dot>
+                      {band.label}
+                    </Badge>
+                  </Tooltip>
+                ) : (
+                  <Badge tone={band.tone} dot>
+                    {band.label}
+                  </Badge>
+                )}
+                {/* `.figure` is Geist Mono with tabular numerals — for numbers.
+                    "unreachable" set in it was a word pretending to be a figure,
+                    so the absent range is `—` and the word is a badge. */}
+                <span className="figure text-xs text-text-secondary">
+                  {unreachable ? ABSENT : `${band.from}–${band.to}`}
+                </span>
+                {unreachable ? <Badge tone="danger">Unreachable</Badge> : null}
+              </li>
+            );
+          })}
         </ul>
       </CardSection>
     </Card>

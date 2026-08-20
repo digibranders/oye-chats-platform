@@ -18,6 +18,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * reaches the parts a mouse does.
  */
 
+/*
+ * This file renders the whole page against jsdom, including the widget mock and
+ * a four-tab form. A single test is comfortably inside a second on its own; the
+ * default five-second budget only bites when vitest runs every file in the
+ * repository in parallel and the workers contend. A test that fails on machine
+ * load is a flaky test, which is a defect of its own — the same reason
+ * `BehaviourPage.test.tsx` and `QualificationPage.test.tsx` carry this line.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 const api = vi.hoisted(() => ({
   getBot: vi.fn(),
   updateBot: vi.fn(),
@@ -370,7 +380,10 @@ describe('the four states', () => {
     renderPage();
     await ready();
     await openTab('Handoff');
-    expect(screen.getByText('Live chat is on Starter and above')).toBeInTheDocument();
+    // A row with a plan badge, not a centred 96px hero dropped into a column of
+    // left-aligned cards.
+    expect(screen.getByText('Starter and above')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Compare plans' })).toBeInTheDocument();
     // The availability schedule is not plan-gated and stays reachable.
     expect(screen.getByRole('switch', { name: /Only available at set hours/i })).toBeInTheDocument();
   });
@@ -432,8 +445,12 @@ describe('the preview never claims to be live when it is not', () => {
   it('is badged live while the draft matches what is stored', async () => {
     renderPage();
     await ready();
-    const preview = screen.getByRole('group', { name: 'Chat widget preview' }).parentElement as HTMLElement;
-    expect(within(preview.parentElement as HTMLElement).getByText('Live')).toBeInTheDocument();
+    // The preview is a `Card` now, so the badge lives in its header rather than
+    // two DOM levels above the mock.
+    const preview = screen
+      .getByRole('group', { name: 'Chat widget preview' })
+      .closest('[data-card]') as HTMLElement;
+    expect(within(preview).getByText('Live')).toBeInTheDocument();
   });
 
   it('warns that a generated reply still comes from the saved chatbot', async () => {

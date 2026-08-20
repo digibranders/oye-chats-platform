@@ -34,14 +34,12 @@ export const FRAMEWORK_OPTIONS: readonly FrameworkOption[] = [
   {
     key: 'bant',
     label: 'BANT',
-    summary:
-      'Budget, Authority, Need, Timeline. The default, and the right choice for self-serve and mid-market selling where the visitor is usually the buyer.',
+    summary: 'Budget, Authority, Need, Timeline. Best for self-serve and mid-market.',
   },
   {
     key: 'meddic',
     label: 'MEDDIC',
-    summary:
-      'Metrics, Economic buyer, Decision criteria, Decision process, Identify pain, Champion. Built for longer enterprise cycles with a buying committee.',
+    summary: 'Six dimensions. Built for enterprise cycles with a buying committee.',
   },
 ];
 

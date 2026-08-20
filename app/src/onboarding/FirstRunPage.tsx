@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { FileText, Globe, Type } from 'lucide-react';
 import {
   Alert,
   Button,
   Card,
   CardBody,
+  CardFooter,
   Field,
   Input,
+  Measure,
   Page,
   PageHeader,
+  RadioCards,
   Spinner,
   buttonClass,
-  cn,
   normalizeUrl,
 } from '../ui';
 import { createBot, crawlWebsite } from '../services/api';
@@ -21,38 +22,23 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { agentPath } from '../shell/nav';
 import {
   hasErrors,
+  skipFirstRun,
   suggestName,
   validateFirstRun,
   type FirstRunErrors,
   type FirstRunSource,
 } from './firstRun';
 
-interface SourceOption {
-  value: FirstRunSource;
-  label: string;
-  blurb: string;
-  icon: typeof Globe;
-}
-
-const SOURCES: SourceOption[] = [
-  {
-    value: 'website',
-    label: 'My website',
-    blurb: 'We read your pages and your chatbot answers from them.',
-    icon: Globe,
-  },
-  {
-    value: 'documents',
-    label: 'Documents',
-    blurb: 'PDFs, Word files or plain text — a handbook, a price list, an FAQ.',
-    icon: FileText,
-  },
-  {
-    value: 'text',
-    label: 'Text I paste in',
-    blurb: 'No site and no files yet? Paste what you would tell a customer.',
-    icon: Type,
-  },
+/**
+ * The three ways in.
+ *
+ * No icons. A globe beside the words "My website" labels nothing, and
+ * DESIGN.md §6.4 says an icon names a distinct concept or it does not ship.
+ */
+const SOURCES: readonly { value: FirstRunSource; label: string; description: string }[] = [
+  { value: 'website', label: 'My website', description: 'Reads your public pages' },
+  { value: 'documents', label: 'Documents', description: 'PDF, Word or plain text' },
+  { value: 'text', label: 'Text I paste in', description: 'Paste what you would tell a customer' },
 ];
 
 /**
@@ -151,110 +137,111 @@ export function FirstRunPage() {
   }
 
   return (
-    <Page width="default">
-      <PageHeader
-        eyebrow="First run"
-        title="Let’s give your chatbot something to know"
-        description="Two answers and it is live. You can change all of it afterwards, and nothing here is a step you can get stuck on."
-      />
+    <Page>
+      <Measure width="form">
+        <PageHeader
+          eyebrow="First run"
+          title="Let’s give your chatbot something to know"
+          description="Change any of this later."
+        />
 
-      {failure ? (
-        <Alert
-          tone="danger"
-          live
-          className="mb-5"
-          title="We could not create your chatbot"
-          action={
-            <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-              Check your plan
-            </Link>
-          }
-        >
-          {failure}
-        </Alert>
-      ) : null}
+        {failure ? (
+          <Alert
+            tone="danger"
+            live
+            className="mb-5"
+            title="We could not create your chatbot"
+            action={
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                Check your plan
+              </Link>
+            }
+          >
+            {failure}
+          </Alert>
+        ) : null}
 
-      <form onSubmit={submit} noValidate>
-        <Card>
-          <CardBody className="space-y-6">
-            <fieldset>
-              <legend className="text-base font-medium text-text-primary">
-                Where should it learn from?
-              </legend>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {SOURCES.map((option) => {
-                  const Icon = option.icon;
-                  const selected = source === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => setSource(option.value)}
-                      className={cn(
-                        'flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left',
-                        'transition-colors duration-[var(--dur-fast)]',
-                        selected
-                          ? 'border-accent-500 bg-accent-50'
-                          : 'border-border bg-surface hover:bg-surface-hover',
-                      )}
-                    >
-                      <Icon aria-hidden className="h-4 w-4 text-text-tertiary" />
-                      <span className="text-base font-medium text-text-primary">{option.label}</span>
-                      <span className="text-2xs leading-relaxed text-text-secondary">{option.blurb}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-
-            {source === 'website' ? (
-              <Field
-                label="Your website"
-                hint="We read the pages a visitor can see. Pages behind a login are not included."
-                error={errors.website}
-              >
-                <Input
-                  value={website}
-                  onChange={(event) => setWebsite(event.target.value)}
-                  placeholder="example.com"
-                  inputMode="url"
-                  autoComplete="url"
-                  autoFocus
+        <form onSubmit={submit} noValidate>
+          <Card>
+            <CardBody className="space-y-6">
+              {/* `RadioCards`, not three loose `role="radio"` buttons in a
+                  `fieldset`: those had no owning radiogroup, all three sat in the
+                  tab order, arrow keys did nothing, and each blurb folded into
+                  its button's accessible name. */}
+              <Field label="Where should it learn from?">
+                <RadioCards
+                  label="Where should it learn from?"
+                  columns={3}
+                  value={source}
+                  onChange={setSource}
+                  items={SOURCES}
                 />
               </Field>
-            ) : null}
 
-            <Field
-              label="What is it called?"
-              hint="Visitors see this at the top of the chat."
-              error={errors.name}
-            >
-              <Input
-                value={name}
-                onChange={(event) => {
-                  setNameTouched(true);
-                  setName(event.target.value);
-                }}
-                placeholder="Support"
-                maxLength={80}
-              />
-            </Field>
-          </CardBody>
+              {source === 'website' ? (
+                <Field
+                  label="Your website"
+                  hint="Public pages only."
+                  error={errors.website}
+                >
+                  <Input
+                    value={website}
+                    onChange={(event) => setWebsite(event.target.value)}
+                    placeholder="example.com"
+                    inputMode="url"
+                    autoComplete="url"
+                    autoFocus
+                  />
+                </Field>
+              ) : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface-sunken px-5 py-3">
-            <p className="text-2xs text-text-tertiary">
-              {source === 'website'
-                ? 'Reading your site takes a few minutes. You can talk to your chatbot while it works.'
-                : 'You will add your content on the next screen.'}
-            </p>
-            <Button type="submit" loading={submitting} disabled={submitting}>
-              {source === 'website' ? 'Start reading my site' : 'Create my chatbot'}
-            </Button>
-          </div>
-        </Card>
-      </form>
+              <Field
+                label="What is it called?"
+                hint="Visitors see this at the top of the chat."
+                error={errors.name}
+              >
+                <Input
+                  value={name}
+                  onChange={(event) => {
+                    setNameTouched(true);
+                    setName(event.target.value);
+                  }}
+                  placeholder="Support"
+                  maxLength={80}
+                />
+              </Field>
+            </CardBody>
+
+            {/* `CardFooter`, not a hand-rolled copy of it: the copy was identical
+                except for the rounded bottom corners, so the sunken bar painted
+                square corners inside a `rounded-lg` card and left a crescent of
+                canvas at both bottom edges. */}
+            <CardFooter className="justify-between">
+              <p className="text-xs text-text-tertiary">
+                {source === 'website' ? 'You can talk to it while it reads.' : null}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Skippable, like every step of Linear's onboarding and none of
+                    this one's. Without it `/welcome` was a forced redirect with no
+                    way out, and Home's own empty state was unreachable code. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    skipFirstRun();
+                    navigate('/', { replace: true });
+                  }}
+                >
+                  Skip for now
+                </Button>
+                <Button type="submit" loading={submitting} disabled={submitting}>
+                  {source === 'website' ? 'Start reading my site' : 'Create my chatbot'}
+                </Button>
+              </div>
+            </CardFooter>
+          </Card>
+        </form>
+      </Measure>
     </Page>
   );
 }

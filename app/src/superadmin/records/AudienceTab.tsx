@@ -6,14 +6,14 @@ import {
   CardHeader,
   ChartFrame,
   EmptyState,
+  Grid,
+  LoadingBars,
   Input,
   RankedBars,
   SearchField,
-  SegmentedControl,
   Section,
-  Skeleton,
   Stack,
-  StatTile,
+  StatRow,
   Toolbar,
   formatDateTime,
   formatNumber,
@@ -26,29 +26,6 @@ import { RecordList } from '../RecordList';
 import { byDate, byText, includesText, usePagedRows } from '../recordListState';
 import { humanise, type GrowthEventRow, type VisitorAnalytics } from './types';
 
-const VIEWS = [
-  { value: 'visitors', label: 'Visitor behaviour' },
-  { value: 'growth', label: 'Growth events' },
-];
-
-/** Who arrives, where from, and what the chatbots did about it. */
-export function AudienceTab() {
-  const url = useUrlState();
-  const view = url.get('view', 'visitors');
-
-  return (
-    <Stack>
-      <SegmentedControl
-        label="Audience view"
-        value={view}
-        onChange={(next) => url.set({ view: next, q: null, bot_id: null })}
-        items={VIEWS}
-      />
-      {view === 'growth' ? <GrowthEventsList /> : <VisitorAnalyticsPanel />}
-    </Stack>
-  );
-}
-
 /**
  * `GET /superadmin/visitors` is an aggregate, not a list.
  *
@@ -56,7 +33,7 @@ export function AudienceTab() {
  * series rather than a table — and it is read through `usePlatformResource`,
  * because `toList` would find no array in it and hand back an empty envelope.
  */
-function VisitorAnalyticsPanel() {
+export function VisitorsTab() {
   const record = usePlatformResource<VisitorAnalytics>('/visitors');
   const data = record.data;
 
@@ -81,24 +58,32 @@ function VisitorAnalyticsPanel() {
 
   return (
     <Stack>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <StatTile
-          label="Behavioural events"
-          value={data ? formatNumber(data.total_events) : undefined}
-          period="All time"
-          loading={record.loading}
-        />
-        <StatTile
-          label="Distinct visitor sessions"
-          value={data ? formatNumber(data.total_sessions) : undefined}
-          period="All time"
-          loading={record.loading}
-        />
-      </div>
+      <Card>
+        <CardBody flush>
+          <StatRow
+            columns={2}
+            label="Visitor telemetry"
+            period="All time"
+            loading={record.loading}
+            items={[
+              {
+                label: 'Behavioural events',
+                size: 'lg',
+                value: data ? formatNumber(data.total_events) : undefined,
+              },
+              {
+                label: 'Distinct visitor sessions',
+                size: 'lg',
+                value: data ? formatNumber(data.total_sessions) : undefined,
+              },
+            ]}
+          />
+        </CardBody>
+      </Card>
 
       <Section
         title="Page views"
-        description="Trailing 14 days, page views only. The endpoint fixes both the window and the event type."
+        description="Trailing 14 days, page views only — the endpoint fixes both."
       >
         <ChartFrame
           summary={chartSummary}
@@ -129,7 +114,7 @@ function VisitorAnalyticsPanel() {
         </ChartFrame>
       </Section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <Grid cols={2} align="start">
         <RankingCard
           title="Event types"
           description="Every behavioural event the widget has reported, all time."
@@ -182,7 +167,7 @@ function VisitorAnalyticsPanel() {
           emptyTitle="No campaign source recorded"
           emptyDescription="No visit arrived with a utm_source on the URL."
         />
-      </div>
+      </Grid>
     </Stack>
   );
 }
@@ -207,7 +192,7 @@ function RankingCard({
       <CardHeader titleAs="h3" title={title} description={description} />
       {loading ? (
         <CardBody>
-          <Skeleton className="h-32" />
+          <LoadingBars rows={5} />
         </CardBody>
       ) : items.length === 0 ? (
         <EmptyState compact title={emptyTitle} description={emptyDescription} />
@@ -220,7 +205,7 @@ function RankingCard({
   );
 }
 
-function GrowthEventsList() {
+export function GrowthEventsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const botId = url.get('bot_id');
@@ -259,9 +244,9 @@ function GrowthEventsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search growth events"
             value={query}
@@ -269,7 +254,7 @@ function GrowthEventsList() {
             placeholder="Event type or chatbot"
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Input
             aria-label="Filter by chatbot id"
             inputMode="numeric"
@@ -281,6 +266,8 @@ function GrowthEventsList() {
       </Toolbar>
       <RecordList
         caption="Per-chatbot growth events"
+        rowNoun="event"
+        what="growth telemetry"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -290,7 +277,7 @@ function GrowthEventsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Demo-link distribution telemetry. Chatbot is filtered by the server; the search box filters the returned rows here."
+        note="The search box filters the rows already loaded."
         empty={
           <EmptyState
             compact
@@ -303,6 +290,6 @@ function GrowthEventsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }

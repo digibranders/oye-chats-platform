@@ -88,7 +88,9 @@ describe('ReconciliationTab', () => {
   it('says what each condition means and what to do about it', async () => {
     respond(report({ pdfs_pending: [brief()] }));
     mount();
-    expect(await screen.findByText('Rendered nothing for over an hour')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Rendered nothing for over an hour' }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/pango library/)).toBeInTheDocument();
   });
 
@@ -147,9 +149,12 @@ describe('ReconciliationTab', () => {
   it('is busy while both reports load', async () => {
     get.mockReturnValue(new Promise(() => {}));
     mount();
-    // One per anomaly block, plus the gateway table's own busy state.
-    expect(await screen.findAllByText('Checking…')).toHaveLength(KEYS.length);
-    expect(screen.getByRole('table')).toHaveAttribute('aria-busy', 'true');
+    // One table per anomaly block, plus the gateway table — every one of them
+    // reports busy rather than rendering an empty-state title with an ellipsis
+    // on it, which never animates and reads as a broken empty list.
+    const tables = await screen.findAllByRole('table');
+    expect(tables).toHaveLength(KEYS.length + 1);
+    for (const table of tables) expect(table).toHaveAttribute('aria-busy', 'true');
   });
 
   it('explains a failure and offers the way back', async () => {
@@ -170,7 +175,7 @@ describe('ReconciliationTab', () => {
           ),
     );
     mount();
-    expect(await screen.findByText('You cannot read reconciliation')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.queryByText('Everything reconciles')).not.toBeInTheDocument();
   });
 });

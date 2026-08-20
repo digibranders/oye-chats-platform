@@ -1,4 +1,4 @@
-import { ABSENT, formatMoney, formatNumber } from '../../ui';
+import { ABSENT, formatMoney, formatNumber } from '../ui';
 
 /**
  * Money, in a console where three different things are all called "cents".

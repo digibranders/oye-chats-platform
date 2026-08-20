@@ -83,7 +83,7 @@ describe('OverviewTab', () => {
     mount();
     const tile = (await screen.findByText('Paying customers')).closest('div');
     expect(tile).toHaveTextContent('220');
-    expect(tile).toHaveTextContent('Right now');
+    expect(tile).toHaveTextContent('Active and past due');
     expect(tile).not.toHaveTextContent('USD');
   });
 
@@ -165,8 +165,8 @@ describe('OverviewTab', () => {
       }),
     );
     mount();
-    expect(await screen.findByText('You cannot read revenue')).toBeInTheDocument();
-    expect(await screen.findByText('You cannot read cohorts')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.queryByText('$0')).not.toBeInTheDocument();
   });
 });

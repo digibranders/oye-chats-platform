@@ -1,19 +1,21 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { AllowedDomainsSection } from './AllowedDomainsSection';
-import { AttributionSection } from './AttributionSection';
 import { InstallStatusCard } from './InstallStatusCard';
 import { PlatformGuide } from './PlatformGuide';
-import { SessionContinuitySection } from './SessionContinuitySection';
 import { installStatus, widgetHeartbeat } from './deployModel';
 
 /**
  * What is covered here is what a unit test of the model cannot reach: that the
- * page refuses to let a customer lock themselves out without saying so, that
- * every control can be driven from the keyboard, and that each of the four
- * states a surface owes its user actually renders one.
+ * install state is a word and not only a colour, that every control can be
+ * driven from the keyboard, and that each of the four states a surface owes its
+ * user actually renders one.
+ *
+ * The allow-list and session-continuity editors moved to Behaviour ▸ Access
+ * (they were never install steps), and their tests moved with them to
+ * `advanced/access.test.tsx`. The in-widget credit line merged into
+ * Experience ▸ Branding, which already owned its on/off switch.
  */
 
 const BOT_KEY = 'bot-11a026a4b8b3';
@@ -29,15 +31,17 @@ describe('InstallStatusCard', () => {
     installedAt: null,
     heartbeat: widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: null }),
     website: 'https://acme.com',
+    domains: [] as string[],
+    accessHref: '/chatbots/7/behaviour',
     verifiedNow: false,
     checking: false,
     onStartVerifying: vi.fn(),
     onStopVerifying: vi.fn(),
-    troubleshootHref: '#deploy-troubleshooting',
+    onTroubleshoot: vi.fn(),
   };
 
   it('says "waiting", not "error", before anyone has installed anything', () => {
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         status={installStatus({ installedAt: null, claimed: false, checking: false })}
@@ -49,7 +53,7 @@ describe('InstallStatusCard', () => {
 
   it('offers the claim only while nothing has been claimed', async () => {
     const onStartVerifying = vi.fn();
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         onStartVerifying={onStartVerifying}
@@ -66,7 +70,7 @@ describe('InstallStatusCard', () => {
 
   it('shows a running search with a way out of it, never a blocking gate', async () => {
     const onStopVerifying = vi.fn();
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         checking
@@ -83,23 +87,25 @@ describe('InstallStatusCard', () => {
     expect(onStopVerifying).toHaveBeenCalledTimes(1);
   });
 
-  it('turns the claim into a real problem, with somewhere to go', () => {
-    render(
+  it('turns the claim into a real problem, with somewhere to go', async () => {
+    const onTroubleshoot = vi.fn();
+    renderWithRouter(
       <InstallStatusCard
         {...base}
+        onTroubleshoot={onTroubleshoot}
         status={installStatus({ installedAt: null, claimed: true, checking: false })}
       />,
     );
     expect(screen.getByRole('heading', { name: 'Not detected yet' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'What to check' })).toHaveAttribute(
-      'href',
-      '#deploy-troubleshooting',
-    );
+    // The checklist is a tab on the same page now, not an anchor two thousand
+    // pixels further down it.
+    await userEvent.click(screen.getByRole('button', { name: 'What to check' }));
+    expect(onTroubleshoot).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: /Check again/i })).toBeInTheDocument();
   });
 
   it('keeps the first sighting and the heartbeat as two separate facts', () => {
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         installedAt="2026-08-01T09:00:00.000Z"
@@ -112,12 +118,14 @@ describe('InstallStatusCard', () => {
       />,
     );
     expect(screen.getByRole('heading', { name: 'Live on your website' })).toBeInTheDocument();
-    expect(screen.getByText(/First seen/)).toBeInTheDocument();
-    expect(screen.getByText(/Last seen/)).toBeInTheDocument();
+    // Label → value, not four stacked paragraphs.
+    expect(screen.getAllByRole('term')).toHaveLength(4);
+    expect(screen.getByText('First seen')).toBeInTheDocument();
+    expect(screen.getByText('Last seen')).toBeInTheDocument();
   });
 
   it('renders an empty heartbeat as "not recorded", never as an outage', () => {
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         installedAt="2026-08-01T09:00:00.000Z"
@@ -137,8 +145,8 @@ describe('InstallStatusCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('marks the origin as reported by the browser rather than as proof', () => {
-    render(
+  it('marks the origin as reported by the browser rather than as proof', async () => {
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         installedAt="2026-08-01T09:00:00.000Z"
@@ -151,12 +159,29 @@ describe('InstallStatusCard', () => {
       />,
     );
     expect(screen.getByText('shop.acme.com')).toBeInTheDocument();
-    expect(screen.getByText(/reported by the browser/i)).toBeInTheDocument();
-    expect(screen.getByText(/never proof of anything/i)).toBeInTheDocument();
+    // The caveat is a tooltip on the label it qualifies, not a 34-word sentence
+    // in the smallest, faintest type on the page.
+    await userEvent.hover(screen.getByRole('button', { name: 'About Loaded from' }));
+    expect(await screen.findByText(/reported by the browser/i)).toBeInTheDocument();
+  });
+
+  it('links the allow-list to the page that now owns it', () => {
+    renderWithRouter(
+      <InstallStatusCard
+        {...base}
+        domains={['acme.com', '*.acme.com']}
+        installedAt="2026-08-01T09:00:00.000Z"
+        status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
+      />,
+    );
+    expect(screen.getByRole('link', { name: '2' })).toHaveAttribute(
+      'href',
+      '/chatbots/7/behaviour',
+    );
   });
 
   it('says nothing about liveness before the widget has ever been seen', () => {
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         status={installStatus({ installedAt: null, claimed: false, checking: false })}
@@ -166,7 +191,7 @@ describe('InstallStatusCard', () => {
   });
 
   it('announces the confirmation rather than only recolouring a dot', () => {
-    render(
+    renderWithRouter(
       <InstallStatusCard
         {...base}
         verifiedNow
@@ -176,194 +201,6 @@ describe('InstallStatusCard', () => {
     );
     const live = screen.getByRole('status', { name: '' });
     expect(within(live).getByText('Your chatbot is live')).toBeInTheDocument();
-  });
-});
-
-/* ---------------------------------------------------------- allowed domains */
-
-describe('AllowedDomainsSection', () => {
-  const base = {
-    website: 'https://www.acme.com',
-    initialDomains: [] as string[],
-    initialEnabled: false,
-    saving: false,
-  };
-
-  it('adds a domain from the keyboard and normalises it the way the server will', async () => {
-    render(<AllowedDomainsSection {...base} onSave={vi.fn()} />);
-    // Named by the `Field`'s visible label. `TagInput`'s own `label` is the
-    // fallback for when it is used outside a `Field`; inside one, letting it
-    // win the name computation is the SC 2.5.3 failure the primitive now avoids.
-    const input = screen.getByRole('textbox', { name: 'Domains' });
-    await userEvent.type(input, 'https://WWW.Acme.com/pricing{Enter}');
-    expect(screen.getByRole('button', { name: 'Remove acme.com' })).toBeInTheDocument();
-  });
-
-  it('explains a rejected entry instead of silently dropping it', async () => {
-    render(<AllowedDomainsSection {...base} onSave={vi.fn()} />);
-    await userEvent.type(screen.getByRole('textbox', { name: 'Domains' }), 'nonsense{Enter}');
-    expect(screen.getByText(/is not a domain/i)).toBeInTheDocument();
-  });
-
-  it('warns before saving a list that would block the customer’s own website', async () => {
-    const onSave = vi.fn();
-    render(
-      <AllowedDomainsSection
-        {...base}
-        initialDomains={['acme.com']}
-        initialEnabled
-        onSave={onSave}
-      />,
-    );
-    // Dirty the form without changing the risk, so Save is reachable.
-    await userEvent.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
-    await userEvent.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
-
-    await userEvent.click(screen.getByRole('button', { name: 'Save domains' }));
-
-    const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/will block your own website/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/www\.acme\.com/)).toBeInTheDocument();
-    // Nothing is written until the customer accepts the consequence.
-    expect(onSave).not.toHaveBeenCalled();
-
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Save anyway' }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-  });
-
-  it('saves without a confirmation once the wildcard covers www', async () => {
-    const onSave = vi.fn().mockResolvedValue({
-      allowed_domains: ['acme.com', '*.acme.com'],
-      domain_check_enabled: true,
-    });
-    render(
-      <AllowedDomainsSection
-        {...base}
-        initialDomains={['acme.com', '*.acme.com']}
-        initialEnabled={false}
-        onSave={onSave}
-      />,
-    );
-    await userEvent.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save domains' }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-  });
-
-  it('offers the apex and the wildcard together, because www is a subdomain', async () => {
-    const onSave = vi.fn();
-    render(<AllowedDomainsSection {...base} onSave={onSave} />);
-    await userEvent.click(screen.getByRole('button', { name: /Add acme\.com and \*\.acme\.com/ }));
-    expect(screen.getByRole('button', { name: 'Remove acme.com' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove *.acme.com' })).toBeInTheDocument();
-  });
-
-  it('keeps a failed save on the page, beside the control that produced it', async () => {
-    const onSave = vi.fn().mockRejectedValue(new Error('Domain limit reached.'));
-    render(<AllowedDomainsSection {...base} onSave={onSave} />);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save domains' }));
-    expect(await screen.findByText('Domain limit reached.')).toBeInTheDocument();
-  });
-
-  it('adopts what the server actually stored rather than what was typed', async () => {
-    const onSave = vi.fn().mockResolvedValue({
-      allowed_domains: ['acme.com'],
-      domain_check_enabled: true,
-    });
-    render(<AllowedDomainsSection {...base} initialDomains={['acme.com', 'stale.com']} onSave={onSave} />);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save domains' }));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Remove stale.com' })).not.toBeInTheDocument(),
-    );
-  });
-});
-
-/* ------------------------------------------------------- session continuity */
-
-describe('SessionContinuitySection', () => {
-  const base = {
-    website: 'https://acme.com',
-    initialShareDomain: null,
-    saving: false,
-  };
-
-  it('presents a working feature as working, not as unconfigured', () => {
-    render(<SessionContinuitySection {...base} onSave={vi.fn()} />);
-    expect(screen.getByText('Automatic')).toBeInTheDocument();
-    expect(screen.getByText('On, with nothing to set up')).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-  });
-
-  it('rejects a wildcard with the reason it cannot work, before any request', async () => {
-    const onSave = vi.fn();
-    render(<SessionContinuitySection {...base} onSave={onSave} />);
-    await userEvent.type(
-      screen.getByRole('textbox', { name: /Pin a parent domain/i }),
-      '*.acme.com',
-    );
-    expect(screen.getByText(/A wildcard will not work here/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it('separates continuing a conversation from showing the widget', () => {
-    render(<SessionContinuitySection {...base} onSave={vi.fn()} />);
-    expect(screen.getByText(/does not put the widget on those pages/i)).toBeInTheDocument();
-  });
-
-  it('saves a pinned parent and reports back what was stored', async () => {
-    const onSave = vi.fn().mockResolvedValue('acme.com');
-    render(<SessionContinuitySection {...base} onSave={onSave} />);
-    await userEvent.type(
-      screen.getByRole('textbox', { name: /Pin a parent domain/i }),
-      'https://www.acme.com/',
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith({ session_share_domain: 'acme.com' }),
-    );
-    expect(await screen.findByText('Pinned')).toBeInTheDocument();
-  });
-});
-
-/* ------------------------------------------------------------- attribution */
-
-describe('AttributionSection', () => {
-  const base = {
-    entitlementsLoading: false,
-    initialText: null,
-    initialUrl: null,
-    saving: false,
-  };
-
-  it('names the plan and the way out rather than hiding the control', () => {
-    renderWithRouter(<AttributionSection {...base} entitled={false} onSave={vi.fn()} />);
-    expect(screen.getByText(/White-label branding is on Standard and above/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Compare plans' })).toHaveAttribute('href', '/billing');
-    expect(screen.queryByRole('textbox', { name: 'Wording' })).not.toBeInTheDocument();
-  });
-
-  it('waits rather than guessing while the plan is still resolving', () => {
-    renderWithRouter(<AttributionSection {...base} entitled={false} entitlementsLoading onSave={vi.fn()} />);
-    expect(screen.getByText(/Checking what your plan includes/)).toBeInTheDocument();
-    expect(screen.queryByText(/White-label branding is on/)).not.toBeInTheDocument();
-  });
-
-  it('adds the scheme the backend demands rather than surfacing a 422', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderWithRouter(<AttributionSection {...base} entitled onSave={onSave} />);
-    const url = screen.getByRole('textbox', { name: /Where it links to/i });
-    await userEvent.clear(url);
-    await userEvent.type(url, 'acme.com');
-    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
-    await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith({
-        branding_text: 'Powered by OyeChats',
-        branding_url: 'https://acme.com',
-      }),
-    );
   });
 });
 

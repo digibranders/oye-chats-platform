@@ -59,7 +59,9 @@ describe('Login', () => {
     fillCredentials();
     fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
-    expect(await screen.findByText(/incorrect email or password/i)).toBeInTheDocument();
+    // The alert's title carries the verdict; its body carries the other door.
+    // It used to glue both sentences into one unstyled 160-character run.
+    expect(await screen.findByText(/email or password is incorrect/i)).toBeInTheDocument();
     expect(loginAdmin).toHaveBeenCalledTimes(1);
     expect(loginOperator).not.toHaveBeenCalled();
   });

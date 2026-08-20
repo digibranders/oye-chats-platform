@@ -135,9 +135,7 @@ describe('MembersPage — the four states', () => {
   it('answers a plan boundary with an upgrade path, not with an error', async () => {
     entitlements.isFree = true;
     renderPage();
-    expect(
-      await screen.findByText('Your plan does not include a team'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Your plan does not include a team')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /see plans/i })).toBeInTheDocument();
     // A Free workspace must not even ask for the roster.
     expect(api.getOperators).not.toHaveBeenCalled();
@@ -171,7 +169,7 @@ describe('MembersPage — destructive actions confirm', () => {
 
     const dialog = await screen.findByRole('alertdialog');
     // The consequence, not "this cannot be undone".
-    expect(within(dialog).getByText(/goes back to the chatbot/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/go back to the chatbot/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/seat is freed/i)).toBeInTheDocument();
     expect(api.deleteOperator).not.toHaveBeenCalled();
 
@@ -222,7 +220,10 @@ describe('MembersPage — destructive actions confirm', () => {
     renderPage('/settings/team?tab=invitations');
     await screen.findByText('new@acme.com');
 
-    await user.click(screen.getByRole('button', { name: /revoke the invitation/i }));
+    await user.click(
+      screen.getByRole('button', { name: /actions for the invitation to new@acme.com/i }),
+    );
+    await user.click(await screen.findByRole('menuitem', { name: /revoke the invitation/i }));
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText(/stops working/i)).toBeInTheDocument();
     expect(api.revokeOperatorInvite).not.toHaveBeenCalled();
@@ -237,11 +238,14 @@ describe('MembersPage — destructive actions confirm', () => {
       departments: [{ id: 5, name: 'Billing', description: null, business_hours: null }],
     });
     renderPage('/settings/team?tab=departments');
-    await screen.findByRole('button', { name: /delete the billing department/i });
-
-    await user.click(screen.getByRole('button', { name: /delete the billing department/i }));
+    await user.click(
+      await screen.findByRole('button', { name: /actions for the billing department/i }),
+    );
+    await user.click(await screen.findByRole('menuitem', { name: /delete department/i }));
     const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/stays on the team but loses their grouping/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/stay on the team but lose their grouping/i),
+    ).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: /delete department/i }));
     await waitFor(() => expect(api.deleteDepartment).toHaveBeenCalledWith(5));
@@ -265,7 +269,7 @@ describe('MembersPage — deactivating a teammate', () => {
     await user.click(await screen.findByRole('menuitem', { name: /deactivate/i }));
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/goes back to the queue/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/go back to the queue/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/seat is freed/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/Nothing is deleted/i)).toBeInTheDocument();
     expect(api.updateOperator).not.toHaveBeenCalled();
@@ -394,10 +398,10 @@ describe('MembersPage — tabs live in the URL', () => {
       departments: [{ id: 5, name: 'Billing', description: null, business_hours: null }],
     });
     renderPage('/settings/team?tab=departments');
-    // Named by its own edit control, because "Billing" is also the credits link
-    // in the seat card above — a bare text match would find both.
+    // Named by its own row menu rather than by a bare text match: the tab row
+    // above also carries the word.
     expect(
-      await screen.findByRole('button', { name: /delete the billing department/i }),
+      await screen.findByRole('button', { name: /actions for the billing department/i }),
     ).toBeInTheDocument();
   });
 
@@ -421,18 +425,18 @@ describe('MembersPage — routing', () => {
   it('exposes the queue settings that had no control anywhere', async () => {
     renderPage('/settings/team?tab=routing');
     expect(await screen.findByText('Waiting and routing')).toBeInTheDocument();
-    expect(screen.getByLabelText(/seconds an operator has to accept/i)).toHaveValue('120');
-    expect(screen.getByLabelText(/visitors who may wait at once/i)).toHaveValue('10');
+    expect(screen.getByLabelText(/accept timeout/i)).toHaveValue('120');
+    expect(screen.getByLabelText(/queue length/i)).toHaveValue('10');
     // The fourth timer. `UpdateBotRequest` accepts it now, and
     // `handle_visitor_disconnect` really does read the column, so this page
     // owns it rather than the "not configurable" list on Behaviour.
-    expect(screen.getByLabelText(/seconds a dropped visitor is held/i)).toHaveValue('120');
+    expect(screen.getByLabelText(/hold a dropped visitor/i)).toHaveValue('120');
   });
 
   it('saves the visitor grace period with the rest of the queue', async () => {
     const user = userEvent.setup();
     renderPage('/settings/team?tab=routing');
-    const field = await screen.findByLabelText(/seconds a dropped visitor is held/i);
+    const field = await screen.findByLabelText(/hold a dropped visitor/i);
 
     await user.clear(field);
     await user.type(field, '45');
@@ -451,7 +455,7 @@ describe('MembersPage — routing', () => {
   it('refuses a grace period the API would refuse, at the field', async () => {
     const user = userEvent.setup();
     renderPage('/settings/team?tab=routing');
-    const field = await screen.findByLabelText(/seconds a dropped visitor is held/i);
+    const field = await screen.findByLabelText(/hold a dropped visitor/i);
 
     await user.clear(field);
     await user.type(field, '4');
@@ -464,7 +468,7 @@ describe('MembersPage — routing', () => {
   it('refuses a value the API would refuse, at the field', async () => {
     const user = userEvent.setup();
     renderPage('/settings/team?tab=routing');
-    const field = await screen.findByLabelText(/visitors who may wait at once/i);
+    const field = await screen.findByLabelText(/queue length/i);
 
     await user.clear(field);
     await user.type(field, '0');

@@ -3,12 +3,15 @@ import { Link2Off } from 'lucide-react';
 import {
   Badge,
   Button,
+  Combobox,
   ConfirmDialog,
   EmptyState,
   SearchField,
   Section,
   Select,
+  Stack,
   Toolbar,
+  Tooltip,
   formatDateTime,
   formatNumber,
   toast,
@@ -27,8 +30,7 @@ import type {
 } from './types';
 
 /** Every list here is filtered in the browser unless a tab says otherwise. */
-const CONSOLE_FILTER_NOTE =
-  'This endpoint accepts no search parameter, so the search box filters the rows it already returned rather than asking the server for fewer.';
+const CONSOLE_FILTER_NOTE = 'Filters the rows already loaded — the endpoint accepts no search parameter.';
 
 /* --------------------------------------------------------------- operators */
 
@@ -107,9 +109,9 @@ export function OperatorsTab() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search operators"
             value={query}
@@ -117,7 +119,7 @@ export function OperatorsTab() {
             placeholder="Name, email or workspace"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by role"
             value={role}
@@ -133,6 +135,8 @@ export function OperatorsTab() {
       </Toolbar>
       <RecordList
         caption="Live-chat operators across every workspace"
+        rowNoun="operator"
+        what="the operator directory"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -153,7 +157,7 @@ export function OperatorsTab() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -203,7 +207,7 @@ export function IdentitiesTab() {
     },
     {
       key: 'actions',
-      header: 'Unlink',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (row) => (
         <Button size="sm" variant="ghost" onClick={() => setPending(row)}>
@@ -215,9 +219,9 @@ export function IdentitiesTab() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search sign-in identities"
             value={query}
@@ -228,6 +232,9 @@ export function IdentitiesTab() {
       </Toolbar>
       <RecordList
         caption="External sign-in identities linked to accounts"
+        rowNoun="identity"
+        rowNounPlural="identities"
+        what="linked sign-in identities"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -274,7 +281,7 @@ export function IdentitiesTab() {
           toast.success('Identity unlinked.');
         }}
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -314,9 +321,9 @@ export function CredentialsTab() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search credentials"
             value={query}
@@ -328,10 +335,12 @@ export function CredentialsTab() {
 
       <Section
         title="Account API keys"
-        description="The X-API-Key each account authenticates the dashboard and its integrations with. Rotate one from the account itself."
+        description="Rotated from the account itself."
       >
         <RecordList
           caption="Account API keys, masked"
+          rowNoun="account key"
+          what="the API key registry"
         columns={[
           { key: 'name', header: 'Account', pinned: true, sortable: true, render: (row) => row.name },
           { key: 'email', header: 'Email', sortable: true, render: (row) => row.email },
@@ -356,7 +365,7 @@ export function CredentialsTab() {
         onRetry={registry.reload}
         loaded={clientRows.length}
         cap={200}
-        note="Keys arrive masked to their last four characters and the full value is never returned by the API. There is nothing here that could reveal more."
+        note="Masked to the last four characters. The full value is never returned by the API."
         empty={
           <EmptyState compact title="No account keys" description="No account matched this search." />
         }
@@ -365,10 +374,12 @@ export function CredentialsTab() {
 
       <Section
         title="Operator API keys"
-        description="The X-Operator-Key each live-chat operator authenticates with. This console cannot rotate one."
+        description="Not rotatable from this console."
       >
         <RecordList
           caption="Operator API keys, masked"
+          rowNoun="operator key"
+          what="the API key registry"
         columns={[
           { key: 'name', header: 'Operator', pinned: true, sortable: true, render: (row) => row.name },
           {
@@ -402,7 +413,7 @@ export function CredentialsTab() {
           }
         />
       </Section>
-    </div>
+    </Stack>
   );
 }
 
@@ -426,7 +437,13 @@ export function DevicesTab() {
   const columns: Column<PushSubscriptionRow>[] = [
     {
       key: 'endpoint_masked',
-      header: 'Push endpoint',
+      header: (
+        <Tooltip content="Masked — the path carries a per-device secret, and the encryption keys are never returned at all.">
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            Push endpoint
+          </span>
+        </Tooltip>
+      ),
       pinned: true,
       sortable: true,
       render: (row) => <span className="font-mono text-xs">{row.endpoint_masked}</span>,
@@ -457,9 +474,9 @@ export function DevicesTab() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search push devices"
             value={query}
@@ -470,6 +487,8 @@ export function DevicesTab() {
       </Toolbar>
       <RecordList
         caption="Web Push device subscriptions"
+        rowNoun="device"
+        what="registered devices"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -479,7 +498,6 @@ export function DevicesTab() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Endpoints are shown as host plus their last twelve characters: the path carries a per-device secret, and the encryption keys are never returned at all. The API offers no way to delete one from here."
         empty={
           <EmptyState
             compact
@@ -492,7 +510,7 @@ export function DevicesTab() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -505,6 +523,10 @@ export function NotificationsTab() {
   // `type` is a real server-side filter on this endpoint, so it is sent rather
   // than applied here — which also means it is not limited by the 500-row cap.
   const list = usePlatformList<NotificationRow>('/notifications', { params: { type } });
+
+  const types = Array.from(
+    new Set([...list.items.map((row) => row.type), ...(type ? [type] : [])]),
+  ).sort();
 
   const paged = usePagedRows(list.items, {
     url,
@@ -551,9 +573,9 @@ export function NotificationsTab() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search notifications"
             value={query}
@@ -561,17 +583,25 @@ export function NotificationsTab() {
             placeholder="Title or body"
           />
         </div>
-        <div className="w-full max-w-56">
-          <SearchField
+        <div className="w-48">
+          {/* The type is an exact-match server filter, so asking the operator to
+              type it verbatim was asking them to know the enum. The options are
+              read out of what came back, plus whatever is already applied. */}
+          <Combobox
             label="Filter by notification type"
-            value={type}
+            value={type || null}
             onValueChange={(next) => url.set({ type: next })}
-            placeholder="Exact type, e.g. feedback_resolved"
+            options={types.map((value) => ({ value, label: value.replace(/_/g, ' ') }))}
+            placeholder="Any type"
+            clearable
+            size="sm"
           />
         </div>
       </Toolbar>
       <RecordList
         caption="In-app notifications across every workspace"
+        rowNoun="notification"
+        what="the notification log"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -581,7 +611,7 @@ export function NotificationsTab() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Type is an exact-match filter applied by the server. The search box then filters the returned rows in this console; the API offers no text search."
+        note="Type is matched exactly, by the server. The search box then filters the rows already loaded."
         empty={
           <EmptyState
             compact
@@ -594,6 +624,6 @@ export function NotificationsTab() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }

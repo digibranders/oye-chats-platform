@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, RefreshCw, ShieldCheck } from 'lucide-react';
+import { CreditCard, MoreHorizontal, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -12,9 +12,16 @@ import {
   EmptyState,
   ErrorState,
   LoadingRows,
+  LockedState,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  buttonClass,
 } from '../../../ui';
 import { deletePaymentMethod, getPaymentMethods } from '../../../services/api';
 import { keys } from '../../../query/keys';
+import { errorStatus } from '../billingModel';
 
 interface SavedMethod {
   id: number;
@@ -65,7 +72,9 @@ export function PaymentMethodsSection({
 
   const refresh = useMutation({
     mutationFn: async () => {
-      const rows = (await getPaymentMethods({ refresh: true })) as unknown as SavedMethod[];
+      const rows = (await getPaymentMethods({
+        refresh: true,
+      })) as unknown as SavedMethod[];
       return Array.isArray(rows) ? rows : [];
     },
     onSuccess: (rows) => client.setQueryData(keys.billing.paymentMethods(), rows),
@@ -82,7 +91,7 @@ export function PaymentMethodsSection({
         eyebrow="Payment"
         title="Payment methods"
         titleAs="h2"
-        description="Instruments saved for one-off credit top-ups. Your plan's own payment mandate is separate and is authorised whenever you change plan."
+        description="Saved for one-off credit top-ups."
         actions={
           <Button
             size="sm"
@@ -90,41 +99,50 @@ export function PaymentMethodsSection({
             onClick={() => refresh.mutate()}
             disabled={refresh.isPending}
           >
-            <RefreshCw aria-hidden className="h-3.5 w-3.5" />
+            <RefreshCw aria-hidden />
             {refresh.isPending ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
       />
 
-      {hasPaidPlan ? (
-        <CardBody>
-          <div className="flex items-start gap-2.5">
-            <ShieldCheck aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-            <p className="text-prose text-text-secondary">
-              Your subscription is billed through an authorised{' '}
-              {provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : 'Razorpay'} mandate.
-              It cannot be swapped in place - changing plan authorises a new one and retires the old.
-            </p>
-          </div>
-        </CardBody>
-      ) : null}
+      {/* Always rendered. When it was conditional, a workspace with no paid
+          plan put a `CardSection`'s `border-t` immediately under the header's
+          `border-b` — two 1px lines abutting as one 2px rule. */}
+      <CardBody>
+        <div className="flex items-start gap-2.5">
+          <ShieldCheck aria-hidden className="mt-0.5 h-icon-md w-icon-md shrink-0 text-success" />
+          <p className="text-prose text-text-secondary">
+            {hasPaidPlan
+              ? `Your subscription is billed through an authorised ${provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : 'Razorpay'} mandate. It cannot be swapped in place — changing plan authorises a new one and retires the old.`
+              : 'Your subscription mandate is authorised when you choose a plan, separately from anything saved here.'}
+          </p>
+        </div>
+      </CardBody>
 
       <CardSection>
         {methods.isPending ? (
           <LoadingRows rows={2} />
+        ) : errorStatus(methods.error) === 403 ? (
+          // The fourth state. A 403 here is a seat that may not read the
+          // workspace's money, not a service that failed.
+          <LockedState
+            size="panel"
+            title="Payment methods are visible to owners and admins"
+            description="Ask an owner if a saved card needs removing."
+          />
         ) : methods.isError ? (
           <ErrorState
-            compact
+            size="panel"
             title="We could not check your saved methods"
             description="An empty list and a failed lookup are different things, so we are not claiming you have none."
             onRetry={() => void methods.refetch()}
           />
         ) : methods.data.length === 0 ? (
           <EmptyState
-            compact
+            size="panel"
             icon={CreditCard}
             title="Nothing saved yet"
-            description="Choose to save your card or UPI ID when you next buy credits, and repeat top-ups will need only a CVV."
+            description="Save your card or UPI ID when you next buy credits."
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -136,17 +154,31 @@ export function PaymentMethodsSection({
                     {methodLabel(method)}
                   </span>
                   {method.issuer ? (
-                    <span className="block truncate text-xs text-text-tertiary">{method.issuer}</span>
+                    <span className="block truncate text-xs text-text-tertiary">
+                      {method.issuer}
+                    </span>
                   ) : null}
                 </span>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={!method.token_id || remove.isPending}
-                  onClick={() => setPendingRemoval(method)}
-                >
-                  Remove
-                </Button>
+                {/* In the row menu, like every other row action in the
+                    console, rather than a per-row destructive button. */}
+                <MenuRoot>
+                  <MenuTrigger
+                    aria-label={`Actions for ${methodLabel(method)}`}
+                    className={buttonClass('ghost', 'icon-sm')}
+                  >
+                    <MoreHorizontal aria-hidden />
+                  </MenuTrigger>
+                  <MenuContent>
+                    <MenuItem
+                      destructive
+                      disabled={!method.token_id || remove.isPending}
+                      icon={<Trash2 aria-hidden />}
+                      onSelect={() => setPendingRemoval(method)}
+                    >
+                      Remove
+                    </MenuItem>
+                  </MenuContent>
+                </MenuRoot>
               </li>
             ))}
           </ul>
@@ -169,7 +201,7 @@ export function PaymentMethodsSection({
         title="Remove this payment method?"
         description={
           pendingRemoval
-            ? `${methodLabel(pendingRemoval)} will be revoked at Razorpay and removed from this workspace. Your subscription's own mandate is a separate authorisation and keeps billing normally. You will need to enter the details again for your next top-up.`
+            ? `${methodLabel(pendingRemoval)} is revoked at Razorpay. Your subscription's own mandate keeps billing normally, and you will need these details again for your next top-up.`
             : ''
         }
         confirmLabel="Remove"

@@ -85,17 +85,12 @@ export function WebsitePreviewDialog({
         if (!next) onClose();
       }}
       title="Preview on my website"
-      description="Loads the live widget over your own site. It shows your saved settings, so save first."
+      description="Shows your saved settings, not your draft."
       size="lg"
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end gap-2">
-          <Field
-            label="Website address"
-            hint="Any page on your site. A staging URL works too."
-            error={error}
-            className="min-w-0 flex-1"
-          >
+          <Field label="Website address" error={error} className="min-w-0 flex-1">
             <Input
               value={url}
               placeholder="https://your-website.com"
@@ -113,9 +108,9 @@ export function WebsitePreviewDialog({
           </Field>
           <Button onClick={load} disabled={url.trim().length === 0}>
             {loadedUrl ? (
-              <RefreshCw aria-hidden className="h-4 w-4" />
+              <RefreshCw aria-hidden />
             ) : (
-              <Globe aria-hidden className="h-4 w-4" />
+              <Globe aria-hidden />
             )}
             {loadedUrl ? 'Reload' : 'Load preview'}
           </Button>
@@ -156,8 +151,7 @@ export function WebsitePreviewDialog({
                   </a>
                 }
               >
-                The widget still works on the live site once it is installed — this is only about
-                showing it inside this window.
+                This only affects the preview, not your live site.
               </Alert>
             ) : null}
           </div>

@@ -1,7 +1,14 @@
 import { useMemo, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ArrowLeft, ChevronsUpDown, Plus, ShieldAlert } from 'lucide-react';
-import { cn, Tooltip, Badge } from '../ui';
+import { Bot, PanelLeft, Plus, ShieldAlert, X } from 'lucide-react';
+import {
+  RailBackLink,
+  RailFrame,
+  RailGroupLabel,
+  RailItem,
+  Tooltip,
+  cn,
+} from '../ui';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
 import { agentHealth } from '../features/home/agentHealth';
@@ -9,13 +16,13 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
 import {
   AGENT_NAV,
-  FOOTER_NAV,
-  WORKSPACE_NAV,
+  CHATBOTS_ITEM,
   agentIdFromPath,
   agentPath,
-  navForRole,
-  type NavItem,
+  railFooter,
+  railPrimary,
 } from './nav';
+import { formatBadgeCount } from './badgeCount';
 import { OyeChatsMark } from './OyeChatsMark';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { AgentSwitcher } from './AgentSwitcher';
@@ -32,66 +39,78 @@ import { AccountMenu } from './AccountMenu';
  * made the previous shell's four off-whites indistinguishable on an ordinary
  * monitor.
  *
- * It has two states, never a tree. In workspace scope it lists six
- * destinations. Inside a chatbot it swaps to that chatbot's six, with a
- * permanent way back. See `nav.ts` for why.
+ * It has two states, never a tree. In workspace scope it lists the workspace's
+ * destinations and its chatbots; inside a chatbot it swaps to that chatbot's
+ * six, with a permanent way back. See `nav.ts` for why.
+ *
+ * **Every row is a `RailItem`.** The geometry is `src/ui/layout/RailFrame`'s,
+ * not this file's: three row heights (36 / 32 / 30) and six left text edges
+ * (20 / 34 / 40 / 40.5 / 42 / 44) used to live in this one 248px column, and
+ * the recent-chatbot names started ten pixels to the left of the nav labels
+ * directly above them. One item shape, one 16px glyph box, one label column.
+ *
+ * **Scope comes from the URL, not from the bot list.** `inAgentScope` used to
+ * require the resolved chatbot, which arrives asynchronously — so a hard reload
+ * of `/chatbots/12/knowledge` painted the workspace rail first and rewrote the
+ * whole column a frame later, with no row keeping its position.
  */
 
-function RailLink({
-  to,
-  label,
-  icon: Icon,
-  end,
-  collapsed,
-  badge,
-  onNavigate,
-}: NavItem & { collapsed: boolean; badge?: ReactNode; onNavigate?: () => void }) {
+/** A health dot, sized for the shared 16px glyph box. */
+function HealthDot({ tone }: { tone: 'neutral' | 'success' | 'warning' | 'danger' }) {
   return (
-    <Tooltip content={label} side="right" disabled={!collapsed}>
-      <NavLink
-        to={to}
-        end={end}
-        onClick={onNavigate}
-        className={({ isActive }) =>
-          cn(
-            'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium',
-            'transition-colors duration-[var(--dur-fast)]',
-            collapsed && 'justify-center px-0',
-            isActive
-              ? 'bg-rail-active text-rail-text'
-              : 'text-rail-text-muted hover:bg-rail-hover hover:text-rail-text',
-          )
-        }
-      >
-        {({ isActive }) => (
-          <>
-            {/* The active marker is a rule on the rail's own edge rather than a
-                full-width fill, so scanning the rail vertically reads as one
-                list with one mark in it. */}
-            <span
-              aria-hidden
-              className={cn(
-                'absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-rail-accent',
-                'transition-opacity duration-[var(--dur-fast)]',
-                isActive ? 'opacity-100' : 'opacity-0',
-              )}
-            />
-            <Icon aria-hidden className="h-4 w-4 shrink-0" />
-            {!collapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
-            {!collapsed && badge}
-          </>
-        )}
-      </NavLink>
-    </Tooltip>
+    <span
+      aria-hidden
+      className={cn(
+        'h-1.5 w-1.5 rounded-full',
+        // The rail's own status scale. The paper fills these replaced measure
+        // 2.94:1 (danger), 3.13 (success) and 3.85 (warning) against
+        // `--color-rail` — the one dot a customer must not miss was the least
+        // visible of the four, and it failed SC 1.4.11.
+        tone === 'danger' && 'bg-rail-danger',
+        tone === 'warning' && 'bg-rail-warning',
+        tone === 'success' && 'bg-rail-success',
+        tone === 'neutral' && 'bg-rail-text-muted',
+      )}
+    />
   );
 }
 
-function RailSectionLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
+/** A count on a rail row: mono, capped, and in the rail's own accent. */
+function RailCount({ value, label }: { value: number; label: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 px-2.5 pb-1 pt-4">
-      <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-text-muted">{children}</p>
-      {action}
-    </div>
+    <span className="figure rounded-xs bg-rail-accent px-1 text-2xs font-medium text-rail">
+      {formatBadgeCount(value)}
+      <span className="sr-only"> {label}</span>
+    </span>
+  );
+}
+
+/** A 24px ghost control in the rail header — collapse on desktop, close on mobile. */
+function RailHeaderButton({
+  label,
+  icon,
+  onClick,
+  controls,
+}: {
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  /** The id of the region it expands, when it expands one. */
+  controls?: string;
+}) {
+  return (
+    <Tooltip content={label} side="right">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        aria-expanded={controls ? true : undefined}
+        aria-controls={controls}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
+      >
+        {icon}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -99,11 +118,15 @@ export interface RailProps {
   collapsed: boolean;
   /** Mobile only: the rail is a drawer, and every link closes it. */
   onNavigate?: () => void;
+  /** Desktop only: collapse and expand. Lives here, not in the top bar. */
+  onToggle?: () => void;
+  /** Mobile only: dismiss the drawer without navigating. */
+  onClose?: () => void;
   /** Waiting conversations, shown on the Inbox row. */
   inboxCount?: number;
 }
 
-export function Rail({ collapsed, onNavigate, inboxCount = 0 }: RailProps) {
+export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 }: RailProps) {
   const { pathname } = useLocation();
   const { isOperator } = useWorkspace();
   const { bots } = useBotContext();
@@ -118,178 +141,204 @@ export function Rail({ collapsed, onNavigate, inboxCount = 0 }: RailProps) {
   const showsPlatformLink =
     !isImpersonating() && (superAdminFlag === 'true' || superAdminFlag === '1');
 
-  const primary = navForRole(WORKSPACE_NAV, isOperator);
+  const primary = railPrimary(isOperator);
+  const footerItems = railFooter(isOperator);
   const inAgentScope = Boolean(scopedAgentId) && !isOperator;
+  // The first three in workspace order, not the three most recently opened —
+  // the comment here used to promise recency the code never delivered, so on a
+  // twelve-chatbot account the same three were pinned forever and looked like a
+  // bug. The tail row goes to all of them; the palette finds any of them by
+  // name in two keystrokes.
+  const firstThree = bots.slice(0, 3);
+
+  const header = collapsed ? (
+    // Collapsed, the mark is the expander. At 60px there is room for one 24px
+    // control, and throwing the brand away to keep a chevron is the wrong trade.
+    <Tooltip content="Expand navigation" side="right">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label="Expand navigation"
+        aria-expanded={false}
+        aria-controls="app-rail"
+        className="mx-auto flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-rail-hover focus-visible:outline-rail-accent"
+      >
+        <OyeChatsMark size={22} onInk />
+      </button>
+    </Tooltip>
+  ) : (
+    <>
+      <WorkspaceSwitcher onNavigate={onNavigate} />
+      {onClose ? (
+        <RailHeaderButton
+          label="Close navigation"
+          onClick={onClose}
+          icon={<X aria-hidden className="h-icon-md w-icon-md" />}
+        />
+      ) : onToggle ? (
+        <RailHeaderButton
+          label="Collapse navigation"
+          onClick={onToggle}
+          controls="app-rail"
+          icon={<PanelLeft aria-hidden className="h-icon-md w-icon-md" />}
+        />
+      ) : null}
+    </>
+  );
+
+  const footer = (
+    <div className="flex flex-col gap-0.5">
+      <ul className="flex flex-col gap-0.5">
+        {footerItems.map((item) => (
+          <RailItem
+            key={item.to}
+            to={item.to}
+            label={item.label}
+            end={item.end}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+            glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
+          />
+        ))}
+        {/* The way into the platform console, for the handful of people who have
+            one. Not in the account menu: a super-admin switching personas is a
+            navigation act, and burying it under an avatar is how the console it
+            opens went unbuilt for so long. Hidden during a support session —
+            acting on the platform through somebody else's identity is exactly
+            what must not happen. */}
+        {showsPlatformLink ? (
+          <RailItem
+            to="/platform"
+            label="Platform"
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+            glyph={<ShieldAlert aria-hidden className="h-icon-md w-icon-md" />}
+          />
+        ) : null}
+      </ul>
+      <div className={cn(collapsed && 'flex justify-center')}>
+        <AccountMenu collapsed={collapsed} />
+      </div>
+    </div>
+  );
 
   return (
-    <div className="flex h-full flex-col bg-rail text-rail-text">
-      <div
-        className={cn(
-          'flex h-topbar shrink-0 items-center border-b border-rail-border',
-          collapsed ? 'justify-center px-0' : 'px-3',
-        )}
-      >
-        {collapsed ? (
-          <OyeChatsMark size={26} onInk />
-        ) : (
-          <WorkspaceSwitcher onNavigate={onNavigate} />
-        )}
-      </div>
+    <RailFrame
+      header={header}
+      footer={footer}
+      navLabel={inAgentScope ? 'Chatbot navigation' : 'Primary navigation'}
+    >
+      {inAgentScope ? (
+        <>
+          <RailBackLink to="/chatbots" onNavigate={onNavigate}>
+            All chatbots
+          </RailBackLink>
 
-      <nav
-        aria-label={inAgentScope ? 'Chatbot navigation' : 'Primary navigation'}
-        className="flex-1 overflow-y-auto px-2 py-2"
-      >
-        {inAgentScope && scopedAgent ? (
-          <>
-            <NavLink
-              to="/chatbots"
-              onClick={onNavigate}
-              className={cn(
-                'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
-                'text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text',
-                collapsed && 'justify-center px-0',
-              )}
-            >
-              <ArrowLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
-              {!collapsed && 'All chatbots'}
-            </NavLink>
+          {!collapsed ? (
+            <li className="py-1">
+              <AgentSwitcher agentId={scopedAgentId!} agent={scopedAgent} onNavigate={onNavigate} />
+            </li>
+          ) : null}
 
-            {!collapsed && (
-              <div className="mt-2">
-                <AgentSwitcher current={scopedAgent} onNavigate={onNavigate} />
-              </div>
-            )}
+          {AGENT_NAV.map((item) => (
+            <RailItem
+              key={item.segment}
+              to={agentPath(scopedAgentId!, item.segment)}
+              label={item.label}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+              glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
+            />
+          ))}
+        </>
+      ) : (
+        <>
+          {primary.map((item) => (
+            <RailItem
+              key={item.to}
+              to={item.to}
+              label={item.label}
+              end={item.end}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+              glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
+              trailing={
+                item.to === '/inbox' && inboxCount > 0 ? (
+                  <RailCount value={inboxCount} label="waiting" />
+                ) : undefined
+              }
+            />
+          ))}
 
-            <div className="mt-3 space-y-0.5">
-              {AGENT_NAV.map((item) => (
-                <RailLink
-                  key={item.segment}
-                  to={agentPath(scopedAgent.id, item.segment)}
-                  label={item.label}
-                  icon={item.icon}
-                  hint={item.hint}
-                  collapsed={collapsed}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="space-y-0.5">
-              {primary.map((item) => (
-                <RailLink
-                  key={item.to}
-                  {...item}
-                  collapsed={collapsed}
-                  onNavigate={onNavigate}
-                  badge={
-                    item.to === '/inbox' && inboxCount > 0 ? (
-                      <Badge tone="success" className="shrink-0">
-                        {inboxCount}
-                      </Badge>
-                    ) : undefined
-                  }
-                />
-              ))}
-            </div>
-
-            {/* Recent chatbots, so cross-chatbot switching stays one click away
-                without the rail growing with the account. */}
-            {!isOperator && bots.length > 0 && !collapsed ? (
-              <>
-                <RailSectionLabel
-                  action={
+          {/* The chatbots, and the way to all of them. The group is rendered
+              whatever the count: gating it on `bots.length > 0` left every new
+              signup looking at four nav rows and nothing else, with no way to
+              create the one object the product exists for. */}
+          {!isOperator ? (
+            <>
+              <RailGroupLabel
+                collapsed={collapsed}
+                action={
+                  <Tooltip content="New chatbot">
                     <NavLink
                       to="/chatbots?new=1"
                       onClick={onNavigate}
                       aria-label="New chatbot"
-                      className="rounded-xs p-0.5 text-rail-text-muted transition-colors hover:text-rail-text"
+                      className="-mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
                     >
-                      <Plus aria-hidden className="h-3.5 w-3.5" />
+                      <Plus aria-hidden className="h-icon-sm w-icon-sm" />
                     </NavLink>
-                  }
-                >
-                  Chatbots
-                </RailSectionLabel>
-                <div className="space-y-0.5">
-                  {bots.slice(0, 3).map((bot) => {
-                    // The dot carries health, so the rail answers "is anything
-                    // wrong?" without the user opening anything. It is never the
-                    // only signal — Home names the chatbot and says what to do.
-                    const health = agentHealth(bot);
-                    return (
-                      <NavLink
-                        key={bot.id}
-                        to={agentPath(bot.id, 'overview')}
-                        onClick={onNavigate}
-                        className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text"
-                      >
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            health.tone === 'danger' && 'bg-danger-fill',
-                            health.tone === 'warning' && 'bg-warning-fill',
-                            health.tone === 'success' && 'bg-success-fill',
-                            health.tone === 'neutral' && 'bg-rail-text-muted',
-                          )}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{bot.name}</span>
-                        <span className="sr-only">{health.label}</span>
-                      </NavLink>
-                    );
-                  })}
-                  {bots.length > 3 ? (
-                    <NavLink
-                      to="/chatbots"
-                      onClick={onNavigate}
-                      className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs text-rail-text-muted transition-colors hover:text-rail-text"
-                    >
-                      <ChevronsUpDown aria-hidden className="h-3 w-3 shrink-0" />
-                      Show all {bots.length}
-                    </NavLink>
-                  ) : null}
-                </div>
-              </>
-            ) : null}
-          </>
-        )}
-      </nav>
+                  </Tooltip>
+                }
+              >
+                Chatbots
+              </RailGroupLabel>
 
-      <div className="shrink-0 border-t border-rail-border p-2">
-        {/* The way into the platform console, for the handful of people who
-            have one. Not in the account menu: a super-admin switching personas
-            is a navigation act, and burying it under an avatar is how the
-            console it opens went unbuilt for so long. Hidden during a support
-            session — acting on the platform through somebody else's identity is
-            exactly what must not happen. */}
-        {showsPlatformLink ? (
-          <Tooltip content="Platform console" side="right" disabled={!collapsed}>
-            <NavLink
-              to="/platform"
-              onClick={onNavigate}
-              className={cn(
-                'mb-1 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium',
-                'text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text',
-                collapsed && 'justify-center px-0',
-              )}
-            >
-              <ShieldAlert aria-hidden className="h-4 w-4 shrink-0" />
-              {collapsed ? <span className="sr-only">Platform console</span> : 'Platform'}
-            </NavLink>
-          </Tooltip>
-        ) : null}
-        {!isOperator ? <SetupProgress collapsed={collapsed} onNavigate={onNavigate} /> : null}
-        <div className="mt-1 space-y-0.5">
-          {navForRole(FOOTER_NAV, isOperator).map((item) => (
-            <RailLink key={item.to} {...item} collapsed={collapsed} onNavigate={onNavigate} />
-          ))}
-        </div>
-        <div className={cn('mt-1', collapsed && 'flex justify-center')}>
-          <AccountMenu collapsed={collapsed} />
-        </div>
-      </div>
-    </div>
+              {firstThree.map((bot) => {
+                // The dot carries health, so the rail answers "is anything
+                // wrong?" without the user opening anything. It is never the
+                // only signal — the row's own screen-reader text names the
+                // state, and Home says what to do about it.
+                const health = agentHealth(bot);
+                return (
+                  <RailItem
+                    key={bot.id}
+                    to={agentPath(bot.id, 'overview')}
+                    label={bot.name ?? `Chatbot ${bot.id}`}
+                    collapsed={collapsed}
+                    onNavigate={onNavigate}
+                    glyph={
+                      <>
+                        <HealthDot tone={health.tone} />
+                        <span className="sr-only">{health.label}</span>
+                      </>
+                    }
+                  />
+                );
+              })}
+
+              <RailItem
+                to={CHATBOTS_ITEM.to}
+                label="All chatbots"
+                end
+                collapsed={collapsed}
+                onNavigate={onNavigate}
+                glyph={<Bot aria-hidden className="h-icon-md w-icon-md" />}
+                trailing={
+                  bots.length > 0 ? (
+                    <span className="figure text-2xs text-rail-text-muted">{bots.length}</span>
+                  ) : undefined
+                }
+              />
+            </>
+          ) : null}
+
+          {/* Onboarding, directly under the destinations rather than in the
+              footer beside Settings. It removes itself when complete, so it
+              costs an established account nothing. */}
+          {!isOperator ? <SetupProgress collapsed={collapsed} onNavigate={onNavigate} /> : null}
+        </>
+      )}
+    </RailFrame>
   );
 }

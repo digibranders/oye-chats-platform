@@ -5,17 +5,18 @@ import {
   Badge,
   Card,
   CardBody,
-  DefinitionList,
+  CopyField,
+  PropertyGrid,
   EmptyState,
   Input,
   SearchField,
-  SegmentedControl,
   Section,
   Select,
   Skeleton,
   Stack,
   Toolbar,
   buttonClass,
+  cn,
   formatDateTime,
   type Column,
 } from '../../ui';
@@ -25,11 +26,6 @@ import { PLATFORM_ROOT } from '../nav';
 import { RecordList } from '../RecordList';
 import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import { SESSION_STATUS_TONES, isFetchableSessionId, type SessionDetail, type SessionRow } from './types';
-
-const VIEWS = [
-  { value: 'all', label: 'All conversations' },
-  { value: 'queue', label: 'Live queue' },
-];
 
 function statusBadge(status: string) {
   return <Badge tone={SESSION_STATUS_TONES[status] ?? 'neutral'}>{status}</Badge>;
@@ -134,23 +130,6 @@ const SESSION_COMPARATORS = {
 
 export function ConversationsTab() {
   const url = useUrlState();
-  const view = url.get('view', 'all');
-
-  return (
-    <Stack>
-      <SegmentedControl
-        label="Conversation view"
-        value={view}
-        onChange={(next) => url.set({ view: next, q: null, status: null, client_id: null })}
-        items={VIEWS}
-      />
-      {view === 'queue' ? <LiveQueueList /> : <SessionsList />}
-    </Stack>
-  );
-}
-
-function SessionsList() {
-  const url = useUrlState();
   const query = url.get('q');
   const status = url.get('status');
   const clientId = url.get('client_id');
@@ -169,9 +148,9 @@ function SessionsList() {
   });
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search conversations"
             value={query}
@@ -179,7 +158,7 @@ function SessionsList() {
             placeholder="Conversation id, chatbot, account or visitor"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by status"
             value={status}
@@ -193,7 +172,7 @@ function SessionsList() {
             ]}
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Input
             aria-label="Filter by account id"
             inputMode="numeric"
@@ -205,6 +184,8 @@ function SessionsList() {
       </Toolbar>
       <RecordList
         caption="Conversations across every chatbot"
+        rowNoun="conversation"
+        what="conversations"
         columns={sessionColumns()}
         paged={paged}
         rowKey={(row) => row.id}
@@ -214,7 +195,7 @@ function SessionsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Status and account are filtered by the server; the search box filters the returned rows here, across conversation id, chatbot, account and visitor."
+        note="The search box filters the rows already loaded, across id, chatbot, account and visitor."
         empty={
           <EmptyState
             compact
@@ -227,11 +208,11 @@ function SessionsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
-function LiveQueueList() {
+export function LiveQueueTab() {
   const url = useUrlState();
   const query = url.get('q');
   const list = usePlatformList<SessionRow>('/live/queue');
@@ -246,7 +227,7 @@ function LiveQueueList() {
   const waiting = list.items.filter((row) => row.status === 'waiting').length;
 
   return (
-    <div className="flex flex-col gap-4">
+    <Stack>
       {waiting > 0 ? (
         <Alert tone="warning" title={`${waiting} visitor${waiting === 1 ? ' is' : 's are'} waiting`}>
           These conversations have asked for a person and have not been picked up. The endpoint
@@ -254,8 +235,8 @@ function LiveQueueList() {
           start time below is the closest the API offers.
         </Alert>
       ) : null}
-      <Toolbar>
-        <div className="w-full max-w-xs">
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search the live queue"
             value={query}
@@ -266,6 +247,8 @@ function LiveQueueList() {
       </Toolbar>
       <RecordList
         caption="Conversations waiting for, or with, a person"
+        rowNoun="conversation"
+        what="the live queue"
         columns={sessionColumns()}
         paged={paged}
         rowKey={(row) => row.id}
@@ -288,7 +271,7 @@ function LiveQueueList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -317,23 +300,30 @@ export function SessionDetailPage() {
   return (
     <PlatformPage
       eyebrow="Conversation"
-      title={sessionId || 'Conversation'}
+      // The visitor, not the id. A 36-character opaque identifier set as a
+      // proportional headline is unreadable and unscannable; the id itself is a
+      // `CopyField` in the header, where it is mono and can be copied.
+      title={
+        detail?.session.visitor_name ?? detail?.session.visitor_email ?? 'Conversation'
+      }
       description={detail ? `${detail.messages.length} messages.` : undefined}
       forbidden={record.forbidden}
       error={record.error && !detail ? record.error : null}
       onRetry={record.reload}
       actions={
-        <Link to={`${PLATFORM_ROOT}/records?tab=conversations`} className={buttonClass('ghost', 'sm')}>
-          <ArrowLeft aria-hidden className="h-3.5 w-3.5" />
-          All conversations
-        </Link>
+        <>
+          {sessionId ? <CopyField compact label="Conversation id" value={sessionId} /> : null}
+          <Link to={`${PLATFORM_ROOT}/records/conversations`} className={buttonClass('ghost', 'sm')}>
+            <ArrowLeft aria-hidden />
+            All conversations
+          </Link>
+        </>
       }
     >
       {!fetchable ? (
         <Alert tone="danger" title="That is not a conversation id">
-          Conversation ids are bounded identifiers — up to 128 letters, digits, dot, colon, hyphen or
-          underscore. The id in the address is not, so the server would reject it before its handler
-          ran and nothing was requested. Check the link you followed here.
+          Nothing was requested — the id in the address is not a valid one. Check the link you
+          followed here.
         </Alert>
       ) : record.loading && !detail ? (
         <Stack>
@@ -350,7 +340,7 @@ export function SessionDetailPage() {
           <Section title="Conversation">
             <Card>
               <CardBody>
-                <DefinitionList
+                <PropertyGrid
                   columns={2}
                   items={[
                     { label: 'Status', value: statusBadge(detail.session.status) },
@@ -405,25 +395,42 @@ export function SessionDetailPage() {
                 />
               ) : (
                 <CardBody>
+                  {/* The shape of the exchange, not a stack of identical boxes:
+                      the visitor's own lines sit on the sunken ground with no
+                      box at all, and everything the platform said carries a
+                      leading rule. Capped at a reading measure — 200-character
+                      lines are what an uncapped 1,830px column produces. */}
                   <ol className="flex flex-col gap-3">
-                    {detail.messages.map((message) => (
-                      <li key={message.id} className="rounded-md border border-border px-3 py-2.5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge tone={ROLE_TONE[message.role] ?? 'neutral'}>{message.role}</Badge>
-                          <span className="figure text-2xs text-text-tertiary">
-                            {formatDateTime(message.created_at)}
-                          </span>
-                          {message.trace_id ? (
-                            <span className="font-mono text-2xs text-text-tertiary">
-                              trace {message.trace_id}
+                    {detail.messages.map((message) => {
+                      const visitor = message.role === 'user';
+                      return (
+                        <li
+                          key={message.id}
+                          className={cn(
+                            'max-w-reading px-3 py-2.5',
+                            visitor
+                              ? 'rounded-md bg-surface-sunken'
+                              : 'border-l-2 border-accent-500 pl-4',
+                            message.role === 'operator' && 'border-plan',
+                          )}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={ROLE_TONE[message.role] ?? 'neutral'}>{message.role}</Badge>
+                            <span className="figure text-2xs text-text-tertiary">
+                              {formatDateTime(message.created_at)}
                             </span>
-                          ) : null}
-                        </div>
-                        <p className="mt-1.5 whitespace-pre-wrap text-prose text-text-primary">
-                          {message.content}
-                        </p>
-                      </li>
-                    ))}
+                            {message.trace_id ? (
+                              <span className="font-mono text-2xs text-text-tertiary">
+                                trace {message.trace_id}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1.5 whitespace-pre-wrap text-prose text-text-primary">
+                            {message.content}
+                          </p>
+                        </li>
+                      );
+                    })}
                   </ol>
                 </CardBody>
               )}

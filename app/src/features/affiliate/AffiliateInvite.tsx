@@ -4,7 +4,6 @@ import { useMutation } from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Field, Input, Spinner, buttonClass } from '../../ui';
 import {
   acceptAffiliateInvite,
@@ -49,7 +48,10 @@ const schema = z.object({
 type SignupValues = z.infer<typeof schema>;
 
 function statusOf(error: unknown): number | undefined {
-  const withStatus = error as { response?: { status?: number }; status?: number } | null;
+  const withStatus = error as {
+    response?: { status?: number };
+    status?: number;
+  } | null;
   return withStatus?.response?.status ?? withStatus?.status;
 }
 
@@ -57,7 +59,11 @@ function formatExpiry(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 }
 
 export function AffiliateInvite() {
@@ -73,13 +79,15 @@ export function AffiliateInvite() {
   >(() =>
     token
       ? { status: 'loading' }
-      : { status: 'invalid', message: 'This link is missing its invitation token.' },
+      : {
+          status: 'invalid',
+          message: 'This link is missing its invitation token.',
+        },
   );
 
   const [accepted, setAccepted] = useState(false);
   const [mismatch, setMismatch] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
 
   // 1) Resolve the token. Never fires without one, so the "invalid" state above
   //    is a real derived state rather than a flash of loading.
@@ -89,7 +97,11 @@ export function AffiliateInvite() {
     lookupAffiliateInvite(token)
       .then((data) => {
         if (cancelled) return;
-        setLookup({ status: 'ready', email: data.email, expiresAt: data.expires_at ?? null });
+        setLookup({
+          status: 'ready',
+          email: data.email,
+          expiresAt: data.expires_at ?? null,
+        });
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -305,7 +317,7 @@ export function AffiliateInvite() {
           </Alert>
         ) : null}
 
-        <Field label="Email" hint="Set by the invitation. It is the address we invited.">
+        <Field label="Email">
           <Input value={lookup.email} readOnly disabled autoComplete="username" />
         </Field>
 
@@ -324,32 +336,22 @@ export function AffiliateInvite() {
           error={form.formState.errors.password?.message}
           hint={<PasswordRules value={password} />}
         >
+          {/* `Input revealable` owns the toggle now. The local one here was
+              byte-identical to the account page's, both 24px inside a 34px
+              control and neither reporting its own pressed state. */}
           <Input
             {...form.register('password')}
-            type={showPassword ? 'text' : 'password'}
+            type="password"
+            revealable
             autoComplete="new-password"
-            trailing={
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="rounded-sm p-1 text-text-tertiary transition-colors hover:text-text-primary"
-              >
-                {showPassword ? (
-                  <EyeOff aria-hidden className="h-4 w-4" />
-                ) : (
-                  <Eye aria-hidden className="h-4 w-4" />
-                )}
-              </button>
-            }
           />
         </Field>
 
-        <Field label="Company" hint="Optional. Appears on the invoices we issue you.">
+        <Field label="Company" optional hint="Appears on your invoices.">
           <Input {...form.register('companyName')} placeholder="Acme Corporation" />
         </Field>
 
-        <Field label="Website" hint="Optional.">
+        <Field label="Website" optional>
           <Input {...form.register('website')} placeholder="acme.com" inputMode="url" />
         </Field>
 

@@ -3,25 +3,28 @@ import { Link } from 'react-router-dom';
 import { Bot as BotIcon, CalendarRange, Download } from 'lucide-react';
 import {
   Alert,
+  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
+  DataTable,
   EmptyState,
   ErrorState,
   LoadingRows,
+  NavTabs,
   Page,
   PageHeader,
   SegmentedControl,
   Stack,
-  StatTile,
+  Tooltip,
   buttonClass,
   formatDate,
   formatNumber,
 } from '../../ui';
 import { downloadPerAgentReportCsv } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
-import { BillingNav } from './billing/BillingNav';
+import { BILLING_SECTIONS } from './billing/sections';
 import { errorMessage } from './billingModel';
 import {
   DEFAULT_REPORT_RANGE,
@@ -74,8 +77,7 @@ export function ReportsPage() {
     <Page width="wide">
       <PageHeader
         title="Reports"
-        description="Conversations held, leads captured and credits spent, one row per chatbot."
-        toolbar={<BillingNav />}
+        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
         actions={
           <>
             <SegmentedControl
@@ -99,7 +101,7 @@ export function ReportsPage() {
               // CSV looks like a broken download rather than a quiet month.
               disabled={downloading || rowCount === 0}
             >
-              <Download aria-hidden className="h-4 w-4" />
+              <Download aria-hidden />
               {downloading ? 'Preparing…' : 'Download CSV'}
             </Button>
           </>
@@ -135,7 +137,7 @@ export function ReportsPage() {
             <EmptyState
               icon={BotIcon}
               title="No chatbots to report on yet"
-              description="Create your first chatbot and deploy it. Once visitors start talking to it, its conversations, leads and credit usage appear here."
+              description="Once visitors start talking to one, its conversations, leads and credit usage appear here."
               action={
                 <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
                   Create a chatbot
@@ -148,7 +150,7 @@ export function ReportsPage() {
             <EmptyState
               icon={CalendarRange}
               title={`No activity in the last ${range} days`}
-              description="None of your chatbots held a conversation, captured a lead or spent a credit in this window. Try a wider one."
+              description="Nothing held a conversation, captured a lead or spent a credit in this window."
               action={
                 range === 90 ? undefined : (
                   <Button variant="secondary" size="sm" onClick={() => setRange(90)}>
@@ -159,126 +161,92 @@ export function ReportsPage() {
             />
           </Card>
         ) : report ? (
-          <>
-            <Card>
-              <CardBody className="grid gap-6 sm:grid-cols-3">
-                <StatTile
-                  label="Conversations"
-                  value={formatNumber(report.totals.conversations)}
-                  period={windowLabel}
-                />
-                <StatTile
-                  label="Leads captured"
-                  value={formatNumber(report.totals.leads)}
-                  period={windowLabel}
-                />
-                <StatTile
-                  label="Credits spent"
-                  value={formatNumber(report.totals.credits_spent)}
-                  period={windowLabel}
-                />
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader
-                eyebrow="Per chatbot"
-                title="Activity"
-                titleAs="h2"
-                description={`${windowLabel} · ${rowCount} active ${rowCount === 1 ? 'chatbot' : 'chatbots'}. A chatbot with no conversations, leads or spend in this window is left out.`}
+          // The stat card is gone. It printed the same three figures as the
+          // table's `tfoot`, from the same `report.totals`, 130px above it —
+          // and the `tfoot` is the better artefact, because it is structurally
+          // a total and it is aligned with the columns it totals.
+          <Card>
+            <CardHeader
+              eyebrow="Per chatbot"
+              title="Activity"
+              titleAs="h2"
+              description={windowLabel}
+              actions={
+                <Badge tone="neutral">
+                  {`${rowCount} active ${rowCount === 1 ? 'chatbot' : 'chatbots'}`}
+                </Badge>
+              }
+            />
+            <CardBody flush>
+              {/* This was a hand-built `<table>` — the second under `/billing`,
+                  at a third cell geometry — because a report needs the
+                  chatbot's name to be the row's HEADER and the account totals
+                  to live in a real `tfoot`. `DataTable` owns both now
+                  (`Column.rowHeader`, `footer`), so the markup goes. */}
+              <DataTable
+                seated
+                caption={`Activity per chatbot for ${windowLabel}: conversations, leads and credits used`}
+                rows={report.rows}
+                rowKey={(row) => String(row.bot_id)}
+                rowNoun="chatbot"
+                defaultSort={{ key: 'credits', direction: 'desc' }}
+                columns={[
+                  {
+                    key: 'name',
+                    header: 'Chatbot',
+                    pinned: true,
+                    width: '16rem',
+                    rowHeader: true,
+                    sortable: (a, b) => a.bot_name.localeCompare(b.bot_name),
+                    render: (row) => (
+                      <span className="font-medium text-text-primary">{row.bot_name}</span>
+                    ),
+                  },
+                  {
+                    key: 'conversations',
+                    header: 'Conversations',
+                    type: 'number',
+                    sortable: (a, b) => a.conversations - b.conversations,
+                    render: (row) => formatNumber(row.conversations),
+                  },
+                  {
+                    key: 'leads',
+                    header: 'Leads',
+                    type: 'number',
+                    sortable: (a, b) => a.leads - b.leads,
+                    render: (row) => formatNumber(row.leads),
+                  },
+                  {
+                    key: 'credits',
+                    header: (
+                      <Tooltip content="Consumption only. Grants, top-ups and refunds are ledger movements, not spend.">
+                        <span>Credits used</span>
+                      </Tooltip>
+                    ),
+                    type: 'number',
+                    sortable: (a, b) => a.credits_spent - b.credits_spent,
+                    render: (row) => formatNumber(row.credits_spent),
+                  },
+                ]}
+                footer={
+                  <tr>
+                    <th scope="row" className="font-semibold">
+                      All chatbots
+                    </th>
+                    <td className="figure text-right font-semibold">
+                      {formatNumber(report.totals.conversations)}
+                    </td>
+                    <td className="figure text-right font-semibold">
+                      {formatNumber(report.totals.leads)}
+                    </td>
+                    <td className="figure text-right font-semibold">
+                      {formatNumber(report.totals.credits_spent)}
+                    </td>
+                  </tr>
+                }
               />
-              <CardBody flush>
-                {/* Hand-built rather than a `DataTable`, and deliberately so: a
-                    report needs the chatbot's name to be the row's HEADER and
-                    the account totals to live in a real `tfoot`. A screen
-                    reader then announces "Acme Support, Conversations, 412"
-                    instead of four unlabelled numbers, and the totals are
-                    structurally distinct from the data rather than being a
-                    "Total" row in the body, where a chatbot genuinely named
-                    Total would be indistinguishable from it. */}
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[34rem]">
-                    <caption className="sr-only">
-                      Activity per chatbot for {windowLabel}: conversations, leads and credits used.
-                    </caption>
-                    <thead>
-                      <tr className="border-b border-border bg-surface-sunken">
-                        <th
-                          scope="col"
-                          className="px-5 py-2 text-left font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary"
-                        >
-                          Chatbot
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-5 py-2 text-right font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary"
-                        >
-                          Conversations
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-5 py-2 text-right font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary"
-                        >
-                          Leads
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-5 py-2 text-right font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary"
-                        >
-                          Credits used
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {report.rows.map((row) => (
-                        <tr key={row.bot_id} className="border-b border-border last:border-b-0">
-                          <th
-                            scope="row"
-                            className="px-5 py-3 text-left text-sm font-medium text-text-primary"
-                          >
-                            {row.bot_name}
-                          </th>
-                          <td className="figure px-5 py-3 text-right text-sm text-text-secondary">
-                            {formatNumber(row.conversations)}
-                          </td>
-                          <td className="figure px-5 py-3 text-right text-sm text-text-secondary">
-                            {formatNumber(row.leads)}
-                          </td>
-                          <td className="figure px-5 py-3 text-right text-sm text-text-primary">
-                            {formatNumber(row.credits_spent)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-border bg-surface-sunken">
-                        <th
-                          scope="row"
-                          className="px-5 py-3 text-left text-sm font-semibold text-text-primary"
-                        >
-                          All chatbots
-                        </th>
-                        <td className="figure px-5 py-3 text-right text-sm font-semibold text-text-primary">
-                          {formatNumber(report.totals.conversations)}
-                        </td>
-                        <td className="figure px-5 py-3 text-right text-sm font-semibold text-text-primary">
-                          {formatNumber(report.totals.leads)}
-                        </td>
-                        <td className="figure px-5 py-3 text-right text-sm font-semibold text-text-primary">
-                          {formatNumber(report.totals.credits_spent)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </CardBody>
-              <div className="border-t border-border px-5 py-3 text-xs leading-relaxed text-text-secondary">
-                Credits shown are consumption only. Plan grants, top-ups and refunds are movements
-                in your ledger but they are not spend, so they are excluded here and on the Usage
-                page.
-              </div>
-            </Card>
-          </>
+            </CardBody>
+          </Card>
         ) : null}
       </Stack>
     </Page>

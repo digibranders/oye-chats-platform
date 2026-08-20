@@ -1,11 +1,22 @@
 import { useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
-import { AGENT_NAV, WORKSPACE_NAV, agentIdFromPath, agentPath } from './nav';
+import {
+  ACCOUNT_SECTIONS,
+  AGENT_NAV,
+  FOOTER_NAV,
+  NAV_SECTIONS,
+  STANDALONE_CRUMBS,
+  WORKSPACE_NAV,
+  agentIdFromPath,
+  agentPath,
+} from './nav';
 
 export interface Crumb {
   label: string;
   to?: string;
+  /** The name has not arrived yet; render a placeholder rather than an id. */
+  pending?: boolean;
 }
 
 /**
@@ -18,7 +29,17 @@ export interface Crumb {
  *
  * **The chatbot is always named.** That is the whole point of this hook: the one
  * object a user can be configuring the wrong copy of is the one the chrome must
- * never leave anonymous.
+ * never leave anonymous. While its name is still in flight the crumb is marked
+ * `pending` and the bar draws a placeholder, rather than printing `Chatbot 12`
+ * and swapping it for `Northwind` a frame later.
+ *
+ * **The trail is never empty and never wrong.** It used to stop at the matched
+ * top-level destination with the comment "the page owns its own title", which
+ * meant `/billing/usage` rendered one crumb reading "Billing" — carrying
+ * `aria-current="page"`, so the chrome told a screen-reader user the current
+ * page was Billing while they were on Usage. Six more routes matched nothing at
+ * all and rendered an empty `<ol>`, `/welcome` — the first screen a new
+ * customer sees — among them.
  */
 export function useBreadcrumbs(): Crumb[] {
   const { pathname } = useLocation();
@@ -33,19 +54,43 @@ export function useBreadcrumbs(): Crumb[] {
       const tab = AGENT_NAV.find((item) => item.segment === segment);
       return [
         { label: 'Chatbots', to: '/chatbots' },
-        { label: agent?.name ?? `Chatbot ${agentId}`, to: agentPath(agentId, 'overview') },
+        {
+          label: agent?.name ?? 'Chatbot',
+          to: agentPath(agentId, 'overview'),
+          pending: !agent,
+        },
         ...(tab ? [{ label: tab.label }] : []),
       ];
     }
 
-    const top = WORKSPACE_NAV.find((item) =>
+    // Settings is a footer destination, not a `WORKSPACE_NAV` one, and the
+    // lookup used to read only the latter — which is why every `/settings/*`
+    // route rendered an empty trail.
+    const top = [...WORKSPACE_NAV, ...FOOTER_NAV].find((item) =>
       item.end ? pathname === item.to : pathname.startsWith(item.to),
     );
-    if (!top) return [];
 
-    // A second segment under a workspace destination is a section of it —
-    // `/settings/team`, `/billing/invoices`. The page owns its own title, so the
-    // trail stops at the destination and does not repeat it.
-    return [{ label: top.label, to: top.end ? undefined : top.to }];
+    if (top) {
+      const section = pathname.split('/')[2];
+      const label = section ? NAV_SECTIONS[top.to]?.[section] : undefined;
+      // The first crumb links only when there is a second one to come back
+      // from: a lone crumb naming the page you are already on is not a link.
+      return label ? [{ label: top.label, to: top.to }, { label }] : [{ label: top.label }];
+    }
+
+    // Your own account, onboarding, and the 404. None of them is in the rail,
+    // which is exactly why the trail has to name them.
+    if (pathname === '/account' || pathname.startsWith('/account/')) {
+      const section = pathname.split('/')[2];
+      const label = section ? ACCOUNT_SECTIONS[section] : undefined;
+      return label ? [{ label: 'Account', to: '/account' }, { label }] : [{ label: 'Account' }];
+    }
+
+    const standalone = Object.entries(STANDALONE_CRUMBS).find(
+      ([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+    if (standalone) return [{ label: standalone[1] }];
+
+    return [{ label: 'Not found' }];
   }, [pathname, bots]);
 }

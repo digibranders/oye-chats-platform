@@ -13,6 +13,9 @@ import {
 import {
   chargeDisclosure,
   formatCredits,
+  formatDate,
+  formatFreeMonths,
+  formatPromotionScope,
   formatAgentAllowance,
   formatSeatAllowance,
   formatTrialOffer,
@@ -72,7 +75,10 @@ function PlanCard({
     <div
       className={cn(
         'flex flex-col rounded-lg border bg-surface p-5',
-        current ? 'border-border-strong' : 'border-border',
+        // A 2px ring without shifting layout. It used to be one shade darker
+        // than the neighbours' hairline — 3.58:1 against 1.28:1 — which reads
+        // as a rendering artefact rather than as "this is your plan".
+        current ? 'border-plan shadow-[inset_0_0_0_1px_var(--color-plan)]' : 'border-border',
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -125,7 +131,10 @@ function PlanCard({
 
       <div className="mt-4">
         {plan.isContactSales ? (
-          <a href={`mailto:${SALES_EMAIL}`} className={cn(buttonClass('secondary', 'md'), 'w-full')}>
+          <a
+            href={`mailto:${SALES_EMAIL}`}
+            className={cn(buttonClass('secondary', 'md'), 'w-full')}
+          >
             Contact sales
           </a>
         ) : (
@@ -216,16 +225,25 @@ export function PlanPickerDialog({
       // The one condition under which a dialog may refuse to close.
       dismissible={!locked}
       title="Choose a plan"
-      description="Prices are per workspace. You can change or cancel at any time; a downgrade takes effect at the end of the period you have already paid for."
+      description="Prices are per workspace, paid by card or UPI through Razorpay. A downgrade takes effect at the end of the period you have already paid for."
       size="xl"
       footer={
-        <p className="mr-auto text-xs text-text-secondary">
-          Paid by card or UPI through Razorpay. Cancelling stops the next charge, never the one you
-          have already made.
-        </p>
+        <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={locked}>
+          Done
+        </Button>
       }
     >
       <div className="space-y-4">
+        {/* The promotion, where the customer is choosing. It used to be a sixth
+            banner on `/billing`, above the plan and — when a card had just
+            failed — above the payment failure. */}
+        {promotion && plans.length > 0 ? (
+          <Alert tone="plan" title={promotion.name ?? 'Launch offer'}>
+            {`Your first ${formatFreeMonths(promotion.freeCycles)} are free on ${formatPromotionScope(promotion, plans)}.`}
+            {promotion.endsAt ? ` The offer closes on ${formatDate(promotion.endsAt)}.` : ''}
+          </Alert>
+        ) : null}
+
         <SegmentedControl
           label="Billing cycle"
           value={cycle}
@@ -281,7 +299,8 @@ export function PlanPickerDialog({
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {plans.map((plan) => {
             const trialPath =
-              !trialUsed && isTrialEligible(plan, currentPlan?.slug ?? 'free', currentStatus, trialUsed);
+              !trialUsed &&
+              isTrialEligible(plan, currentPlan?.slug ?? 'free', currentStatus, trialUsed);
             return (
               <PlanCard
                 key={plan.id}

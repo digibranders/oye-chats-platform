@@ -7,7 +7,7 @@ import {
   EmptyState,
   Input,
   SearchField,
-  SegmentedControl,
+  PropertyGrid,
   Select,
   Stack,
   Toolbar,
@@ -21,40 +21,8 @@ import { RecordList } from '../RecordList';
 import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import { humanise, type BantSignalRow, type LeadRow, type MeetingRow, type OfflineMessageRow } from './types';
 
-const VIEWS = [
-  { value: 'leads', label: 'Leads' },
-  { value: 'offline', label: 'Offline messages' },
-  { value: 'meetings', label: 'Meetings' },
-  { value: 'signals', label: 'Qualification' },
-];
-
-/** Everything a conversation produced: contacts, follow-ups and the scoring behind them. */
-export function EngagementTab() {
-  const url = useUrlState();
-  const view = url.get('view', 'leads');
-
-  return (
-    <Stack>
-      <SegmentedControl
-        label="Engagement view"
-        value={view}
-        onChange={(next) => url.set({ view: next, q: null, status: null, dimension: null })}
-        items={VIEWS}
-      />
-      {view === 'offline' ? (
-        <OfflineMessagesList />
-      ) : view === 'meetings' ? (
-        <MeetingsList />
-      ) : view === 'signals' ? (
-        <SignalsList />
-      ) : (
-        <LeadsList />
-      )}
-    </Stack>
-  );
-}
-
-function LeadsList() {
+/** Contacts a conversation produced. */
+export function LeadsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const list = usePlatformList<LeadRow>('/leads');
@@ -97,9 +65,9 @@ function LeadsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search leads"
             value={query}
@@ -110,6 +78,8 @@ function LeadsList() {
       </Toolbar>
       <RecordList
         caption="Leads captured across every chatbot"
+        rowNoun="lead"
+        what="captured leads"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -119,7 +89,6 @@ function LeadsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="This endpoint joins leads to accounts on a column the lead table does not have, so it may fail outright on the server. If the error state below appears with a database message, that is why — it is a server-side defect, not a permissions or network problem."
         empty={
           <EmptyState
             compact
@@ -132,7 +101,7 @@ function LeadsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -142,7 +111,7 @@ const OFFLINE_TONES: Record<string, 'warning' | 'neutral' | 'success'> = {
   replied: 'success',
 };
 
-function OfflineMessagesList() {
+export function OfflineMessagesTab() {
   const url = useUrlState();
   const query = url.get('q');
   const status = url.get('status');
@@ -198,7 +167,7 @@ function OfflineMessagesList() {
     {
       key: 'message_body',
       header: 'Message',
-      render: (row) => <span className="line-clamp-2 text-text-secondary">{row.message_body}</span>,
+      render: (row) => <span className="text-text-secondary">{row.message_body}</span>,
     },
     { key: 'bot_name', header: 'Chatbot', sortable: true, render: (row) => row.bot_name ?? '—' },
     {
@@ -227,14 +196,14 @@ function OfflineMessagesList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
+    <Stack>
       {error ? (
         <Alert tone="danger" live title="The status was not changed">
           {error}
         </Alert>
       ) : null}
-      <Toolbar>
-        <div className="w-full max-w-xs">
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search offline messages"
             value={query}
@@ -242,7 +211,7 @@ function OfflineMessagesList() {
             placeholder="Visitor, email or message"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by status"
             value={status}
@@ -255,7 +224,7 @@ function OfflineMessagesList() {
             ]}
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Input
             aria-label="Filter by chatbot id"
             inputMode="numeric"
@@ -267,6 +236,8 @@ function OfflineMessagesList() {
       </Toolbar>
       <RecordList
         caption="Visitor messages left while the team was offline"
+        rowNoun="message"
+        what="offline messages"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -276,7 +247,7 @@ function OfflineMessagesList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Status and chatbot are filtered by the server. Marking a message read or replied here changes it for the customer's own inbox too — this is the same record they see."
+        note="Marking a message read or replied changes it in the customer's own inbox too — it is the same record."
         empty={
           <EmptyState
             compact
@@ -323,40 +294,30 @@ function OfflineMessagesList() {
         {reading ? (
           <div className="flex flex-col gap-4">
             <p className="whitespace-pre-wrap text-prose text-text-primary">{reading.message_body}</p>
-            <dl className="flex flex-col gap-2 rounded-md border border-border bg-surface-sunken px-3 py-3 text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="text-xs text-text-tertiary">Chatbot</dt>
-                <dd>{reading.bot_name ?? '—'}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-xs text-text-tertiary">Account</dt>
-                <dd>{reading.client_name ?? '—'}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-xs text-text-tertiary">Phone</dt>
-                <dd>{reading.visitor_phone ?? '—'}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-xs text-text-tertiary">Why it fell back</dt>
-                <dd>{humanise(reading.fallback_reason)}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-xs text-text-tertiary">Received</dt>
-                <dd className="figure">{formatDateTime(reading.created_at)}</dd>
-              </div>
-            </dl>
+            <PropertyGrid
+              density="compact"
+              items={[
+                { label: 'Chatbot', value: reading.bot_name },
+                { label: 'Account', value: reading.client_name },
+                { label: 'Phone', value: reading.visitor_phone },
+                { label: 'Why it fell back', value: humanise(reading.fallback_reason) },
+                {
+                  label: 'Received',
+                  value: <span className="figure">{formatDateTime(reading.created_at)}</span>,
+                },
+              ]}
+            />
             <p className="text-xs text-text-tertiary">
-              This console can change the status only. There is no super-admin endpoint that replies
-              to a visitor — the reply is sent by the customer&apos;s own team from their inbox.
+              Status only — the reply is sent by the customer&apos;s own team from their inbox.
             </p>
           </div>
         ) : null}
       </Drawer>
-    </div>
+    </Stack>
   );
 }
 
-function MeetingsList() {
+export function MeetingsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const botId = url.get('bot_id');
@@ -404,9 +365,9 @@ function MeetingsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search meetings"
             value={query}
@@ -414,7 +375,7 @@ function MeetingsList() {
             placeholder="Attendee, chatbot or account"
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Input
             aria-label="Filter by chatbot id"
             inputMode="numeric"
@@ -426,6 +387,8 @@ function MeetingsList() {
       </Toolbar>
       <RecordList
         caption="Meetings booked from a conversation"
+        rowNoun="meeting"
+        what="booked meetings"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -435,7 +398,7 @@ function MeetingsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Chatbot is filtered by the server; the search box filters the returned rows here."
+        note="The search box filters the rows already loaded."
         empty={
           <EmptyState
             compact
@@ -448,7 +411,7 @@ function MeetingsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -459,7 +422,7 @@ const DIMENSION_TONES: Record<string, 'success' | 'warning' | 'neutral'> = {
   timeline: 'neutral',
 };
 
-function SignalsList() {
+export function QualificationTab() {
   const url = useUrlState();
   const query = url.get('q');
   const dimension = url.get('dimension');
@@ -492,7 +455,7 @@ function SignalsList() {
       header: 'Signal',
       render: (row) => (
         <div className="min-w-0">
-          <p className="line-clamp-2 text-text-primary">{row.signal_text ?? '—'}</p>
+          <p className="truncate text-text-primary">{row.signal_text ?? '—'}</p>
           {row.extracted_value ? (
             <p className="truncate text-xs text-text-secondary">→ {row.extracted_value}</p>
           ) : null}
@@ -533,9 +496,9 @@ function SignalsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search qualification signals"
             value={query}
@@ -543,7 +506,7 @@ function SignalsList() {
             placeholder="Signal text or extracted value"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by dimension"
             value={dimension}
@@ -557,7 +520,7 @@ function SignalsList() {
             ]}
           />
         </div>
-        <div className="w-full max-w-xs">
+        <div className="w-72 max-w-full">
           <SearchField
             label="Filter by conversation id"
             value={sessionId}
@@ -568,6 +531,8 @@ function SignalsList() {
       </Toolbar>
       <RecordList
         caption="Append-only BANT and MEDDIC qualification signals"
+        rowNoun="signal"
+        what="qualification signals"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -577,7 +542,7 @@ function SignalsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note="Dimension and conversation id are filtered by the server, and the conversation id must match exactly. This log is append-only: it records what the extractor concluded, and nothing here can change a score."
+        note="Append-only: it records what the extractor concluded, and nothing here changes a score."
         empty={
           <EmptyState
             compact
@@ -590,6 +555,6 @@ function SignalsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }

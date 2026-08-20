@@ -1,16 +1,12 @@
 import {
   type LucideIcon,
-  AlertTriangle,
-  ArrowRightLeft,
   FileText,
   ListOrdered,
   MessageCircle,
   Paperclip,
   ThumbsUp,
-  Timer,
-  Wand2,
-  Wifi,
 } from 'lucide-react';
+import { normalizeDomain } from '../channels/deployModel';
 
 /**
  * Behaviour — the configuration model for the technical corner of a chatbot.
@@ -23,6 +19,9 @@ import {
  * | `featureFlags` | `feature_flags` | shallow-merged server-side |
  * | `widgetConfig` | `widget_config` | shallow-merged server-side |
  * | `operatorTimeoutSeconds` | `operator_timeout_seconds` | `int 5..3600` |
+ * | `allowedDomains` | `allowed_domains` | list of hostnames, normalised |
+ * | `domainCheckEnabled` | `domain_check_enabled` | bool |
+ * | `sessionShareDomain` | `session_share_domain` | one parent domain, no wildcard |
  *
  * Deliberately absent, and why:
  *
@@ -39,7 +38,7 @@ import {
  *   chatbot's own actions menu, because resuming is an admission decision the
  *   server can refuse — not a form field.
  * - **Routing strategy and `operator_disconnect_timeout`** are still columns no
- *   control can move. See `BLOCKED_CAPABILITIES` below.
+ *   control can move, and both are inert. See the note at the end of this file.
  */
 
 // ── Answering scope (relevance_threshold) ────────────────────────────────────
@@ -100,7 +99,7 @@ export const FEATURE_FLAGS: readonly FeatureFlagDef[] = [
   {
     key: 'post_chat_rating',
     label: 'Post-chat rating',
-    desc: 'Ask visitors to rate the conversation when it ends. This is what fills the rating figures on Overview and Analytics.',
+    desc: 'Ask visitors to rate the conversation.',
     icon: ThumbsUp,
     default: true,
   },
@@ -164,16 +163,12 @@ export interface ConfigFieldDef {
 
 export interface ConfigGroupDef {
   readonly title: string;
-  readonly description: string;
-  readonly icon: LucideIcon;
   readonly fields: readonly ConfigFieldDef[];
 }
 
 export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
   {
     title: 'Welcome animation',
-    description: 'Timing of the welcome screen and the greeting bubble.',
-    icon: Wand2,
     fields: [
       {
         key: 'welcome_exit_duration_ms',
@@ -199,8 +194,6 @@ export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
   },
   {
     title: 'Interaction timeouts',
-    description: 'Limits for transient states like the typing indicator.',
-    icon: Timer,
     fields: [
       {
         key: 'typing_timeout_ms',
@@ -216,8 +209,6 @@ export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
   },
   {
     title: 'Frustration detection',
-    description: 'Notice when a visitor fires off several messages in a row.',
-    icon: AlertTriangle,
     fields: [
       {
         key: 'frustration_window_ms',
@@ -243,8 +234,6 @@ export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
   },
   {
     title: 'Connection recovery',
-    description: 'How the widget recovers a dropped connection on the visitor’s side.',
-    icon: Wifi,
     fields: [
       {
         key: 'max_reconnect_attempts',
@@ -290,8 +279,6 @@ export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
   },
   {
     title: 'Handoff form',
-    description: 'Fine-tuning for the form a visitor fills in to reach a person.',
-    icon: ArrowRightLeft,
     fields: [
       {
         key: 'handoff_auto_submit_delay_ms',
@@ -355,6 +342,12 @@ export interface BehaviourDraft {
   widgetConfig: Record<string, number>;
   /** Seconds an operator has to accept a handoff before it is re-offered. */
   operatorTimeoutSeconds: number;
+  /** Origins allowed to embed this chatbot. Empty allows everything. */
+  allowedDomains: string[];
+  /** Whether the allow-list is enforced at all. */
+  domainCheckEnabled: boolean;
+  /** A pinned cookie parent for session continuity. Empty = auto-detect. */
+  sessionShareDomain: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -393,6 +386,12 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
     widgetConfig: mergeConfig(raw.widget_config),
     operatorTimeoutSeconds:
       typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : OPERATOR_TIMEOUT.default,
+    allowedDomains: Array.isArray(raw.allowed_domains)
+      ? raw.allowed_domains.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    domainCheckEnabled: raw.domain_check_enabled === true,
+    sessionShareDomain:
+      typeof raw.session_share_domain === 'string' ? raw.session_share_domain.trim() : '',
   };
 }
 
@@ -413,43 +412,81 @@ export function toBehaviourPayload(draft: BehaviourDraft): Record<string, unknow
   };
 }
 
-// ── Capability the backend does not expose ───────────────────────────────────
+// ── Access (allowed_domains · domain_check_enabled · session_share_domain) ───
 
-export interface BlockedCapability {
-  readonly title: string;
-  /** What the column does, so the gap is legible without reading Python. */
-  readonly detail: string;
-  /** Exactly where the missing write path would go. */
-  readonly reference: string;
+/**
+ * The three columns that decide **where** this chatbot is allowed to run.
+ *
+ * They used to live on Deploy, beneath the snippet, each with its own save
+ * button and its own unguarded dirty state. They are not install steps: the
+ * allow-list is a security control over a public embed key, and the session
+ * parent is a cookie scope. Both belong with the chatbot's other settings,
+ * under this page's single draft and single save bar.
+ *
+ * They are a separate payload from `toBehaviourPayload` because they are a
+ * separate concern, and because sending them on every save of an unrelated flag
+ * would rewrite an allow-list the customer never opened.
+ */
+export function toAccessPayload(draft: BehaviourDraft): Record<string, unknown> {
+  const trimmed = draft.sessionShareDomain.trim();
+  return {
+    allowed_domains: draft.allowedDomains,
+    domain_check_enabled: draft.domainCheckEnabled,
+    // An empty string clears the override server-side and returns the widget to
+    // auto-detect. Continuity itself never turns off.
+    session_share_domain: trimmed ? (normalizeDomain(trimmed) ?? trimmed) : '',
+  };
 }
 
 /**
- * Columns no control can move, listed rather than quietly omitted.
+ * Why a pinned parent cannot be saved, in the customer's terms.
  *
- * A customer who has been told "routing strategy is configurable" needs to see
- * that it is not, in the place they would look for it, and the next engineer
- * needs the file and the line rather than a second archaeology session.
- *
- * The list shrank from four to two. Visitor disconnect grace period, the
- * follow-up pause and the chatbot's own active flag are all writable now and
- * all have a surface: Settings ▸ Team ▸ Routing, the Lead follow-up section on
- * this page, and the chatbot's actions menu. Both survivors are here for the
- * same reason, which is stronger than "unwritable" — the column is **inert**,
- * so exposing it would ship a setting that saves, persists and changes nothing.
+ * The backend raises on a wildcard (`_normalize_session_share_domain`) because
+ * the value becomes a cookie `Domain`, which is one parent and not a pattern. It
+ * is said here rather than surfaced as a 422.
  */
-export const BLOCKED_CAPABILITIES: readonly BlockedCapability[] = [
-  {
-    title: 'Routing strategy',
-    detail:
-      'Bot.live_chat_routing_strategy would choose how a waiting chat picks an operator (least busy, round robin). It is not merely unwritable — it is inert: the only function that reads it, live_chat_routing_service.select_operator, has no caller anywhere in the API. Assignment is operator-pull today, set when someone accepts a waiting chat. A control here would change nothing, so there is deliberately not one.',
-    reference:
-      'api/app/services/live_chat_routing_service.py:85 (select_operator, uncalled) · api/app/db/models.py:437',
-  },
-  {
-    title: 'Operator disconnect grace period',
-    detail:
-      'Bot.operator_disconnect_timeout would decide how long a dropped operator connection is held before their chats are handed back. The column and its 60-second default exist, but live_chat_service._operator_disconnect_timeout sleeps a class constant and never reads them, so a control here would validate, save and change nothing — rendered next to the visitor-side timer, which does work. The visitor half is configurable, under Settings ▸ Team ▸ Routing.',
-    reference:
-      'api/app/services/live_chat_service.py:607 (_operator_disconnect_timeout sleeps DEFAULT_OPERATOR_DISCONNECT_TIMEOUT) · api/app/db/models.py:429 · deliberately absent from UpdateBotRequest',
-  },
-];
+export function sessionShareDomainError(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.startsWith('*.')) {
+    return 'A wildcard will not work here. Use the parent domain on its own, e.g. acme.com.';
+  }
+  if (!normalizeDomain(trimmed)) return 'That is not a domain. Use a hostname like acme.com.';
+  return null;
+}
+
+/** True when the access slice differs, so an untouched allow-list is not rewritten. */
+export function accessChanged(next: BehaviourDraft, previous: BehaviourDraft): boolean {
+  return (
+    next.domainCheckEnabled !== previous.domainCheckEnabled ||
+    next.sessionShareDomain !== previous.sessionShareDomain ||
+    next.allowedDomains.length !== previous.allowedDomains.length ||
+    next.allowedDomains.some((entry, index) => entry !== previous.allowedDomains[index])
+  );
+}
+
+/** True when anything outside the access slice differs. */
+export function behaviourChanged(next: BehaviourDraft, previous: BehaviourDraft): boolean {
+  return JSON.stringify(toBehaviourPayload(next)) !== JSON.stringify(toBehaviourPayload(previous));
+}
+
+/*
+ * Two `Bot` columns are stored, defaulted and never read, so there is
+ * deliberately no control for either. They used to be rendered as a card on this
+ * page, complete with Python `file.py:line` references and private function
+ * names, which is engineering notes shipped as product — a customer's settings
+ * page is not a place to publish the backend's call graph.
+ *
+ * - `Bot.live_chat_routing_strategy` would choose how a waiting chat picks an
+ *   operator. Its only reader, `live_chat_routing_service.select_operator`, has
+ *   no caller anywhere in the API; assignment is operator-pull, set when someone
+ *   accepts a waiting chat.
+ * - `Bot.operator_disconnect_timeout` would decide how long a dropped operator
+ *   connection is held before their chats are handed back.
+ *   `live_chat_service._operator_disconnect_timeout` sleeps a class constant and
+ *   never reads it. The visitor-side half of the same timer does work, and is
+ *   configurable under Settings ▸ Team ▸ Routing.
+ *
+ * Both are inert rather than merely unwritable: a control over either would
+ * validate, save, echo back and change nothing.
+ */

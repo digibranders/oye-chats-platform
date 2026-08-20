@@ -1,15 +1,16 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
-import { Menu as MenuIcon, PanelLeft, Search } from 'lucide-react';
-import { Button, Kbd, Tooltip, cn, modifierKey } from '../ui';
+import { ChevronRight, Menu as MenuIcon, Search } from 'lucide-react';
+import { Button, Kbd, Skeleton, Tooltip, cn, modifierKey } from '../ui';
 import { useBreadcrumbs } from './useBreadcrumbs';
 import { NotificationBell } from './NotificationBell';
 
 export interface TopBarProps {
   isMobile: boolean;
-  collapsed: boolean;
   onToggleRail: () => void;
   onOpenSearch: () => void;
+  /** The palette finds chatbots and pages; an operator has neither. */
+  searchable?: boolean;
 }
 
 /**
@@ -18,44 +19,55 @@ export interface TopBarProps {
  * It is deliberately thin. The workspace switcher and the account menu live in
  * the rail, beside what they scope; the previous bar carried both switchers plus
  * breadcrumbs plus four controls, which at 375px needed 350px before the
- * breadcrumb had rendered anything.
+ * breadcrumb had rendered anything. The collapse control has gone the same way —
+ * onto the rail's own header, where Linear, Vercel and Notion all put it —
+ * which is what lets the trail start on the page's gutter.
+ *
+ * **The bar shares the page's gutter.** It was `px-4 md:px-6` against `Page`'s
+ * `px-6 md:px-8`, and with a 28px toggle and a 12px gap in front of the trail,
+ * the breadcrumb sat 32px right of the page title at every width and 84px right
+ * of it at 1920. The trail naming the page and the title of the page were never
+ * on the same line. Both now read `--spacing-gutter` / `--spacing-gutter-lg`.
  */
-export function TopBar({ isMobile, collapsed, onToggleRail, onOpenSearch }: TopBarProps) {
+export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true }: TopBarProps) {
   const crumbs = useBreadcrumbs();
 
   return (
     <header
       className={cn(
-        'z-[var(--z-topbar)] flex h-topbar shrink-0 items-center gap-3',
-        'border-b border-border bg-canvas px-4 md:px-6',
+        'flex h-topbar shrink-0 items-center gap-3 border-b border-border bg-canvas',
+        'px-gutter lg:px-gutter-lg',
       )}
     >
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        onClick={onToggleRail}
-        aria-label={isMobile ? 'Open navigation' : collapsed ? 'Expand navigation' : 'Collapse navigation'}
-        aria-expanded={isMobile ? undefined : !collapsed}
-        aria-controls="app-rail"
-      >
-        {isMobile ? (
-          <MenuIcon aria-hidden className="h-4 w-4" />
-        ) : (
-          <PanelLeft aria-hidden className="h-4 w-4" />
-        )}
-      </Button>
+      {isMobile ? (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onToggleRail}
+          aria-label="Open navigation"
+          className="-ml-1.5"
+        >
+          <MenuIcon aria-hidden />
+        </Button>
+      ) : null}
 
       <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
         <ol className="flex min-w-0 items-center gap-1.5 text-sm">
           {crumbs.map((crumb, index) => (
             <Fragment key={`${crumb.label}-${index}`}>
               {index > 0 ? (
-                <li aria-hidden className="shrink-0 text-text-tertiary">
-                  /
+                <li aria-hidden className="shrink-0">
+                  {/* A chevron, optically centred by the flex row. It was a
+                      literal `/` at body size in `--text-tertiary` (5.38:1),
+                      sitting on the baseline and nearly as heavy as the labels
+                      it separated. */}
+                  <ChevronRight className="h-3.5 w-3.5 text-border-strong" />
                 </li>
               ) : null}
               <li className="min-w-0">
-                {crumb.to && index < crumbs.length - 1 ? (
+                {crumb.pending ? (
+                  <Skeleton className="h-3.5 w-28" />
+                ) : crumb.to && index < crumbs.length - 1 ? (
                   <Link
                     to={crumb.to}
                     className="block truncate text-text-secondary underline-offset-2 transition-colors hover:text-text-primary hover:underline"
@@ -77,26 +89,31 @@ export function TopBar({ isMobile, collapsed, onToggleRail, onOpenSearch }: TopB
       </nav>
 
       <div className="flex shrink-0 items-center gap-1">
-        <Tooltip content="Search everything">
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            className={cn(
-              'flex h-control-sm items-center gap-2 rounded-md border border-border bg-surface px-2.5',
-              'text-xs text-text-tertiary transition-colors hover:border-border-strong hover:text-text-secondary',
-            )}
-          >
-            <Search aria-hidden className="h-3.5 w-3.5 shrink-0" />
-            <span className="hidden sm:inline">Search</span>
-            {/* Two keys, two glyphs — and the modifier resolved per platform.
-                The previous bar hardcoded a single "⌘K" chip and showed it to
-                Windows and Linux users, naming a key they do not have. */}
-            <span className="hidden items-center gap-1 lg:inline-flex">
-              <Kbd>{modifierKey()}</Kbd>
-              <Kbd>K</Kbd>
-            </span>
-          </button>
-        </Tooltip>
+        {searchable ? (
+          // The tooltip only earns its place where the trigger is a bare icon.
+          // Above `sm` the control already reads "Search ⌘ K".
+          <Tooltip content="Search chatbots and pages" disabled={!isMobile}>
+            <button
+              type="button"
+              onClick={onOpenSearch}
+              aria-label="Search chatbots and pages"
+              className={cn(
+                'flex h-control-sm items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5',
+                'text-xs text-text-tertiary transition-colors hover:border-text-tertiary hover:text-text-secondary',
+              )}
+            >
+              <Search aria-hidden className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden sm:inline">Search</span>
+              {/* Two keys, two glyphs — and the modifier resolved per platform.
+                  The previous bar hardcoded a single "⌘K" chip and showed it to
+                  Windows and Linux users, naming a key they do not have. */}
+              <span className="hidden items-center gap-1 lg:inline-flex">
+                <Kbd>{modifierKey()}</Kbd>
+                <Kbd>K</Kbd>
+              </span>
+            </button>
+          </Tooltip>
+        ) : null}
         <NotificationBell />
       </div>
     </header>

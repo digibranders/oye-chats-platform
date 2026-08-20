@@ -5,8 +5,9 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
+  CodeBlock,
   DataTable,
+  Dialog,
   EmptyState,
   LockedState,
   Section,
@@ -17,6 +18,8 @@ import {
   type Tone,
 } from '../../ui';
 import { usePlatformList, usePlatformResource } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
+import { PAGE_SIZE } from '../recordListState';
 import { InvoiceDrawer } from './InvoiceDrawer';
 import { invoiceStatusLabel, invoiceStatusTone, invoiceTypeLabel } from './invoice';
 import type { AnomalyBrief, AnomalyKey, GatewayRun, ReconciliationResponse } from './types';
@@ -112,6 +115,7 @@ export function ReconciliationTab() {
     params: { limit: 14 },
   });
   const [openInvoice, setOpenInvoice] = useState<number | null>(null);
+  const [openRun, setOpenRun] = useState<GatewayRun | null>(null);
 
   const counts = report.data?.counts;
   const totalAnomalies = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : null;
@@ -180,21 +184,16 @@ export function ReconciliationTab() {
     {
       key: 'report',
       header: 'What disagreed',
+      // A dialog rather than an expander in the cell: expanding one row used to
+      // inflate it to 256px and shift every row below it, which is the reason
+      // an overlay exists.
       render: (row) =>
         row.delta_count === 0 ? (
           <span className="text-sm text-text-tertiary">Razorpay and the platform agreed.</span>
         ) : (
-          <details>
-            <summary className="cursor-pointer text-sm text-accent-600 hover:text-accent-700">
-              Show the report
-            </summary>
-            {/* Rendered raw on purpose: the report's shape is not contractual,
-                and inventing a table for it would hide any field the job
-                started emitting. */}
-            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface-sunken p-3 text-2xs text-text-secondary">
-              {JSON.stringify(row.report, null, 2)}
-            </pre>
-          </details>
+          <Button size="sm" variant="ghost" onClick={() => setOpenRun(row)}>
+            Show the report
+          </Button>
         ),
     },
   ];
@@ -203,23 +202,22 @@ export function ReconciliationTab() {
     <Stack>
       {report.forbidden ? (
         <LockedState
-          title="You cannot read reconciliation"
-          description="Your super-admin account is not permitted to read the invoice anomaly report. Nothing was loaded."
+          title={FORBIDDEN_TITLE}
+          description={forbiddenDescription('the invoice anomaly report')}
         />
       ) : (
         <>
           {totalAnomalies === 0 ? (
             <Alert tone="success" title="Everything reconciles">
-              None of the six invariants is broken. That is what a healthy platform looks like — the
-              tables below stay empty until something needs a person.
+              None of the six invariants is broken.
             </Alert>
           ) : totalAnomalies != null ? (
             <Alert
               tone="danger"
               title={`${formatNumber(totalAnomalies)} document${totalAnomalies === 1 ? '' : 's'} need attention`}
             >
-              Each block below is a condition that should never persist. Every one of them is a
-              customer holding — or missing — a legal document.
+              Each block below is a condition that should never persist: a customer holding — or
+              missing — a legal document.
             </Alert>
           ) : null}
 
@@ -255,55 +253,50 @@ export function ReconciliationTab() {
                   const rows = report.data?.[group.key] ?? [];
                   const count = counts?.[group.key] ?? 0;
                   return (
-                    <Card key={group.key}>
-                      <CardHeader
-                        titleAs="h3"
-                        title={group.title}
-                        description={group.meaning}
-                        actions={
-                          count === 0 ? (
-                            <Badge tone="success" dot>
-                              Clear
-                            </Badge>
-                          ) : (
-                            <Badge tone={group.tone} dot>
-                              <span className="figure">{formatNumber(count)}</span> affected
-                            </Badge>
-                          )
+                    // A `Section`, not a `Card` around a `DataTable`: the table
+                    // draws its own surface, so the card was a second hairline
+                    // and a second radius twenty pixels outside the first, six
+                    // times down this page.
+                    <Section
+                      key={group.key}
+                      title={group.title}
+                      description={group.meaning}
+                      actions={
+                        count === 0 ? (
+                          <Badge tone="success" dot>
+                            Clear
+                          </Badge>
+                        ) : (
+                          <Badge tone={group.tone} dot>
+                            <span className="figure">{formatNumber(count)}</span> affected
+                          </Badge>
+                        )
+                      }
+                    >
+                      {count > 0 ? (
+                        <Alert tone={group.tone} title="What to do" className="mb-3">
+                          {group.remedy}
+                        </Alert>
+                      ) : null}
+                      <DataTable
+                        caption={group.title}
+                        columns={columns}
+                        rows={rows}
+                        rowKey={(row) => String(row.id)}
+                        rowNoun="document"
+                        rowLabel={(row) => row.invoice_number ?? `document ${row.id}`}
+                        onRowClick={(row) => setOpenInvoice(row.id)}
+                        loading={report.loading && !report.data}
+                        pageSize={PAGE_SIZE}
+                        empty={
+                          <EmptyState
+                            compact
+                            title="Nothing here"
+                            description="No document is in this condition."
+                          />
                         }
                       />
-                      {report.loading && !report.data ? (
-                        <CardBody>
-                          <EmptyState compact title="Checking…" />
-                        </CardBody>
-                      ) : count === 0 ? (
-                        <EmptyState
-                          compact
-                          title="Nothing here"
-                          description="No document is in this condition."
-                        />
-                      ) : (
-                        <>
-                          <CardBody className="pb-0">
-                            <Alert tone={group.tone} title="What to do">
-                              {group.remedy}
-                            </Alert>
-                          </CardBody>
-                          <CardBody>
-                            <DataTable
-                              caption={group.title}
-                              columns={columns}
-                              rows={rows}
-                              rowKey={(row) => String(row.id)}
-                              rowLabel={(row) => row.invoice_number ?? `document ${row.id}`}
-                              onRowClick={(row) => setOpenInvoice(row.id)}
-                              pageSize={10}
-                              empty={<EmptyState compact title="Nothing here" />}
-                            />
-                          </CardBody>
-                        </>
-                      )}
-                    </Card>
+                    </Section>
                   );
                 })
               )}
@@ -314,12 +307,13 @@ export function ReconciliationTab() {
 
       <Section
         title="Gateway reconciliation"
-        description="The nightly job comparing Razorpay's record of the money against ours. Read-only — there is no way to trigger a run from here."
+        description="The nightly job comparing Razorpay's record of the money against ours. Read-only."
       >
         {runs.forbidden ? (
           <LockedState
-            title="You cannot read gateway runs"
-            description="Your super-admin account is not permitted to read reconciliation runs. Nothing was loaded."
+            size="panel"
+            title={FORBIDDEN_TITLE}
+            description={forbiddenDescription('reconciliation runs')}
           />
         ) : (
           <DataTable
@@ -327,19 +321,37 @@ export function ReconciliationTab() {
             columns={runColumns}
             rows={runs.items}
             rowKey={(row) => String(row.id)}
+            rowNoun="run"
             loading={runs.loading}
             error={runs.error}
             onRetry={runs.reload}
-            pageSize={14}
+            pageSize={PAGE_SIZE}
             empty={
               <EmptyState
                 title="No reconciliation run recorded"
-                description="The nightly safety net has never written a run. Either it has not run yet on this environment, or the scheduled job is not configured — an empty list is not the same as a clean result."
+                description="The nightly safety net has never written a run — an empty list is not the same as a clean result."
               />
             }
           />
         )}
       </Section>
+
+      <Dialog
+        open={openRun !== null}
+        onOpenChange={(next) => {
+          if (!next) setOpenRun(null);
+        }}
+        size="lg"
+        title="Gateway reconciliation report"
+        description={openRun ? `Run of ${formatDateTime(openRun.ran_at)}` : undefined}
+      >
+        {/* Raw on purpose: the report's shape is not contractual, and inventing
+            a table for it would hide any field the job started emitting. */}
+        <CodeBlock
+          label="report.json"
+          code={openRun ? JSON.stringify(openRun.report, null, 2) : ''}
+        />
+      </Dialog>
 
       <InvoiceDrawer
         invoiceId={openInvoice}

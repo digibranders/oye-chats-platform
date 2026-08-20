@@ -63,23 +63,6 @@
   40%, 60% { transform: translateX(4px); }
 }
 
-:root {
-  --oc-impersonation-bar-h: 2.25rem; /* must match the banner's h-9 */
-}
-
-body.oc-impersonating {
-  padding-top: var(--oc-impersonation-bar-h);
-}
-
-body.oc-impersonating [data-app-sidebar] {
-  top: var(--oc-impersonation-bar-h);
-  height: calc(100vh - var(--oc-impersonation-bar-h));
-}
-
-body.oc-impersonating [data-app-topbar] {
-  top: var(--oc-impersonation-bar-h);
-}
-
 .widget-chat-preview .prose {
   line-height: 1.7;
   font-weight: 300;

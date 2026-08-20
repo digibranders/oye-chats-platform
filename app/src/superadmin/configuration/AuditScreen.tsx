@@ -1,16 +1,14 @@
 import { useMemo, useState } from 'react';
 import {
-  Alert,
   Badge,
   Button,
   CodeBlock,
+  Combobox,
   DataTable,
-  DefinitionList,
+  PropertyGrid,
   Drawer,
   EmptyState,
-  Field,
   LockedState,
-  SearchField,
   Section,
   Select,
   Stack,
@@ -22,6 +20,7 @@ import {
   type SelectOption,
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import type { AuditEntry } from './types';
 
 /**
@@ -56,6 +55,16 @@ export function AuditScreen() {
   const audit = usePlatformList<AuditEntry>('/audit', {
     params: { actor: actor || undefined, action: action || undefined },
   });
+
+  // The actor is an exact-match server filter, so the options are the distinct
+  // names in the response plus whatever is already applied.
+  const actorOptions = useMemo(() => {
+    const seen = new Set(
+      audit.items.map((entry) => entry.actor_name).filter((name): name is string => Boolean(name)),
+    );
+    if (actor) seen.add(actor);
+    return [...seen].sort().map((value) => ({ value, label: value }));
+  }, [audit.items, actor]);
 
   const actionOptions: SelectOption[] = useMemo(() => {
     const seen = new Set(audit.items.map((entry) => entry.action));
@@ -117,38 +126,35 @@ export function AuditScreen() {
 
   if (audit.forbidden) {
     return (
-      <LockedState
-        title="You cannot read the audit log"
-        description="Your super-admin account is not permitted to load it."
-      />
+      <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription('the audit log')} />
     );
   }
 
   return (
     <Stack>
-      <Alert tone="neutral" title="The 500 most recent entries">
-        The endpoint returns no more than that and takes no offset, so filtering narrows what you are looking
-        at rather than reaching further back. Anything older is in the database and not reachable from here.
-      </Alert>
-
-      <Toolbar>
-        <div className="min-w-0 flex-1">
-          <SearchField
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
+          {/* The actor is an exact-match server filter, so a text box was asking
+              the reader to spell a colleague's name the way the log stores it. */}
+          <Combobox
             size="sm"
-            label="Filter by actor name"
-            placeholder="Exact actor name…"
-            value={actor}
-            onValueChange={(next) => url.set({ actor: next.trim() || null })}
+            label="Filter by actor"
+            value={actor || null}
+            onValueChange={(next) => url.set({ actor: next })}
+            options={actorOptions}
+            placeholder="Every actor"
+            clearable
           />
         </div>
-        <Field label="Action" hideLabel className="w-64">
+        <div className="w-48">
           <Select
             size="sm"
+            aria-label="Filter by action"
             options={actionOptions}
             value={action}
             onChange={(event) => url.set({ action: event.target.value || null })}
           />
-        </Field>
+        </div>
         {actor || action ? (
           <Button size="sm" variant="ghost" onClick={() => url.set({ actor: null, action: null })}>
             Clear
@@ -158,7 +164,7 @@ export function AuditScreen() {
 
       <Section
         title="Entries"
-        description="Newest first. Open a row for the exact before and after the write recorded."
+        description="Newest first, most recent 500 only. Open a row for the exact before and after."
       >
         <DataTable
           caption="Super-admin audit log"
@@ -205,37 +211,32 @@ export function AuditScreen() {
       >
         {open ? (
           <div className="flex flex-col gap-5">
-            <DefinitionList
+            <PropertyGrid
               columns={2}
+              density="compact"
               items={[
-                { label: 'Actor', value: open.actor_name ?? 'Unknown' },
-                { label: 'Actor id', value: <span className="figure">{open.actor_id ?? '—'}</span> },
-                { label: 'Target type', value: open.target_type ?? '—' },
-                { label: 'Target id', value: <span className="figure">{open.target_id ?? '—'}</span> },
-                { label: 'IP', value: <span className="figure">{open.ip ?? '—'}</span> },
+                { label: 'Actor', value: open.actor_name },
+                { label: 'Actor id', value: <span className="figure">{open.actor_id}</span> },
+                { label: 'Target type', value: open.target_type },
+                { label: 'Target id', value: <span className="figure">{open.target_id}</span> },
+                { label: 'IP', value: <span className="figure">{open.ip}</span> },
                 { label: 'Entry id', value: <span className="figure">{formatNumber(open.id)}</span> },
+                {
+                  label: 'User agent',
+                  value: open.user_agent ? (
+                    <span className="figure break-words">{open.user_agent}</span>
+                  ) : undefined,
+                },
               ]}
             />
-            {open.user_agent ? (
-              <div>
-                <p className="text-xs text-text-tertiary">User agent</p>
-                <p className="figure mt-0.5 break-words text-xs text-text-primary">{open.user_agent}</p>
-              </div>
-            ) : null}
-            <div>
-              <p className="mb-1.5 text-xs text-text-tertiary">Before</p>
-              <CodeBlock
-                label="before"
-                code={open.before == null ? 'null' : JSON.stringify(open.before, null, 2)}
-              />
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs text-text-tertiary">After</p>
-              <CodeBlock
-                label="after"
-                code={open.after == null ? 'null' : JSON.stringify(open.after, null, 2)}
-              />
-            </div>
+            <CodeBlock
+              label="Before"
+              code={open.before == null ? 'null' : JSON.stringify(open.before, null, 2)}
+            />
+            <CodeBlock
+              label="After"
+              code={open.after == null ? 'null' : JSON.stringify(open.after, null, 2)}
+            />
           </div>
         ) : null}
       </Drawer>

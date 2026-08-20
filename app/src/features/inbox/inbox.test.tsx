@@ -286,9 +286,12 @@ describe('Transcript', () => {
         ]}
       />,
     );
-    expect(screen.getByText('Visitor')).toBeInTheDocument();
-    expect(screen.getByText('AI')).toBeInTheDocument();
-    expect(screen.getByText('You')).toBeInTheDocument();
+    // One label per group of consecutive messages from one speaker, carried in
+    // the screen-reader layer at the head of the group's first bubble — the
+    // visible line under every single message was the same fact repeated.
+    expect(screen.getByText('Visitor:')).toBeInTheDocument();
+    expect(screen.getByText('AI:')).toBeInTheDocument();
+    expect(screen.getByText('You:')).toBeInTheDocument();
   });
 
   it('announces the visitor typing rather than showing three silent dots', () => {

@@ -4,6 +4,9 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
+  CardBody,
+  CardHeader,
   SegmentedControl,
   Tooltip,
 } from '../../../ui';
@@ -51,8 +54,10 @@ export interface PreviewPanelProps {
   answerStale: boolean;
   botKey: string | null;
   website: string | null;
-  /** The credit line's wording, from the record. Editable on Deploy, not here. */
+  /** The credit line's wording, as it will read. */
   brandingText: string;
+  /** Jump to the tab that owns a message this preview state renders. */
+  onEditState?: (tab: 'messages' | 'handoff') => void;
 }
 
 export function PreviewPanel({
@@ -64,6 +69,7 @@ export function PreviewPanel({
   botKey,
   website,
   brandingText,
+  onEditState,
 }: PreviewPanelProps): ReactElement {
   const { hasFeature } = useEntitlements();
   const [state, setState] = useState<PreviewState>('welcome');
@@ -119,80 +125,108 @@ export function PreviewPanel({
     setStreamError(null);
   }, []);
 
+  // Two of the three preview states render a message edited on another tab, and
+  // there was no way from the preview to the field that controls it.
+  const editTab: 'messages' | 'handoff' | null =
+    state === 'waiting' ? 'handoff' : state === 'offline' ? 'messages' : null;
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-text-primary">Preview</h2>
-          {!settled ? (
-            <Badge tone="neutral">Updating</Badge>
-          ) : dirty ? (
-            <Badge tone="warning" dot>
-              Unsaved
-            </Badge>
-          ) : (
-            <Badge tone="success" dot>
-              Live
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {messages.length > 0 ? (
-            <Tooltip content="Start the preview conversation again">
-              <Button variant="ghost" size="icon-sm" onClick={reset} aria-label="Reset preview conversation">
-                <RotateCcw aria-hidden className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
-          ) : null}
-          {botKey ? (
-            <Button variant="secondary" size="sm" onClick={() => setWebsiteOpen(true)}>
-              <Globe aria-hidden className="h-3.5 w-3.5" />
-              On my website
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <p className="text-xs leading-relaxed text-text-secondary">
-        {dirty
-          ? 'Your unsaved changes, as a visitor would see them. The widget on your site still shows the saved version.'
-          : 'Exactly what a visitor sees right now.'}
-      </p>
-
-      <SegmentedControl
-        items={STATES}
-        value={state}
-        onChange={setState}
-        label="Preview state"
+    // A `Card`, like the panels it sits beside. Its chrome used to sit raw on
+    // the canvas next to a column of white cards, so the two panes did not read
+    // as peers.
+    <Card>
+      <CardHeader
         size="sm"
+        titleAs="h2"
+        title="Preview"
+        actions={
+          <>
+            {!settled ? (
+              <Badge tone="neutral">Updating</Badge>
+            ) : dirty ? (
+              <Badge tone="warning" dot>
+                Unsaved
+              </Badge>
+            ) : (
+              <Badge tone="success" dot>
+                Live
+              </Badge>
+            )}
+            {messages.length > 0 ? (
+              <Tooltip content="Start the preview conversation again">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={reset}
+                  aria-label="Reset preview conversation"
+                >
+                  <RotateCcw aria-hidden />
+                </Button>
+              </Tooltip>
+            ) : null}
+            {botKey ? (
+              <Tooltip content="Load the saved widget over your own site">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setWebsiteOpen(true)}
+                  aria-label="Preview on my website"
+                >
+                  <Globe aria-hidden />
+                </Button>
+              </Tooltip>
+            ) : null}
+          </>
+        }
       />
+      <CardBody className="flex flex-col gap-3">
+        <SegmentedControl
+          items={STATES}
+          value={state}
+          onChange={setState}
+          label="Preview state"
+          size="sm"
+          fill
+        />
 
-      <WidgetMock
-        draft={shown}
-        agentName={agentName}
-        state={state}
-        messages={messages}
-        pending={pending}
-        // Mirrors the widget config endpoint's own gate: the handoff control is
-        // hidden on a plan without live chat, so previewing it there would show
-        // visitors an option they will never be offered.
-        liveChatVisible={draft.liveChatEnabled && hasFeature('live_chat')}
-        brandingText={brandingText}
-        onSend={agentId === null || state !== 'welcome' ? undefined : ask}
-      />
+        {editTab && onEditState ? (
+          <Button
+            variant="link"
+            size="sm"
+            className="self-start"
+            onClick={() => onEditState(editTab)}
+          >
+            Edit this message
+          </Button>
+        ) : null}
 
-      {streamError ? (
-        <Alert tone="danger" title="The preview could not answer" live>
-          {streamError}
-        </Alert>
-      ) : null}
+        <WidgetMock
+          draft={shown}
+          agentName={agentName}
+          state={state}
+          messages={messages}
+          pending={pending}
+          // Mirrors the widget config endpoint's own gate: the handoff control is
+          // hidden on a plan without live chat, so previewing it there would show
+          // visitors an option they will never be offered.
+          liveChatVisible={draft.liveChatEnabled && hasFeature('live_chat')}
+          brandingText={brandingText}
+          onSend={agentId === null || state !== 'welcome' ? undefined : ask}
+        />
 
-      {answerStale ? (
-        <Alert tone="warning" title="Replies still use your saved settings">
-          Colours and wording above update as you type, but an answer is generated by the chatbot as
-          it is saved. Save to hear your new voice, prompt or services.
-        </Alert>
-      ) : null}
+        {streamError ? (
+          <Alert tone="danger" title="The preview could not answer" live>
+            {streamError}
+          </Alert>
+        ) : null}
+
+        {answerStale ? (
+          <Alert tone="warning" title="Replies still use your saved settings">
+            Colours and wording above update as you type, but an answer is generated by the chatbot
+            as it is saved.
+          </Alert>
+        ) : null}
+      </CardBody>
 
       <WebsitePreviewDialog
         open={websiteOpen}
@@ -200,6 +234,6 @@ export function PreviewPanel({
         botKey={botKey}
         website={website}
       />
-    </div>
+    </Card>
   );
 }

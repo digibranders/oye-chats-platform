@@ -49,30 +49,38 @@ describe('BillingOpsPage', () => {
   /** Dunning first: everything else here can wait a day, and a grace period cannot. */
   it('opens on dunning', async () => {
     mount();
-    expect(await screen.findByRole('tab', { name: 'Dunning', selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Dunning', current: 'page' })).toBeInTheDocument();
     expect(await screen.findByText('Nobody is failing payment')).toBeInTheDocument();
+  });
+
+  it('renders its views as navigation, not as a tablist', async () => {
+    mount();
+    await screen.findByRole('navigation', { name: 'Billing operations views' });
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
   it('gives every view its own address', async () => {
     const user = userEvent.setup();
     mount();
 
-    await user.click(await screen.findByRole('tab', { name: 'GSTR export' }));
+    await user.click(await screen.findByRole('link', { name: 'GSTR export' }));
 
     await waitFor(() =>
       expect(screen.getByTestId('url').textContent).toBe('/platform/billing-ops/gstr'),
     );
-    expect(screen.getByRole('tab', { name: 'GSTR export', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'GSTR export', current: 'page' })).toBeInTheDocument();
   });
 
   it('selects the tab named by the URL on first paint', async () => {
     mount('/platform/billing-ops/seller');
-    expect(await screen.findByRole('tab', { name: 'Seller profile', selected: true })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('link', { name: 'Seller profile', current: 'page' }),
+    ).toBeInTheDocument();
   });
 
   it('sends a mistyped sub-path to dunning rather than a dead page', async () => {
     mount('/platform/billing-ops/nonsense');
     await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/platform/billing-ops'));
-    expect(screen.getByRole('tab', { name: 'Dunning', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Dunning', current: 'page' })).toBeInTheDocument();
   });
 });

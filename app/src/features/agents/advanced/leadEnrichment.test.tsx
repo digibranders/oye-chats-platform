@@ -53,7 +53,10 @@ describe('LeadEnrichmentSection', () => {
     expect(screen.getByRole('switch', { name: /Email verification/i })).not.toHaveAttribute(
       'aria-disabled',
     );
-    expect(screen.getByText(/Included on the Professional plan/i)).toBeInTheDocument();
+    // The plan name alone, beside a disabled switch — `Badge` is
+    // `whitespace-nowrap`, so "the Standard and Professional plans" rendered as
+    // a ~290px unbreakable pill.
+    expect(screen.getByText('Professional')).toBeInTheDocument();
   });
 
   it('shows a locked switch as OFF without clearing the stored value', async () => {

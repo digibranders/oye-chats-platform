@@ -6,14 +6,13 @@ import {
   Card,
   CardBody,
   CardHeader,
-  DataTable,
+  Combobox,
   EmptyState,
-  Input,
+  LoadingBars,
   LockedState,
   RankedBars,
   Section,
   SegmentedControl,
-  Skeleton,
   Stack,
   Toolbar,
   formatDateTime,
@@ -21,6 +20,10 @@ import {
   type Column,
 } from '../../ui';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
+import { RecordList } from '../RecordList';
+import { byDate, byText, usePagedRows } from '../recordListState';
+import type { ClientRow } from '../customers/types';
 import type { BillingFunnelResponse, PaymentMethodRow } from './types';
 
 /**
@@ -56,6 +59,15 @@ export function PaymentsTab() {
   // record (`{days, counts, recent}`) rather than a list, and the resource hook
   // takes no params. It is one request either way; splitting it into two hooks
   // to satisfy the shape would double the traffic for the same data.
+  const clients = usePlatformList<ClientRow>('/clients');
+
+  const methodsPaged = usePagedRows(methods.items, {
+    url,
+    pageKey: 'mpage',
+    sortKey: 'msort',
+    comparators: { synced: byDate((row) => row.synced_at) },
+  });
+
   const funnel = usePlatformResource<BillingFunnelResponse>(
     `/billing-funnel?days=${days}&limit=${RECENT_LIMIT}`,
   );
@@ -122,7 +134,7 @@ export function PaymentsTab() {
       header: 'Last synced',
       width: '12rem',
       secondary: true,
-      sortable: (a, b) => (a.synced_at ?? '').localeCompare(b.synced_at ?? ''),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDateTime(row.synced_at)}</span>,
     },
   ];
@@ -158,6 +170,13 @@ export function PaymentsTab() {
     },
   ];
 
+  const eventsPaged = usePagedRows(funnel.data?.recent ?? [], {
+    url,
+    pageKey: 'epage',
+    sortKey: 'esort',
+    comparators: { event: byText((row) => row.event), surface: byText((row) => row.surface) },
+  });
+
   return (
     <Stack>
       <Section
@@ -175,8 +194,9 @@ export function PaymentsTab() {
       >
         {funnel.forbidden ? (
           <LockedState
-            title="You cannot read the payment funnel"
-            description="Your super-admin account is not permitted to read billing funnel events. Nothing was loaded."
+            size="panel"
+            title={FORBIDDEN_TITLE}
+            description={forbiddenDescription('billing funnel events')}
           />
         ) : (
           <Card>
@@ -186,10 +206,8 @@ export function PaymentsTab() {
               description="Counts are per surface and event, largest first. An abandoned sheet is not a failure — a declined one is."
             />
             {funnel.loading && !funnel.data ? (
-              <CardBody className="space-y-2">
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
+              <CardBody>
+                <LoadingBars rows={4} />
               </CardBody>
             ) : funnel.error && !funnel.data ? (
               <CardBody>
@@ -210,10 +228,12 @@ export function PaymentsTab() {
               <EmptyState
                 compact
                 title="No checkout activity in this window"
-                description="Nobody opened a payment sheet in the selected range. On a live platform that is worth checking — it can also mean the event is not being recorded."
+                description="Nobody opened a payment sheet in this range — or the event is not being recorded."
               />
             ) : (
-              <RankedBars label="Billing funnel events by surface" items={bars} tone="ink" />
+              <CardBody>
+                <RankedBars label="Billing funnel events by surface" items={bars} />
+              </CardBody>
             )}
           </Card>
         )}
@@ -223,19 +243,21 @@ export function PaymentsTab() {
         title="Most recent checkout events"
         description={`The last ${RECENT_LIMIT} events in the window, newest first.`}
       >
-        <DataTable
+        <RecordList
           caption="Recent billing funnel events"
           columns={eventColumns}
-          rows={funnel.data?.recent ?? []}
+          paged={eventsPaged}
           rowKey={(row) => String(row.id)}
+          rowNoun="event"
+          what="billing funnel events"
           loading={funnel.loading && !funnel.data}
           error={funnel.error && !funnel.data ? funnel.error : null}
+          forbidden={funnel.forbidden}
           onRetry={funnel.reload}
-          pageSize={25}
           empty={
             <EmptyState
               title="No checkout events"
-              description="Nothing was recorded in this window. Widen the range, or check that the checkout surfaces are emitting funnel events at all."
+              description="Nothing was recorded in this window. Widen the range, or check the checkout surfaces are emitting events at all."
             />
           }
         />
@@ -243,64 +265,56 @@ export function PaymentsTab() {
 
       <Section
         title="Stored payment methods"
-        description="Cards, UPI mandates and bank references on file. UPI handles are masked server-side, and no gateway token is ever returned."
+        description="UPI handles are masked server-side; no gateway token is ever returned."
       >
-        <Toolbar className="mb-3">
-          <Input
-            size="sm"
-            type="number"
-            min={1}
-            inputMode="numeric"
-            aria-label="Filter payment methods by client id"
-            placeholder="Client id"
-            className="w-36"
-            value={clientId}
-            onChange={(event) => url.set({ client: event.target.value })}
-          />
+        <Toolbar sticky className="mb-3">
+          <div className="w-48">
+            <Combobox
+              size="sm"
+              label="Filter payment methods by account"
+              value={clientId || null}
+              onValueChange={(next) => url.set({ client: next })}
+              options={clients.items.map((row) => ({
+                value: String(row.id),
+                label: row.name,
+                description: row.email,
+                keywords: row.email,
+              }))}
+              placeholder="Every customer"
+              clearable
+            />
+          </div>
           {clientId ? (
             <Button size="sm" variant="ghost" onClick={() => url.set({ client: null })}>
               Show every customer
             </Button>
           ) : null}
-          <span className="figure ml-auto text-xs text-text-tertiary">
-            {methods.loading ? 'Loading…' : `${formatNumber(methods.items.length)} shown`}
-          </span>
         </Toolbar>
 
-        {methods.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="Truncated at 500 methods">
-            The endpoint returns at most {SERVER_CAP} rows and does not paginate. Filter by client id
-            to see a specific account's instruments.
-          </Alert>
-        ) : null}
-
-        {methods.forbidden ? (
-          <LockedState
-            title="You cannot read payment methods"
-            description="Your super-admin account is not permitted to read stored payment instruments. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Stored payment methods, newest first"
-            columns={methodColumns}
-            rows={methods.items}
-            rowKey={(row) => String(row.id)}
-            loading={methods.loading}
-            error={methods.error}
-            onRetry={methods.reload}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={clientId ? 'No methods for that client' : 'No payment methods stored'}
-                description={
-                  clientId
-                    ? 'That client id has no card, UPI mandate or bank reference on file.'
-                    : 'Nobody has a payment instrument on file. Every charge would have to be a one-off checkout.'
-                }
-              />
-            }
-          />
-        )}
+        <RecordList
+          caption="Stored payment methods, newest first"
+          columns={methodColumns}
+          paged={methodsPaged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="method"
+          what="stored payment instruments"
+          loading={methods.loading}
+          error={methods.error}
+          forbidden={methods.forbidden}
+          onRetry={methods.reload}
+          loaded={methods.items.length}
+          cap={SERVER_CAP}
+          empty={
+            <EmptyState
+              title={clientId ? 'No methods for that client' : 'No payment methods stored'}
+              description={
+                clientId
+                  ? 'That account has no card, UPI mandate or bank reference on file.'
+                  : 'Nobody has a payment instrument on file.'
+              }
+            />
+          }
+        />
       </Section>
     </Stack>
   );

@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Plus, Sparkles, Trash2 } from 'lucide-react';
 import {
   Alert,
+  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
+  EmptyState,
   Field,
   Input,
   SegmentedControl,
@@ -41,6 +43,28 @@ const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
   { value: 'horizontal', label: 'Side by side' },
   { value: 'vertical', label: 'Stacked' },
 ];
+
+/**
+ * "Leave it empty for the default" was said nine times on this tab, and it had
+ * to be: every one of these fields shows a placeholder that *is* the shipped
+ * default, and `Input` paints a placeholder in `--color-text-disabled`. Nine
+ * fields, no way to tell which you had customised without clicking into each.
+ *
+ * The rule is stated once on the card now, and the state is marked on the
+ * control. It sits in `Input`'s trailing slot because `Field` has no slot beside
+ * its label — reported as a `src/ui` gap.
+ */
+function defaultMark(value: string) {
+  // Always rendered, hidden rather than removed: `Input` returns a bare
+  // `<input>` when it has no affix and a wrapped one when it does, so a
+  // conditional slot remounts the element on the first keystroke and takes the
+  // caret with it.
+  return (
+    <Badge tone="neutral" size="sm" className={value.trim().length === 0 ? undefined : 'invisible'}>
+      Default
+    </Badge>
+  );
+}
 
 export interface MessagesSectionProps {
   draft: ExperienceDraft;
@@ -123,15 +147,9 @@ export function MessagesSection({
           eyebrow="Identity"
           titleAs="h2"
           title="What your chatbot is called"
-          description="The name in the widget header is the chatbot's name everywhere else too — the rail, the inbox, your reports."
         />
         <CardBody className="flex flex-col gap-5">
-          <Field
-            label="Display name"
-            hint="Shown beside the avatar at the top of the chat window."
-            error={errors.displayName ?? null}
-            required
-          >
+          <Field label="Display name" error={errors.displayName ?? null} required>
             <Input
               value={draft.displayName}
               maxLength={LIMITS.displayName}
@@ -141,15 +159,13 @@ export function MessagesSection({
               className="max-w-sm"
             />
           </Field>
-          <Field
-            label="Launcher text"
-            hint="The small label beside the closed launcher button. Leave it empty to use the default."
-          >
+          <Field label="Launcher text" hint="Beside the closed launcher.">
             <Input
               value={draft.launcherName}
               maxLength={LIMITS.launcherName}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.launcherName}
+              trailing={defaultMark(draft.launcherName)}
               onChange={(event) => onChange({ launcherName: event.target.value })}
               className="max-w-sm"
             />
@@ -162,36 +178,35 @@ export function MessagesSection({
           eyebrow="Welcome"
           titleAs="h2"
           title="The first thing a visitor reads"
-          description="Shown the moment the chat opens, before anyone has typed anything."
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Greeting" hint="One short line. It is the largest text in the window.">
+          <Field label="Greeting">
             <Input
               value={draft.welcomeGreeting}
               maxLength={LIMITS.welcomeGreeting}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.welcomeGreeting}
+              trailing={defaultMark(draft.welcomeGreeting)}
               onChange={(event) => onChange({ welcomeGreeting: event.target.value })}
             />
           </Field>
-          <Field label="Subtitle" hint="A sentence of context under the greeting.">
+          <Field label="Subtitle">
             <Input
               value={draft.welcomeSubtitle}
               maxLength={LIMITS.welcomeSubtitle}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.welcomeSubtitle}
+              trailing={defaultMark(draft.welcomeSubtitle)}
               onChange={(event) => onChange({ welcomeSubtitle: event.target.value })}
             />
           </Field>
-          <Field
-            label="Message box placeholder"
-            hint="The grey hint inside the box a visitor types into."
-          >
+          <Field label="Message box placeholder">
             <Input
               value={draft.inputPlaceholder}
               maxLength={LIMITS.inputPlaceholder}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.inputPlaceholder}
+              trailing={defaultMark(draft.inputPlaceholder)}
               onChange={(event) => onChange({ inputPlaceholder: event.target.value })}
               className="max-w-sm"
             />
@@ -204,7 +219,7 @@ export function MessagesSection({
           eyebrow="Starter questions"
           titleAs="h2"
           title="Questions a visitor can tap"
-          description="Shown under the greeting. A visitor who does not know what to ask taps one instead of leaving."
+          description="Shown under the greeting."
           actions={
             <SegmentedControl
               items={LAYOUTS}
@@ -217,10 +232,7 @@ export function MessagesSection({
         />
         <CardBody className="flex flex-col gap-4">
           {quickActions.length === 0 ? (
-            <p className="text-prose text-text-secondary">
-              No starter questions yet. Add one, or let the chatbot propose questions it can already
-              answer from what it has read.
-            </p>
+            <EmptyState size="inline" title="No starter questions yet" />
           ) : (
             <ul className="flex flex-col gap-2">
               {quickActions.map((action, index) => (
@@ -245,36 +257,36 @@ export function MessagesSection({
                   <Tooltip content="Move up">
                     <Button
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-md"
                       disabled={readOnly || index === 0}
                       aria-label={`Move starter question ${index + 1} up`}
                       onClick={() => move(index, index - 1)}
                     >
-                      <ChevronUp aria-hidden className="h-4 w-4" />
+                      <ChevronUp aria-hidden />
                     </Button>
                   </Tooltip>
                   <Tooltip content="Move down">
                     <Button
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-md"
                       disabled={readOnly || index === quickActions.length - 1}
                       aria-label={`Move starter question ${index + 1} down`}
                       onClick={() => move(index, index + 1)}
                     >
-                      <ChevronDown aria-hidden className="h-4 w-4" />
+                      <ChevronDown aria-hidden />
                     </Button>
                   </Tooltip>
                   <Tooltip content="Remove">
                     <Button
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-md"
                       disabled={readOnly}
                       aria-label={`Remove starter question ${index + 1}`}
                       onClick={() =>
                         setActions(quickActions.filter((_, i) => i !== index))
                       }
                     >
-                      <Trash2 aria-hidden className="h-4 w-4" />
+                      <Trash2 aria-hidden />
                     </Button>
                   </Tooltip>
                 </li>
@@ -289,7 +301,7 @@ export function MessagesSection({
               disabled={readOnly || atLimit}
               onClick={() => setActions([...quickActions, ''], quickActions.length)}
             >
-              <Plus aria-hidden className="h-3.5 w-3.5" />
+              <Plus aria-hidden />
               Add a question
             </Button>
             <Button
@@ -297,7 +309,7 @@ export function MessagesSection({
               size="sm"
               loading={suggesting}
               disabled={readOnly || agentId === null}
-              iconLeft={<Sparkles aria-hidden className="h-3.5 w-3.5" />}
+              iconLeft={<Sparkles aria-hidden />}
               onClick={() => void suggest()}
             >
               {suggestions === null ? 'Suggest questions' : 'Suggest different questions'}
@@ -331,7 +343,7 @@ export function MessagesSection({
                         disabled={readOnly || atLimit}
                         onClick={() => setActions([...quickActions, question])}
                       >
-                        <Plus aria-hidden className="h-3.5 w-3.5" />
+                        <Plus aria-hidden />
                         {question}
                       </Button>
                     </li>
@@ -354,26 +366,21 @@ export function MessagesSection({
           eyebrow="Other wording"
           titleAs="h2"
           title="The rest of the widget's copy"
-          description="Everything else a visitor can read. Leave a field empty to use the platform's wording, which we keep improving."
+          description="Leave a field empty for our wording."
         />
         <CardBody className="flex flex-col gap-5">
-          <Field
-            label="Greeting bubble"
-            hint="The teaser that pops up beside the closed launcher after a moment."
-          >
+          <Field label="Greeting bubble">
             <Input
               value={draft.greetingMessage}
               maxLength={LIMITS.greetingMessage}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.greetingMessage}
+              trailing={defaultMark(draft.greetingMessage)}
               onChange={(event) => onChange({ greetingMessage: event.target.value })}
             />
           </Field>
 
-          <Field
-            label="Offline banner"
-            hint="Shown in the chat window when nobody is available. Different from the live-chat handoff message on the Handoff tab."
-          >
+          <Field label="Offline banner" hint="When nobody is available.">
             <Textarea
               rows={2}
               value={draft.offlineBanner}
@@ -386,12 +393,13 @@ export function MessagesSection({
 
           {liveChatIncluded ? (
             <>
-              <Field label="Live chat button" hint="The control a visitor uses to ask for a person.">
+              <Field label="Live chat button">
                 <Input
                   value={draft.liveChatLabel}
                   maxLength={LIMITS.liveChatLabel}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.liveChatLabel}
+                  trailing={defaultMark(draft.liveChatLabel)}
                   onChange={(event) => onChange({ liveChatLabel: event.target.value })}
                   className="max-w-sm"
                 />
@@ -402,6 +410,7 @@ export function MessagesSection({
                   maxLength={LIMITS.ratingPrompt}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.ratingPrompt}
+                  trailing={defaultMark(draft.ratingPrompt)}
                   onChange={(event) => onChange({ ratingPrompt: event.target.value })}
                 />
               </Field>
@@ -411,16 +420,16 @@ export function MessagesSection({
                   maxLength={LIMITS.endChatLabel}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.endChatLabel}
+                  trailing={defaultMark(draft.endChatLabel)}
                   onChange={(event) => onChange({ endChatLabel: event.target.value })}
                   className="max-w-sm"
                 />
               </Field>
             </>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-surface-sunken px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-surface-sunken px-3 py-2.5">
               <p className="min-w-0 text-prose text-text-secondary">
-                Three more lines — the live chat button, the rating prompt and the end-chat button —
-                appear once your plan includes live chat. Visitors never see them until then.
+                Three more lines appear with live chat.
               </p>
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
                 Compare plans

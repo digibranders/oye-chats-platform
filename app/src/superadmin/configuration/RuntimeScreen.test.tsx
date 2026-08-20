@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeScreen } from './RuntimeScreen';
 import type { ModelConfig } from './types';
@@ -41,12 +41,16 @@ function config(overrides: Partial<ModelConfig> = {}): ModelConfig {
   };
 }
 
+/**
+ * A data router, not `MemoryRouter`: the form's `SaveBar` blocks navigation
+ * while the draft is dirty, and `useBlocker` only exists on a data router.
+ */
 function renderScreen() {
-  return render(
-    <MemoryRouter initialEntries={['/platform/platform?view=runtime']}>
-      <RuntimeScreen />
-    </MemoryRouter>,
+  const router = createMemoryRouter(
+    [{ path: '/platform/platform/runtime', element: <RuntimeScreen /> }],
+    { initialEntries: ['/platform/platform/runtime'] },
   );
+  return render(<RouterProvider router={router} />);
 }
 
 beforeEach(() => {
@@ -67,9 +71,10 @@ describe('RuntimeScreen', () => {
     const overlap = await screen.findByLabelText('Chunk overlap');
     await user.clear(overlap);
     await user.type(overlap, '1000');
-    await user.click(screen.getByRole('button', { name: /Apply 1 change/ }));
-
-    expect(await screen.findByText(/below chunk size/i)).toBeInTheDocument();
+    // The bar names the field that is blocking the save rather than telling the
+    // reader to go and find it.
+    expect(await screen.findByText(/Chunk overlap —/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review and apply' })).toBeDisabled();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(httpClient.put).not.toHaveBeenCalled();
   });
@@ -85,7 +90,7 @@ describe('RuntimeScreen', () => {
     const size = await screen.findByLabelText('Chunk size');
     await user.clear(size);
     await user.type(size, '1200');
-    await user.click(screen.getByRole('button', { name: /Apply 1 change/ }));
+    await user.click(screen.getByRole('button', { name: 'Review and apply' }));
 
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('chunk_size: 1200');
@@ -97,10 +102,18 @@ describe('RuntimeScreen', () => {
     );
   });
 
+  /** The sticky bar floats, so it appears only once there is something to save. */
   it('offers nothing to apply until something changes', async () => {
+    const user = userEvent.setup();
     httpClient.get.mockResolvedValue({ data: config() });
     renderScreen();
-    expect(await screen.findByRole('button', { name: 'No changes' })).toBeDisabled();
+    await screen.findByLabelText('Chunk size');
+    expect(screen.queryByRole('button', { name: 'Review and apply' })).not.toBeInTheDocument();
+
+    const size = screen.getByLabelText('Chunk size');
+    await user.clear(size);
+    await user.type(size, '1200');
+    expect(await screen.findByRole('button', { name: 'Review and apply' })).toBeEnabled();
   });
 
   it('disables the impersonation switch when the environment refuses it', async () => {
@@ -136,6 +149,6 @@ describe('RuntimeScreen', () => {
 
     httpClient.get.mockRejectedValue({ response: { status: 403, data: { detail: 'Nope.' } } });
     renderScreen();
-    expect(await screen.findByText('You cannot read the runtime configuration')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
   });
 });

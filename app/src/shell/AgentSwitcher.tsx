@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
-import { Combobox } from '../ui';
+import { Combobox, Skeleton } from '../ui';
 import { useBotContext } from '../context/BotContext';
 import { agentPath } from './nav';
 import type { Bot } from '../types/domain';
@@ -16,43 +15,55 @@ import type { Bot } from '../types/domain';
  * in the URL, and the URL is the only scope the agent pages read. The system
  * this replaces kept a shell-level selection beside the URL one, and the two
  * disagreeing is what let a user configure one chatbot while chatting with
- * another.
+ * another. It therefore takes the id from the URL and the chatbot itself only
+ * when the list has arrived; while it has not, the trigger holds a placeholder
+ * rather than the rail rewriting itself a frame later.
+ *
+ * `size="sm"` puts its text at x=18 — the rail's glyph column, and the same
+ * left edge as every group label. At `md` it started at 20, which was a fourth
+ * text edge in a column that already had too many. It carries no "New chatbot"
+ * button of its own either: the Chatbots group label owns that action in
+ * workspace scope, and one action wants one affordance.
  */
-export function AgentSwitcher({ current, onNavigate }: { current: Bot; onNavigate?: () => void }) {
+export function AgentSwitcher({
+  agentId,
+  agent,
+  onNavigate,
+}: {
+  agentId: string;
+  agent: Bot | null;
+  onNavigate?: () => void;
+}) {
   const navigate = useNavigate();
   const { bots } = useBotContext();
 
+  if (!agent) {
+    return (
+      <div className="flex h-control-sm items-center rounded-md border border-rail-border bg-rail-hover px-2.5">
+        <Skeleton className="h-3 w-28" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-1.5">
-      <Combobox
-        label="Chatbot"
-        value={String(current.id)}
-        placeholder="Select a chatbot"
-        searchPlaceholder="Find a chatbot…"
-        emptyMessage="No chatbots match"
-        options={bots.map((bot) => ({
-          value: String(bot.id),
-          label: bot.name ?? `Chatbot ${bot.id}`,
-          description: bot.bot_key ?? undefined,
-        }))}
-        onValueChange={(next) => {
-          if (!next || next === String(current.id)) return;
-          onNavigate?.();
-          navigate(agentPath(next, 'overview'));
-        }}
-        className="border-rail-border bg-rail-hover text-rail-text hover:border-rail-text-muted"
-      />
-      <button
-        type="button"
-        onClick={() => {
-          onNavigate?.();
-          navigate('/chatbots?new=1');
-        }}
-        className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-rail-text-muted transition-colors hover:text-rail-text"
-      >
-        <Plus aria-hidden className="h-3 w-3 shrink-0" />
-        New chatbot
-      </button>
-    </div>
+    <Combobox
+      size="sm"
+      label="Chatbot"
+      value={agentId}
+      placeholder="Select a chatbot"
+      searchPlaceholder="Find a chatbot…"
+      emptyMessage="No chatbots match"
+      options={bots.map((bot) => ({
+        value: String(bot.id),
+        label: bot.name ?? `Chatbot ${bot.id}`,
+        description: bot.bot_key ?? undefined,
+      }))}
+      onValueChange={(next) => {
+        if (!next || next === agentId) return;
+        onNavigate?.();
+        navigate(agentPath(next, 'overview'));
+      }}
+      className="border-rail-border bg-rail-hover text-rail-text hover:border-rail-text-muted"
+    />
   );
 }

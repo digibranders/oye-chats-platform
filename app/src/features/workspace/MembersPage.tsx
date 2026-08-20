@@ -100,10 +100,7 @@ const TAB_ITEMS = [
 
 function isTab(value: string | null): value is TabKey {
   return (
-    value === 'people' ||
-    value === 'invitations' ||
-    value === 'departments' ||
-    value === 'routing'
+    value === 'people' || value === 'invitations' || value === 'departments' || value === 'routing'
   );
 }
 
@@ -302,7 +299,9 @@ export function MembersPage() {
       width: '17rem',
       pinned: true,
       sortable: (a, b) =>
-        (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' }),
+        (a.name || a.email).localeCompare(b.name || b.email, undefined, {
+          sensitivity: 'base',
+        }),
       render: (operator) => (
         <div className="flex min-w-0 items-center gap-2.5">
           <Avatar name={operator.name || operator.email} size="sm" src={operator.avatar_url} />
@@ -327,7 +326,9 @@ export function MembersPage() {
       key: 'role',
       header: 'Role',
       sortable: (a, b) => (a.role ?? '').localeCompare(b.role ?? ''),
-      render: (operator) => <Badge tone={roleTone(operator.role)}>{roleLabel(operator.role)}</Badge>,
+      render: (operator) => (
+        <Badge tone={roleTone(operator.role)}>{roleLabel(operator.role)}</Badge>
+      ),
     },
     {
       key: 'department',
@@ -399,25 +400,16 @@ export function MembersPage() {
               Edit member
             </MenuItem>
             {operator.linked_client_id === team.clientId ? (
-              <MenuItem
-                icon={<LogOut aria-hidden />}
-                onSelect={() => setLeaving(true)}
-              >
+              <MenuItem icon={<LogOut aria-hidden />} onSelect={() => setLeaving(true)}>
                 Leave live chat
               </MenuItem>
             ) : operator.is_active === false ? (
-              <MenuItem
-                icon={<Power aria-hidden />}
-                onSelect={() => setReactivating(operator)}
-              >
+              <MenuItem icon={<Power aria-hidden />} onSelect={() => setReactivating(operator)}>
                 Reactivate…
               </MenuItem>
             ) : (
               <>
-                <MenuItem
-                  icon={<Power aria-hidden />}
-                  onSelect={() => setDeactivating(operator)}
-                >
+                <MenuItem icon={<Power aria-hidden />} onSelect={() => setDeactivating(operator)}>
                   Deactivate…
                 </MenuItem>
                 <MenuItem
@@ -531,9 +523,7 @@ export function MembersPage() {
       render: (department) => (
         <div className="min-w-0">
           <p className="truncate font-medium text-text-primary">{department.name}</p>
-          <p className="truncate text-xs text-text-secondary">
-            {department.description || ABSENT}
-          </p>
+          <p className="truncate text-xs text-text-secondary">{department.description || ABSENT}</p>
         </div>
       ),
     },
@@ -558,10 +548,7 @@ export function MembersPage() {
             <MoreHorizontal aria-hidden />
           </MenuTrigger>
           <MenuContent>
-            <MenuItem
-              icon={<Pencil aria-hidden />}
-              onSelect={() => setDepartmentDraft(department)}
-            >
+            <MenuItem icon={<Pencil aria-hidden />} onSelect={() => setDepartmentDraft(department)}>
               Edit department
             </MenuItem>
             <MenuItem
@@ -657,23 +644,23 @@ export function MembersPage() {
         >
           <TabPanel value="people">
             <DataTable
-                caption="Everyone who can answer conversations on this chatbot"
-                columns={memberColumns}
-                rows={roster}
-                rowKey={(operator) => String(operator.id)}
-                rowLabel={(operator) => operator.name || operator.email}
-                empty={
-                  <EmptyState
-                    icon={Users}
-                    title="Nobody on the roster yet"
-                    description="Invite a teammate to answer live conversations, or join the roster yourself."
-                    action={
-                      <Button onClick={() => setInviting(true)} size="sm">
-                        Invite a teammate
-                      </Button>
-                    }
-                  />
-                }
+              caption="Everyone who can answer conversations on this chatbot"
+              columns={memberColumns}
+              rows={roster}
+              rowKey={(operator) => String(operator.id)}
+              rowLabel={(operator) => operator.name || operator.email}
+              empty={
+                <EmptyState
+                  icon={Users}
+                  title="Nobody on the roster yet"
+                  description="Invite a teammate to answer live conversations, or join the roster yourself."
+                  action={
+                    <Button onClick={() => setInviting(true)} size="sm">
+                      Invite a teammate
+                    </Button>
+                  }
+                />
+              }
               rowNoun="teammate"
             />
           </TabPanel>
@@ -682,7 +669,7 @@ export function MembersPage() {
             {team.invitesForbidden ? (
               <Card>
                 <ErrorState
-                  compact
+                  size="panel"
                   title="We could not load the invitations"
                   description="Only owners and admins can see outstanding invitations. If that is you, try again."
                   onRetry={invalidate}
@@ -690,26 +677,26 @@ export function MembersPage() {
               </Card>
             ) : (
               <DataTable
-                  caption="Invitations that have been sent but not yet accepted"
-                  columns={inviteColumns}
-                  rows={invites}
-                  rowKey={(invite) => String(invite.id)}
-                  rowLabel={(invite) => invite.email}
-                  empty={
-                    <EmptyState
-                      icon={UserPlus}
-                      title="No invitations outstanding"
-                      description="Everyone you have invited has either accepted or been revoked."
-                      action={
-                        <Button size="sm" onClick={() => setInviting(true)}>
-                          Invite a teammate
-                        </Button>
-                      }
-                    />
-                  }
-                  rowNoun="invitation"
-                  defaultSort={{ key: 'expiry', direction: 'asc' }}
-                />
+                caption="Invitations that have been sent but not yet accepted"
+                columns={inviteColumns}
+                rows={invites}
+                rowKey={(invite) => String(invite.id)}
+                rowLabel={(invite) => invite.email}
+                empty={
+                  <EmptyState
+                    icon={UserPlus}
+                    title="No invitations outstanding"
+                    description="Everyone you have invited has either accepted or been revoked."
+                    action={
+                      <Button size="sm" onClick={() => setInviting(true)}>
+                        Invite a teammate
+                      </Button>
+                    }
+                  />
+                }
+                rowNoun="invitation"
+                defaultSort={{ key: 'expiry', direction: 'asc' }}
+              />
             )}
           </TabPanel>
 
@@ -827,7 +814,11 @@ export function MembersPage() {
         confirmLabel="Deactivate"
         destructive
         onConfirm={async () => {
-          if (deactivating) await setActive.mutateAsync({ operator: deactivating, active: false });
+          if (deactivating)
+            await setActive.mutateAsync({
+              operator: deactivating,
+              active: false,
+            });
         }}
       />
 
@@ -845,7 +836,11 @@ export function MembersPage() {
         }
         confirmLabel="Reactivate"
         onConfirm={async () => {
-          if (reactivating) await setActive.mutateAsync({ operator: reactivating, active: true });
+          if (reactivating)
+            await setActive.mutateAsync({
+              operator: reactivating,
+              active: true,
+            });
         }}
       />
 
@@ -899,5 +894,70 @@ export function MembersPage() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Two rows of what a paid plan buys, behind the lock.
+ *
+ * `LockedState` takes a `preview` precisely so a customer can judge the upgrade,
+ * and this is the one screen in the console where the slot earns its existence:
+ * "a team" is not a thing anyone can picture, and a roster is.
+ */
+function RosterPreview() {
+  const rows = [
+    {
+      id: 1,
+      name: 'Priya Raman',
+      email: 'priya@acme.com',
+      role: 'admin',
+      online: true,
+    },
+    {
+      id: 2,
+      name: 'Sam Okafor',
+      email: 'sam@acme.com',
+      role: 'operator',
+      online: false,
+    },
+  ];
+  return (
+    <DataTable
+      caption="An example roster"
+      rows={rows}
+      rowKey={(row) => String(row.id)}
+      stickyHeader={false}
+      columns={[
+        {
+          key: 'name',
+          header: 'Member',
+          width: '17rem',
+          render: (row) => (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Avatar name={row.name} size="sm" />
+              <div className="min-w-0">
+                <p className="truncate font-medium text-text-primary">{row.name}</p>
+                <p className="truncate text-xs text-text-secondary">{row.email}</p>
+              </div>
+            </div>
+          ),
+        },
+        {
+          key: 'role',
+          header: 'Role',
+          render: (row) => <Badge tone={roleTone(row.role)}>{roleLabel(row.role)}</Badge>,
+        },
+        {
+          key: 'availability',
+          header: 'Availability',
+          render: (row) => (
+            <StatusDot
+              tone={row.online ? 'success' : 'neutral'}
+              label={row.online ? 'Online' : 'Offline'}
+            />
+          ),
+        },
+      ]}
+    />
   );
 }

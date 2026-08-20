@@ -107,6 +107,8 @@ export const CREDIT_ACTIONS = [
   { key: 'company_name', bucket: 'companyName', label: 'Company identified', unit: 'lookup' },
 ] as const;
 
+/** One metered action, as `CREDIT_ACTIONS` declares it. */
+export type CreditAction = (typeof CREDIT_ACTIONS)[number];
 export type CreditActionKey = (typeof CREDIT_ACTIONS)[number]['key'];
 export type CreditActionBucket = (typeof CREDIT_ACTIONS)[number]['bucket'];
 

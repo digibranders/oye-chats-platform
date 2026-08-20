@@ -84,7 +84,7 @@ export function installStatus({ installedAt, claimed, checking }: InstallStatusI
     state: 'waiting',
     label: 'Waiting to be installed',
     tone: 'neutral',
-    detail: 'Add the snippet below to your website and visitors can start chatting.',
+    detail: 'Paste the snippet on your website and visitors can start chatting.',
   };
 }
 
@@ -127,7 +127,7 @@ export interface WidgetHeartbeat {
  * anyone can forge with two lines of curl. It is presented as a support
  * diagnostic and labelled as reported rather than verified, and nothing in this
  * console may branch on it. Enforcement of where the widget may run is
- * `allowed_domains` and lives further down the same page.
+ * `allowed_domains`, which is configured under Behaviour ▸ Access.
  */
 export function widgetHeartbeat({
   installedAt,
@@ -305,7 +305,7 @@ export function domainNotice({
       id: 'empty',
       tone: 'warning',
       title: 'Nothing is being enforced yet',
-      body: 'The check is on but the list is empty, and an empty list lets every origin through. Add your website below to actually lock it down.',
+      body: 'The check is on but the list is empty, and an empty list lets every origin through. Add your website to actually lock it down.',
     };
   }
   const risk = ownSiteRisk({ website, domains, enabled });
@@ -412,13 +412,13 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
     items.push({
       id: 'allow-list',
       title: `Your allow-list is turning away ${risk.host}`,
-      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Allowed domains below.`,
+      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Behaviour ▸ Access.`,
     });
   } else if (domainCheckEnabled && domainsConfigured > 0) {
     items.push({
       id: 'allow-list-subdomain',
       title: 'Check the exact address the page is served from',
-      body: 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com — only *.acme.com does. Compare the address bar on the page you installed to the list below, character for character.',
+      body: 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com — only *.acme.com does. Compare the address bar on the page you installed to your allowed domains, character for character.',
     });
   }
 

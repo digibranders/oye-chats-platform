@@ -56,9 +56,14 @@ const FUNNEL: BillingFunnelResponse = {
 };
 
 function respond(methods: PaymentMethodRow[], funnel: BillingFunnelResponse | null = FUNNEL) {
-  get.mockImplementation((path: string) =>
-    Promise.resolve({ data: path.includes('billing-funnel') ? funnel : methods }),
-  );
+  get.mockImplementation((path: string) => {
+    if (path.includes('billing-funnel')) return Promise.resolve({ data: funnel });
+    if (path.includes('payment-methods')) return Promise.resolve({ data: methods });
+    // The account directory the one filter picks from.
+    return Promise.resolve({
+      data: [{ id: 42, name: 'Northwind Security', email: 'ops@northwind.test' }],
+    });
+  });
 }
 
 function UrlProbe() {
@@ -114,13 +119,15 @@ describe('PaymentsTab', () => {
     expect(await screen.findByText(/••••@ybl/)).toBeInTheDocument();
   });
 
-  it('filters both the methods list by client id, through the URL', async () => {
+  /** The filter names the account rather than asking for its integer id. */
+  it('filters the methods list by account, through the URL', async () => {
     const user = userEvent.setup();
     respond([method()]);
     mount();
 
-    await screen.findByText('Northwind Security');
-    await user.type(screen.getByLabelText(/filter payment methods by client id/i), '42');
+    await screen.findAllByText('Northwind Security');
+    await user.click(screen.getByLabelText(/filter payment methods by account/i));
+    await user.click(await screen.findByRole('option', { name: /Northwind Security/ }));
 
     await waitFor(() => expect(screen.getByTestId('url').textContent).toContain('client=42'));
     await waitFor(() =>
@@ -171,7 +178,7 @@ describe('PaymentsTab', () => {
         : Promise.resolve({ data: FUNNEL }),
     );
     mount();
-    expect(await screen.findByText('You cannot read payment methods')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.getByText('sheet opened')).toBeInTheDocument();
   });
 });

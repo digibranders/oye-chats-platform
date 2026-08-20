@@ -47,7 +47,11 @@ export const OtpField = forwardRef<HTMLInputElement, OtpFieldProps>(function Otp
         value={value}
         onChange={(event) => onChange(event.target.value)}
         size="lg"
-        className="figure text-center text-lg tracking-widest"
+        // `size="lg"` already sets the control's own rung. `text-lg` is the
+        // section-heading size, whose 26px line-height overflows what a 40px
+        // control was measured for, and `tracking-widest` is an arbitrary
+        // tracking value in a system that declares exactly one.
+        className="figure text-center"
       />
     </Field>
   );

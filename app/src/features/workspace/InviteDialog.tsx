@@ -7,13 +7,14 @@ import {
   Dialog,
   Field,
   Input,
+  RadioCards,
   Select,
   toast,
   validateEmail,
 } from '../../ui';
 import { createOperatorInvite } from '../../services/api';
 import type { Department } from '../../types/domain';
-import { assignableRoles, roleDefinition, type WorkspaceRole } from './roles';
+import { assignableRoles, type WorkspaceRole } from './roles';
 
 export interface InviteDialogProps {
   open: boolean;
@@ -98,8 +99,6 @@ export function InviteDialog({
     invite.mutate();
   }
 
-  const selected = roleDefinition(role);
-
   return (
     <Dialog
       open={open}
@@ -119,7 +118,11 @@ export function InviteDialog({
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={invite.isPending}>
               Cancel
             </Button>
-            <Button onClick={submit} loading={invite.isPending} disabled={atSeatLimit || botId == null}>
+            <Button
+              onClick={submit}
+              loading={invite.isPending}
+              disabled={atSeatLimit || botId == null}
+            >
               Send invitation
             </Button>
           </>
@@ -161,7 +164,7 @@ export function InviteDialog({
             <Field
               label="Email address"
               required
-              hint="They get a sign-in link. They do not need an OyeChats account first."
+              hint="They get a sign-in link — no account needed first."
               error={emailError}
             >
               <Input
@@ -176,33 +179,23 @@ export function InviteDialog({
               />
             </Field>
 
-            <div>
-              <Field label="Role" required hint={selected?.summary}>
-                <Select
-                  value={role}
-                  options={assignableRoles(callerRole).map((definition) => ({
-                    value: definition.value,
-                    label: definition.label,
-                  }))}
-                  onChange={(event) => setRole(event.target.value as WorkspaceRole)}
-                />
-              </Field>
-              {selected ? (
-                <div
-                  aria-live="polite"
-                  className="mt-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5"
-                >
-                  <p className="text-xs font-medium text-text-primary">{selected.label} can:</p>
-                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-text-secondary">
-                    {selected.can.map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
+            {/* All three roles readable at once. See `MemberDialog` — this was
+                the same `Select`-plus-live-region workaround, copied. */}
+            <Field label="Role" required>
+              <RadioCards
+                label="Role"
+                columns={1}
+                value={role}
+                onChange={setRole}
+                items={assignableRoles(callerRole).map((definition) => ({
+                  value: definition.value,
+                  label: definition.label,
+                  description: definition.summary,
+                }))}
+              />
+            </Field>
 
-            <Field label="Department" hint="Optional. Used to route conversations to a group.">
+            <Field label="Department" optional hint="Routes a conversation to a group.">
               <Select
                 value={departmentId}
                 options={[

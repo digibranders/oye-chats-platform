@@ -8,9 +8,9 @@ import {
   EmptyState,
   Field,
   Input,
+  Kbd,
   LoadingRows,
   Textarea,
-  cn,
   toast,
 } from '../../ui';
 import {
@@ -100,8 +100,21 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
       <Drawer
         open={open}
         onOpenChange={onOpenChange}
-        title="Saved replies"
-        description="Type / in the message box to drop one into a conversation. Use {name} and it becomes the visitor's first name."
+        // The title follows the body. It used to stay "Saved replies" with the
+        // same description while the body had become an edit form for one
+        // reply, so nothing on screen said which one was being edited.
+        title={
+          editing
+            ? draft.id == null
+              ? 'New saved reply'
+              : `Edit “${draft.title.trim() || 'saved reply'}”`
+            : 'Saved replies'
+        }
+        description={
+          editing
+            ? undefined
+            : "Type / in the message box to drop one into a conversation. Use {name} and it becomes the visitor's first name."
+        }
         width="md"
         footer={
           editing ? (
@@ -123,12 +136,13 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
             </>
           ) : (
             <Button
+              variant="primary"
               onClick={() => {
                 setDraft(BLANK);
                 setEditing(true);
               }}
             >
-              <Plus aria-hidden className="h-4 w-4" />
+              <Plus aria-hidden />
               New saved reply
             </Button>
           )
@@ -173,7 +187,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
           <LoadingRows rows={4} />
         ) : snippets.length === 0 ? (
           <EmptyState
-            compact
+            size="panel"
             title="No saved replies yet"
             description="Write the answers your team gives every day once, and reach them with a slash from any conversation."
           />
@@ -185,9 +199,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
                   <div className="flex flex-wrap items-baseline gap-2">
                     <p className="text-base font-medium text-text-primary">{snippet.title}</p>
                     {snippet.shortcut ? (
-                      <span className={cn('figure rounded-xs bg-surface-sunken px-1.5 py-0.5 text-2xs text-text-secondary')}>
-                        /{snippet.shortcut.replace(/^\//, '')}
-                      </span>
+                      <Kbd>/{snippet.shortcut.replace(/^\//, '')}</Kbd>
                     ) : null}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-secondary">
@@ -209,7 +221,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
                       setEditing(true);
                     }}
                   >
-                    <Pencil aria-hidden className="h-4 w-4" />
+                    <Pencil aria-hidden />
                   </Button>
                   <Button
                     size="icon-sm"
@@ -217,7 +229,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
                     aria-label={`Delete ${snippet.title}`}
                     onClick={() => setPendingDelete(snippet)}
                   >
-                    <Trash2 aria-hidden className="h-4 w-4" />
+                    <Trash2 aria-hidden />
                   </Button>
                 </div>
               </li>

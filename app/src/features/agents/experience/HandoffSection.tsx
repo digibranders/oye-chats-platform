@@ -2,14 +2,18 @@ import { type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Alert,
+  Badge,
   Card,
   CardBody,
   CardHeader,
   Checkbox,
   Field,
+  Grid,
   Input,
-  LockedState,
+  LoadingRows,
   Select,
+  SettingGroup,
+  SettingRow,
   Switch,
   Textarea,
   buttonClass,
@@ -85,32 +89,29 @@ export function HandoffSection({
   return (
     <div className="flex flex-col gap-6">
       {entitlementsLoading ? (
+        // A `Card` whose only child is a `CardHeader` paints a doubled,
+        // square-ended hairline across its own rounded bottom edge.
         <Card>
-          <CardHeader
-            eyebrow="Live chat"
-            titleAs="h2"
-            title="Talking to a person"
-            description="Checking what your plan includes…"
-          />
+          <CardBody>
+            <LoadingRows rows={2} />
+          </CardBody>
         </Card>
       ) : !liveChatIncluded ? (
-        <LockedState
-          title="Live chat is on Starter and above"
-          description="Visitors can ask for a person, land in your inbox, and carry on the same conversation with someone from your team. Until then the chatbot answers on its own and the handoff controls are not offered — anything set here would never reach a visitor."
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'sm')}>
+        <SettingGroup title="Talking to a person" titleAs="h2">
+          <SettingRow
+            label="Let visitors ask for a person"
+            badge={<Badge tone="plan">Starter and above</Badge>}
+            description="Visitors can ask for a person and land in your inbox."
+            controlWidth="auto"
+          >
+            <Link to="/billing" className={buttonClass('secondary', 'sm')}>
               Compare plans
             </Link>
-          }
-        />
+          </SettingRow>
+        </SettingGroup>
       ) : (
         <Card>
-          <CardHeader
-            eyebrow="Live chat"
-            titleAs="h2"
-            title="Talking to a person"
-            description="Whether a visitor can ask for someone from your team, and what they see while they wait."
-          />
+          <CardHeader eyebrow="Live chat" titleAs="h2" title="Talking to a person" />
           <CardBody className="flex flex-col gap-5">
             {chatbotOnFree ? (
               <Alert tone="warning" title={`This chatbot is on the ${meta.planName} plan`}>
@@ -120,7 +121,7 @@ export function HandoffSection({
             ) : null}
             <Switch
               label="Let visitors ask for a person"
-              description="Adds the live chat control to the widget. Conversations arrive in your inbox."
+              description="Conversations arrive in your inbox."
               checked={draft.liveChatEnabled}
               disabled={readOnly}
               onCheckedChange={(liveChatEnabled) => onChange({ liveChatEnabled })}
@@ -142,10 +143,7 @@ export function HandoffSection({
                   />
                 </Field>
 
-                <Field
-                  label="When nobody is available"
-                  hint="The reply when a visitor asks for a person and none of your team is online. Different from the widget's general offline banner, which is on the Messages tab."
-                >
+                <Field label="When nobody is available" hint="When nobody on your team is online.">
                   <Textarea
                     rows={2}
                     value={draft.handoffOfflineMessage}
@@ -156,10 +154,7 @@ export function HandoffSection({
                   />
                 </Field>
 
-                <Field
-                  label="Offer the handoff"
-                  hint="How long the chatbot waits after suggesting a person before showing the form."
-                >
+                <Field label="Offer the handoff" hint="Delay before the form appears.">
                   <Select
                     options={HANDOFF_DELAY_OPTIONS}
                     value={String(draft.handoffDelaySeconds)}
@@ -171,12 +166,8 @@ export function HandoffSection({
                   />
                 </Field>
 
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <Field
-                    label="Give up waiting after"
-                    hint={`Between ${QUEUE_TIMEOUT.min} and ${QUEUE_TIMEOUT.max} seconds.`}
-                    error={errors.queueTimeoutSeconds ?? null}
-                  >
+                <Grid cols={2}>
+                  <Field label="Give up waiting after" error={errors.queueTimeoutSeconds ?? null}>
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -194,7 +185,7 @@ export function HandoffSection({
                   </Field>
                   <Field
                     label="Most people waiting at once"
-                    hint={`Between ${MAX_QUEUE.min} and ${MAX_QUEUE.max}. Past it, visitors are offered the offline form instead of a queue.`}
+                    hint="Past it, visitors get the offline form."
                     error={errors.maxQueueSize ?? null}
                   >
                     <Input
@@ -209,7 +200,7 @@ export function HandoffSection({
                       className="figure"
                     />
                   </Field>
-                </div>
+                </Grid>
               </>
             ) : null}
           </CardBody>
@@ -221,7 +212,7 @@ export function HandoffSection({
           eyebrow="Availability"
           titleAs="h2"
           title="When someone is there"
-          description="This chatbot's own hours. Every chatbot in the workspace keeps its own — a support bot and a sales bot rarely keep the same ones."
+          description="This chatbot's own hours."
         />
         <CardBody className="flex flex-col gap-4">
           {errors.businessHours ? (
@@ -239,27 +230,29 @@ export function HandoffSection({
       </Card>
 
       {!entitlementsLoading && isFree ? (
-        <LockedState
-          title="The pre-chat form is on Starter and above"
-          description="Ask a visitor for their details before the conversation starts, and every chat arrives with a name and a way to reply. Leads are not stored on the Free plan, so the form has nowhere to put what it collects."
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'sm')}>
+        <SettingGroup title="What to ask before the chat starts" titleAs="h2">
+          <SettingRow
+            label="Ask before chatting"
+            badge={<Badge tone="plan">Starter and above</Badge>}
+            description="Every chat arrives with a name and a way to reply."
+            controlWidth="auto"
+          >
+            <Link to="/billing" className={buttonClass('secondary', 'sm')}>
               Compare plans
             </Link>
-          }
-        />
+          </SettingRow>
+        </SettingGroup>
       ) : (
         <Card>
           <CardHeader
             eyebrow="Lead form"
             titleAs="h2"
             title="What to ask before the chat starts"
-            description="A short form shown to a new visitor. Every field you add is one more reason to close the window, so ask for as little as you can."
+            description="Every field you add is one more reason to close the window."
           />
           <CardBody className="flex flex-col gap-5">
             <Switch
               label="Ask before chatting"
-              description="New visitors fill this in before their first message."
               checked={draft.leadFormEnabled}
               disabled={readOnly}
               onCheckedChange={(leadFormEnabled) => onChange({ leadFormEnabled })}

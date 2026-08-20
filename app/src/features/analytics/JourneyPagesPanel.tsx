@@ -1,7 +1,9 @@
 import { Download, Compass } from 'lucide-react';
 import {
+  ABSENT,
   Button,
   Card,
+  CardBody,
   CardHeader,
   DataTable,
   EmptyState,
@@ -53,7 +55,7 @@ export function JourneyPagesPanel({
       width: '11rem',
       render: (row) => (
         <span className="figure text-text-secondary">
-          {journeys > 0 ? formatPercent(row.sessions / journeys) : '—'}
+          {journeys > 0 ? formatPercent(row.sessions / journeys) : ABSENT}
         </span>
       ),
       sortable: (a, b) => a.sessions - b.sessions,
@@ -91,33 +93,32 @@ export function JourneyPagesPanel({
         description={`Where visitors were before they opened the chatbot · ${monthLabel}`}
         actions={
           rows.length > 0 ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onExport}
-              iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-            >
+            <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
               Export
             </Button>
           ) : undefined
         }
       />
-      <DataTable
-        caption="Pages visitors were on before opening the chatbot"
-        columns={columns}
-        rows={rows}
-        rowKey={(row) => row.path}
-        defaultSort={{ key: 'sessions', direction: 'desc' }}
-        pageSize={10}
-        empty={
-          <EmptyState
-            compact
-            icon={Compass}
-            title="No pages tracked this month"
-            description="This needs visitors who browsed at least one page before opening the chat. Nobody did in this month."
-          />
-        }
-      />
+      <CardBody flush>
+        <DataTable
+          seated
+          caption="Pages visitors were on before opening the chatbot"
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.path}
+          defaultSort={{ key: 'sessions', direction: 'desc' }}
+          pageSize={10}
+          rowNoun="page"
+          empty={
+            <EmptyState
+              size="inline"
+              icon={Compass}
+              title="No pages tracked this month"
+              description="This needs visitors who browsed at least one page before opening the chat. Nobody did in this month."
+            />
+          }
+        />
+      </CardBody>
     </Card>
   );
 }

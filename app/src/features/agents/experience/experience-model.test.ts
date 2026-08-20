@@ -107,11 +107,14 @@ describe('draftFromBot', () => {
 });
 
 describe('metaFromBot', () => {
-  it('keeps the credit line out of the draft — Deploy owns its wording', () => {
-    const meta = metaFromBot(RAW);
-    expect(meta.brandingText).toBe('Powered by Acme');
-    expect(meta.brandingUrl).toBe('https://acme.test');
-    expect(Object.keys(load())).not.toContain('brandingText');
+  it('keeps the saved wording for the preview, and puts the editable pair in the draft', () => {
+    /* The wording and the URL used to live on Deploy, under a second card with
+       the same title as the switch's card here. One entitlement governs both
+       halves, so both halves are one card and one draft now. */
+    expect(metaFromBot(RAW).brandingText).toBe('Powered by Acme');
+    const draft = draftFromBot(RAW);
+    expect(draft.brandingText).toBe('Powered by Acme');
+    expect(draft.brandingUrl).toBe('https://acme.test');
   });
 
   it('drops a recommended colour that is not a colour', () => {

@@ -6,7 +6,9 @@ import {
   Bot as BotIcon,
   CheckCheck,
   Download,
+  Info,
   MailX,
+  MoreHorizontal,
   Users,
 } from 'lucide-react';
 import {
@@ -17,19 +19,24 @@ import {
   Button,
   Card,
   CardBody,
+  CardHeader,
   ConfirmDialog,
   DataTable,
   EmptyState,
-  LoadingRows,
   LockedState,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
   Page,
   PageHeader,
   SearchField,
   Select,
   Stack,
-  StatTile,
+  StatRow,
   Toolbar,
   Tooltip,
+  BUTTON_ICON_SLOT,
   buttonClass,
   cn,
   formatNumber,
@@ -81,14 +88,19 @@ import {
  * were the workspace's total. The API has supported `tier`, `min_score`, `page`
  * and `limit` the whole time.
  *
- * So the division of labour here is explicit, and the page says it out loud:
- * **tier and minimum score are the server's**, applied across every lead and
- * driving the count; **search, lead type and column sorting are the browser's**,
- * applied to the rows on screen. Every one of them lives in the URL, so a
- * filtered view is a link.
+ * **The table owns its paging.** `DataTable` takes `page`, `onPageChange` and
+ * `rowCount`, and this page hand-rolled a `<nav>` of Previous/Next buttons
+ * twenty lines below one that already had them — which cost more than
+ * duplication. Because `page` was never passed, the table did not know it was
+ * server-paged, so it happily sorted fifty rows out of nine thousand and
+ * presented the result as "sorted by score".
  *
- * The pipeline summary at the top is the reason `GET /leads/stats` is called.
- * The page this replaces fetched it on every load and rendered none of it.
+ * **The division of labour is a property of the API, not a paragraph.** Tier and
+ * minimum score are the server's, applied across every lead. Search and lead
+ * type are the browser's, applied to the rows on screen — so while either is
+ * active this stops claiming to be page 3 of 128 and reports what it is actually
+ * showing. The page used to explain that split in two lines of body copy; it is
+ * now one tooltip on one glyph, where a reader who wonders can find it.
  */
 
 const CONTACT_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
@@ -107,6 +119,9 @@ const SCORE_OPTIONS = [
   ...MIN_SCORE_OPTIONS.map((score) => ({ value: String(score), label: `Score ${score}+` })),
 ];
 
+/** What search and the lead-type filter actually reach. One tooltip, not two lines. */
+const SCOPE_NOTE = `Quality and score filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
+
 /**
  * A deliverability verdict beside an email.
  *
@@ -123,54 +138,57 @@ function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
   return (
     <span role="img" aria-label={label} className="inline-flex shrink-0">
       {isValid ? (
-        <BadgeCheck aria-hidden className="h-3.5 w-3.5 text-success" />
+        <BadgeCheck aria-hidden className="h-icon-sm w-icon-sm text-success" />
       ) : (
-        <AlertCircle aria-hidden className="h-3.5 w-3.5 text-danger" />
+        <AlertCircle aria-hidden className="h-icon-sm w-icon-sm text-danger" />
       )}
     </span>
   );
 }
 
 /**
- * The qualification cell: one chip per framework dimension, each carrying its
- * real name.
+ * How much of the framework this lead answered, as one figure.
  *
- * The column this replaces was headed with the literal string "BANT" — the
- * exact jargon the module was written to eliminate — and its four chips were
- * single capital letters whose meaning lived only in a `title` attribute, which
- * is unreachable by keyboard and invisible on touch. Whole words, and a real
- * tooltip carrying what the visitor actually said.
+ * It was four to five tinted word-chips — `Budget` `Authority` `Need`
+ * `Timeline` — each in its own tooltip, wrapping to two lines the moment the
+ * framework was MEDDIC, so no two rows in the column were the same height. And
+ * the question a reader actually asks down a column is "how complete is this
+ * one?", which four words cannot answer at a glance. The words move to the
+ * drawer, where there is room to read them; the column carries the count and
+ * names every dimension in one tooltip.
  */
-function QualificationChips({ lead }: { lead: Lead }) {
+function QualificationCell({ lead }: { lead: Lead }) {
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) {
     return <span className="text-text-tertiary">{ABSENT}</span>;
   }
+  const captured = dimensions.filter((dimension) => dimension.captured);
   return (
-    <ul className="flex flex-wrap items-center gap-1">
-      {dimensions.map((dimension) => (
-        <li key={dimension.key}>
-          <Tooltip
-            content={
-              dimension.captured
-                ? `${dimension.label}: ${dimension.value ?? 'captured'}`
-                : `${dimension.label}: nothing captured yet`
-            }
-          >
-            <span
-              className={cn(
-                'inline-flex items-center rounded-xs px-1.5 py-0.5 text-2xs font-medium',
-                dimension.captured
-                  ? 'bg-success-tint text-success'
-                  : 'bg-neutral-tint text-neutral',
-              )}
-            >
-              {dimension.label}
-            </span>
-          </Tooltip>
-        </li>
-      ))}
-    </ul>
+    <Tooltip
+      content={
+        <ul>
+          {dimensions.map((dimension) => (
+            <li key={dimension.key}>
+              {dimension.label}: {dimension.captured ? (dimension.value ?? 'captured') : 'nothing yet'}
+            </li>
+          ))}
+        </ul>
+      }
+    >
+      <span
+        className={cn(
+          'figure inline-flex items-center rounded-xs px-1.5 py-0.5 text-xs font-medium',
+          captured.length === 0
+            ? 'bg-neutral-tint text-neutral'
+            : captured.length === dimensions.length
+              ? 'bg-success-tint text-success'
+              : 'bg-surface-sunken text-text-secondary',
+        )}
+      >
+        {captured.length}/{dimensions.length}
+        <span className="sr-only"> dimensions captured</span>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -181,42 +199,28 @@ function QualificationChips({ lead }: { lead: Lead }) {
  * button that activates the row and a `<button>` may only contain phrasing
  * content — a `div` or a `ul` in there is invalid, whatever the browser makes
  * of it in practice.
+ *
+ * One line, not three. It was a 32px avatar beside a name, an email and a wrap
+ * of tag chips — about 76px against the 44px row token, so a 1080p screen
+ * showed nine leads where Attio shows twenty-four. Unread is weight, not a blue
+ * pip: blue means interactive in this system, and a selected unread row had
+ * accent as its ground *and* accent as its status mark.
  */
-function LeadCell({ lead, tags }: { lead: Lead; tags: readonly string[] }) {
+function LeadCell({ lead }: { lead: Lead }) {
+  const email = lead.contact?.email;
   return (
-    <span className="flex items-center gap-3">
-      <Avatar name={leadDisplayName(lead)} size="md" />
-      <span className="min-w-0">
-        <span className="flex items-center gap-2">
-          {lead.unread ? (
-            <span
-              role="img"
-              aria-label="Not opened yet"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500"
-            />
-          ) : null}
-          <span className={cn('truncate text-sm text-text-primary', lead.unread && 'font-semibold')}>
-            {leadDisplayName(lead)}
-          </span>
-        </span>
-        {lead.contact?.email ? (
-          <span className="mt-0.5 flex items-center gap-1 text-xs text-text-secondary">
-            <span className="truncate">{lead.contact.email}</span>
-            <EmailVerdict isValid={lead.contact.is_valid_email} />
-          </span>
-        ) : null}
-        {tags.length > 0 ? (
-          <span className="mt-1 flex flex-wrap items-center gap-1">
-            <span className="sr-only">Your private tags: </span>
-            {tags.slice(0, 3).map((tag) => (
-              <Badge key={tag}>{tag}</Badge>
-            ))}
-            {tags.length > 3 ? (
-              <span className="figure text-2xs text-text-tertiary">+{tags.length - 3}</span>
-            ) : null}
-          </span>
-        ) : null}
+    <span className="flex items-center gap-2">
+      <Avatar name={leadDisplayName(lead)} size="sm" />
+      <span className={cn('shrink-0 truncate', lead.unread && 'font-semibold')}>
+        {leadDisplayName(lead)}
       </span>
+      {email ? (
+        <>
+          <span className="min-w-0 truncate text-xs text-text-secondary">{email}</span>
+          <EmailVerdict isValid={lead.contact?.is_valid_email} />
+        </>
+      ) : null}
+      {lead.unread ? <span className="sr-only">Not opened yet</span> : null}
     </span>
   );
 }
@@ -267,12 +271,28 @@ export function LeadsPage() {
     [leads.leads, state.contact, state.query],
   );
 
+  const refined = hasClientRefinement(state);
+  /**
+   * Sorting is offered only when the whole result set is on screen.
+   *
+   * `GET /leads` takes no sort parameter, so a comparator here can only order
+   * the fifty rows this page happens to hold. That is honest when those fifty
+   * *are* the result — one page of results, or a client-refined subset of one —
+   * and a lie the moment there is a second page. `DataTable` refuses to draw an
+   * affordance it cannot honour, so the columns simply stop declaring one.
+   */
+  const sortable = refined || leads.total <= LEADS_PAGE_SIZE;
+
   // ── Selection ─────────────────────────────────────────────────────────────
   // Scoped to what is on screen. The version this replaces kept a selection
   // across filter and page changes, so "3 selected" could mean three rows the
   // user could no longer see, with no way to review them before exporting.
+  //
+  // `query` is deliberately NOT in the scope. `SearchField` debounces at 200ms,
+  // so with it in here one keystroke silently discarded a selection the user had
+  // built by hand — the reset is right, doing it mid-typing was not.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
-  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.page}|${state.contact}|${state.query}`;
+  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.page}|${state.contact}`;
   const [selectionScope, setSelectionScope] = useState(scope);
   if (selectionScope !== scope) {
     setSelectionScope(scope);
@@ -304,6 +324,16 @@ export function LeadsPage() {
     );
   }, [annotations.tagsFor, leads.leads, selected]);
 
+  const handleMarkSelectedRead = useCallback(() => {
+    selected.forEach((sessionId) => markRead(sessionId));
+    setSelected(new Set());
+  }, [markRead, selected]);
+
+  // The failure belongs beside the control that produced it (DESIGN.md §6.8).
+  // It used to render as the first child of the page's `Stack` — left-aligned
+  // and full width, about 300px from the top-right button that caused it — so
+  // it goes through the header's own toolbar slot instead. Not a toast: the
+  // `Toaster` is not mounted at the app root, so a toast here would be silence.
   async function handleExportAll(): Promise<void> {
     setExporting(true);
     setExportError(null);
@@ -323,25 +353,44 @@ export function LeadsPage() {
       {
         key: 'lead',
         header: 'Lead',
-        sortable: compareLeads.name,
-        render: (lead) => <LeadCell lead={lead} tags={annotations.tagsFor(lead.session_id)} />,
+        rowHeader: true,
+        sortable: sortable ? compareLeads.name : undefined,
+        render: (lead) => <LeadCell lead={lead} />,
+      },
+      {
+        key: 'tags',
+        header: 'Tags',
+        secondary: true,
+        width: '10rem',
+        render: (lead) => {
+          const tags = annotations.tagsFor(lead.session_id);
+          if (tags.length === 0) return <span className="text-text-tertiary">{ABSENT}</span>;
+          return (
+            <span className="flex items-center gap-1">
+              <span className="sr-only">Your private tags: </span>
+              {tags.slice(0, 2).map((tag) => (
+                <Badge key={tag}>{tag}</Badge>
+              ))}
+              {tags.length > 2 ? (
+                <span className="figure text-xs text-text-tertiary">+{tags.length - 2}</span>
+              ) : null}
+            </span>
+          );
+        },
       },
       {
         key: 'company',
         header: 'Company',
         secondary: true,
-        sortable: compareLeads.company,
+        width: '12rem',
+        sortable: sortable ? compareLeads.company : undefined,
         // The domain is derived free of charge from the captured email address.
         // Personal-provider addresses correctly yield nothing, so an em dash
         // here means "consumer email", not "the lookup failed".
         render: (lead) => {
           const company = companyDisplay(lead.contact);
           if (!company) return <span className="text-text-tertiary">{ABSENT}</span>;
-          return (
-            <span className="block max-w-48 truncate text-sm text-text-primary">
-              {company.value}
-            </span>
-          );
+          return <span className="text-text-primary">{company.value}</span>;
         },
       },
     ];
@@ -352,7 +401,7 @@ export function LeadsPage() {
           key: 'quality',
           header: 'Quality',
           width: '11rem',
-          sortable: compareLeads.score,
+          sortable: sortable ? compareLeads.score : undefined,
           render: (lead) => {
             const tier = TIER_META[normalizeTier(lead.status)];
             return (
@@ -369,21 +418,23 @@ export function LeadsPage() {
         },
         {
           key: 'qualification',
-          header: 'Qualification',
+          header: 'Qualified',
           secondary: true,
-          width: '17rem',
-          render: (lead) => <QualificationChips lead={lead} />,
+          align: 'center',
+          width: '6rem',
+          render: (lead) => <QualificationCell lead={lead} />,
         },
         {
           key: 'location',
           header: 'Location',
           secondary: true,
+          width: '10rem',
           render: (lead) => {
             const location = formatLocation(lead.location);
             return location === 'Unknown' ? (
               <span className="text-text-tertiary">{ABSENT}</span>
             ) : (
-              <span className="text-sm text-text-secondary">{location}</span>
+              <span className="text-text-secondary">{location}</span>
             );
           },
         },
@@ -394,41 +445,28 @@ export function LeadsPage() {
       {
         key: 'chats',
         header: 'Messages',
-        align: 'right',
+        type: 'number',
         width: '6rem',
         secondary: true,
-        sortable: compareLeads.chats,
+        sortable: sortable ? compareLeads.chats : undefined,
         render: (lead) => (lead.chats ? formatNumber(lead.chats) : ABSENT),
       },
       {
+        // Left-aligned and set in Inter. `align: 'right'` makes `DataTable` set
+        // the cell as a figure, and "3 days ago" is a phrase — right-aligned
+        // monospace prose with tabular figures reads as a broken number column.
         key: 'last_active',
         header: 'Last active',
-        align: 'right',
         width: '10rem',
-        sortable: compareLeads.lastActive,
-        render: (lead) => (
-          <span className="whitespace-nowrap">{formatRelative(lead.last_active_at)}</span>
-        ),
+        sortable: sortable ? compareLeads.lastActive : undefined,
+        render: (lead) => formatRelative(lead.last_active_at),
       },
     );
 
     return base;
-  }, [annotations, intelligenceLocked]);
+  }, [annotations, intelligenceLocked, sortable]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
-
-  if (botsLoading && bots.length === 0) {
-    return (
-      <Page width="wide">
-        <PageHeader title="Leads" description="Who asked about buying, and how ready they sounded." />
-        <Card>
-          <CardBody>
-            <LoadingRows rows={6} />
-          </CardBody>
-        </Card>
-      </Page>
-    );
-  }
 
   if (!botsLoading && bots.length === 0) {
     return (
@@ -438,7 +476,7 @@ export function LeadsPage() {
           <EmptyState
             icon={BotIcon}
             title="No chatbots yet"
-            description="Leads are the people who chat with your chatbot. Create one, put it on your site, and everyone who talks to it turns up here."
+            description="Everyone who chats with your chatbot appears here."
             action={
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
                 Create your first chatbot
@@ -453,81 +491,69 @@ export function LeadsPage() {
   if (leads.locked) {
     return (
       <Page width="wide">
-        <PageHeader title="Leads" description="Who asked about buying, and how ready they sounded." />
-        <LockedState
-          title="Leads are not included on your plan"
-          description="Every visitor who chats with your chatbot becomes a lead here, scored on how ready they sounded to buy, with the whole conversation attached."
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
-              See plans
-            </Link>
-          }
-          preview={<LockedPreview />}
-        />
+        <PageHeader title="Leads" />
+        <LockedLeads />
       </Page>
     );
   }
 
   const filtered = hasActiveFilters(state);
-  const refined = hasClientRefinement(state);
-  const shownFrom = (state.page - 1) * LEADS_PAGE_SIZE + 1;
-  const shownTo = Math.min(state.page * LEADS_PAGE_SIZE, leads.total);
+  // While a browser-side refinement is active the rows on screen are no longer
+  // "the server's page N", so the table stops reporting the server's total and
+  // reports what it is actually showing. Anything else is the count lying.
+  const serverPaged = !refined;
 
   return (
     <Page width="wide">
       <PageHeader
         title="Leads"
-        description="Who asked about buying, and how ready they sounded."
+        toolbar={
+          exportError ? (
+            <Alert tone="danger" live title="The export failed">
+              {exportError}
+            </Alert>
+          ) : undefined
+        }
         actions={
-          <>
-            {/* The unsubscribe list, one press from the table that raises the
-                question. A follow-up refused with "this email has unsubscribed"
-                had no surface anywhere in the console to check against. */}
-            <Button
-              variant="ghost"
-              iconLeft={<MailX aria-hidden className="h-4 w-4" />}
-              onClick={() => setSuppressionsOpen(true)}
+          <MenuRoot>
+            <MenuTrigger
+              aria-label="Lead actions"
+              className={buttonClass('secondary', 'icon-md', BUTTON_ICON_SLOT['icon-md'])}
             >
-              Unsubscribes
-            </Button>
-            <Button
-              variant="ghost"
-              iconLeft={<CheckCheck aria-hidden className="h-4 w-4" />}
-              disabled={leads.stats === null || leads.stats.unread === 0}
-              onClick={() => setConfirmMarkAll(true)}
-            >
-              Mark all read
-            </Button>
-            <Tooltip
-              content={
-                intelligenceLocked
-                  ? 'The CSV export is included on Starter and above.'
-                  : 'Every lead for this chatbot, ignoring the filters on this page. Your private tags are not in it.'
-              }
-            >
-              <span className="inline-flex">
-                <Button
-                  variant="secondary"
-                  loading={exporting}
-                  disabled={intelligenceLocked || leads.total === 0}
-                  iconLeft={<Download aria-hidden className="h-4 w-4" />}
-                  onClick={() => void handleExportAll()}
-                >
-                  Export all leads
-                </Button>
-              </span>
-            </Tooltip>
-          </>
+              <MoreHorizontal aria-hidden />
+            </MenuTrigger>
+            <MenuContent>
+              <MenuItem
+                icon={<Download aria-hidden className="h-icon-sm w-icon-sm" />}
+                disabled={intelligenceLocked || leads.total === 0 || exporting}
+                onSelect={() => void handleExportAll()}
+              >
+                Export all leads
+              </MenuItem>
+              {/* Disabled only when there is genuinely nothing unread.
+                  `stats === null` is also the state when the stats request
+                  *failed*, and disabling on that rendered a permanently dead
+                  command with no reason given — where the action is idempotent
+                  and costs nothing to offer. */}
+              <MenuItem
+                icon={<CheckCheck aria-hidden className="h-icon-sm w-icon-sm" />}
+                disabled={leads.stats?.unread === 0}
+                onSelect={() => setConfirmMarkAll(true)}
+              >
+                Mark all read
+              </MenuItem>
+              <MenuItem
+                icon={<MailX aria-hidden className="h-icon-sm w-icon-sm" />}
+                onSelect={() => setSuppressionsOpen(true)}
+              >
+                Unsubscribes
+              </MenuItem>
+            </MenuContent>
+          </MenuRoot>
         }
       />
 
       <Stack>
-        {exportError ? (
-          <Alert tone="danger" live title="The export failed">
-            {exportError}
-          </Alert>
-        ) : null}
-
         {intelligenceLocked ? (
           <Alert
             tone="plan"
@@ -538,53 +564,57 @@ export function LeadsPage() {
               </Link>
             }
           >
-            You can read every conversation and every contact detail here. Quality, score, the
-            qualification breakdown, location and the CSV export arrive with a paid plan.
+            Scores, qualification, location and CSV export are on Starter and above.
           </Alert>
         ) : null}
 
-        {/* The summary the page owes the reader before any row is scanned. */}
+        {/* The summary the page owes the reader before any row is scanned. The
+            window is stated once, in the header: `StatRow` suppresses it on
+            every tile that inherits it and renders it nowhere itself. */}
         <Card>
-          <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-5">
-            <StatTile
-              label="Leads"
-              value={leads.stats ? formatNumber(leads.stats.total) : undefined}
+          <CardHeader
+            size="sm"
+            title="Pipeline"
+            titleAs="h2"
+            actions={<span className="text-xs text-text-tertiary">All time</span>}
+          />
+          <CardBody flush>
+            <StatRow
+              label="Lead pipeline"
               period="All time"
+              columns={5}
               loading={leads.loading}
-            />
-            <StatTile
-              label="Qualified"
-              value={
-                leads.stats?.qualified === undefined
-                  ? undefined
-                  : formatNumber(leads.stats.qualified)
-              }
-              period="Past just exploring"
-              loading={leads.loading}
-            />
-            <StatTile
-              label="Ready to buy"
-              value={leads.stats?.sql === undefined ? undefined : formatNumber(leads.stats.sql)}
-              period="Highest tier"
-              tone={leads.stats?.sql ? 'success' : 'neutral'}
-              loading={leads.loading}
-            />
-            <StatTile
-              label="Average score"
-              value={
-                leads.stats?.avgScore === undefined
-                  ? undefined
-                  : formatNumber(Math.round(leads.stats.avgScore))
-              }
-              period="Out of 100"
-              loading={leads.loading}
-            />
-            <StatTile
-              label="Not opened"
-              value={leads.stats ? formatNumber(leads.stats.unread) : undefined}
-              period="Nobody has read these"
-              tone={leads.stats?.unread ? 'warning' : 'neutral'}
-              loading={leads.loading}
+              items={[
+                {
+                  label: 'Leads',
+                  value: leads.stats ? formatNumber(leads.stats.total) : undefined,
+                  size: 'lg',
+                },
+                {
+                  label: 'Qualified',
+                  value:
+                    leads.stats?.qualified === undefined
+                      ? undefined
+                      : formatNumber(leads.stats.qualified),
+                },
+                {
+                  label: 'Ready to buy',
+                  value: leads.stats?.sql === undefined ? undefined : formatNumber(leads.stats.sql),
+                  tone: leads.stats?.sql ? 'success' : 'neutral',
+                },
+                {
+                  label: 'Average score',
+                  value:
+                    leads.stats?.avgScore === undefined
+                      ? undefined
+                      : `${formatNumber(Math.round(leads.stats.avgScore))}/100`,
+                },
+                {
+                  label: 'Not opened',
+                  value: leads.stats ? formatNumber(leads.stats.unread) : undefined,
+                  tone: leads.stats?.unread ? 'warning' : 'neutral',
+                },
+              ]}
             />
           </CardBody>
         </Card>
@@ -593,7 +623,7 @@ export function LeadsPage() {
           {/* Each control is boxed to a width. Both `SearchField` and `Select`
               wrap themselves in a `w-full` element, so dropped straight into a
               wrapping flex row every one of them would claim its own line. */}
-          <Toolbar>
+          <Toolbar sticky>
             <div className="w-full sm:w-64">
               <SearchField
                 label="Search the leads on this page"
@@ -635,6 +665,15 @@ export function LeadsPage() {
                 onChange={(event) => update({ contact: event.target.value as ContactFilter })}
               />
             </div>
+            <Tooltip content={SCOPE_NOTE}>
+              <button
+                type="button"
+                aria-label="What these filters cover"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
+              >
+                <Info aria-hidden className="h-icon-sm w-icon-sm" />
+              </button>
+            </Tooltip>
             {filtered ? (
               <Button
                 variant="ghost"
@@ -648,36 +687,6 @@ export function LeadsPage() {
             ) : null}
           </Toolbar>
 
-          <p className="mt-2 text-xs text-text-secondary" aria-live="polite">
-            {leads.loading ? (
-              'Loading your leads…'
-            ) : (
-              <>
-                <span className="figure">{leads.total === 0 ? 0 : shownFrom}</span>–
-                <span className="figure">{shownTo}</span> of{' '}
-                <span className="figure">{formatNumber(leads.total)}</span>
-                {filtered ? ' matching leads' : ' leads'}
-                {refined && rows.length !== leads.leads.length ? (
-                  <>
-                    {' · '}
-                    <span className="figure">{rows.length}</span> of them match what you typed
-                  </>
-                ) : null}
-                {leads.fetching ? ' · updating…' : null}
-              </>
-            )}
-          </p>
-
-          {/* The division of labour, stated rather than implied. The page this
-              replaces filtered a truncated slice and reported its length as the
-              workspace total. */}
-          {leads.total > LEADS_PAGE_SIZE || refined ? (
-            <p className="mt-1 text-xs text-text-tertiary">
-              Quality and score filter every lead you have. Search, lead type and column sorting
-              apply to the {LEADS_PAGE_SIZE} rows on this page.
-            </p>
-          ) : null}
-
           <div className="mt-3">
             <DataTable
               caption="Leads captured by your chatbots"
@@ -685,29 +694,47 @@ export function LeadsPage() {
               rows={rows}
               rowKey={(lead) => lead.session_id}
               rowLabel={leadDisplayName}
-              loading={leads.loading}
+              rowNoun="lead"
+              loading={leads.loading || botsLoading}
               error={leads.error ? leads.error.message : null}
               onRetry={leads.retry}
               sort={state.sort}
               onSortChange={handleSort}
+              pageSize={LEADS_PAGE_SIZE}
+              page={serverPaged ? state.page : undefined}
+              onPageChange={serverPaged ? (page) => update({ page }) : undefined}
+              rowCount={serverPaged ? leads.total : undefined}
+              // The toolbar above is sticky, so the column heads have to stick
+              // below it rather than scroll away underneath it.
+              stickyOffset="3.25rem"
               selectedKeys={selected}
               onSelectionChange={setSelected}
               bulkActions={
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-                  onClick={handleExportSelected}
-                >
-                  Export these rows, with your private tags
-                </Button>
+                <>
+                  <Tooltip content="Your private tags are included.">
+                    <span className="inline-flex">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        iconLeft={<Download aria-hidden />}
+                        onClick={handleExportSelected}
+                      >
+                        Export selection
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Button size="sm" variant="secondary" onClick={handleMarkSelectedRead}>
+                    Mark read
+                  </Button>
+                </>
               }
               onRowClick={(lead) => update({ openLead: lead.session_id, tab: 'profile' })}
               empty={
                 filtered ? (
                   <EmptyState
+                    size="inline"
                     title="No leads match these filters"
-                    description="Nothing on this page matches. Try widening the quality or score filter, or clearing what you typed."
+                    description="Try a wider quality or score filter."
                     action={
                       <Button
                         size="sm"
@@ -721,44 +748,15 @@ export function LeadsPage() {
                   />
                 ) : (
                   <EmptyState
+                    size="inline"
                     icon={Users}
                     title="No leads yet"
-                    description="Every visitor who starts a conversation with your chatbot turns up here, with what they asked and how ready they sounded to buy."
+                    description="Visitors appear here as soon as they start a conversation."
                   />
                 )
               }
             />
           </div>
-
-          {leads.pageCount > 1 ? (
-            <nav
-              aria-label="Lead pages"
-              className="mt-3 flex items-center justify-between gap-3"
-            >
-              <p className="text-xs text-text-secondary">
-                Page <span className="figure">{state.page}</span> of{' '}
-                <span className="figure">{leads.pageCount}</span>
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={state.page <= 1 || leads.fetching}
-                  onClick={() => update({ page: state.page - 1 })}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={state.page >= leads.pageCount || leads.fetching}
-                  onClick={() => update({ page: state.page + 1 })}
-                >
-                  Next
-                </Button>
-              </div>
-            </nav>
-          ) : null}
         </div>
       </Stack>
 
@@ -785,9 +783,9 @@ export function LeadsPage() {
         title="Mark every lead as read?"
         description={
           <>
-            This clears the unread mark on{' '}
-            <span className="figure">{formatNumber(leads.stats?.unread ?? 0)}</span> leads across
-            every page, not just the ones on screen. There is no way to put the marks back.
+            Clears the unread mark on{' '}
+            <span className="figure">{formatNumber(leads.stats?.unread ?? 0)}</span> leads, on every
+            page. Cannot be undone.
           </>
         }
         confirmLabel="Mark all read"
@@ -801,38 +799,113 @@ export function LeadsPage() {
 }
 
 /**
- * What sits behind the plan lock.
+ * The plan wall, with the product behind it.
  *
- * `LockedState` renders this `inert`, so it is a picture of the feature rather
- * than the feature. Asking someone to buy a surface they have never seen is how
- * the previous locked pages worked: a bare card, no page title, no description.
+ * `LockedState` renders its preview `inert`, so it is a picture of the feature
+ * rather than the feature. The preview is the real `DataTable` with three
+ * fixture rows: asking somebody to buy a surface they have never seen is how the
+ * previous locked pages worked, and an approximation of the table is a worse
+ * argument than the table.
  */
+function LockedLeads() {
+  return (
+    <LockedState
+      title="Leads are not included on your plan"
+      description="Every visitor scored on how ready they sounded to buy, with the conversation attached."
+      action={
+        <Link to="/billing" className={buttonClass('primary', 'md')}>
+          See plans
+        </Link>
+      }
+      preview={<LockedPreview />}
+    />
+  );
+}
+
+interface PreviewRow {
+  session_id: string;
+  name: string;
+  company: string | null;
+  tier: TierKey;
+  score: number;
+  lastActive: string;
+}
+
+const PREVIEW_ROWS: readonly PreviewRow[] = [
+  {
+    session_id: 'p1',
+    name: 'Priya Raman',
+    company: 'infosys.com',
+    tier: 'sql',
+    score: 84,
+    lastActive: '2 hours ago',
+  },
+  {
+    session_id: 'p2',
+    name: 'Tom Whitfield',
+    company: 'northwind.co.uk',
+    tier: 'sal',
+    score: 61,
+    lastActive: 'Yesterday',
+  },
+  {
+    session_id: 'p3',
+    name: 'Anonymous visitor',
+    company: null,
+    tier: 'mql',
+    score: 38,
+    lastActive: '3 days ago',
+  },
+];
+
+const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
+  {
+    key: 'lead',
+    header: 'Lead',
+    rowHeader: true,
+    render: (row) => (
+      <span className="flex items-center gap-2">
+        <Avatar name={row.name} size="sm" />
+        <span className="truncate">{row.name}</span>
+      </span>
+    ),
+  },
+  {
+    key: 'company',
+    header: 'Company',
+    width: '12rem',
+    render: (row) =>
+      row.company ?? <span className="text-text-tertiary">{ABSENT}</span>,
+  },
+  {
+    key: 'quality',
+    header: 'Quality',
+    width: '11rem',
+    render: (row) => (
+      <span className="flex items-center gap-2">
+        <Badge tone={TIER_META[row.tier].tone}>{TIER_META[row.tier].label}</Badge>
+        <span className="figure text-xs text-text-secondary">{row.score}</span>
+      </span>
+    ),
+  },
+  {
+    key: 'last_active',
+    header: 'Last active',
+    width: '10rem',
+    render: (row) => row.lastActive,
+  },
+];
+
 function LockedPreview() {
   return (
-    <div className="px-5 py-4">
-      <div className="grid grid-cols-3 gap-6">
-        <StatTile label="Leads" value="128" period="All time" />
-        <StatTile label="Qualified" value="41" period="Past just exploring" />
-        <StatTile label="Ready to buy" value="9" period="Highest tier" tone="success" />
-      </div>
-      <ul className="mt-5 space-y-2">
-        {[
-          { name: 'Priya Raman', company: 'infosys.com', tier: 'sql' as TierKey, score: 84 },
-          { name: 'Tom Whitfield', company: 'northwind.co.uk', tier: 'sal' as TierKey, score: 61 },
-          { name: 'Anonymous visitor', company: null, tier: 'mql' as TierKey, score: 38 },
-        ].map((row) => (
-          <li
-            key={row.name}
-            className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
-          >
-            <Avatar name={row.name} size="sm" />
-            <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{row.name}</span>
-            <span className="truncate text-xs text-text-secondary">{row.company ?? ABSENT}</span>
-            <Badge tone={TIER_META[row.tier].tone}>{TIER_META[row.tier].label}</Badge>
-            <span className="figure text-xs text-text-secondary">{row.score}</span>
-          </li>
-        ))}
-      </ul>
+    <div className="p-cell">
+      <DataTable
+        caption="What the leads table looks like"
+        columns={PREVIEW_COLUMNS}
+        rows={PREVIEW_ROWS}
+        rowKey={(row) => row.session_id}
+        rowNoun="lead"
+      />
     </div>
   );
 }

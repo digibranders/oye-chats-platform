@@ -1,17 +1,12 @@
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { TabPanel, Tabs } from '../../ui';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { DunningTab } from './DunningTab';
 import { ReconciliationTab } from './ReconciliationTab';
 import { GstrExportTab } from './GstrExportTab';
 import { SellerProfileTab } from './SellerProfileTab';
 import { WebhooksTab } from './WebhooksTab';
-import {
-  BILLING_OPS_BASE,
-  BILLING_OPS_TABS,
-  billingOpsTabFor,
-  billingOpsTabPath,
-} from './tabs';
+import { BILLING_OPS_BASE, BILLING_OPS_TABS, billingOpsTabPath } from './tabs';
 
 /**
  * Billing operations — the money as something you *act on*.
@@ -27,36 +22,29 @@ import {
  * per screen.
  */
 export function BillingOpsPage() {
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const current = billingOpsTabFor(pathname);
-
   return (
     <PlatformPage
-      eyebrow="Money"
       title="Billing operations"
-      description="Dunning, refunds, reconciliation, GSTR export and the seller profile."
+      toolbarBleed
+      toolbar={
+        <NavTabs
+          label="Billing operations views"
+          items={BILLING_OPS_TABS.map((tab) => ({
+            to: billingOpsTabPath(tab.value) ?? BILLING_OPS_BASE,
+            label: tab.label,
+            end: tab.path === '',
+          }))}
+        />
+      }
     >
-      <Tabs
-        label="Billing operations views"
-        value={current}
-        onValueChange={(next) => {
-          const path = billingOpsTabPath(next);
-          if (path) navigate(path);
-        }}
-        items={BILLING_OPS_TABS.map(({ value, label }) => ({ value, label }))}
-      >
-        <TabPanel value={current}>
-          <Routes>
-            <Route index element={<DunningTab />} />
-            <Route path="reconciliation" element={<ReconciliationTab />} />
-            <Route path="gstr" element={<GstrExportTab />} />
-            <Route path="seller" element={<SellerProfileTab />} />
-            <Route path="webhooks" element={<WebhooksTab />} />
-            <Route path="*" element={<Navigate to={BILLING_OPS_BASE} replace />} />
-          </Routes>
-        </TabPanel>
-      </Tabs>
+      <Routes>
+        <Route index element={<DunningTab />} />
+        <Route path="reconciliation" element={<ReconciliationTab />} />
+        <Route path="gstr" element={<GstrExportTab />} />
+        <Route path="seller" element={<SellerProfileTab />} />
+        <Route path="webhooks" element={<WebhooksTab />} />
+        <Route path="*" element={<Navigate to={BILLING_OPS_BASE} replace />} />
+      </Routes>
     </PlatformPage>
   );
 }

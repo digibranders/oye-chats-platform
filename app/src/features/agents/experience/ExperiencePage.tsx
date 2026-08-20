@@ -1,7 +1,7 @@
 import { type ReactElement, useEffect } from 'react';
 import { Link, useBlocker, useSearchParams } from 'react-router-dom';
 import { Bot } from 'lucide-react';
-import { Badge, buttonClass, Card, CardBody, ConfirmDialog, EmptyState, ErrorState, LockedState, Page, PageHeader, SaveBar, Skeleton, StatusDot, TabPanel, Tabs, type TabItem } from '../../../ui';
+import { Badge, buttonClass, Card, CardBody, Columns, ConfirmDialog, EmptyState, ErrorState, LockedState, Page, PageHeader, SaveBar, Skeleton, Stack, StatusDot, TabPanel, Tabs, type TabItem } from '../../../ui';
 import { useExperience } from './useExperience';
 import { BrandingSection } from './BrandingSection';
 import { MessagesSection } from './MessagesSection';
@@ -90,12 +90,8 @@ export function ExperiencePage(): ReactElement {
     setParams(updated, { replace: true });
   };
 
-  const header = (
-    <PageHeader
-      title="Experience"
-      description="What a visitor sees and hears — the widget's colours, its wording, how it sounds, and how it hands over to a person."
-    />
-  );
+  // No description: it listed the four tab labels rendered 40px below it.
+  const header = <PageHeader title="Experience" eyebrow={experience.agentName} />;
 
   if (experience.status === 'loading') {
     return (
@@ -110,18 +106,17 @@ export function ExperiencePage(): ReactElement {
     return (
       <Page width="wide">
         {header}
-        <Card>
-          <EmptyState
-            icon={Bot}
-            title="This chatbot does not exist"
-            description="It may have been deleted, or the address may be wrong. Your other chatbots are all still here."
-            action={
-              <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
-                All chatbots
-              </Link>
-            }
-          />
-        </Card>
+        <EmptyState
+          framed
+          icon={Bot}
+          title="This chatbot does not exist"
+          description="It may have been deleted."
+          action={
+            <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
+              All chatbots
+            </Link>
+          }
+        />
       </Page>
     );
   }
@@ -132,7 +127,7 @@ export function ExperiencePage(): ReactElement {
         {header}
         <LockedState
           title="Your seat cannot configure this chatbot"
-          description="Operators work conversations in the inbox; changing what visitors see is an owner or admin job. Ask someone with an admin seat to make the change, or ask them to change your role."
+          description="Changing what visitors see needs an owner or admin seat."
           action={
             <Link to="/inbox" className={buttonClass('primary', 'sm')}>
               Go to the inbox
@@ -147,13 +142,12 @@ export function ExperiencePage(): ReactElement {
     return (
       <Page width="wide">
         {header}
-        <Card>
-          <ErrorState
-            title="We could not load this chatbot"
-            description={experience.loadError ?? 'Something went wrong on the way to the server.'}
-            onRetry={experience.retry}
-          />
-        </Card>
+        <ErrorState
+          framed
+          title="We could not load this chatbot"
+          description={experience.loadError ?? 'Something went wrong on the way to the server.'}
+          onRetry={experience.retry}
+        />
       </Page>
     );
   }
@@ -167,96 +161,105 @@ export function ExperiencePage(): ReactElement {
       {header}
 
       {readOnly ? (
-        <div className="mb-6">
+        // `mb-8`, matching the rhythm below it: a 24px margin above a 32px gap
+        // read as two different separations of the same kind.
+        <div className="mb-8">
           <LockedState
+            size="panel"
             title="These settings are now read-only"
-            description="The server refused the last save because this seat cannot change chatbot settings. Your edits are still on screen — copy anything you need before leaving."
-            compact
+            description="Your last save was refused. Copy anything you need before leaving."
           />
         </div>
       ) : null}
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto]">
-        {/* `scroll-mb-*` on every control in this column is what keeps the
-            sticky save bar from landing on top of the field a keyboard user
-            just tabbed to (WCAG 2.2 SC 2.4.11): the browser scrolls a focused
-            element into view honouring its scroll margin, so the bar's height
-            is reserved below it. */}
-        <div className="flex min-w-0 flex-col [&_:is(input,textarea,select,button,a)]:scroll-mb-24">
-          <Tabs items={tabs} value={tab} onValueChange={selectTab} label="Experience settings">
-            {tabs.map((item) => (
-              <TabPanel key={item.value} value={item.value}>
-                {item.value === 'branding' ? (
-                  <BrandingSection
-                    draft={draft}
-                    meta={meta}
-                    errors={errors}
-                    agentId={experience.agentId}
-                    readOnly={readOnly}
-                    onChange={experience.update}
-                  />
-                ) : null}
-                {item.value === 'messages' ? (
-                  <MessagesSection
-                    draft={draft}
-                    errors={errors}
-                    agentId={experience.agentId}
-                    readOnly={readOnly}
-                    onChange={experience.update}
-                  />
-                ) : null}
-                {item.value === 'voice' ? (
-                  <VoiceSection
-                    draft={draft}
-                    meta={meta}
-                    errors={errors}
-                    agentId={experience.agentId}
-                    readOnly={readOnly}
-                    onChange={experience.update}
-                    onServerCommit={experience.commitServerValues}
-                  />
-                ) : null}
-                {item.value === 'handoff' ? (
-                  <HandoffSection
-                    draft={draft}
-                    meta={meta}
-                    errors={errors}
-                    readOnly={readOnly}
-                    onChange={experience.update}
-                  />
-                ) : null}
-              </TabPanel>
-            ))}
-          </Tabs>
+      <Stack>
+        <Columns
+          asideWidth="md"
+          stickyAside
+          asideLabel="Widget preview"
+          main={
+            /* `scroll-mb-*` on every control in this column is what keeps the
+               sticky save bar from landing on top of the field a keyboard user
+               just tabbed to (WCAG 2.2 SC 2.4.11): the browser scrolls a focused
+               element into view honouring its scroll margin, so the bar's height
+               is reserved below it. */
+            <div className="flex min-w-0 flex-col [&_:is(input,textarea,select,button,a)]:scroll-mb-24">
+              <Tabs items={tabs} value={tab} onValueChange={selectTab} label="Experience settings">
+                {tabs.map((item) => (
+                  <TabPanel key={item.value} value={item.value}>
+                    {item.value === 'branding' ? (
+                      <BrandingSection
+                        draft={draft}
+                        meta={meta}
+                        errors={errors}
+                        readOnly={readOnly}
+                        onChange={experience.update}
+                      />
+                    ) : null}
+                    {item.value === 'messages' ? (
+                      <MessagesSection
+                        draft={draft}
+                        errors={errors}
+                        agentId={experience.agentId}
+                        readOnly={readOnly}
+                        onChange={experience.update}
+                      />
+                    ) : null}
+                    {item.value === 'voice' ? (
+                      <VoiceSection
+                        draft={draft}
+                        meta={meta}
+                        errors={errors}
+                        agentId={experience.agentId}
+                        readOnly={readOnly}
+                        onChange={experience.update}
+                        onServerCommit={experience.commitServerValues}
+                      />
+                    ) : null}
+                    {item.value === 'handoff' ? (
+                      <HandoffSection
+                        draft={draft}
+                        meta={meta}
+                        errors={errors}
+                        readOnly={readOnly}
+                        onChange={experience.update}
+                      />
+                    ) : null}
+                  </TabPanel>
+                ))}
+              </Tabs>
+            </div>
+          }
+          aside={
+            <PreviewPanel
+              draft={draft}
+              agentName={experience.agentName}
+              agentId={experience.agentId}
+              dirty={dirty}
+              answerStale={experience.answerStale}
+              botKey={meta.botKey}
+              website={meta.website}
+              brandingText={draft.brandingText || meta.brandingText}
+              onEditState={selectTab}
+            />
+          }
+        />
 
-          <SaveBar
-            dirty={dirty}
-            saving={experience.saving}
-            saved={experience.savedAt !== null}
-            saveError={experience.saveError}
-            blockedReason={blocked ? 'Fix the highlighted fields to save.' : null}
-            summary={summarizeSections(experience.dirtySections)}
-            onSave={() => void experience.save()}
-            onDiscard={discard}
-            guard="this chatbot’s experience"
-          />
-        </div>
-
-        {/* Sticky, because the whole point of the column is watching a change
-            land — a preview that scrolls away is a screenshot. */}
-        <aside className="w-full lg:sticky lg:top-4 lg:w-96 lg:self-start">
-          <PreviewPanel
-            draft={draft}
-            agentName={experience.agentName}
-            agentId={experience.agentId}
-            dirty={dirty}
-            answerStale={experience.answerStale}
-            botKey={meta.botKey}
-            website={meta.website}
-            brandingText={meta.brandingText}
-          />
-        </aside>
-      </div>
+        {/* Outside the grid, so the bar spans the form it saves. Inside the left
+            column it stopped dead at the preview's left edge and read as
+            belonging to the tab panel rather than to the page. */}
+        <SaveBar
+          dirty={dirty}
+          saving={experience.saving}
+          saved={experience.savedAt !== null}
+          saveError={experience.saveError}
+          blockedReason={blocked ? 'Fix the highlighted fields to save.' : null}
+          summary={summarizeSections(experience.dirtySections)}
+          onSave={() => void experience.save()}
+          onDiscard={discard}
+          guard="this chatbot’s experience"
+        />
+      </Stack>
 
       <ConfirmDialog
         open={blocker.state === 'blocked'}
@@ -291,22 +294,32 @@ export function ExperiencePage(): ReactElement {
 /** Shaped like what arrives, so the load does not shift the page under the cursor. */
 function LoadingLayout(): ReactElement {
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto]">
-      <div className="flex flex-col gap-6">
-        <Skeleton className="h-9 w-80" />
+    <Columns
+      asideWidth="md"
+      aside={
         <Card>
-          <CardBody className="flex flex-col gap-4">
-            <Skeleton className="h-4 w-40" />
-            <Skeleton className="h-control-md w-full max-w-sm" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-control-md w-full max-w-sm" />
+          <CardBody className="flex flex-col gap-3">
+            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-control-sm w-full" />
+            <Skeleton className="h-128 w-full" />
           </CardBody>
         </Card>
-      </div>
-      <div className="hidden lg:block lg:w-96">
-        <Skeleton className="h-128 w-full" />
-      </div>
-    </div>
+      }
+      main={
+        <div className="flex flex-col gap-6">
+          {/* The tab row is part of the shape that arrives. */}
+          <Skeleton className="h-10 w-full" />
+          {[0, 1].map((index) => (
+            <Card key={index}>
+              <CardBody className="flex flex-col gap-4">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-control-md w-full max-w-sm" />
+                <Skeleton className="h-16 w-full" />
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+      }
+    />
   );
 }

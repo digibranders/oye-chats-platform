@@ -1,11 +1,8 @@
 import {
-  Alert,
   Badge,
   Button,
-  DataTable,
+  Combobox,
   EmptyState,
-  Input,
-  LockedState,
   Section,
   Stack,
   Toolbar,
@@ -16,7 +13,10 @@ import {
   type Column,
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
-import { USD_NORMALISED_SHORT, usageLabel, usageTone, usdCents } from './money';
+import { RecordList } from '../RecordList';
+import { byDate, byNumber, usePagedRows } from '../recordListState';
+import type { ClientRow } from '../customers/types';
+import { usageLabel, usageTone, usdCents } from '../money';
 import type { CreditLedgerRow, UsageRecordRow } from './types';
 
 /**
@@ -39,6 +39,33 @@ export function UsageCreditsTab() {
 
   const usage = usePlatformList<UsageRecordRow>('/usage-records', { params: filter });
   const ledger = usePlatformList<CreditLedgerRow>('/credits/ledger', { params: filter });
+  // Accounts, so the one filter both endpoints accept is a name rather than an
+  // integer id nobody knows by heart.
+  const clients = usePlatformList<ClientRow>('/clients');
+
+  const usagePaged = usePagedRows(usage.items, {
+    url,
+    pageKey: 'upage',
+    sortKey: 'usort',
+    comparators: {
+      period: byDate((row) => row.period_start),
+      ai: byNumber((row) => row.ai_messages_used),
+      live: byNumber((row) => row.live_chat_messages_used),
+      scans: byNumber((row) => row.url_scans_used),
+      storage: byNumber((row) => row.storage_used_mb),
+      overage: byNumber((row) => row.overage_amount_cents),
+    },
+  });
+
+  const ledgerPaged = usePagedRows(ledger.items, {
+    url,
+    pageKey: 'lpage',
+    sortKey: 'lsort',
+    comparators: {
+      created: byDate((row) => row.created_at),
+      delta: byNumber((row) => row.delta),
+    },
+  });
 
   const usageColumns: readonly Column<UsageRecordRow>[] = [
     {
@@ -61,7 +88,7 @@ export function UsageCreditsTab() {
       key: 'period',
       header: 'Period',
       width: '13rem',
-      sortable: (a, b) => (a.period_start ?? '').localeCompare(b.period_start ?? ''),
+      sortable: true,
       render: (row) => (
         <span className="figure text-sm">
           {formatDate(row.period_start)} – {formatDate(row.period_end)}
@@ -73,7 +100,7 @@ export function UsageCreditsTab() {
       header: 'AI messages',
       align: 'right',
       width: '11rem',
-      sortable: (a, b) => a.ai_messages_used - b.ai_messages_used,
+      sortable: true,
       render: (row) => (
         <QuotaCell used={row.ai_messages_used} limit={row.ai_messages_limit} />
       ),
@@ -84,7 +111,7 @@ export function UsageCreditsTab() {
       align: 'right',
       width: '11rem',
       secondary: true,
-      sortable: (a, b) => a.live_chat_messages_used - b.live_chat_messages_used,
+      sortable: true,
       render: (row) => (
         <QuotaCell used={row.live_chat_messages_used} limit={row.live_chat_messages_limit} />
       ),
@@ -95,7 +122,7 @@ export function UsageCreditsTab() {
       align: 'right',
       width: '10rem',
       secondary: true,
-      sortable: (a, b) => a.url_scans_used - b.url_scans_used,
+      sortable: true,
       render: (row) => <QuotaCell used={row.url_scans_used} limit={row.url_scans_limit} />,
     },
     {
@@ -104,15 +131,17 @@ export function UsageCreditsTab() {
       align: 'right',
       width: '10rem',
       secondary: true,
-      sortable: (a, b) => a.storage_used_mb - b.storage_used_mb,
+      sortable: true,
       render: (row) => <QuotaCell used={row.storage_used_mb} limit={row.storage_limit_mb} />,
     },
     {
       key: 'overage',
-      header: 'Overage',
+      // Real US dollars, not the normalised figure the rest of this section
+      // carries: the server passes the stored amount through without converting.
+      header: 'Overage (already US dollars)',
       align: 'right',
       width: '11rem',
-      sortable: (a, b) => a.overage_amount_cents - b.overage_amount_cents,
+      sortable: true,
       render: (row) =>
         row.overage_messages === 0 && row.overage_amount_cents === 0 ? (
           <span className="figure text-text-tertiary">None</span>
@@ -133,7 +162,7 @@ export function UsageCreditsTab() {
       header: 'When',
       pinned: true,
       width: '12rem',
-      sortable: (a, b) => a.created_at.localeCompare(b.created_at),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDateTime(row.created_at)}</span>,
     },
     {
@@ -147,7 +176,7 @@ export function UsageCreditsTab() {
       header: 'Change',
       align: 'right',
       width: '8rem',
-      sortable: (a, b) => a.delta - b.delta,
+      sortable: true,
       render: (row) => (
         <span className={row.delta < 0 ? 'figure text-danger' : 'figure text-success'}>
           {row.delta > 0 ? '+' : ''}
@@ -198,113 +227,89 @@ export function UsageCreditsTab() {
 
   return (
     <Stack>
-      <Toolbar>
-        <Input
-          size="sm"
-          type="number"
-          min={1}
-          inputMode="numeric"
-          aria-label="Filter both lists by client id"
-          placeholder="Client id"
-          className="w-36"
-          value={clientId}
-          onChange={(event) => url.set({ client: event.target.value })}
-        />
+      <Toolbar sticky>
+        <div className="w-48">
+          <Combobox
+            size="sm"
+            label="Filter both lists by account"
+            value={clientId || null}
+            onValueChange={(next) => url.set({ client: next })}
+            options={clients.items.map((row) => ({
+              value: String(row.id),
+              label: row.name,
+              description: row.email,
+              keywords: row.email,
+            }))}
+            placeholder="Every customer"
+            clearable
+          />
+        </div>
         {clientId ? (
           <Button size="sm" variant="ghost" onClick={() => url.set({ client: null })}>
             Show every customer
           </Button>
         ) : null}
-        <span className="ml-auto text-xs text-text-tertiary">
-          Client id is the only filter either endpoint accepts.
-        </span>
       </Toolbar>
 
       <Section
         title="Usage against plan limits"
-        description="One row per billing period, newest first. Limits are the customer's live plan limits, not the ones frozen on the record when the period opened."
+        description="One row per billing period. Limits are the account's live plan limits, not the ones frozen when the period opened."
       >
-        {usage.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="Truncated at 500 periods">
-            The endpoint returns at most {SERVER_CAP} usage records and does not paginate. Filter by
-            client id to see a specific account's full history.
-          </Alert>
-        ) : null}
-        {usage.forbidden ? (
-          <LockedState
-            title="You cannot read usage"
-            description="Your super-admin account is not permitted to read usage records. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Usage records against plan limits, newest period first"
-            columns={usageColumns}
-            rows={usage.items}
-            rowKey={(row) => String(row.id)}
-            loading={usage.loading}
-            error={usage.error}
-            onRetry={usage.reload}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={clientId ? 'No usage for that client' : 'No usage recorded'}
-                description={
-                  clientId
-                    ? 'That client id has no usage period on record. Either the id is wrong or the account has never opened a billing period.'
-                    : 'No billing period has been opened for any account yet. Usage records are created when a subscription starts its first period.'
-                }
-              />
-            }
-          />
-        )}
-        <p className="mt-2 text-xs text-text-tertiary">
-          Overage is stated in {USD_NORMALISED_SHORT.toLowerCase()} — the server passes it through
-          without conversion, so it is already US dollars.
-        </p>
+        <RecordList
+          caption="Usage records against plan limits, newest period first"
+          columns={usageColumns}
+          paged={usagePaged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="period"
+          what="usage records"
+          loading={usage.loading}
+          error={usage.error}
+          forbidden={usage.forbidden}
+          onRetry={usage.reload}
+          loaded={usage.items.length}
+          cap={SERVER_CAP}
+          empty={
+            <EmptyState
+              title={clientId ? 'No usage for that client' : 'No usage recorded'}
+              description={
+                clientId
+                  ? 'That account has never opened a billing period.'
+                  : 'No billing period has been opened for any account yet.'
+              }
+            />
+          }
+        />
       </Section>
 
       <Section
         title="Credit ledger"
-        description="Every grant and deduction, newest first. Append-only: nothing here is ever edited, only added to."
+        description="Every grant and deduction, newest first. The running total is not the account balance: it walks this window forward from zero."
       >
-        {ledger.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="Truncated at 500 entries">
-            The endpoint returns at most {SERVER_CAP} ledger rows and does not paginate. Filter by
-            client id to read one account's history in full.
-          </Alert>
-        ) : null}
-        <Alert tone="neutral" className="mb-3" title="“Running total” is not the account balance">
-          The server computes it by walking this window of history forward from zero, so it only
-          equals the real balance when every entry the account has ever had fits in the {SERVER_CAP}{' '}
-          rows returned. Read it as a movement trail, not as a balance.
-        </Alert>
-        {ledger.forbidden ? (
-          <LockedState
-            title="You cannot read the credit ledger"
-            description="Your super-admin account is not permitted to read credit movements. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Credit ledger entries, newest first"
-            columns={ledgerColumns}
-            rows={ledger.items}
-            rowKey={(row) => String(row.id)}
-            loading={ledger.loading}
-            error={ledger.error}
-            onRetry={ledger.reload}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={clientId ? 'No credit movements for that client' : 'No credit movements yet'}
-                description={
-                  clientId
-                    ? 'That client id has no grant, deduction or expiry on record.'
-                    : 'No credits have been granted or spent on this platform yet.'
-                }
-              />
-            }
-          />
-        )}
+        <RecordList
+          caption="Credit ledger entries, newest first"
+          columns={ledgerColumns}
+          paged={ledgerPaged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="entry"
+          rowNounPlural="entries"
+          what="credit movements"
+          loading={ledger.loading}
+          error={ledger.error}
+          forbidden={ledger.forbidden}
+          onRetry={ledger.reload}
+          loaded={ledger.items.length}
+          cap={SERVER_CAP}
+          empty={
+            <EmptyState
+              title={clientId ? 'No credit movements for that client' : 'No credit movements yet'}
+              description={
+                clientId
+                  ? 'That account has no grant, deduction or expiry on record.'
+                  : 'No credits have been granted or spent on this platform yet.'
+              }
+            />
+          }
+        />
       </Section>
     </Stack>
   );

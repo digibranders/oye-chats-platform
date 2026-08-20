@@ -71,7 +71,7 @@ export function BusinessHoursField({
     <div className="flex flex-col gap-5">
       <Switch
         label="Only available at set hours"
-        description="Outside them the widget shows your offline banner and takes a message instead of queueing for a person."
+        description="Outside them, visitors get your offline banner."
         checked={value !== null}
         disabled={disabled}
         onCheckedChange={(on) => onChange(on ? defaultBusinessHours() : null)}
@@ -79,10 +79,7 @@ export function BusinessHoursField({
 
       {value ? (
         <>
-          <Field
-            label="Time zone"
-            hint="The hours below are read in this zone, wherever your visitor is."
-          >
+          <Field label="Time zone">
             <Select
               options={zones}
               value={timezone}
@@ -97,11 +94,18 @@ export function BusinessHoursField({
             <ul className="mt-2.5 flex flex-col">
               {DAY_KEYS.map((key) => {
                 const day = value.days[key];
+                // Rendered disabled rather than replaced by the word "Closed",
+                // so the row geometry never changes and the previous hours stay
+                // visible while the day is off.
+                const hours = day ?? { start: '09:00', end: '17:00' };
                 const error = errors[`businessHours:${key}`];
                 return (
-                  <li key={key} className="flex flex-col gap-1.5 border-t border-border py-2.5 first:border-t-0">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="w-40 shrink-0">
+                  // A fixed row height and controls that are always rendered:
+                  // a checked day used to be ~48px and an unchecked one ~38px,
+                  // so ticking Saturday jumped every row below it 10px.
+                  <li key={key} className="flex flex-col gap-1.5 border-t border-border py-1.5 first:border-t-0">
+                    <div className="flex min-h-row-compact flex-wrap items-center gap-3">
+                      <span className="w-28 shrink-0">
                         <Checkbox
                           label={DAY_LABELS[key]}
                           checked={day !== null}
@@ -111,35 +115,32 @@ export function BusinessHoursField({
                           }
                         />
                       </span>
-                      {day ? (
-                        <span className="flex items-center gap-2">
-                          <Input
-                            type="time"
-                            size="sm"
-                            value={day.start}
-                            disabled={disabled}
-                            aria-label={`${DAY_LABELS[key]} opens at`}
-                            aria-invalid={error ? true : undefined}
-                            onChange={(event) => setDay(key, { ...day, start: event.target.value })}
-                            className="figure w-28"
-                          />
-                          <span aria-hidden className="text-xs text-text-tertiary">
-                            to
-                          </span>
-                          <Input
-                            type="time"
-                            size="sm"
-                            value={day.end}
-                            disabled={disabled}
-                            aria-label={`${DAY_LABELS[key]} closes at`}
-                            aria-invalid={error ? true : undefined}
-                            onChange={(event) => setDay(key, { ...day, end: event.target.value })}
-                            className="figure w-28"
-                          />
+                      <span className="flex items-center gap-2">
+                        <Input
+                          type="time"
+                          value={hours.start}
+                          disabled={disabled || day === null}
+                          aria-label={`${DAY_LABELS[key]} opens at`}
+                          aria-invalid={error ? true : undefined}
+                          onChange={(event) => setDay(key, { ...hours, start: event.target.value })}
+                          className="figure w-24"
+                        />
+                        <span aria-hidden className="text-xs text-text-tertiary">
+                          to
                         </span>
-                      ) : (
-                        <span className="text-xs text-text-secondary">Closed</span>
-                      )}
+                        <Input
+                          type="time"
+                          value={hours.end}
+                          disabled={disabled || day === null}
+                          aria-label={`${DAY_LABELS[key]} closes at`}
+                          aria-invalid={error ? true : undefined}
+                          onChange={(event) => setDay(key, { ...hours, end: event.target.value })}
+                          className="figure w-24"
+                        />
+                        {day === null ? (
+                          <span className="text-xs text-text-tertiary">Closed</span>
+                        ) : null}
+                      </span>
                     </div>
                     {error ? (
                       <p role="status" className="text-xs text-danger">
@@ -152,10 +153,6 @@ export function BusinessHoursField({
             </ul>
           </fieldset>
 
-          <p className="text-xs leading-relaxed text-text-secondary">
-            A closing time earlier than its opening time means the day runs past midnight — 22:00 to
-            02:00 is a valid late shift.
-          </p>
         </>
       ) : null}
     </div>

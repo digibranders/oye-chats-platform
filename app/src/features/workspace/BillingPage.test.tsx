@@ -41,7 +41,13 @@ const api = vi.hoisted(() => ({
 vi.mock('../../services/api', () => api);
 vi.mock('../../lib/razorpay', () => ({ openRazorpayCheckout: vi.fn() }));
 vi.mock('../../context/CurrencyContext', () => ({
-  useCurrency: () => ({ country: 'IN', countrySource: 'stored', currency: 'inr', isInr: true, loading: false }),
+  useCurrency: () => ({
+    country: 'IN',
+    countrySource: 'stored',
+    currency: 'inr',
+    isInr: true,
+    loading: false,
+  }),
 }));
 
 const state = vi.hoisted(() => ({
@@ -77,7 +83,13 @@ const PLAN = {
   features: {},
 };
 
-const AGENCY_PLAN = { ...PLAN, id: 5, slug: 'enterprise', name: 'Enterprise', limits: { bots: -1 } };
+const AGENCY_PLAN = {
+  ...PLAN,
+  id: 5,
+  slug: 'enterprise',
+  name: 'Enterprise',
+  limits: { bots: -1 },
+};
 
 function subscriptionPayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -104,7 +116,14 @@ const BALANCE = {
   monthly_grant: 3000,
   period_start: '2026-08-01T00:00:00Z',
   resets_at: '2026-09-01T00:00:00Z',
-  costs: { ai_chat: 1, url_scan: 3, document_upload: 3, email_send: 1, email_verification: 10, company_name: 10 },
+  costs: {
+    ai_chat: 1,
+    url_scan: 3,
+    document_upload: 3,
+    email_send: 1,
+    email_verification: 10,
+    company_name: 10,
+  },
   usage: { ai_chat: { credits_used: 600, event_count: 600 } },
   currency: 'INR',
   bots: [],
@@ -162,8 +181,14 @@ describe('the page frame', () => {
     const nav = screen.getByRole('navigation', { name: 'Billing sections' });
     // Links, not buttons: middle-click and copy-link-address both matter on a
     // page a customer forwards to whoever holds the company card.
-    expect(within(nav).getByRole('link', { name: 'Usage' })).toHaveAttribute('href', '/billing/usage');
-    expect(within(nav).getByRole('link', { name: 'Reports' })).toHaveAttribute('href', '/billing/reports');
+    expect(within(nav).getByRole('link', { name: 'Usage' })).toHaveAttribute(
+      'href',
+      '/billing/usage',
+    );
+    expect(within(nav).getByRole('link', { name: 'Reports' })).toHaveAttribute(
+      'href',
+      '/billing/reports',
+    );
     await screen.findByText('Standard');
   });
 
@@ -177,7 +202,11 @@ describe('the page frame', () => {
 describe('the four states', () => {
   it('shows a loading skeleton before the subscription lands', () => {
     let release: (value: unknown) => void = () => {};
-    api.getCurrentSubscription.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    api.getCurrentSubscription.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
     const { container } = renderPage();
     expect(container.querySelector('[aria-busy]')).not.toBeNull();
     release(subscriptionPayload());
@@ -203,7 +232,7 @@ describe('the four states', () => {
   it('shows an empty invoice table that explains why it is empty', async () => {
     renderPage();
     expect(await screen.findByText('No invoices yet')).toBeInTheDocument();
-    expect(screen.getByText(/free workspace is never charged/i)).toBeInTheDocument();
+    expect(screen.getByText(/appears here the moment a paid plan is charged/i)).toBeInTheDocument();
   });
 });
 
@@ -255,23 +284,28 @@ describe('dunning', () => {
     });
     renderPage();
     expect(await screen.findByText(/finish switching to your new plan/i)).toBeInTheDocument();
-    expect(screen.getByText(/nothing failed and you have not been charged twice/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/nothing failed and you have not been charged twice/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/could not take your last payment/i)).toBeNull();
   });
 });
 
 describe('the plan summary', () => {
-  it('anchors the price to its cycle and names the charge currency', async () => {
+  it('anchors the price to its cycle', async () => {
     renderPage();
     await screen.findByText('₹949');
     expect(screen.getByText('Per month')).toBeInTheDocument();
-    expect(screen.getByText('Charged in INR')).toBeInTheDocument();
+    // The charge currency is stated only when it differs from the displayed
+    // one. "Charged in INR" under a price already printed in INR is a line of
+    // type carrying nothing.
+    expect(screen.queryByText('Charged in INR')).toBeNull();
   });
 
   it('shows the overage rate the plan configures', async () => {
     renderPage();
-    await screen.findByText('₹0.50');
-    expect(screen.getByText(/per credit past your allowance/i)).toBeInTheDocument();
+    expect(await screen.findByText('₹0.50')).toBeInTheDocument();
+    expect(screen.getByText('Extra credits')).toBeInTheDocument();
   });
 
   it('never renders the unlimited sentinel as a number', async () => {
@@ -313,7 +347,9 @@ describe('scheduled changes', () => {
   });
 
   it('lets a customer who has cancelled change their mind, scoped to the same subscription', async () => {
-    api.getCurrentSubscription.mockResolvedValue(subscriptionPayload({ cancel_at_period_end: true }));
+    api.getCurrentSubscription.mockResolvedValue(
+      subscriptionPayload({ cancel_at_period_end: true }),
+    );
     renderPage('/billing?chatbot=7');
     await screen.findByText('Your subscription is set to end');
 
@@ -378,7 +414,7 @@ describe('credits at a glance', () => {
   it('warns before the balance runs out, and differently once it has', async () => {
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 100, topup: 0, total: 100 });
     renderPage();
-    expect(await screen.findByText(/close to running out of credits/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nearly out/i)).toBeInTheDocument();
 
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 0, topup: 0, total: 0 });
     renderPage();

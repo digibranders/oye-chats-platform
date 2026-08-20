@@ -115,7 +115,7 @@ export function SupportSessionsPanel({ clientId }: { clientId?: number }) {
         titleAs="h3"
         eyebrow="Impersonation"
         title="Support sessions"
-        description="Tokens minted from this console since it loaded. Each one lets its holder act as the customer until it expires or is revoked."
+        description="Minted in this browser tab."
         actions={
           liveCount > 0 ? (
             <Badge tone="warning" dot>
@@ -135,7 +135,7 @@ export function SupportSessionsPanel({ clientId }: { clientId?: number }) {
           <EmptyState
             compact
             title="No support session opened from here"
-            description="The API exposes no endpoint that lists impersonation tokens, so this shows only what this console minted in this tab. A session opened by another super-admin, or in another browser, cannot be seen or revoked here."
+            description="The API lists no impersonation tokens, so only what this tab minted appears here — a session opened elsewhere cannot be seen or revoked."
           />
         ) : (
           <ul className="flex flex-col gap-2">
@@ -179,13 +179,13 @@ export function SupportSessionsPanel({ clientId }: { clientId?: number }) {
                     {isLive(session, now) ? (
                       <Button
                         size="sm"
-                        variant="danger"
+                        variant="ghost"
                         onClick={() => {
                           setError(null);
                           setPendingRevoke(session);
                         }}
                       >
-                        <ShieldOff aria-hidden className="h-3.5 w-3.5" />
+                        <ShieldOff aria-hidden />
                         Revoke
                       </Button>
                     ) : null}

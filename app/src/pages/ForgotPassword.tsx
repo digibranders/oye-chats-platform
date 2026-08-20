@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
-import { CheckCircle2, Eye, EyeOff, Lock, Mail, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { Alert, Button, Field, Input, buttonClass, validateEmail } from '../ui';
 import { requestPasswordReset, resetPassword } from '../services/api';
 import { AuthShell } from './auth/AuthShell';
@@ -55,6 +55,13 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [revealPassword, setRevealPassword] = useState(false);
   const cooldown = useResendCooldown();
+  // Stage 3 replaces the whole screen, so without this focus falls to `<body>`
+  // and a keyboard user tabs from the top of the document to reach "Sign in".
+  // Stage 2 moves focus on its own, through `OtpField autoFocus`.
+  const doneRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (stage === 'done') doneRef.current?.focus();
+  }, [stage]);
 
   const requestForm = useForm<RequestValues>({
     resolver: zodResolver(requestSchema),
@@ -95,10 +102,7 @@ export default function ForgotPassword() {
 
   if (stage === 'done') {
     return (
-      <AuthShell
-        title="Password changed"
-        description="You can sign in with your new password now."
-      >
+      <AuthShell title="Password changed">
         <div className="space-y-4">
           <Alert tone="success" live icon={<CheckCircle2 aria-hidden className="h-4 w-4" />}>
             Every other session on this account has been signed out.
@@ -107,7 +111,7 @@ export default function ForgotPassword() {
               with no cleanup, so the navigation fired even after the component
               had gone — and it moved the page out from under anyone still
               reading it. */}
-          <Link to={signInHref} className={buttonClass('primary', 'lg', 'w-full')}>
+          <Link ref={doneRef} to={signInHref} className={buttonClass('primary', 'lg', 'w-full')}>
             Sign in
           </Link>
         </div>
@@ -126,6 +130,18 @@ export default function ForgotPassword() {
           </>
         }
         back={{ to: '/login', label: 'Back to sign in' }}
+        secondary={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => requestCode.mutate(email)}
+            loading={requestCode.isPending}
+            disabled={cooldown.active}
+            iconLeft={<RotateCcw aria-hidden />}
+          >
+            {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
+          </Button>
+        }
         footer={
           <>
             Wrong address?{' '}
@@ -138,7 +154,7 @@ export default function ForgotPassword() {
                 resetForm.reset();
                 requestForm.setValue('email', email);
               }}
-              className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+              className={buttonClass('link')}
             >
               Use a different email
             </button>
@@ -154,7 +170,7 @@ export default function ForgotPassword() {
 
           {requestCode.isSuccess && !commitReset.isError ? (
             <Alert tone="success" live>
-              Code sent — check your inbox, and your spam folder.
+              Code sent. Check your spam folder too.
             </Alert>
           ) : null}
 
@@ -174,7 +190,6 @@ export default function ForgotPassword() {
               error={resetForm.formState.errors.code?.message}
               disabled={commitReset.isPending}
               autoFocus
-              hint="Paste it, or let your phone fill it in."
             />
 
             <Field
@@ -187,7 +202,6 @@ export default function ForgotPassword() {
                 type={revealPassword ? 'text' : 'password'}
                 autoComplete="new-password"
                 placeholder="Choose a password"
-                leading={<Lock aria-hidden className="h-4 w-4" />}
                 trailing={
                   <button
                     type="button"
@@ -211,19 +225,6 @@ export default function ForgotPassword() {
               Set new password
             </Button>
           </form>
-
-          <div className="border-t border-border pt-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => requestCode.mutate(email)}
-              loading={requestCode.isPending}
-              disabled={cooldown.active}
-              iconLeft={<RotateCcw aria-hidden className="h-3.5 w-3.5" />}
-            >
-              {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
-            </Button>
-          </div>
         </div>
       </AuthShell>
     );
@@ -232,7 +233,7 @@ export default function ForgotPassword() {
   return (
     <AuthShell
       title="Reset your password"
-      description="Tell us the address on the account and we will send a six-digit code."
+      description="We will send a six-digit code."
       back={{ to: '/login', label: 'Back to sign in' }}
       footer={
         <>
@@ -240,7 +241,7 @@ export default function ForgotPassword() {
           <button
             type="button"
             onClick={() => navigate('/login')}
-            className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+            className={buttonClass('link')}
           >
             Sign in
           </button>
@@ -265,7 +266,6 @@ export default function ForgotPassword() {
               autoComplete="email"
               autoFocus
               placeholder="you@company.com"
-              leading={<Mail aria-hidden className="h-4 w-4" />}
               {...requestForm.register('email')}
             />
           </Field>

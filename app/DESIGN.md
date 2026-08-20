@@ -84,6 +84,23 @@ unreadable and would otherwise be reached for out of habit.
 (15.70) · `--color-rail-text-muted` `#A5A099` (6.89) · `--color-rail-accent`
 `#8FAAF5` (7.87).
 
+It has a **status scale too**, for the same reason and measured the same way.
+Stopping at neutrals plus one accent guaranteed the habit it was written to
+prevent: six components needed a status colour on the rail and all six borrowed
+a paper token, including the health dot that says a chatbot is broken —
+`--color-danger-fill` measures **2.94** against `--color-rail` and fails SC
+1.4.11's 3:1 for a non-text indicator, making the one dot a customer must not
+miss the least visible of the four.
+
+`--color-rail-success` `#4FC08A` (7.87) · `--color-rail-warning` `#E0A649`
+(8.28) · `--color-rail-danger` `#F08279` (6.96) · `--color-rail-track` `#3A3A40`
+(1.58 — a track is a felt step, not a stripe; the setup ring's unfilled arc was
+drawn in `--color-rail-border` at 1.14 and could not be seen at all).
+
+**No paper status token appears on the rail.** A count in the chrome is
+`.figure`, and capped: it read `9+` in the top bar and `14` in the rail for the
+same queue.
+
 ### 2.3 Signal
 
 | Token | Value | Role |
@@ -113,7 +130,10 @@ brass, used **only** on plan, entitlement and upgrade surfaces.
 
 One categorical ramp: `#2F5FE0 · #1F7C56 · #A8701F · #6E4FB8 · #B5322B ·
 #0F6E6C · #8E4A7C · #4E5C6B`. Muted violet is permitted here and only here — as
-data, never as UI chrome. Every series clears 3:1 on the canvas. Because their
+data, never as UI chrome. **Blue is not a data fill.** The accent means
+interactive; two panels filled their bars with `--color-accent-500` and one with
+`--color-accent-50`, a background token, at 1.05:1 on its own track. A bar,
+a ranked row and a series take the ramp. Every series clears 3:1 on the canvas. Because their
 greyscale spread is narrow, charts never lean on hue alone: series carry direct
 labels or a legend, and lines vary dash pattern past four.
 
@@ -160,7 +180,7 @@ existed.
 
 | Rung | Size / line | Job |
 |---|---|---|
-| `2xs` | 11 / 16 | Mono eyebrows, column heads |
+| `2xs` | 11 / 16 | Mono eyebrows and column *groups* |
 | `xs` | 12 / 18 | Meta, hints, captions, badges |
 | `sm` | 13 / 20 | Table cells, dense UI |
 | `base` | 14 / 22 | Body, inputs, buttons, card titles |
@@ -172,6 +192,13 @@ existed.
 Weights: 400 body · 500 UI and labels · 600 headings and emphasis. Eyebrows are
 mono 11px uppercase at `--tracking-eyebrow` (0.08em).
 
+**A column head is not an eyebrow.** It is 12px Inter, sentence case. Mono
+uppercase across twelve columns was the single most magazine-like element on the
+console's most important surface, and at the same padding as the cells it
+labelled it did not even align with them: mono side bearings plus 0.08em of
+tracking put the header a pixel off the figures under it. `Eyebrow` keeps the
+rung for card headers and for column *groups*.
+
 ---
 
 ## 4. Space, shape, elevation
@@ -180,19 +207,110 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
   (`h-control-md`, `h-row`), not arbitrary values, so a button and an input on
   one row line up and the guardrail rule has nothing to make an exception for.
 - Controls: `sm` 28 · `md` 34 · `lg` 40. Rows: 44, compact 36.
-- Page gutter 24 / 32. `max-w-page` 1440 for dense surfaces, `max-w-reading` 896
-  for settings and forms — a 1,400px-wide form puts the label and its control a
-  screen apart.
+- Page gutter 24 / 32, from one token pair (`--spacing-gutter`,
+  `--spacing-gutter-lg`) that the page, the top bar and the shell's banners all
+  read. `max-w-page` 1440 is the widest content column. A narrower measure is a
+  property of the *content*, never of the page: `Measure` gives a form 672 and
+  long-form help 896, and the page keeps one left edge at every route.
 - Card padding 20. Card header 16 vertical plus a hairline. Section stack 24.
   Field gap 6 between label, control and hint.
-- Radii: `4` chip · `6` input and small button · `8` button and select · `10`
-  card · `14` modal and drawer. Full only for avatars, badges and toggles.
+- Radii: `4` chip and badge · `6` small control · `8` medium and large control ·
+  `10` card and floating panel · `14` modal; a drawer anchored to an edge is
+  square on those edges and `14` on its leading one. Full only for avatars,
+  status dots and toggles. Radius is a function of control **size**, not control
+  type, so a button and an input on one toolbar row are one set.
+- A progress or ranked-bar **track** is `rounded-xs`. A fully round track reads
+  as a pill, and at 4px tall the radius is doing nothing anyone can see.
+- An icon's size is derived from the control that holds it, never chosen at the
+  call site.
+- A name and the sentence explaining it are 4px apart inside one control; 6px is
+  the `Field`'s label → control → hint chain and nothing else.
+- Overlay padding is one contract: header 20/16 plus a hairline, body 20 all
+  round, footer 20/12 on sunken.
+- A `Select`'s closed control is ours; its **open list is platform chrome** and
+  ignores every token here. That is the accepted price of a native select.
 - **Cards carry no shadow.** Elevation means "floating above the page, and
   dismissible", which a card is not. `--shadow-xs` is a 1px *seam* — a switch
   thumb, an active segment — and is honest about that. `md` is for menus and
   popovers, `lg` for modals and drawers.
-- **Cards do not nest.** A card inside a card gives you two competing hairlines
-  and forty pixels of dead gutter. Use `CardSection`.
+- **Cards do not nest**, and the rule is wider than it reads. A `Card` whose
+  entire body is an `Alert` (`rounded-md border`), a `DataTable`
+  (`rounded-lg border`) or a `LockedState` is the same defect: two competing
+  hairlines and two concentric radii a pixel apart. Use `CardSection` for a
+  band inside a card, `seated` + `CardBody flush` for a table, and
+  `size="panel"` for a state.
+- **The chrome grid.** The rail's icon column is at x=18 with a 16px optical
+  box; every rail glyph — icon, health dot, progress ring, brand mark —
+  occupies it. The rail's label column is at x=44. Group labels and any control
+  spanning the rail start at 18, on the glyph column. The top bar shares the
+  page's gutter, so the breadcrumb and the page title stand on one line. Rail
+  rows are `h-9` (36); the identity row is `--spacing-row` (44) and is the only
+  exception. Both consoles get this from `RailFrame`, because two shells owning
+  their own geometry drifted 22px apart.
+
+---
+
+### 4.1 Composition
+
+The first version of this document specified colour, type, shape and space, and
+then left the arrangement of a page to whoever wrote it. That omission produced
+the console's worst quality: a token layer and a primitive layer with no layout
+layer, so `Stack` — `flex-col gap-6`, one column, forever — became the default
+composition for the whole product. Eighty-eight hand-written `grid-cols-*`
+strings grew in `features/` around it, and every page whose author did not write
+one became a single column of full-width cards. The review of the result put it
+plainly: it read as a magazine, not as an instrument.
+
+**A page is a grid, not a stack.** `Stack` sets the vertical rhythm *between*
+sections. It is not how peers are arranged. Two or more cards answering the same
+question at the same altitude belong in a `Grid`. A form beside a summary or a
+live preview is `Columns`. A list and its detail is `SplitPane`, both panes
+mounted, so scroll position and half-written replies survive. A secondary nav
+beside its content is `SidebarLayout`. If a page renders more than three `Stack`
+children in a row and none of them is a table, it is wrong.
+
+**A pair is a pair.** A label and its control, a term and its value, a bar and
+its figure — these bind visually only while they are close. Stretched across a
+1440px card by `justify-between` they stop being a pair and the middle of the
+row becomes a hole; the console shipped a switch 1,540px from the label naming
+it. Every such row is capped at `--container-pair` (640).
+
+**A record is a `PropertyGrid`, not a paragraph.** Any run of label→value facts
+is hairline rows, one or two columns, `—` for an absent value. Prose describing
+a record is deleted, not styled.
+
+**A setting is a `SettingRow`, not a card.** A card per setting costs about
+130px of chrome to present one control. A run of them is a `SettingGroup`: name
+left, control right, a hairline between.
+
+**A number lives in a `StatRow`.** Never a lone tile, never a hand-written
+`grid grid-cols-4`, and the period is stated once for the row rather than
+repeated on every tile. The one number a page is *about* is the only one that
+takes `size="hero"`.
+
+**Breakpoints are container queries, not viewport queries.** This console has
+panes. A `Grid` inside a 320px inbox pane on a 1920px monitor is one column, and
+only the container knows that. `Page` declares `@container/page` and every
+primitive that narrows the measure re-declares it, so `@3xl/page:` always means
+"the box I am actually in is at least 768 wide", wherever it is written.
+
+**The page box never moves.** `Page` is left-anchored. It used to be `mx-auto`,
+so navigating from a wide page to a narrow one slid the title, the tab row and
+every card 148px right at 1440 and 388px at 1920, and back again — the app had
+no stable left edge, which is the single most visible cause of "the arrangement
+of pages is broken". A reading measure is `Measure`, and `Measure` is never
+`mx-auto` either.
+
+**A card's chrome is proportional to its content.** A widget card gets a 40px
+header (`CardHeader size="sm"`, no eyebrow, no hairline). A section card gets a
+68px one. Nothing gets 98.
+
+**A description earns its line or it is deleted.** It may not restate its own
+title, may not repeat a sibling hint, and never exceeds one clause. Anything
+longer is a `Tooltip` on the label, or it does not need saying. The console
+carried about 610 of them — 101 of its 103 card headers among them — and roughly
+four hundred said nothing the title had not already said. No copy tells the
+reader to scroll.
 
 ---
 
@@ -201,8 +319,13 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
 - **One focus ring: `outline`, not `box-shadow`.** The system draws structure
   with inset box-shadows — the active tab's underline, the table's hairlines, a
   switch thumb's seam — and a box-shadow ring overwrites all of them. An outline
-  also follows `border-radius` on its own and is never clipped by an
-  `overflow: hidden` ancestor, which a ring on a table cell always is.
+  also follows `border-radius` on its own and takes no layout space, which a
+  box-shadow ring does not. It **is** still painted inside an `overflow`
+  ancestor's clip rect, like any other ink — so a control at the edge of a
+  scrolling panel needs inset room for its ring. `PopoverBody` carries 20px
+  because of it, and a scrolling table sets `outline-offset: -2px`. The earlier
+  claim here that an outline "is never clipped" was simply wrong, and it was
+  licensing scroll containers that clip focus rings.
 - Easing `cubic-bezier(.2,.8,.2,1)`. Durations: 120 hover and press · 180 menus
   and popovers · 240 drawers and modals.
 - No scroll reveals. No entrance animation on data. An operator opening this
@@ -212,11 +335,25 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
 - One z-ladder: sticky 10 · rail 20 · topbar 30 · scrim 40 · overlay 50 · toast
   60 · banner 70. The system this replaces put the mobile scrim and the top bar
   both on 20, with the bar later in the DOM, so the bar painted above its own
-  scrim and stayed clickable.
+  scrim and stayed clickable. **A rung is only real on a positioned element**,
+  and an overlay's z-index belongs on its positioner, not on the popup Base UI
+  renders as a static child. A panel and its own backdrop never share a rung:
+  relying on DOM order is the failure the ladder exists to prevent.
+- **A must-see bar is a layout row, not an overlay.** It renders in the shell's
+  banner slot above the top bar and pushes the chrome down. The impersonation
+  bar was `position: fixed` at rung 70 with a `body { padding-top }` rule
+  compensating — and that rule targeted two attributes the rebuilt shell does
+  not have, so the bar covered the top bar and the shell hung 36px below the
+  fold.
 - **Every surface ships loading, empty, error and forbidden.** They are one
   decision, not four: "nothing here yet", "nothing matched your filter", "we
   could not load this" and "your plan does not include this" are different
   answers, and a single blank panel makes the reader guess which one they got.
+  A state **seated in a card matches the card's gutter** (`--spacing-cell`); an
+  inline state is left-aligned and drawn at row scale, because a table that
+  returned no rows is not a poster. A **route-level** 403 is a page of its own,
+  never a silent `<Navigate>` — a redirect throws away the address the reader
+  asked for and tells them nothing about why.
 
 ---
 
@@ -244,7 +381,15 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
    unreachable by keyboard, invisible on touch, and waits a second before it
    appears.
 10. Every figure is `.figure`. Every absent value is `—`, never `0` or a blank
-    cell.
+    cell. A count in the chrome is a figure too, and it is capped: `99+`, from
+    one helper, so the same queue cannot read `9+` in the top bar and `14` in
+    the rail.
+11. **A destination has exactly one name, in exactly one place.** The rail
+    printed "Chatbots" as a nav row and again forty pixels below as the label of
+    the group listing them; the account menu offered two items that opened the
+    identical screen, and a third that 404'd. A trail that names the wrong page
+    is worse than a short one — the last crumb carries `aria-current="page"`,
+    so it is read aloud as the answer to "where am I".
 
 ---
 
@@ -257,6 +402,10 @@ mono 11px uppercase at `--tracking-eyebrow` (0.08em).
 - `src/ui/scale.test.ts` — the guardrails.
 - `src/ui/ui.test.tsx` — the keyboard and ARIA contracts that are invisible
   until they break.
+- `src/shell/shell.test.tsx` — the chrome's own guardrails: no Tailwind default
+  palette anywhere in the shell (`--color-*: initial` deletes it, so it compiles
+  to nothing and renders invisible), no paper status token on the ink rail, and
+  the breadcrumb's answer at every route shape.
 
 ---
 
@@ -322,3 +471,23 @@ for a stack trace, in writing.
 that belongs above the title — "You already have one chatbot on Free". It is set
 in sentence case at full size, not in the mono uppercase `Eyebrow`, because
 these are sentences and 11px uppercase mono mangles a sentence.
+
+**The chrome is one component, drawn twice.** There are two consoles — the
+customer's and the platform's — and they were the same 248px column with two
+different interiors: a 56px header against a 52px one, a bottom border against
+none, a 12px inset against 16, 8px of nav padding against none, and an active
+state with an accent rule against one without. A super-admin crosses between
+them constantly and every crossing moved the content start by 22px. `RailFrame`,
+`RailItem`, `RailGroupLabel` and `RailBackLink` own that geometry now, in
+`src/ui/`, because two shells consuming one frame cannot drift and two shells
+each owning their own always will.
+
+**A class that compiles to nothing looks exactly like a class that works.**
+`tokens.css` opens its `@theme` with `--color-*: initial`, which deletes all
+twenty-two of Tailwind's default palettes — `white` and `black` included, since
+they live in the same namespace. The impersonation bar reached for `bg-rose-600`,
+`text-white` and `bg-white/15`, and the built stylesheet contained none of them:
+the one bar in the product whose stated job is to make a support session
+impossible to forget rendered as a transparent strip with near-black text, and
+nothing in its source said so. Reading the diff could not catch it. A guardrail
+test over the shell's own source can, and does.

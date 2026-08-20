@@ -51,7 +51,8 @@ describe('FollowUpSection', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Pause follow-up emails' });
     expect(toggle).toBeChecked();
-    expect(screen.getByText(/Anyone who tries to send one is told/i)).toBeInTheDocument();
+    // The state carries a word as well as the switch position.
+    expect(screen.getByText('Paused')).toBeInTheDocument();
   });
 
   it('states the consequence and writes nothing until it is confirmed', async () => {
@@ -59,8 +60,7 @@ describe('FollowUpSection', () => {
     await user.click(await screen.findByRole('switch', { name: 'Pause follow-up emails' }));
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent(/Nobody on your team will be able to send a follow-up/i);
-    expect(dialog).toHaveTextContent(/no queue, no retry, nothing sent later/i);
+    expect(dialog).toHaveTextContent(/Nobody can send a follow-up from this chatbot/i);
     expect(vi.mocked(updateBot)).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Pause follow-ups' }));
@@ -117,7 +117,8 @@ describe('FollowUpSection', () => {
     );
     renderSection();
 
-    expect(await screen.findByText('This chatbot is not yours to change')).toBeInTheDocument();
+    expect(await screen.findByText(/Only this chatbot’s workspace can change it/)).toBeInTheDocument();
+    expect(screen.getByText('Not yours')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(screen.queryByRole('switch')).toBeNull();
   });

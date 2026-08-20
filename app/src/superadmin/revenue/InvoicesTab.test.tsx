@@ -140,8 +140,9 @@ describe('InvoicesTab', () => {
 
     await screen.findByText('DB/26-27/000114');
     const pager = screen.getByRole('navigation', { name: /pages/i });
+    // The table's own count, in the pager: "1–50 of 137 documents".
     expect(within(pager).getByText('137')).toBeInTheDocument();
-    expect(screen.getByText('137 documents')).toBeInTheDocument();
+    expect(pager).toHaveTextContent('documents');
   });
 
   it('turns the page through the URL and refetches from the server', async () => {
@@ -224,7 +225,9 @@ describe('InvoicesTab', () => {
   it('says the account is not permitted rather than showing an empty table', async () => {
     get.mockRejectedValue(forbidden());
     renderTab();
-    expect(await screen.findByText('You cannot read invoices')).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
+    // The column heads stay so the reader can see what they are locked out of;
+    // no document row is rendered.
+    expect(screen.queryAllByRole('cell')).toHaveLength(1);
   });
 });

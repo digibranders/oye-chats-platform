@@ -150,7 +150,7 @@ describe('the four states', () => {
 
   it('shows an empty funnel rather than an empty chart', async () => {
     await renderSettled();
-    expect(await screen.findByText('No conversations in this period')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing scored in this period')).toBeInTheDocument();
   });
 });
 
@@ -268,7 +268,7 @@ describe('validation refuses a set that cannot score', () => {
   it('accepts weights that do not total 100, because the server normalises them', async () => {
     await renderSettled();
 
-    const weight = screen.getAllByLabelText('Weight')[0];
+    const weight = screen.getByLabelText('Weight for Need');
     await user.clear(weight);
     await user.type(weight, '5');
 
@@ -280,7 +280,7 @@ describe('validation refuses a set that cannot score', () => {
   it('rebalances to exactly 100 on request', async () => {
     await renderSettled();
 
-    const weight = screen.getAllByLabelText('Weight')[0];
+    const weight = screen.getByLabelText('Weight for Need');
     await user.clear(weight);
     await user.type(weight, '5');
     await user.click(await screen.findByRole('button', { name: 'Balance to 100' }));
@@ -295,7 +295,11 @@ describe('what fires at each tier', () => {
 
     const heading = await screen.findByRole('heading', { name: 'What happens at each tier' });
     const card = heading.closest('[data-card]') as HTMLElement;
-    expect(within(card).getAllByText(/Only sales-qualified notifies anyone/i)).toHaveLength(2);
+    // Stated once, in the header — it used to be a 33-word paragraph printed
+    // verbatim on both of the tiers that send nothing.
+    expect(within(card).getAllByText(/Only sales-qualified notifies anyone/i)).toHaveLength(1);
+    // …and each non-firing tier carries the fact as a badge instead.
+    expect(within(card).getAllByText('Recorded only')).toHaveLength(2);
   });
 
   it('names the real recipients when the email will fire', async () => {
@@ -337,7 +341,11 @@ describe('the master switch', () => {
     vi.mocked(getClientSettings).mockResolvedValue({ ...SETTINGS, bant_enabled: false });
     await renderSettled();
 
-    expect(screen.getByText(/no qualified-lead email or webhook can fire/i)).toBeInTheDocument();
+    // Stated once, in the page header beside the switch that caused it — it used
+    // to be a 34-word paragraph inserted above the framework picker, which moved
+    // the control the reader was about to use.
+    expect(screen.getByText('Scoring off')).toBeInTheDocument();
+    expect(screen.getByText(/Leads are still captured, but nothing is scored/i)).toBeInTheDocument();
     // Disabled, not `inert`: the rubric stays readable — including to a screen
     // reader — but cannot be edited. Before this, a tab reached the framework
     // picker of a chatbot whose scoring was off, and changing it PATCHed the

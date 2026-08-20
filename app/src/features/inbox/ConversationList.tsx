@@ -1,11 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
-import { Avatar, Badge, EmptyState, ErrorState, LoadingRows, SearchField, SegmentedControl, StatusDot, cn, formatRelative } from '../../ui';
-import { INBOX_VIEWS, VIEW_META, byRecency, matchesQuery, waitLabel, waitTone, type InboxItem, type InboxView } from './inboxModel';
+import {
+  Avatar,
+  Badge,
+  Button,
+  EmptyState,
+  ErrorState,
+  LoadingConversations,
+  PaneHeader,
+  SearchField,
+  Select,
+  StatusDot,
+  cn,
+  formatRelative,
+} from '../../ui';
+import {
+  INBOX_VIEWS,
+  VIEW_META,
+  byRecency,
+  matchesQuery,
+  waitLabel,
+  waitTone,
+  type InboxItem,
+  type InboxView,
+} from './inboxModel';
 
 export interface ConversationListProps {
   view: InboxView;
   onViewChange: (view: InboxView) => void;
   counts: Record<InboxView, number>;
+  /** True when a scope holds something unread, so the switcher can say so. */
+  unread?: Partial<Record<InboxView, boolean>>;
   items: InboxItem[];
   selectedId: string | null;
   onSelect: (item: InboxItem) => void;
@@ -18,7 +42,6 @@ export interface ConversationListProps {
   now: number;
   /** Rendered under the list — pagination for the offline scope. */
   footer?: React.ReactNode;
-  emptyAction?: React.ReactNode;
   /**
    * Replaces the scope's own empty copy when the list is empty for a reason the
    * scope does not know about — being offline, for instance, which is why there
@@ -27,6 +50,15 @@ export interface ConversationListProps {
   emptyOverride?: { title: string; description: string; action?: React.ReactNode } | null;
 }
 
+/**
+ * One conversation, in a fixed 72px box.
+ *
+ * It used to be 90–110px, because the preview was a `line-clamp-2` — a
+ * *maximum*, not a box — so adjacent rows differed in height by 20px and the
+ * list read as ragged rather than as a column. Eight conversations filled the
+ * pane. Intercom's row is 72px and Front's is 64; this is two lines, fixed:
+ * name · state · time, then the preview.
+ */
 function Row({
   item,
   selected,
@@ -55,12 +87,21 @@ function Row({
         }
       }}
       className={cn(
-        'flex cursor-pointer gap-3 border-b border-border px-3 py-3',
+        'flex h-18 cursor-pointer items-center gap-3 border-b border-border px-cell last:border-b-0',
         'transition-colors duration-[var(--dur-fast)]',
-        selected ? 'bg-accent-50' : 'bg-surface hover:bg-surface-hover',
+        // `div[role=option][tabindex]` is deliberately outside the one
+        // `:focus-visible` selector in `tokens.css`, so `move()` called
+        // `.focus()` on a row and nothing was drawn. Inset, because the row is
+        // flush to the pane's edges and a +2 outline is clipped by the list's
+        // own `overflow-y-auto`.
+        'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2',
+        'focus-visible:outline-accent-500',
+        selected
+          ? 'bg-accent-50 shadow-[inset_3px_0_0_var(--color-accent-500)]'
+          : 'bg-surface hover:bg-surface-hover',
       )}
     >
-      <div className="relative shrink-0 pt-0.5">
+      <div className="relative shrink-0">
         <Avatar size="md" name={item.name} />
         {item.online ? (
           <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-surface p-0.5">
@@ -71,9 +112,16 @@ function Row({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <p className="min-w-0 flex-1 truncate text-base font-medium text-text-primary">{item.name}</p>
+          <p className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+            {item.name}
+          </p>
+          {item.state ? (
+            <Badge tone={item.state.tone} className="shrink-0">
+              {item.state.label}
+            </Badge>
+          ) : null}
           {wait ? (
-            <Badge tone={waitTone(item.at, now)} className="figure">
+            <Badge tone={waitTone(item.at, now)} className="figure shrink-0">
               {wait}
             </Badge>
           ) : (
@@ -81,20 +129,17 @@ function Row({
               {formatRelative(item.at)}
             </span>
           )}
-        </div>
-        <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-text-secondary">{item.preview}</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {item.state ? <Badge tone={item.state.tone}>{item.state.label}</Badge> : null}
-          {item.botName ? (
-            <span className="truncate text-2xs text-text-tertiary">{item.botName}</span>
-          ) : null}
+          {/* On line 1, pinned, and capped. It used to be `ml-auto` inside a
+              wrapping row, so behind a long chatbot name the most important
+              number on the row wrapped to the left edge of a second line. */}
           {item.unread > 0 ? (
-            <span className="figure ml-auto rounded-full bg-ink px-1.5 py-0.5 text-2xs font-medium text-rail-text">
-              {item.unread}
+            <Badge tone="ink" className="figure shrink-0">
+              {item.unread > 99 ? '99+' : item.unread}
               <span className="sr-only"> unread</span>
-            </span>
+            </Badge>
           ) : null}
         </div>
+        <p className="mt-0.5 truncate text-xs text-text-secondary">{item.preview}</p>
       </div>
     </div>
   );
@@ -108,6 +153,11 @@ function Row({
  * with a click handler — unreachable by keyboard at all — inside three separate
  * lists that each maintained their own idea of what was selected.
  *
+ * The scope is a `Select`, not a segmented control. Four segments each carrying
+ * a count came to roughly 340px against the 296px this pane has, and
+ * `SegmentedControl` neither wraps nor scrolls nor sets `min-w-0`, so it
+ * painted straight over the pane's own right border.
+ *
  * Search filters within the current scope only. Searching across all four would
  * be a different feature (and a server-side one); pretending to do it client
  * side over one page of offline messages would be a lie about coverage.
@@ -116,6 +166,7 @@ export function ConversationList({
   view,
   onViewChange,
   counts,
+  unread = {},
   items,
   selectedId,
   onSelect,
@@ -126,7 +177,6 @@ export function ConversationList({
   onRetry,
   now,
   footer,
-  emptyAction,
   emptyOverride = null,
 }: ConversationListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -179,27 +229,38 @@ export function ConversationList({
   }, [selectedId]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-r border-border bg-surface">
-      <div className="shrink-0 space-y-2.5 border-b border-border px-3 py-3">
-        <SegmentedControl
-          size="sm"
-          label="Conversation scope"
-          value={view}
-          onChange={onViewChange}
-          items={INBOX_VIEWS.map((value) => ({
-            value,
-            label: VIEW_META[value].label,
-            count: counts[value],
-          }))}
-        />
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <PaneHeader
+        title="Conversations"
+        actions={
+          <>
+            {/* Colour is never the only signal, so the scope that holds unread
+                messages carries a dot beside its name as well as a count. */}
+            {unread[view] ? <StatusDot tone="danger" label="Unread in this scope" /> : null}
+            <div className="w-36">
+              <Select<InboxView>
+                size="sm"
+                aria-label="Conversation scope"
+                value={view}
+                onChange={(event) => onViewChange(event.target.value as InboxView)}
+                options={INBOX_VIEWS.map((value) => ({
+                  value,
+                  label: `${VIEW_META[value].label} (${counts[value]})`,
+                }))}
+              />
+            </div>
+          </>
+        }
+      >
         <SearchField
           size="sm"
           label={`Search ${meta.label.toLowerCase()}`}
           placeholder={`Search ${meta.label.toLowerCase()}…`}
           value={query}
           onValueChange={onQueryChange}
+          className="w-full"
         />
-      </div>
+      </PaneHeader>
 
       <div
         ref={listRef}
@@ -209,19 +270,28 @@ export function ConversationList({
         className="min-h-0 flex-1 overflow-y-auto"
       >
         {loading && visible.length === 0 ? (
-          <LoadingRows rows={6} className="p-3" />
+          <LoadingConversations rows={6} />
         ) : error ? (
-          <ErrorState compact description={error} onRetry={onRetry} />
+          <ErrorState size="panel" polite description={error} onRetry={onRetry} />
         ) : visible.length === 0 ? (
           <EmptyState
-            compact
+            size="panel"
             title={query ? 'Nothing matched' : (emptyOverride?.title ?? meta.emptyTitle)}
             description={
               query
                 ? `No conversation in ${meta.label} matches “${query}”.`
                 : (emptyOverride?.description ?? meta.emptyBody)
             }
-            action={query ? undefined : (emptyOverride?.action ?? emptyAction)}
+            // A "nothing matched" state with no way out is a dead end.
+            action={
+              query ? (
+                <Button size="sm" variant="secondary" onClick={() => onQueryChange('')}>
+                  Clear search
+                </Button>
+              ) : (
+                emptyOverride?.action
+              )
+            }
           />
         ) : (
           visible.map((item) => (
@@ -236,7 +306,9 @@ export function ConversationList({
         )}
       </div>
 
-      {footer ? <div className="shrink-0 border-t border-border px-3 py-2">{footer}</div> : null}
+      {footer ? (
+        <div className="shrink-0 border-t border-border px-cell py-2">{footer}</div>
+      ) : null}
     </div>
   );
 }

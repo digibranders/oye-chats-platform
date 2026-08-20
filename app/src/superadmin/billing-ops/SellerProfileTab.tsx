@@ -5,11 +5,12 @@ import {
   Button,
   Card,
   CardBody,
-  CardFooter,
   Field,
+  Grid,
   Input,
   LoadingRows,
   LockedState,
+  SaveBar,
   Section,
   Stack,
   Switch,
@@ -17,6 +18,7 @@ import {
   toast,
 } from '../../ui';
 import { platform } from '../client';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { usePlatformResource } from '../usePlatform';
 import {
   MAX_TAX_RATE_BPS,
@@ -42,6 +44,23 @@ import type { SellerProfile } from './types';
  * the server derives rather than accepts are shown as derived rather than as
  * editable controls that silently do nothing.
  */
+/** Field labels, so the save bar can name what is blocking it. */
+const FIELD_LABELS: Record<string, string> = {
+  legal_name: 'Registered legal name',
+  cin: 'CIN',
+  country: 'Country',
+  sac_code: 'SAC / HSN',
+  tax_rate_bps: 'Tax rate',
+  invoice_prefix: 'Invoice prefix',
+  lut_number: 'LUT number',
+  support_email: 'Support email',
+  website: 'Website',
+};
+
+function sameDraft(a: SellerDraft, b: SellerDraft): boolean {
+  return (Object.keys(a) as (keyof SellerDraft)[]).every((key) => a[key] === b[key]);
+}
+
 export function SellerProfileTab() {
   const profile = usePlatformResource<SellerProfile>('/billing/seller-profile');
   const [draft, setDraft] = useState<SellerDraft | null>(null);
@@ -55,6 +74,13 @@ export function SellerProfileTab() {
 
   const errors = useMemo(() => (draft ? validateSellerDraft(draft) : {}), [draft]);
   const invalid = Object.keys(errors).length > 0;
+  // Named, never "fix the highlighted fields": this form is fourteen fields over
+  // three cards, and the reader would have to hunt all three to find the one.
+  const blockingKey = (Object.keys(errors) as (keyof SellerDraft)[])[0];
+  const blockedReason = blockingKey
+    ? `${FIELD_LABELS[blockingKey] ?? blockingKey} — ${errors[blockingKey]}`
+    : null;
+  const dirty = Boolean(draft && profile.data && !sameDraft(draft, toDraft(profile.data)));
 
   function set<K extends keyof SellerDraft>(key: K, value: SellerDraft[K]): void {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
@@ -66,7 +92,12 @@ export function SellerProfileTab() {
     setSaving(true);
     setError(null);
     try {
-      await platform.put<SellerProfile>('/billing/seller-profile', toPatch(draft));
+      // The draft is reset from what the server stored rather than from what was
+      // typed: the server derives the state code and normalises the identity, so
+      // a form still showing the typed value is showing something that is not
+      // what any future invoice will carry.
+      const stored = await platform.put<SellerProfile>('/billing/seller-profile', toPatch(draft));
+      setDraft(toDraft(stored));
       toast.success('Seller profile saved.');
       setSaved(true);
       profile.reload();
@@ -80,8 +111,8 @@ export function SellerProfileTab() {
   if (profile.forbidden) {
     return (
       <LockedState
-        title="You cannot read the seller profile"
-        description="Your super-admin account is not permitted to read the seller-of-record identity. Nothing was loaded."
+        title={FORBIDDEN_TITLE}
+        description={forbiddenDescription('the seller-of-record identity')}
       />
     );
   }
@@ -126,20 +157,7 @@ export function SellerProfileTab() {
         </Alert>
       ) : null}
 
-      {saved ? (
-        <Alert tone="success" live title="Saved">
-          Documents numbered from now on carry this identity. Documents already issued keep the
-          snapshot they were made with — editing this never rewrites them.
-        </Alert>
-      ) : null}
-
-      {error ? (
-        <Alert tone="danger" live title="The seller profile was refused">
-          {error}
-        </Alert>
-      ) : null}
-
-      <Section title="Status">
+      <Section title="Status" description="The first two are derived by the server: a stored GSTIN is what turns receipts into tax invoices.">
         <Card>
           <CardBody className="flex flex-wrap items-center gap-3">
             <Badge tone={stored.configured ? 'success' : 'danger'} dot>
@@ -151,33 +169,33 @@ export function SellerProfileTab() {
             <Badge tone={stored.lut_active ? 'plan' : 'neutral'}>
               {stored.lut_active ? `LUT active · ${stored.lut_number ?? 'no number'}` : 'No LUT'}
             </Badge>
-            <p className="w-full text-xs text-text-secondary">
-              Both of the first two are derived by the server, not set here: a stored GSTIN is what
-              turns receipts into tax invoices.
-            </p>
           </CardBody>
         </Card>
       </Section>
 
-      <Section title="Legal identity" description="Printed on every document this platform issues.">
+      <Section
+        title="Legal identity"
+        description="Printed on documents numbered from now on. Documents already issued keep their own snapshot — editing this never rewrites them."
+      >
         <Card>
-          <CardBody className="grid max-w-3xl gap-5 sm:grid-cols-2">
+          <CardBody>
+            <Grid cols={2}>
             <Field
               label="Registered legal name"
               required
               error={errors.legal_name}
-              hint="Exactly as registered. This is the name on the invoice."
+              hint="Exactly as registered."
               className="sm:col-span-2"
             >
               <Input value={draft.legal_name} onChange={(event) => set('legal_name', event.target.value)} />
             </Field>
-            <Field label="Trading name" hint="The name customers know, if it differs.">
+            <Field label="Trading name" hint="If it differs from the legal name.">
               <Input value={draft.trade_name} onChange={(event) => set('trade_name', event.target.value)} />
             </Field>
             <Field
               label="CIN"
               error={errors.cin}
-              hint="Companies Act s.12(3)(c). Blank if the seller is not a company."
+              hint="Blank if the seller is not a company."
             >
               <Input
                 value={draft.cin}
@@ -187,7 +205,7 @@ export function SellerProfileTab() {
             </Field>
             <Field
               label="Registered address"
-              hint="One line per line. Blank lines are dropped."
+              hint="One line per line."
               className="sm:col-span-2"
             >
               <Textarea
@@ -208,8 +226,8 @@ export function SellerProfileTab() {
               disabled={gstinSet}
               hint={
                 gstinSet
-                  ? 'Derived from the first two digits of the GSTIN. The server ignores anything sent here while a GSTIN is stored.'
-                  : 'Two digits. Used to decide whether a supply is intra- or inter-state.'
+                  ? 'Derived from the GSTIN while one is stored.'
+                  : 'Two digits. Decides intra- or inter-state supply.'
               }
             >
               <Input
@@ -219,16 +237,21 @@ export function SellerProfileTab() {
                 onChange={(event) => set('state_code', event.target.value)}
               />
             </Field>
+            </Grid>
           </CardBody>
         </Card>
       </Section>
 
-      <Section title="Tax" description="What the platform charges, and under which registration.">
+      <Section
+        title="Tax"
+        description="Prices are tax-inclusive and cannot be otherwise: checkout collects the sticker price, so the server refuses the alternative."
+      >
         <Card>
-          <CardBody className="grid max-w-3xl gap-5 sm:grid-cols-2">
+          <CardBody>
+            <Grid cols={2}>
             <Field
               label="GSTIN"
-              hint="Format and checksum are validated by the server. Clearing it turns every future document into a plain receipt."
+              hint="Clearing it turns every future document into a plain receipt."
               className="sm:col-span-2"
             >
               <Input
@@ -257,7 +280,7 @@ export function SellerProfileTab() {
             <Field
               label="Invoice prefix"
               error={errors.invoice_prefix}
-              hint="One to three characters. RCT and CN are reserved for the receipt and credit-note series."
+              hint="One to three characters. RCT and CN are reserved."
             >
               <Input
                 value={draft.invoice_prefix}
@@ -270,7 +293,7 @@ export function SellerProfileTab() {
                 checked={draft.lut_active}
                 onCheckedChange={(next) => set('lut_active', next)}
                 label="LUT active"
-                description="Exports are zero-rated under a Letter of Undertaking. The number is required while this is on."
+                description="Exports are zero-rated. The number is required while this is on."
               />
             </div>
             <Field
@@ -285,21 +308,16 @@ export function SellerProfileTab() {
                 onChange={(event) => set('lut_number', event.target.value)}
               />
             </Field>
-            <div className="sm:col-span-2">
-              <Alert tone="neutral" title="Prices are tax-inclusive, and cannot be otherwise">
-                Checkout collects the sticker price, so exclusive pricing would invoice more tax than
-                was ever collected. The server rejects the change outright, which is why there is no
-                control for it here.
-              </Alert>
-            </div>
+            </Grid>
           </CardBody>
         </Card>
       </Section>
 
       <Section title="Contact" description="The billing contact printed on the document.">
         <Card>
-          <CardBody className="grid max-w-3xl gap-5 sm:grid-cols-2">
-            <Field label="Support email" error={errors.support_email} hint="Falls back to the platform support address when blank.">
+          <CardBody>
+            <Grid cols={2}>
+            <Field label="Support email" error={errors.support_email} hint="Falls back to platform support.">
               <Input
                 type="email"
                 value={draft.support_email}
@@ -312,33 +330,33 @@ export function SellerProfileTab() {
             <Field label="Website" error={errors.website} hint="Must include http:// or https://.">
               <Input value={draft.website} onChange={(event) => set('website', event.target.value)} />
             </Field>
-            <Field label="Logo URL" hint="Printed at the top of the document. Blank for no logo.">
+            <Field label="Logo URL" hint="Blank for no logo.">
               <Input value={draft.logo_url} onChange={(event) => set('logo_url', event.target.value)} />
             </Field>
+            </Grid>
           </CardBody>
-          <CardFooter>
-            <Button
-              variant="ghost"
-              disabled={saving}
-              onClick={() => {
-                setDraft(toDraft(stored));
-                setError(null);
-                setSaved(false);
-              }}
-            >
-              Discard changes
-            </Button>
-            <Button variant="primary" loading={saving} disabled={invalid} onClick={() => void save()}>
-              Save seller profile
-            </Button>
-          </CardFooter>
         </Card>
-        {invalid ? (
-          <p className="mt-2 text-xs text-danger">
-            Fix the highlighted fields before saving. Nothing is sent until they are valid.
-          </p>
-        ) : null}
       </Section>
+
+      {/* Outside all three cards, because the fields are spread across all three:
+          anchoring the control to the last one meant editing the legal name in
+          the first card and then scrolling past fourteen fields to save it. */}
+      <SaveBar
+        dirty={dirty}
+        saving={saving}
+        saved={saved}
+        saveError={error}
+        blockedReason={blockedReason}
+        summary="the seller of record"
+        saveLabel="Save seller profile"
+        onSave={() => void save()}
+        onDiscard={() => {
+          setDraft(toDraft(stored));
+          setError(null);
+          setSaved(false);
+        }}
+        guard="the seller profile"
+      />
     </Stack>
   );
 }

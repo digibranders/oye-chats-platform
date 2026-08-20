@@ -1,16 +1,16 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { Eye, EyeOff } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Button,
-  Card,
   CardBody,
-  CardHeader,
+  CardFooter,
   ConfirmDialog,
-  Field,
   Input,
+  SettingGroup,
+  SettingRow,
   toast,
   validateEmail,
 } from '../../ui';
@@ -36,26 +36,16 @@ import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
 
 // ── Password ────────────────────────────────────────────────────────────────
 
-function PasswordToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={shown ? 'Hide password' : 'Show password'}
-      className="rounded-sm p-1 text-text-tertiary transition-colors hover:text-text-primary"
-    >
-      {shown ? <EyeOff aria-hidden className="h-4 w-4" /> : <Eye aria-hidden className="h-4 w-4" />}
-    </button>
-  );
-}
-
 export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
+  const fieldId = useId();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [showCurrent, setShowCurrent] = useState(false);
-  const [showNext, setShowNext] = useState(false);
-  const [errors, setErrors] = useState<{ current?: string; next?: string; confirm?: string }>({});
+  const [errors, setErrors] = useState<{
+    current?: string;
+    next?: string;
+    confirm?: string;
+  }>({});
 
   const change = useMutation({
     mutationFn: async (): Promise<void> => {
@@ -68,8 +58,6 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
       setCurrent('');
       setNext('');
       setConfirm('');
-      setShowCurrent(false);
-      setShowNext(false);
       setErrors({});
       toast.success('Password changed', {
         description: 'Use the new one next time you sign in.',
@@ -96,95 +84,102 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Password"
-        titleAs="h2"
-        description="Changing it here does not sign you out of this browser."
-      />
+    <SettingGroup title="Password">
       <form onSubmit={submit}>
-        <CardBody className="space-y-5">
-          {change.isError ? (
+        {change.isError ? (
+          <div className="px-cell pt-4">
             <Alert tone="danger" live title="We could not change your password">
               {errorMessage(change.error, 'Please check your current password and try again.')}
             </Alert>
-          ) : null}
+          </div>
+        ) : null}
 
-          <Field
-            label="Current password"
+        <SettingRow
+          label="Current password"
+          htmlFor={`${fieldId}-current`}
+          error={errors.current}
+          description={
+            isOperator ? undefined : (
+              <>
+                Cannot remember it?{' '}
+                <Link
+                  to="/forgot-password"
+                  className="font-medium text-accent-600 underline-offset-2 hover:underline"
+                >
+                  Reset it by email
+                </Link>
+                .
+              </>
+            )
+          }
+        >
+          {/* `Input revealable` owns the toggle. This file and the affiliate
+              invite shipped byte-identical `PasswordToggle`s, both 24px inside
+              a 34px control and neither reporting its own state. */}
+          <Input
+            id={`${fieldId}-current`}
+            type="password"
+            revealable
             required
-            error={errors.current}
-            hint={
-              isOperator ? undefined : (
-                <>
-                  Cannot remember it?{' '}
-                  <Link
-                    to="/forgot-password"
-                    className="font-medium text-accent-600 underline-offset-2 hover:underline"
-                  >
-                    Reset it by email
-                  </Link>
-                  .
-                </>
-              )
-            }
-          >
-            <Input
-              type={showCurrent ? 'text' : 'password'}
-              autoComplete="current-password"
-              value={current}
-              onChange={(event) => {
-                setCurrent(event.target.value);
-                setErrors((found) => ({ ...found, current: undefined }));
-              }}
-              trailing={
-                <PasswordToggle
-                  shown={showCurrent}
-                  onToggle={() => setShowCurrent((value) => !value)}
-                />
-              }
-            />
-          </Field>
+            aria-invalid={errors.current ? true : undefined}
+            autoComplete="current-password"
+            value={current}
+            onChange={(event) => {
+              setCurrent(event.target.value);
+              setErrors((found) => ({ ...found, current: undefined }));
+            }}
+          />
+        </SettingRow>
 
-          <Field
-            label="New password"
+        <SettingRow
+          label="New password"
+          htmlFor={`${fieldId}-next`}
+          error={errors.next}
+          description={<PasswordRules value={next} />}
+          stacked
+        >
+          <Input
+            id={`${fieldId}-next`}
+            type="password"
+            revealable
             required
-            error={errors.next}
-            hint={<PasswordRules value={next} />}
-          >
-            <Input
-              type={showNext ? 'text' : 'password'}
-              autoComplete="new-password"
-              value={next}
-              onChange={(event) => {
-                setNext(event.target.value);
-                setErrors((found) => ({ ...found, next: undefined }));
-              }}
-              trailing={
-                <PasswordToggle shown={showNext} onToggle={() => setShowNext((value) => !value)} />
-              }
-            />
-          </Field>
+            aria-invalid={errors.next ? true : undefined}
+            autoComplete="new-password"
+            value={next}
+            onChange={(event) => {
+              setNext(event.target.value);
+              setErrors((found) => ({ ...found, next: undefined }));
+            }}
+          />
+        </SettingRow>
 
-          <Field label="Confirm new password" required error={errors.confirm}>
-            <Input
-              type={showNext ? 'text' : 'password'}
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(event) => {
-                setConfirm(event.target.value);
-                setErrors((found) => ({ ...found, confirm: undefined }));
-              }}
-            />
-          </Field>
-        </CardBody>
-        <div className="flex justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
+        <SettingRow
+          label="Confirm new password"
+          htmlFor={`${fieldId}-confirm`}
+          error={errors.confirm}
+        >
+          <Input
+            id={`${fieldId}-confirm`}
+            type="password"
+            revealable
+            required
+            aria-invalid={errors.confirm ? true : undefined}
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(event) => {
+              setConfirm(event.target.value);
+              setErrors((found) => ({ ...found, confirm: undefined }));
+            }}
+          />
+        </SettingRow>
+
+        <CardFooter>
           <Button type="submit" loading={change.isPending}>
             Change password
           </Button>
-        </div>
+        </CardFooter>
       </form>
-    </Card>
+    </SettingGroup>
   );
 }
 
@@ -211,6 +206,7 @@ export interface ChangeEmailCardProps {
  * a silent resend button that 401s is not.
  */
 export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
+  const emailFieldId = useId();
   const pending = user.pending_email ?? null;
   const [step, setStep] = useState<EmailStep>(pending ? 'verify' : 'idle');
   const [email, setEmail] = useState(pending ?? '');
@@ -288,81 +284,83 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
 
   return (
     <>
-      <Card>
-        <CardHeader
-          title="Sign-in email"
-          titleAs="h2"
-          description="Your address only moves once you have proved you can read the new inbox."
-          actions={
-            step === 'idle' ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setEmail('');
-                  setPassword('');
-                  setEmailError(null);
-                  setPasswordError(null);
-                  setStep('request');
-                }}
-              >
-                Change
-              </Button>
-            ) : undefined
-          }
-        />
-
+      <SettingGroup
+        title="Sign-in email"
+        actions={
+          step === 'idle' ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setEmail('');
+                setPassword('');
+                setEmailError(null);
+                setPasswordError(null);
+                setStep('request');
+              }}
+            >
+              Change
+            </Button>
+          ) : undefined
+        }
+      >
         {step === 'idle' ? (
-          <CardBody>
-            <p className="text-xs text-text-tertiary">Current address</p>
-            <p className="figure mt-0.5 text-base text-text-primary">{user.email ?? '—'}</p>
-          </CardBody>
+          <SettingRow label="Current address" controlWidth="auto">
+            <span className="figure text-base text-text-primary">{user.email ?? ABSENT}</span>
+          </SettingRow>
         ) : null}
 
         {step === 'request' ? (
           <form onSubmit={submitRequest}>
-            <CardBody className="space-y-5">
-              {request.isError ? (
+            {request.isError ? (
+              <div className="px-cell pt-4">
                 <Alert tone="danger" live title="We could not start that change">
                   {errorMessage(request.error, 'Please check the address and your password.')}
                 </Alert>
-              ) : null}
+              </div>
+            ) : null}
 
-              <Field
-                label="New email address"
+            <SettingRow
+              label="New email address"
+              htmlFor={`${emailFieldId}-new`}
+              description="Your address does not move until you enter the code."
+              error={emailError ?? undefined}
+            >
+              <Input
+                id={`${emailFieldId}-new`}
+                type="email"
                 required
-                hint="We send a code there. Your sign-in address does not move until you enter it."
-                error={emailError}
-              >
-                <Input
-                  type="email"
-                  value={email}
-                  autoComplete="off"
-                  onChange={(event) => {
-                    setEmail(event.target.value);
-                    setEmailError(null);
-                  }}
-                />
-              </Field>
+                aria-invalid={emailError ? true : undefined}
+                value={email}
+                autoComplete="off"
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setEmailError(null);
+                }}
+              />
+            </SettingRow>
 
-              <Field
-                label="Current password"
+            <SettingRow
+              label="Current password"
+              htmlFor={`${emailFieldId}-password`}
+              error={passwordError ?? undefined}
+            >
+              <Input
+                id={`${emailFieldId}-password`}
+                type="password"
+                revealable
                 required
-                hint="Proves it is you, not somebody who found your screen unlocked."
-                error={passwordError}
-              >
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    setPasswordError(null);
-                  }}
-                />
-              </Field>
-            </CardBody>
-            <div className="flex justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
+                aria-invalid={passwordError ? true : undefined}
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  setPasswordError(null);
+                }}
+              />
+            </SettingRow>
+
+            <CardFooter>
               <Button
                 type="button"
                 variant="ghost"
@@ -377,7 +375,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
               <Button type="submit" loading={request.isPending}>
                 Send the code
               </Button>
-            </div>
+            </CardFooter>
           </form>
         ) : null}
 
@@ -385,9 +383,8 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
           <form onSubmit={submitConfirm}>
             <CardBody className="space-y-5">
               <Alert tone="neutral" title="Check the new inbox">
-                We sent a code to{' '}
-                <strong className="text-text-primary">{pending ?? email}</strong>. Until you enter
-                it, keep signing in with {user.email ?? 'your current address'}.
+                We sent a code to <strong className="text-text-primary">{pending ?? email}</strong>.
+                Until you enter it, keep signing in with {user.email ?? 'your current address'}.
               </Alert>
 
               {confirmChange.isError ? (
@@ -404,7 +401,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                 autoFocus
               />
             </CardBody>
-            <div className="flex flex-wrap justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
+            <CardFooter>
               <Button
                 type="button"
                 variant="ghost"
@@ -427,10 +424,10 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
               <Button type="submit" loading={confirmChange.isPending}>
                 Confirm new address
               </Button>
-            </div>
+            </CardFooter>
           </form>
         ) : null}
-      </Card>
+      </SettingGroup>
 
       <ConfirmDialog
         open={confirmingCancel}
@@ -439,8 +436,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
         description={
           <>
             Your sign-in address stays {user.email ?? 'as it is'} and the code we sent to{' '}
-            {pending ?? email} stops working. Nothing else changes, and you can start again
-            whenever you like.
+            {pending ?? email} stops working. You can start again whenever you like.
           </>
         }
         confirmLabel="Cancel the change"

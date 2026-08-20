@@ -96,9 +96,7 @@ describe('GeneralPage — the four states', () => {
   it('does not show a team seat a save button that would always 403', async () => {
     workspace.currentRole = 'operator';
     renderPage();
-    expect(
-      await screen.findByText('Only the workspace owner can change this'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Only the workspace owner can change this')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /save changes/i })).not.toBeInTheDocument();
   });
 });

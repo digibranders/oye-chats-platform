@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Alert, Badge, Progress, Select, Tooltip } from '../../ui';
+import { Info } from 'lucide-react';
+import { Alert, Disclosure, Progress, Select, Tooltip } from '../../ui';
 import type { Lead, LeadSignal } from '../../types/domain';
+import { LeadSection } from './LeadSection';
 import { dimensionMax, orderedDimensions } from './leadModel';
 
 /**
@@ -21,6 +23,14 @@ import { dimensionMax, orderedDimensions } from './leadModel';
  * pinned a lead to the wrong tier permanently, with no remedy short of editing
  * the database. Every override is written to the same append-only signal trail
  * as an LLM extraction, tagged as an operator's.
+ *
+ * **It is four rows, not four boxes.** Each dimension used to be a bordered
+ * panel holding a label, a figure, a `Select`, a `Progress` bar and then either
+ * a bulleted list, a paragraph or "Nothing captured for this yet." — about
+ * 460px for four dimensions, with the two things a salesperson actually wants
+ * (which dimensions landed, and what the visitor said) buried under three layers
+ * of chrome each. One hairline row per dimension is 144px, and what the visitor
+ * said moves below the list as evidence, consulted rather than scanned.
  */
 
 export interface LeadQualificationProps {
@@ -70,6 +80,14 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
     label: String(score),
   }));
 
+  const evidence = dimensions
+    .map((dimension) => ({
+      label: dimension.label,
+      values: statedValues(lead.signals, dimension.key),
+      fallback: dimension.value,
+    }))
+    .filter((entry) => entry.values.length > 0 || entry.fallback);
+
   async function apply(dimension: string, label: string, score: number): Promise<void> {
     setError(null);
     setSaved(null);
@@ -84,18 +102,25 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
   }
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-lg font-semibold text-text-primary">What we learned</h3>
-        <Tooltip content="Correcting a score here is recorded against your account and recalculates the lead's quality.">
-          <span className="inline-flex">
-            <Badge>You can correct these</Badge>
-          </span>
+    <LeadSection
+      title="What we learned"
+      actions={
+        // Stated once, on one affordance. It used to be a `Badge` reading "You
+        // can correct these" — a state label wearing the job of an affordance
+        // hint — carrying this same tooltip.
+        <Tooltip content="Recorded against your account; recalculates the score.">
+          <button
+            type="button"
+            aria-label="About correcting a score"
+            className="flex h-6 w-6 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
+          >
+            <Info aria-hidden className="h-icon-sm w-icon-sm" />
+          </button>
         </Tooltip>
-      </div>
-
+      }
+    >
       {error ? (
-        <Alert tone="danger" live>
+        <Alert tone="danger" live className="mb-2">
           {error}
         </Alert>
       ) : null}
@@ -103,76 +128,73 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
           moved, and a sighted user sees the number change while a screen-reader
           user would otherwise get nothing at all. */}
       {saved && !error ? (
-        <Alert tone="success" live>
+        <Alert tone="success" live className="mb-2">
           {saved}
         </Alert>
       ) : null}
 
-      <ul className="space-y-2.5">
+      <ul>
         {dimensions.map((dimension) => {
-          const values = statedValues(lead.signals, dimension.key);
           // Clamped for the bar only. An unevenly-weighted dimension can exceed
-          // the equal-weight ceiling, and the text below reports it honestly
+          // the equal-weight ceiling, and the figure beside it reports the truth
           // rather than moving the goalposts.
           const percent = Math.min((dimension.score / max) * 100, 100);
           return (
-            <li key={dimension.key} className="rounded-md border border-border px-3.5 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                <span className="text-base font-medium text-text-primary">{dimension.label}</span>
-                <div className="flex items-center gap-2">
-                  <span className="figure text-xs text-text-secondary">
-                    {dimension.score} / {max}
-                  </span>
-                  {/* Boxed to a width: `Select` wraps itself in a `w-full`
-                      element, which would otherwise take the whole row. */}
-                  <div className="w-20">
-                    <Select
-                      size="sm"
-                      aria-label={`${dimension.label} score out of ${max}`}
-                      value={String(Math.min(dimension.score, max))}
-                      options={scoreOptions}
-                      disabled={saving}
-                      onChange={(event) =>
-                        void apply(dimension.key, dimension.label, Number(event.target.value))
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-
+            <li
+              key={dimension.key}
+              className="flex items-center gap-3 border-t border-border py-2 first:border-t-0"
+            >
+              <span className="w-28 shrink-0 truncate text-sm font-medium text-text-primary">
+                {dimension.label}
+              </span>
               <Progress
-                className="mt-2"
+                className="min-w-0 flex-1"
                 size="sm"
                 value={percent}
                 label={`${dimension.label}: ${dimension.score} out of ${max}`}
                 tone={dimension.captured ? 'success' : 'accent'}
               />
-
-              {values.length > 1 ? (
-                <ul className="mt-2 space-y-1">
-                  {values.map((value) => (
-                    <li key={value} className="flex gap-2 text-prose text-text-secondary">
-                      <span
-                        aria-hidden
-                        className="mt-2 h-1 w-1 shrink-0 rounded-full bg-text-tertiary"
-                      />
-                      <span>{value}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (values[0] ?? dimension.value) ? (
-                <p className="mt-2 text-prose text-text-secondary">
-                  {values[0] ?? dimension.value}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-text-tertiary">
-                  Nothing captured for this yet.
-                </p>
-              )}
+              <span className="figure w-12 shrink-0 text-right text-xs text-text-secondary">
+                {dimension.score}/{max}
+              </span>
+              {/* Boxed to a width: `Select` wraps itself in a `w-full` element,
+                  which would otherwise take the whole row. */}
+              <span className="w-20 shrink-0">
+                <Select
+                  size="sm"
+                  aria-label={`${dimension.label} score out of ${max}`}
+                  value={String(Math.min(dimension.score, max))}
+                  options={scoreOptions}
+                  disabled={saving}
+                  onChange={(event) =>
+                    void apply(dimension.key, dimension.label, Number(event.target.value))
+                  }
+                />
+              </span>
             </li>
           );
         })}
       </ul>
-    </section>
+
+      {/* Evidence, once, below the list — not a paragraph inside every row. */}
+      {evidence.length > 0 ? (
+        <Disclosure
+          className="mt-2"
+          summary={`What they said (${evidence.length})`}
+          regionLabel="What the visitor said"
+        >
+          <dl className="space-y-2">
+            {evidence.map((entry) => (
+              <div key={entry.label}>
+                <dt className="text-xs text-text-secondary">{entry.label}</dt>
+                <dd className="text-prose text-text-primary">
+                  {entry.values.length > 0 ? entry.values.join(' · ') : entry.fallback}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </Disclosure>
+      ) : null}
+    </LeadSection>
   );
 }

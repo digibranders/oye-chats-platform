@@ -1,14 +1,16 @@
-import { Star } from 'lucide-react';
+import { Download, Star } from 'lucide-react';
 import {
+  Button,
   Card,
   CardBody,
   CardHeader,
   EmptyState,
   ErrorState,
-  LoadingRows,
+  RankedBars,
   formatNumber,
   formatPercent,
 } from '../../ui';
+import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useRatings } from './useAnalyticsData';
 
 /**
@@ -28,6 +30,20 @@ const STARS: ReadonlyArray<1 | 2 | 3 | 4 | 5> = [5, 4, 3, 2, 1];
 
 export function SatisfactionPanel({ botId }: { botId: number | null }) {
   const { ratings, loading, error, refetch } = useRatings(botId);
+  const empty = !ratings || ratings.total === 0;
+
+  function onExport() {
+    if (!ratings) return;
+    exportRows(
+      csvFilename('ratings', 'all time'),
+      ['Rating', 'Ratings', 'Share (%)'],
+      STARS.map((star) => [
+        star,
+        ratings.distribution[star],
+        ratings.total > 0 ? ((ratings.distribution[star] / ratings.total) * 100).toFixed(1) : '',
+      ]),
+    );
+  }
 
   return (
     <Card>
@@ -36,62 +52,64 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
         title="What visitors thought"
         titleAs="h2"
         description="Ratings visitors left after a conversation · all time"
+        actions={
+          !loading && !error && !empty ? (
+            <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
+              Export
+            </Button>
+          ) : undefined
+        }
       />
-      {loading ? (
-        <CardBody>
-          <LoadingRows rows={5} />
-        </CardBody>
-      ) : error ? (
+      {error ? (
         <ErrorState
-          compact
+          size="panel"
+          polite
           title="Ratings could not be loaded"
           description={errorMessage(error, 'The request for your visitor ratings failed.')}
           onRetry={() => void refetch()}
         />
-      ) : !ratings || ratings.total === 0 ? (
+      ) : !loading && empty ? (
         <EmptyState
-          compact
+          size="panel"
           icon={Star}
           title="No ratings yet"
           description="Visitors can rate a conversation when it ends. Nobody has yet, so there is nothing to summarise."
         />
       ) : (
-        <CardBody>
-          <div className="flex items-baseline gap-2">
-            <span className="figure text-2xl font-semibold text-text-primary">
-              {ratings.average.toFixed(1)}
-            </span>
-            <span className="text-xs text-text-tertiary">out of 5</span>
-            <span className="text-xs text-text-secondary">
-              from {formatNumber(ratings.total)} {ratings.total === 1 ? 'rating' : 'ratings'}
-            </span>
-          </div>
-          <ul className="mt-4 space-y-2">
-            {STARS.map((star) => {
-              const count = ratings.distribution[star];
-              const share = ratings.total > 0 ? count / ratings.total : 0;
-              return (
-                <li key={star} className="flex items-center gap-3">
-                  <span className="figure w-14 shrink-0 text-xs text-text-secondary">
-                    {star} {star === 1 ? 'star' : 'stars'}
-                  </span>
-                  <span
-                    aria-hidden
-                    className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-sunken"
-                  >
-                    <span
-                      className="block h-full rounded-full bg-accent-500"
-                      style={{ width: `${Math.round(share * 100)}%` }}
-                    />
-                  </span>
-                  <span className="figure w-24 shrink-0 text-right text-xs text-text-secondary">
-                    {formatNumber(count)} · {formatPercent(share)}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </CardBody>
+        <>
+          {ratings ? (
+            <CardBody>
+              <div className="flex items-baseline gap-2">
+                <span className="figure text-2xl font-semibold text-text-primary">
+                  {ratings.average.toFixed(1)}
+                </span>
+                <span className="text-xs text-text-tertiary">out of 5</span>
+                <span className="text-xs text-text-secondary">
+                  from <span className="figure">{formatNumber(ratings.total)}</span>{' '}
+                  {ratings.total === 1 ? 'rating' : 'ratings'}
+                </span>
+              </div>
+            </CardBody>
+          ) : null}
+          <CardBody flush>
+            <RankedBars
+              label="Ratings by number of stars"
+              loading={loading}
+              loadingRows={STARS.length}
+              max={ratings?.total}
+              items={STARS.map((star) => {
+                const count = ratings?.distribution[star] ?? 0;
+                const share = ratings && ratings.total > 0 ? count / ratings.total : 0;
+                return {
+                  id: String(star),
+                  label: `${star} ${star === 1 ? 'star' : 'stars'}`,
+                  value: count,
+                  display: `${formatNumber(count)} · ${formatPercent(share)}`,
+                };
+              })}
+            />
+          </CardBody>
+        </>
       )}
     </Card>
   );

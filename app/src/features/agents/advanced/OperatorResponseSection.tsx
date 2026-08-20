@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, CardBody, CardHeader, CardSection, LockedState, buttonClass } from '../../../ui';
+import { Badge, SettingRow, buttonClass } from '../../../ui';
 import { NumberField } from './NumberField';
 import { OPERATOR_TIMEOUT, operatorTimeoutError } from './behaviour.config';
 
@@ -24,6 +24,11 @@ export interface OperatorResponseSectionProps {
  * deadline rather than something a visitor sees, and because Experience already
  * owns the visitor-facing half of the queue — the wait message, the queue
  * timeout and the queue cap.
+ *
+ * The locked case is the same row with a plan badge where the control goes. It
+ * used to be a centred 96px `LockedState` hero dropped into a column of
+ * left-aligned settings cards, which reads as an error rather than as "your plan
+ * does not include this".
  */
 function OperatorResponseSectionInner({
   value,
@@ -32,50 +37,43 @@ function OperatorResponseSectionInner({
 }: OperatorResponseSectionProps) {
   if (!liveChatAllowed) {
     return (
-      <LockedState
-        title="Live chat is not included on this chatbot's plan"
-        description="The operator response window decides how long a person has to pick up a chat before it is offered to someone else. It only applies once live chat is available."
-        action={
-          <Link to="/billing" className={buttonClass('primary', 'md')}>
-            See plans
-          </Link>
-        }
-      />
+      <SettingRow
+        label="Time to accept"
+        badge={<Badge tone="plan">Starter and above</Badge>}
+        description="Live chat is not included on this chatbot’s plan."
+        controlWidth="auto"
+      >
+        <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+          See plans
+        </Link>
+      </SettingRow>
     );
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Operator response window"
-        titleAs="h2"
-        description="How long an operator has to accept a chat that has been handed to them."
+    <SettingRow
+      label="Time to accept"
+      description={`Then it goes back to the queue. Default ${OPERATOR_TIMEOUT.default}.`}
+      stacked
+    >
+      <NumberField
+        // The visible row label is "Time to accept"; the control's own name adds
+        // the unit, so the two agree (SC 2.5.3) without printing it twice.
+        hideLabel
+        label="Time to accept"
+        unitLabel="seconds"
+        error={operatorTimeoutError(value)}
+        value={value}
+        min={OPERATOR_TIMEOUT.min}
+        max={OPERATOR_TIMEOUT.max}
+        step={5}
+        className="w-40"
+        onChange={(raw) => {
+          const parsed = Math.round(Number(raw));
+          onChange(Number.isFinite(parsed) ? parsed : value);
+        }}
       />
-      <CardBody>
-        <NumberField
-          className="max-w-xs"
-          label="Time to accept"
-          unitLabel="seconds"
-          hint={`When it expires the conversation goes back to the queue for anyone else on the roster to pick up. The default is ${OPERATOR_TIMEOUT.default} seconds.`}
-          error={operatorTimeoutError(value)}
-          value={value}
-          min={OPERATOR_TIMEOUT.min}
-          max={OPERATOR_TIMEOUT.max}
-          step={5}
-          onChange={(raw) => {
-            const parsed = Math.round(Number(raw));
-            onChange(Number.isFinite(parsed) ? parsed : value);
-          }}
-        />
-      </CardBody>
-      <CardSection className="bg-surface-sunken">
-        <p className="text-xs leading-relaxed text-text-secondary">
-          The visitor-facing side of the queue — how long they wait before the chatbot takes over
-          again, how many people can queue at once, and what they are told while they wait — is on
-          the Experience page, beside the rest of what a visitor sees.
-        </p>
-      </CardSection>
-    </Card>
+    </SettingRow>
   );
 }
 

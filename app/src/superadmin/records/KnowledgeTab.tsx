@@ -2,7 +2,6 @@ import {
   Badge,
   EmptyState,
   SearchField,
-  SegmentedControl,
   Select,
   Stack,
   Toolbar,
@@ -15,30 +14,8 @@ import { RecordList } from '../RecordList';
 import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import type { CrawlRow, DocumentRow } from './types';
 
-const VIEWS = [
-  { value: 'documents', label: 'Documents' },
-  { value: 'crawls', label: 'Crawls' },
-];
-
 /** The ingested corpus: what was embedded, and where it came from. */
-export function KnowledgeTab() {
-  const url = useUrlState();
-  const view = url.get('view', 'documents');
-
-  return (
-    <Stack>
-      <SegmentedControl
-        label="Knowledge view"
-        value={view}
-        onChange={(next) => url.set({ view: next, q: null, source: null })}
-        items={VIEWS}
-      />
-      {view === 'crawls' ? <CrawlsList /> : <DocumentsList />}
-    </Stack>
-  );
-}
-
-function DocumentsList() {
+export function DocumentsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const source = url.get('source');
@@ -119,9 +96,9 @@ function DocumentsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search documents"
             value={query}
@@ -129,7 +106,7 @@ function DocumentsList() {
             placeholder="Document, chatbot or source"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by source"
             value={source}
@@ -144,6 +121,8 @@ function DocumentsList() {
       </Toolbar>
       <RecordList
         caption="Ingested documents"
+        rowNoun="document"
+        what="ingested documents"
         columns={columns}
         paged={paged}
         rowKey={(row) => row.id}
@@ -153,19 +132,7 @@ function DocumentsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note={
-          <>
-            One row is one <strong>document</strong>, grouped from its chunks — the endpoint used to
-            return one row per chunk with a literal chunk count of one, no name and a size of zero.
-            Characters are counted after chunking, so they run a little ahead of the original file by
-            the chunk overlap.
-            <br />
-            There is no re-embed control here any more. The reindex route acts on a single chunk
-            (<code>POST /superadmin/documents/{'{'}chunk_id{'}'}/reindex</code>), and re-embedding one
-            arbitrary chunk of a document that may have hundreds is not a thing worth offering. A
-            source-level reindex needs a route that does not exist yet.
-          </>
-        }
+        note="One row is one document, grouped from its chunks. Characters are counted after chunking, so they run a little ahead of the original file by the chunk overlap."
         empty={
           <EmptyState
             compact
@@ -178,11 +145,11 @@ function DocumentsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
-function CrawlsList() {
+export function CrawlsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const list = usePlatformList<CrawlRow>('/crawls');
@@ -226,9 +193,9 @@ function CrawlsList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search crawls"
             value={query}
@@ -239,6 +206,8 @@ function CrawlsList() {
       </Toolbar>
       <RecordList
         caption="Crawl jobs, grouped from their chunks"
+        rowNoun="crawl"
+        what="crawl records"
         columns={columns}
         paged={paged}
         rowKey={(row) => row.id}
@@ -261,6 +230,6 @@ function CrawlsList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }

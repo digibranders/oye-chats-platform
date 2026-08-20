@@ -1,6 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Pencil, Plus, Radio, Send, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import {
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Power,
+  Radio,
+  Send,
+  Trash2,
+  Webhook as WebhookIcon,
+} from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -8,27 +17,22 @@ import {
   Card,
   CardBody,
   CardHeader,
+  CardSection,
   CodeBlock,
   ConfirmDialog,
   DataTable,
+  Disclosure,
   EmptyState,
   MenuContent,
   MenuItem,
   MenuRoot,
   MenuTrigger,
-  Section,
   Stack,
-  Switch,
   buttonClass,
   toast,
   type Column,
 } from '../../../ui';
-import {
-  deleteWebhook,
-  getWebhooks,
-  testWebhook,
-  updateWebhook,
-} from '../../../services/api';
+import { deleteWebhook, getWebhooks, testWebhook, updateWebhook } from '../../../services/api';
 import { keys } from '../../../query/keys';
 import type { Webhook } from '../../../types/domain';
 import { PAYLOAD_EXAMPLE, describeEvents } from './webhookModel';
@@ -60,7 +64,9 @@ export function WebhooksPanel({ botId }: WebhooksPanelProps) {
   });
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: keys.workspace.webhooks(botId) });
+    void queryClient.invalidateQueries({
+      queryKey: keys.workspace.webhooks(botId),
+    });
   };
 
   const toggle = useMutation({
@@ -118,21 +124,6 @@ export function WebhooksPanel({ botId }: WebhooksPanelProps) {
       ),
     },
     {
-      key: 'active',
-      header: 'Send events',
-      align: 'right',
-      secondary: true,
-      render: (webhook) => (
-        <Switch
-          size="sm"
-          hideLabel
-          label={`Send events to ${webhook.url}`}
-          checked={Boolean(webhook.is_active)}
-          onCheckedChange={(active) => toggle.mutate({ webhook, active })}
-        />
-      ),
-    },
-    {
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
       align: 'right',
@@ -143,30 +134,31 @@ export function WebhooksPanel({ botId }: WebhooksPanelProps) {
             aria-label={`Actions for ${webhook.url}`}
             className={buttonClass('ghost', 'icon-sm')}
           >
-            <MoreHorizontal aria-hidden className="h-4 w-4" />
+            <MoreHorizontal aria-hidden />
           </MenuTrigger>
           <MenuContent>
+            {/* Pause and Resume live here, not in a second column. `Status` and
+                `Send events` were two columns saying `is_active` twice — and
+                the switch column was `secondary`, so below `md` the badge
+                stayed and the only way to pause disappeared. */}
             <MenuItem
-              icon={<Radio aria-hidden className="h-3.5 w-3.5" />}
-              onSelect={() => setInspecting(webhook)}
+              icon={<Power aria-hidden />}
+              onSelect={() => toggle.mutate({ webhook, active: !webhook.is_active })}
             >
+              {webhook.is_active ? 'Pause' : 'Resume'}
+            </MenuItem>
+            <MenuItem icon={<Radio aria-hidden />} onSelect={() => setInspecting(webhook)}>
               Delivery log
             </MenuItem>
-            <MenuItem
-              icon={<Send aria-hidden className="h-3.5 w-3.5" />}
-              onSelect={() => test.mutate(webhook)}
-            >
+            <MenuItem icon={<Send aria-hidden />} onSelect={() => test.mutate(webhook)}>
               Send test event
             </MenuItem>
-            <MenuItem
-              icon={<Pencil aria-hidden className="h-3.5 w-3.5" />}
-              onSelect={() => setEditing(webhook)}
-            >
+            <MenuItem icon={<Pencil aria-hidden />} onSelect={() => setEditing(webhook)}>
               Edit
             </MenuItem>
             <MenuItem
               destructive
-              icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
+              icon={<Trash2 aria-hidden />}
               onSelect={() => setDeleting(webhook)}
             >
               Delete
@@ -189,64 +181,67 @@ export function WebhooksPanel({ botId }: WebhooksPanelProps) {
         <CardHeader
           title="Endpoints"
           titleAs="h2"
-          description="We POST JSON to each of these as events happen, and retry five times over about six hours before giving up."
+          description="We POST JSON as events happen, and retry five times over about six hours."
           actions={
             <Button
               size="sm"
               variant="secondary"
               onClick={() => setEditing('new')}
               disabled={botId == null}
-              iconLeft={<Plus aria-hidden className="h-3.5 w-3.5" />}
+              iconLeft={<Plus aria-hidden />}
             >
               Add endpoint
             </Button>
           }
         />
-        <DataTable
-          caption="Webhook endpoints registered for this chatbot"
-          columns={columns}
-          rows={webhooks.data ?? []}
-          rowKey={(webhook) => String(webhook.id)}
-          rowLabel={(webhook) => webhook.url}
-          loading={webhooks.isPending && botId != null}
-          error={
-            webhooks.isError
-              ? webhooks.error instanceof Error
-                ? webhooks.error.message
-                : 'We could not load your endpoints.'
-              : null
-          }
-          onRetry={() => void webhooks.refetch()}
-          empty={
-            <EmptyState
-              icon={WebhookIcon}
-              title="No endpoints yet"
-              description="Add one to push qualified leads straight into your CRM, or into Zapier or Make, without anyone re-typing them."
-              action={
-                <Button size="sm" onClick={() => setEditing('new')} disabled={botId == null}>
-                  Add your first endpoint
-                </Button>
-              }
-            />
-          }
-        />
+        <CardBody flush>
+          <DataTable
+            seated
+            rowNoun="endpoint"
+            caption="Webhook endpoints registered for this chatbot"
+            columns={columns}
+            rows={webhooks.data ?? []}
+            rowKey={(webhook) => String(webhook.id)}
+            rowLabel={(webhook) => webhook.url}
+            loading={webhooks.isPending && botId != null}
+            error={
+              webhooks.isError
+                ? webhooks.error instanceof Error
+                  ? webhooks.error.message
+                  : 'We could not load your endpoints.'
+                : null
+            }
+            onRetry={() => void webhooks.refetch()}
+            empty={
+              <EmptyState
+                icon={WebhookIcon}
+                title="No endpoints yet"
+                description="Push qualified leads straight into your CRM, Zapier or Make."
+                action={
+                  <Button size="sm" onClick={() => setEditing('new')} disabled={botId == null}>
+                    Add your first endpoint
+                  </Button>
+                }
+              />
+            }
+          />
+        </CardBody>
+        {/* Collapsed. 300px of payload example is a first-run need, and it was
+            being charged to every later visit as a `Section` plus a `Card` for
+            one code block. */}
+        <CardSection>
+          <Disclosure summary="What we send">
+            <div className="space-y-3">
+              <CodeBlock code={PAYLOAD_EXAMPLE} label="example payload" caption="POST body" />
+              <Alert tone="neutral">
+                Every request carries an HMAC signature computed with the endpoint's signing secret.
+                Verify it before you trust the body — otherwise anyone who learns your URL can
+                create leads in your CRM.
+              </Alert>
+            </div>
+          </Disclosure>
+        </CardSection>
       </Card>
-
-      <Section
-        title="What we send"
-        description="The exact body an endpoint receives, so you can map it onto a CRM field by field."
-      >
-        <Card>
-          <CardBody className="space-y-3">
-            <CodeBlock code={PAYLOAD_EXAMPLE} label="example payload" caption="POST body" />
-            <Alert tone="neutral">
-              Every request carries an HMAC signature computed with the endpoint's signing secret.
-              Verify it before you trust the body — otherwise anyone who learns your URL can create
-              leads in your CRM.
-            </Alert>
-          </CardBody>
-        </Card>
-      </Section>
 
       <WebhookDialog
         open={editing !== null}
@@ -268,10 +263,8 @@ export function WebhooksPanel({ botId }: WebhooksPanelProps) {
         title="Delete this endpoint?"
         description={
           <>
-            We stop sending events to {deleting?.url} immediately, and its delivery history is
-            deleted with it. Anything downstream that depends on these events — a CRM sync, a Slack
-            alert, a Zap — stops working, silently, at the far end. If you only want to stop it for
-            now, pause it instead.
+            We stop sending events to {deleting?.url} immediately and its delivery history goes with
+            it. Anything downstream stops working, silently. To stop it for now, pause it instead.
           </>
         }
         confirmLabel="Delete endpoint"

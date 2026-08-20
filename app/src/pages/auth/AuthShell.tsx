@@ -1,12 +1,22 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { Card, CardBody, cn } from '../../ui';
+import { Card, CardBody, CardSection, cn } from '../../ui';
 
 export interface AuthShellProps {
   title: string;
   description?: ReactNode;
   children: ReactNode;
+  /**
+   * A secondary row under the card's body — a resend control, a way out.
+   *
+   * Rendered as a `CardSection`, so its hairline reaches the card's edges.
+   * `ForgotPassword` and `VerifyEmail` both drew this rule themselves *inside*
+   * `CardBody`'s padding, where it floats as a short line 20–24px short of both
+   * edges rather than dividing the card — on the two screens users reach when
+   * something has already gone wrong.
+   */
+  secondary?: ReactNode;
   /** A single line under the card: the link to the other side of the flow. */
   footer?: ReactNode;
   /** A way back out of a multi-step flow, above the title. */
@@ -27,17 +37,38 @@ export interface AuthShellProps {
  * a violet gradient with floating orbs, four generic feature cards and a
  * framer-motion entrance, selling to someone who had already decided.
  *
- * What the panel says is three lines of plain type and nothing else. No
- * gradient, no glow, no animation, no stock iconography. On ink, restraint is
- * the whole effect.
+ * What the panel says is two lines of plain type and nothing else. No gradient,
+ * no glow, no animation, no stock iconography. On ink, restraint is the whole
+ * effect.
  *
- * Below `lg` the panel is not rendered at all, rather than stacked above the
- * form. A phone that has to scroll past a marketing panel to reach a password
- * field is being asked to pay for someone else's layout.
+ * **The split fires at `xl`, not `lg`.** At exactly 1024 the panel took 488px
+ * and the form column 536, so a `max-w-md` card sat in 44px gutters — visibly
+ * tighter than at 1023, where it is centred in the whole viewport — and the
+ * panel's headline wrapped to three lines. That is the most common laptop width
+ * in the product's analytics. At 1280 the panel is 610 and the column 670, which
+ * is the ratio the design wants; below it, one centred column is strictly
+ * better.
+ *
+ * Below the split the panel is not rendered at all, rather than stacked above
+ * the form. A phone that has to scroll past a marketing panel to reach a
+ * password field is being asked to pay for someone else's layout.
  */
-export function AuthShell({ title, description, children, footer, back, className }: AuthShellProps) {
+export function AuthShell({
+  title,
+  description,
+  children,
+  secondary,
+  footer,
+  back,
+  className,
+}: AuthShellProps) {
   return (
-    <div className={cn('min-h-screen bg-canvas lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]', className)}>
+    <div
+      className={cn(
+        'min-h-screen bg-canvas xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]',
+        className,
+      )}
+    >
       {/*
         `aria-hidden`, and deliberately so. Every word in here is decorative
         restatement of the page the form already titles, so to a screen reader
@@ -47,50 +78,70 @@ export function AuthShell({ title, description, children, footer, back, classNam
       */}
       <aside
         aria-hidden
-        className="relative hidden flex-col justify-between bg-rail p-10 text-rail-text lg:flex xl:p-14"
+        className="relative hidden flex-col justify-between bg-rail p-10 text-rail-text xl:flex xl:p-14"
       >
-        <img src="/new_dark.png" alt="" className="h-7 w-auto self-start object-contain" draggable={false} />
+        {/*
+          The white knock-out, not the dark one. `/new_dark.png` is black ink on
+          transparent and `--color-rail` is #17171A, so the wordmark at the top
+          of this panel rendered black on black — the exact failure
+          `OyeChatsMark.onInk` documents, one directory away.
+
+          Boxed to the same measure as the copy below it, so the mark, the
+          headline and the paragraph share one left edge instead of the mark
+          floating at the panel's own padding.
+        */}
+        <div className="max-w-md">
+          <img
+            src="/new_white.png"
+            alt=""
+            className="h-7 w-auto object-contain"
+            draggable={false}
+          />
+        </div>
 
         <div className="max-w-md">
           <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-text-muted">
             OyeChats
           </p>
-          <p className="mt-4 text-3xl font-semibold leading-tight tracking-tight">
+          {/* `text-2xl`, the top of the seven-rung scale. `text-3xl` is not on it
+              at all and compiled only because Tailwind's default survives the
+              token reset — a 30px headline in a system whose largest rung is
+              28. */}
+          <p className="mt-4 text-2xl font-semibold leading-tight tracking-tight">
             An assistant that has read everything you have written.
           </p>
           <p className="mt-4 text-prose text-rail-text-muted">
-            Upload what you know. Paste one line into your site. Every visitor
-            gets an answer from your own documents, and you get to see what they
-            asked.
+            Upload what you know. Paste one line into your site.
           </p>
         </div>
 
-        <p className="text-2xs text-rail-text-muted">
-          Answers come from your documents, not from a guess.
-        </p>
+        {/* The third slot is deliberately empty: `justify-between` holds the
+            headline in the panel's optical centre, and the line that used to sit
+            here was a third claim under two that had already made it. */}
+        <div aria-hidden />
       </aside>
 
-      <main className="flex min-h-screen items-center justify-center px-4 py-10 sm:py-16 lg:min-h-0 lg:py-10">
+      <main className="flex min-h-screen items-center justify-center px-4 py-10 sm:py-16 xl:min-h-0 xl:py-14">
         <div className="w-full max-w-md">
           {/*
-            The mark, for the breakpoint where the panel is gone. Hidden from
-            `lg` up so it is not shown twice.
+            The mark, for the breakpoints where the panel is gone. Hidden from
+            `xl` up so it is not shown twice.
           */}
           <img
             src="/new_dark.png"
             alt="OyeChats"
-            className="mx-auto h-7 w-auto object-contain lg:hidden"
+            className="mx-auto h-7 w-auto object-contain xl:hidden"
             draggable={false}
           />
 
-          <Card className="mt-8 lg:mt-0">
+          <Card className="mt-8 xl:mt-0">
             <CardBody className="p-5 sm:p-6">
               {back ? (
                 <Link
                   to={back.to}
                   className="-ml-1 mb-4 inline-flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary"
                 >
-                  <ArrowLeft aria-hidden className="h-3.5 w-3.5" />
+                  <ArrowLeft aria-hidden className="h-icon-sm w-icon-sm" />
                   {back.label}
                 </Link>
               ) : null}
@@ -102,9 +153,13 @@ export function AuthShell({ title, description, children, footer, back, classNam
 
               <div className="mt-5">{children}</div>
             </CardBody>
+            {secondary ? <CardSection>{secondary}</CardSection> : null}
           </Card>
 
-          {footer ? <p className="mt-5 text-center text-xs text-text-secondary">{footer}</p> : null}
+          {/* 14px, not 12. "Create an account" / "Sign in" is the most-clicked
+              link on the page and it was set at the smallest prose rung in the
+              system, below the card. */}
+          {footer ? <p className="mt-5 text-center text-base text-text-secondary">{footer}</p> : null}
         </div>
       </main>
     </div>
@@ -117,6 +172,11 @@ export function AuthShell({ title, description, children, footer, back, classNam
  * A `<span>` rather than an `<hr>` on each side: the word is the content, and a
  * screen reader announcing two separators around it reads as three things where
  * there is one.
+ *
+ * **The caller decides whether it renders at all.** `GoogleAuthButton` returns
+ * `null` on a deployment with no OAuth client, and both sign-in screens drew
+ * this divider unconditionally above it — an "OR" with nothing on one side of
+ * it, which is what the running app shows today.
  */
 export function AuthDivider({ children = 'or' }: { children?: ReactNode }) {
   return (

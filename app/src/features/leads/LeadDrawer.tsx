@@ -2,30 +2,34 @@ import { useState } from 'react';
 import Markdown from 'react-markdown';
 import { Star } from 'lucide-react';
 import {
-  ABSENT,
   Alert,
   Badge,
   Button,
-  DefinitionList,
   Drawer,
   ErrorState,
   Field,
-  Input,
   LoadingRows,
   Progress,
+  PropertyGrid,
+  SaveBar,
   Skeleton,
   TabPanel,
   Tabs,
+  TagInput,
   Textarea,
   cn,
   formatDateTime,
+  formatRelative,
   formatTime,
+  type PropertyItem,
 } from '../../ui';
 import type { Lead } from '../../types/domain';
-import { LeadInsights } from './LeadInsights';
+import { LeadJourney } from './LeadInsights';
+import { asRecord, asText, engagementBand, truncate } from './leadSource';
+import { LeadSection } from './LeadSection';
 import { LeadQualification } from './LeadQualification';
 import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
-import { useLeadDetail, type TranscriptMessage } from './useLeadDetail';
+import { TRANSCRIPT_PAGE_SIZE, useLeadDetail, type TranscriptMessage } from './useLeadDetail';
 import type { LeadAnnotationController, LeadAnnotationsStore } from './useLeadAnnotations';
 import type { DrawerTab } from './leadsUrl';
 import {
@@ -47,10 +51,15 @@ import {
  * the row again, and clicking a different button. Both faces are here, both are
  * reachable from either, and which one is showing lives in the URL.
  *
- * It is the design system's `Drawer`, which is also how the focus trap gets
- * fixed: the hand-rolled one queried only the panel for focusable elements
- * while the scrim was a focusable `button` *outside* it, so the one control it
- * was trying to keep reachable was the one nobody could tab to.
+ * **It is a record, not a document.** The profile was seven `<section>`s of
+ * equal weight — Verdict, Contact, What we learned, Where they came from, How
+ * they behaved, Network and email, Your notes — each with an `h3` set at exactly
+ * the size and weight of the drawer's own title, and each wrapped in a bordered
+ * box invented inline. Eleven such boxes, three paddings, two radii, about
+ * 1,900px of scroll in a 672px column. Now: an identity band, one score strip,
+ * one property grid, the qualification rows, the journey behind a disclosure,
+ * and the notes. Inside a drawer a section is a heading and a hairline — the
+ * drawer *is* the surface.
  */
 
 export interface LeadDrawerProps {
@@ -66,6 +75,61 @@ export interface LeadDrawerProps {
   annotations: LeadAnnotationsStore;
 }
 
+/** Every fact about this lead, in one list. */
+function leadProperties(lead: Lead): PropertyItem[] {
+  const company = companyDisplay(lead.contact);
+  const location = formatLocation(lead.location);
+  const source = asRecord(lead.source);
+  const utm = asRecord(source.utm_params);
+  const behavioural = lead.behavioral ?? {};
+  const visits = Number(behavioural.visit_count) || 0;
+  const engagement = lead.behavioral_score ?? 0;
+
+  const items: PropertyItem[] = [
+    { label: 'Email', value: lead.contact?.email || undefined },
+    { label: 'Phone', value: lead.contact?.phone || undefined },
+    { label: 'Company', value: company?.value, note: company?.secondary ?? undefined },
+    { label: 'Location', value: location === 'Unknown' ? undefined : location },
+    {
+      label: 'Device',
+      value: lead.device && lead.device !== 'Unknown' ? lead.device : undefined,
+    },
+    {
+      label: 'First seen',
+      value: lead.created_at ? formatDateTime(lead.created_at) : undefined,
+    },
+  ];
+
+  // Attribution and behaviour exist only on the plans that produce them, so an
+  // absent field here means "not on your plan" rather than "no value" — and an
+  // em dash would say the wrong thing about it. Omitted instead.
+  const campaign = asText(utm.utm_campaign);
+  const medium = asText(utm.utm_medium);
+  const adDetail = asText(utm.utm_content) ?? asText(utm.utm_term);
+  const referrer = asText(source.referrer);
+  const landing = asText(source.landing_page);
+  const utmSource = asText(utm.utm_source);
+
+  if (utmSource) items.push({ label: 'Source', value: utmSource });
+  if (campaign) items.push({ label: 'Campaign', value: campaign });
+  if (medium) items.push({ label: 'Medium', value: medium });
+  if (adDetail) items.push({ label: 'Ad detail', value: truncate(adDetail) });
+  if (referrer) items.push({ label: 'Referrer', value: truncate(referrer) });
+  if (landing) items.push({ label: 'Landed on', value: truncate(landing) });
+  if (Object.keys(source).length > 0 && !utmSource && !campaign && !medium && !referrer) {
+    items.push({ label: 'Source', value: 'Direct — no campaign or referrer' });
+  }
+
+  if (engagement > 0) items.push({ label: 'Engagement', value: engagementBand(engagement) });
+  if (visits > 1) {
+    items.push({ label: 'Visits', value: <span className="figure">{visits}</span> });
+  }
+
+  return items;
+}
+
+
+
 /** A post-chat rating, as stars and as a word. Colour is never the only signal. */
 function VisitorRating({ rating }: { rating: number }) {
   const unhappy = rating <= 2;
@@ -77,7 +141,7 @@ function VisitorRating({ rating }: { rating: number }) {
             key={step}
             aria-hidden
             className={cn(
-              'h-3.5 w-3.5',
+              'h-icon-sm w-icon-sm',
               step <= rating ? 'fill-current text-warning' : 'text-text-tertiary',
             )}
           />
@@ -90,10 +154,30 @@ function VisitorRating({ rating }: { rating: number }) {
   );
 }
 
-function Verdict({ lead, rating }: { lead: Lead; rating: number | null }) {
+/**
+ * How good this lead is, in one band.
+ *
+ * It used to be a `bg-surface-sunken` `rounded-lg` panel — the well token used
+ * as a hero, at a radius no other box in the same scroll shared. It is not a
+ * box: it is the first thing under the panel's own header, and the hairline
+ * below it is the only chrome it needs.
+ *
+ * It does not repeat the name. The drawer's header carries it, and the version
+ * this replaces set every section heading at `text-lg font-semibold` — the same
+ * rung as `Drawer.Title` — so the record's name and six section headings read as
+ * seven peers.
+ */
+/** Company and recency, as the drawer's one-line subtitle. */
+function subtitle(lead: Lead): string | undefined {
+  const company = companyDisplay(lead.contact)?.value;
+  const active = lead.last_active_at ? `Last active ${formatRelative(lead.last_active_at)}` : null;
+  return [company, active].filter(Boolean).join(' · ') || undefined;
+}
+
+function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
   const tier = TIER_META[normalizeTier(lead.status)];
   return (
-    <section className="rounded-lg border border-border bg-surface-sunken px-4 py-3.5">
+    <div className="border-b border-border pb-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <p className="figure text-2xl font-semibold leading-none text-text-primary">
           {lead.score}
@@ -103,67 +187,37 @@ function Verdict({ lead, rating }: { lead: Lead; rating: number | null }) {
         {rating !== null ? <VisitorRating rating={rating} /> : null}
       </div>
       <Progress
-        className="mt-2.5"
+        className="mt-3"
         value={lead.score}
         label={`Quality score: ${lead.score} out of 100`}
         tone={tier.tone === 'success' ? 'success' : tier.tone === 'warning' ? 'warning' : 'accent'}
       />
-      <p className="mt-2 text-prose text-text-secondary">{tier.hint}</p>
-    </section>
-  );
-}
-
-function ContactCard({ lead }: { lead: Lead }) {
-  const company = companyDisplay(lead.contact);
-  const location = formatLocation(lead.location);
-  const items = [
-    { label: 'Name', value: lead.contact?.name || ABSENT },
-    { label: 'Email', value: lead.contact?.email || ABSENT },
-    { label: 'Phone', value: lead.contact?.phone || ABSENT },
-    {
-      label: 'Company',
-      value: company ? (
-        <>
-          {company.value}
-          {company.secondary ? (
-            <span className="block text-xs text-text-tertiary">{company.secondary}</span>
-          ) : null}
-        </>
-      ) : (
-        ABSENT
-      ),
-    },
-    { label: 'Location', value: location === 'Unknown' ? ABSENT : location },
-    { label: 'Device', value: lead.device && lead.device !== 'Unknown' ? lead.device : ABSENT },
-  ];
-
-  return (
-    <section className="space-y-2">
-      <h3 className="text-lg font-semibold text-text-primary">Contact</h3>
-      <div className="rounded-md border border-border px-3.5 py-3">
-        <DefinitionList columns={2} items={items} />
-        {lead.contact?.company_description ? (
-          <p className="mt-3 border-t border-border pt-3 text-prose text-text-secondary">
-            {lead.contact.company_description}
-          </p>
-        ) : null}
-      </div>
-    </section>
+      <p className="mt-2 text-xs text-text-secondary">{tier.hint}</p>
+    </div>
   );
 }
 
 function Bubble({ message }: { message: TranscriptMessage }) {
   const text = message.content ?? message.message ?? '';
   const visitor = message.role === 'user';
-  const who = visitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
+  const operator = message.role === 'operator';
+  const who = visitor ? 'Visitor' : operator ? 'Operator' : 'Chatbot';
   const at = message.created_at ?? message.timestamp ?? null;
 
   return (
     <li className={cn('flex', visitor ? 'justify-end' : 'justify-start')}>
+      {/* One radius and one ground per speaker role, matching the first-run
+          transcript. The visitor used to sit on `bg-accent-50`, which is accent
+          used as a status — blue means interactive in this system and nothing
+          else. */}
       <div
         className={cn(
           'max-w-[85%] rounded-md px-3 py-2',
-          visitor ? 'bg-accent-50' : 'bg-surface-sunken',
+          visitor
+            ? 'bg-surface-sunken'
+            : operator
+              ? 'bg-neutral-tint'
+              : 'border border-border bg-surface',
         )}
       >
         <p className="mb-0.5 flex items-center gap-2 font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
@@ -195,101 +249,74 @@ function Bubble({ message }: { message: TranscriptMessage }) {
  * leads remounts it and the drafts reset from the incoming controller without a
  * synchronous `setState` in an effect.
  *
- * The copy is the fix here. It used to say "only your team sees these", which is
- * false in the way that matters: there is no server API for lead notes, so they
- * live in this browser's `localStorage` and a colleague opening the same lead
- * sees nothing. The export column says the same thing.
+ * **One save bar for both fields.** It had two `justify-end` buttons — one per
+ * field, each with its own dirty state — plus a success `Alert` appended below
+ * them that pushed the tag list down whenever it appeared. That is the fourth
+ * hand-rolled save contract in a codebase whose design system ships exactly one.
+ *
+ * The copy is the other fix. It used to say "only your team sees these", which
+ * is false in the way that matters: there is no server API for lead notes, so
+ * they live in this browser's `localStorage` and a colleague opening the same
+ * lead sees nothing.
  */
 function Annotations({ controller }: { controller: LeadAnnotationController }) {
   const { note, tags, saveNote, saveTags } = controller;
   const [noteDraft, setNoteDraft] = useState(note?.text ?? '');
-  const [tagDraft, setTagDraft] = useState(tags.join(', '));
-  const [savedWhat, setSavedWhat] = useState<'note' | 'tags' | null>(null);
+  const [tagDraft, setTagDraft] = useState<string[]>(() => [...tags]);
+  const [saved, setSaved] = useState(false);
 
   const noteChanged = noteDraft.trim() !== (note?.text ?? '');
-  const tagsChanged = tagDraft.trim() !== tags.join(', ');
+  const tagsChanged = tagDraft.join(',') !== tags.join(',');
+  const dirty = noteChanged || tagsChanged;
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-lg font-semibold text-text-primary">Your notes</h3>
-      <Alert>
-        These stay in this browser. They are not sent to the visitor, they are not stored on your
-        workspace, and nobody else on your team can see them — not even on another machine.
-      </Alert>
+    <LeadSection title="Your notes">
+      <p className="text-xs text-text-secondary">
+        Saved in this browser only — teammates cannot see these.
+      </p>
 
-      <div className="space-y-4 rounded-md border border-border px-3.5 py-3">
-        <Field
-          label="Note"
-          hint={note ? `Last edited ${formatDateTime(note.ts)}` : 'Nothing saved yet.'}
-        >
+      <div className="mt-3 space-y-4">
+        <Field label="Note" hint={note ? `Last edited ${formatDateTime(note.ts)}` : undefined}>
           <Textarea
             rows={3}
             value={noteDraft}
             placeholder="Context for yourself — next steps, who to loop in…"
             onChange={(event) => {
               setNoteDraft(event.target.value);
-              setSavedWhat(null);
+              setSaved(false);
             }}
           />
         </Field>
-        <div className="flex items-center justify-end">
-          <Button
-            size="sm"
-            disabled={!noteChanged}
-            onClick={() => {
-              saveNote(noteDraft);
-              setSavedWhat('note');
-            }}
-          >
-            Save note
-          </Button>
-        </div>
 
-        <Field label="Tags" hint="Separate them with commas.">
-          <Input
-            value={tagDraft}
-            placeholder="enterprise, follow-up, demo-requested"
-            onChange={(event) => {
-              setTagDraft(event.target.value);
-              setSavedWhat(null);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              event.preventDefault();
-              saveTags(tagDraft);
-              setSavedWhat('tags');
+        <Field label="Tags">
+          <TagInput
+            label="Tags"
+            values={tagDraft}
+            placeholder="enterprise, follow-up…"
+            onValuesChange={(next) => {
+              setTagDraft(next);
+              setSaved(false);
             }}
           />
         </Field>
-        {tags.length > 0 ? (
-          <ul aria-label="Saved tags" className="flex flex-wrap gap-1.5">
-            {tags.map((tag) => (
-              <li key={tag}>
-                <Badge>{tag}</Badge>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className="flex items-center justify-end">
-          <Button
-            size="sm"
-            disabled={!tagsChanged}
-            onClick={() => {
-              saveTags(tagDraft);
-              setSavedWhat('tags');
-            }}
-          >
-            Save tags
-          </Button>
-        </div>
 
-        {savedWhat ? (
-          <Alert tone="success" live>
-            {savedWhat === 'note' ? 'Note saved in this browser.' : 'Tags saved in this browser.'}
-          </Alert>
-        ) : null}
+        <SaveBar
+          dirty={dirty}
+          saved={saved}
+          summary="your note and tags"
+          onSave={() => {
+            if (noteChanged) saveNote(noteDraft);
+            if (tagsChanged) saveTags(tagDraft.join(','));
+            setSaved(true);
+          }}
+          onDiscard={() => {
+            setNoteDraft(note?.text ?? '');
+            setTagDraft([...tags]);
+            setSaved(false);
+          }}
+        />
       </div>
-    </section>
+    </LeadSection>
   );
 }
 
@@ -306,17 +333,23 @@ export function LeadDrawer({
   const { detail, transcript } = data;
   const controller = annotations.controllerFor(sessionId);
 
+  const properties: PropertyItem[] = detail ? leadProperties(detail) : [];
+
   return (
     <Drawer
       open={sessionId !== null}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      width="lg"
+      // 768, not 672. A panel holding a property grid *and* a transcript at 672
+      // wraps everything in it, which is most of why every value in here needed
+      // its own line.
+      width="xl"
+      eyebrow="Lead"
       title={detail ? leadDisplayName(detail) : 'Lead'}
-      description={
-        detail?.last_active_at ? `Last active ${formatDateTime(detail.last_active_at)}` : undefined
-      }
+      // Relative, not `formatDateTime`. The description is 12px secondary text;
+      // an absolute timestamp there is neither readable nor scannable.
+      description={detail ? subtitle(detail) : undefined}
     >
       {data.loading ? (
         <div className="space-y-4">
@@ -345,18 +378,19 @@ export function LeadDrawer({
             },
           ]}
         >
-          <TabPanel value="profile" className="space-y-6">
-            {intelligenceLocked || !hasIntelligence(detail) ? (
-              <Alert tone="plan" title="Lead scoring is not on your plan">
-                The conversation and the contact details below are yours on every plan. The quality
-                score, the qualification breakdown and the visitor&rsquo;s location arrive with a
-                paid plan.
-              </Alert>
-            ) : (
-              <Verdict lead={detail} rating={data.visitorRating} />
+          <TabPanel value="profile" className="space-y-5">
+            {/* No second plan notice. The page this drawer opens from carries the
+                page-level one, and the columns are silently absent as a third
+                signal — three statements of one lock on one screen. */}
+            {intelligenceLocked || !hasIntelligence(detail) ? null : (
+              <ScoreBand lead={detail} rating={data.visitorRating} />
             )}
 
-            <ContactCard lead={detail} />
+            <LeadSection title="Details">
+              {/* No `label`: the heading above already names these facts, and a
+                  second `role="group"` name would announce "Details" twice. */}
+              <PropertyGrid density="compact" items={properties} />
+            </LeadSection>
 
             {hasIntelligence(detail) ? (
               <LeadQualification
@@ -366,7 +400,7 @@ export function LeadDrawer({
               />
             ) : null}
 
-            <LeadInsights lead={detail} />
+            <LeadJourney lead={detail} />
 
             <VisitorIntelligenceSection lead={detail} unlocked={visitorIntelligence} />
 
@@ -376,7 +410,7 @@ export function LeadDrawer({
           <TabPanel value="conversation" className="space-y-3">
             {transcript.error ? (
               <ErrorState
-                compact
+                size="panel"
                 title="We could not load the conversation"
                 description={transcript.error.message}
                 onRetry={transcript.retry}
@@ -384,9 +418,7 @@ export function LeadDrawer({
             ) : transcript.loading ? (
               <LoadingRows rows={5} />
             ) : transcript.messages.length === 0 ? (
-              <p className="rounded-md border border-border px-3.5 py-3 text-prose text-text-secondary">
-                No messages were recorded for this conversation.
-              </p>
+              <Alert tone="neutral">No messages recorded.</Alert>
             ) : (
               <>
                 {/* Paged backwards from the most recent message. The panel used
@@ -401,7 +433,7 @@ export function LeadDrawer({
                       loading={transcript.loadingEarlier}
                       onClick={transcript.loadEarlier}
                     >
-                      Load earlier messages
+                      Load {TRANSCRIPT_PAGE_SIZE} earlier messages
                     </Button>
                   </div>
                 ) : (

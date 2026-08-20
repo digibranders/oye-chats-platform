@@ -4,14 +4,14 @@ import {
   Badge,
   Card,
   CardBody,
-  DefinitionList,
+  PropertyGrid,
   EmptyState,
   SearchField,
   Section,
   Select,
   Skeleton,
   Stack,
-  StatTile,
+  StatRow,
   Toolbar,
   buttonClass,
   formatDate,
@@ -99,8 +99,8 @@ export function ChatbotsTab() {
 
   return (
     <Stack>
-      <Toolbar>
-        <div className="w-full max-w-xs">
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search chatbots"
             value={query}
@@ -108,7 +108,7 @@ export function ChatbotsTab() {
             placeholder="Name, bot key or account"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by state"
             value={state}
@@ -123,6 +123,8 @@ export function ChatbotsTab() {
       </Toolbar>
       <RecordList
         caption="Every chatbot on the platform"
+        rowNoun="chatbot"
+        what="the chatbot list"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -169,8 +171,8 @@ export function BotDetailPage() {
       error={!valid ? 'That is not a valid chatbot id.' : record.error && !bot ? record.error : null}
       onRetry={record.reload}
       actions={
-        <Link to={`${PLATFORM_ROOT}/records?tab=chatbots`} className={buttonClass('ghost', 'sm')}>
-          <ArrowLeft aria-hidden className="h-3.5 w-3.5" />
+        <Link to={`${PLATFORM_ROOT}/records`} className={buttonClass('ghost', 'sm')}>
+          <ArrowLeft aria-hidden />
           All chatbots
         </Link>
       }
@@ -187,27 +189,40 @@ export function BotDetailPage() {
         />
       ) : (
         <Stack>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatTile
-              label="Conversations"
-              value={formatNumber(bot.total_sessions)}
-              period="All time"
-            />
-            <StatTile label="Messages" value={formatNumber(bot.total_messages)} period="All time" />
-            <StatTile
-              label="State"
-              value={bot.is_active ? 'Active' : 'Disabled'}
-              period="Right now"
-              tone={bot.is_active ? 'neutral' : 'warning'}
-            />
-          </div>
+          <Card>
+            <CardBody flush>
+              <StatRow
+                columns={2}
+                label="Chatbot totals"
+                period="All time"
+                items={[
+                  { label: 'Conversations', size: 'lg', value: formatNumber(bot.total_sessions) },
+                  { label: 'Messages', size: 'lg', value: formatNumber(bot.total_messages) },
+                ]}
+              />
+            </CardBody>
+          </Card>
 
           <Section title="Identity">
             <Card>
               <CardBody>
-                <DefinitionList
+                <PropertyGrid
                   columns={2}
                   items={[
+                    {
+                      // A status, not a figure: it was a word set as a 22px
+                      // tabular-mono headline in a stat tile.
+                      label: 'State',
+                      value: bot.is_active ? (
+                        <Badge tone="success" dot>
+                          Active
+                        </Badge>
+                      ) : (
+                        <Badge tone="warning" dot>
+                          Disabled
+                        </Badge>
+                      ),
+                    },
                     { label: 'Chatbot id', value: <span className="figure">{bot.id}</span> },
                     {
                       label: 'Bot key',
@@ -236,39 +251,36 @@ export function BotDetailPage() {
 
           <Section
             title="Its records"
-            description="This endpoint returns counts only. The lists themselves live in the tabs below, filtered where the API allows it."
+            description="Counts only. The lists live in Records, filtered where the API allows it."
           >
             <div className="flex flex-wrap gap-2">
+              {/* Only the links that work. The three the API cannot filter by
+                  chatbot needed no eulogy. */}
               <Link
-                to={`${PLATFORM_ROOT}/records?tab=engagement&view=offline&bot_id=${bot.id}`}
+                to={`${PLATFORM_ROOT}/records/offline?bot_id=${bot.id}`}
                 className={buttonClass('secondary', 'sm')}
               >
                 Offline messages
               </Link>
               <Link
-                to={`${PLATFORM_ROOT}/records?tab=engagement&view=meetings&bot_id=${bot.id}`}
+                to={`${PLATFORM_ROOT}/records/meetings?bot_id=${bot.id}`}
                 className={buttonClass('secondary', 'sm')}
               >
                 Meetings
               </Link>
               <Link
-                to={`${PLATFORM_ROOT}/records?tab=audience&view=growth&bot_id=${bot.id}`}
+                to={`${PLATFORM_ROOT}/records/growth?bot_id=${bot.id}`}
                 className={buttonClass('secondary', 'sm')}
               >
                 Growth events
               </Link>
               <Link
-                to={`${PLATFORM_ROOT}/records?tab=conversations&client_id=${bot.client_id}`}
+                to={`${PLATFORM_ROOT}/records/conversations?client_id=${bot.client_id}`}
                 className={buttonClass('secondary', 'sm')}
               >
                 Conversations for this account
               </Link>
             </div>
-            <p className="mt-2 text-xs text-text-tertiary">
-              Conversations, documents and crawls cannot be filtered by chatbot: those endpoints
-              accept no <code className="font-mono text-xs">bot_id</code> parameter. The account
-              filter above is the narrowest the API offers.
-            </p>
           </Section>
         </Stack>
       )}

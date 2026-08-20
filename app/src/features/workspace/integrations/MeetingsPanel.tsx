@@ -1,6 +1,15 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Card, CardBody, CardHeader, Field, Input, SaveBar, Select, Switch, toast } from '../../../ui';
+import {
+  Alert,
+  Input,
+  SaveBar,
+  Select,
+  SettingGroup,
+  SettingRow,
+  Switch,
+  toast,
+} from '../../../ui';
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
 import { MEETING_PROVIDERS, readIntegrations, validateMeetingUrl } from './emailModel';
@@ -39,6 +48,7 @@ function readMeetings(bot: Bot): MeetingDraft {
  * exactly as they were, so switching back does not lose a link.
  */
 export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
+  const fieldId = useId();
   const [baseline, setBaseline] = useState<MeetingDraft>(() => readMeetings(bot));
   const [draft, setDraft] = useState<MeetingDraft>(() => readMeetings(bot));
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -85,80 +95,89 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
   const dirty = JSON.stringify(baseline) !== JSON.stringify(draft);
 
   return (
-    <Card>
-      <CardHeader
-        title="Meeting booking"
-        titleAs="h2"
-        description="When a conversation is going well, the chatbot can offer your calendar instead of asking the visitor to email you."
-      />
-      <CardBody className="space-y-5">
-        {save.isError ? (
+    <SettingGroup title="Meeting booking">
+      {save.isError ? (
+        <div className="px-cell pt-4">
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        ) : null}
+        </div>
+      ) : null}
 
+      {/* The off-state explanation is the switch's own description, so the row
+          does not appear and disappear — which is what made the card jump
+          height on every toggle. */}
+      <SettingRow
+        label="Offer a booking link"
+        description="Off: the chatbot captures contact details instead."
+        controlWidth="auto"
+      >
         <Switch
+          hideLabel
           label="Offer a booking link"
-          description="Shown to visitors who look ready to talk to someone."
           checked={draft.enabled}
           onCheckedChange={(next) => setDraft((current) => ({ ...current, enabled: next }))}
         />
+      </SettingRow>
 
-        {draft.enabled ? (
-          <>
-            <Field label="Scheduling tool" required>
-              <Select
-                value={draft.providerId}
-                options={MEETING_PROVIDERS.map((candidate) => ({
-                  value: candidate.id,
-                  label: candidate.name,
-                }))}
-                onChange={(event) => {
-                  const nextId = event.target.value;
-                  const next = MEETING_PROVIDERS.find((candidate) => candidate.id === nextId)!;
-                  const settings = readIntegrations(bot);
-                  setUrlError(null);
-                  setDraft((current) => ({
-                    ...current,
-                    providerId: nextId,
-                    // Restore whatever was already saved for that provider,
-                    // rather than carrying the previous provider's URL across
-                    // into a field it can never be valid in.
-                    url: (settings[next.field] as string | null | undefined) ?? '',
-                  }));
-                }}
-              />
-            </Field>
-
-            <Field
-              label={`${provider.name} link`}
+      {draft.enabled ? (
+        <>
+          <SettingRow label="Scheduling tool" htmlFor={`${fieldId}-provider`}>
+            <Select
+              id={`${fieldId}-provider`}
               required
-              hint={`Your public booking page — the one you would send a customer. It must be on ${provider.host}.`}
-              error={urlError}
-            >
-              <Input
-                value={draft.url}
-                onChange={(event) => {
-                  setUrlError(null);
-                  setDraft((current) => ({ ...current, url: event.target.value }));
-                }}
-                placeholder={provider.placeholder}
-                inputMode="url"
-              />
-            </Field>
-          </>
-        ) : (
-          <p className="text-xs text-text-secondary">
-            With this off, the chatbot captures contact details instead and the lead appears in
-            Leads for you to follow up.
-          </p>
-        )}
-      </CardBody>
+              value={draft.providerId}
+              options={MEETING_PROVIDERS.map((candidate) => ({
+                value: candidate.id,
+                label: candidate.name,
+              }))}
+              onChange={(event) => {
+                const nextId = event.target.value;
+                const next = MEETING_PROVIDERS.find((candidate) => candidate.id === nextId)!;
+                const settings = readIntegrations(bot);
+                setUrlError(null);
+                setDraft((current) => ({
+                  ...current,
+                  providerId: nextId,
+                  // Restore whatever was already saved for that provider,
+                  // rather than carrying the previous provider's URL across
+                  // into a field it can never be valid in.
+                  url: (settings[next.field] as string | null | undefined) ?? '',
+                }));
+              }}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label={`${provider.name} link`}
+            htmlFor={`${fieldId}-url`}
+            description={`Must be on ${provider.host}.`}
+            stacked
+            error={urlError ?? undefined}
+          >
+            <Input
+              id={`${fieldId}-url`}
+              required
+              aria-invalid={urlError ? true : undefined}
+              value={draft.url}
+              onChange={(event) => {
+                setUrlError(null);
+                setDraft((current) => ({
+                  ...current,
+                  url: event.target.value,
+                }));
+              }}
+              placeholder={provider.placeholder}
+              inputMode="url"
+            />
+          </SettingRow>
+        </>
+      ) : null}
+
       <SaveBar
-          variant="footer"
+        variant="footer"
         dirty={dirty}
         saving={save.isPending}
         onSave={submit}
@@ -167,6 +186,6 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
           setUrlError(null);
         }}
       />
-    </Card>
+    </SettingGroup>
   );
 }

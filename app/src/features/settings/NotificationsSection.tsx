@@ -1,11 +1,22 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Bell, BellOff } from 'lucide-react';
-import { Alert, Badge, Button, Card, CardBody, CardHeader, CardSection, Combobox, ErrorState, Field, Input, LoadingRows, SaveBar, Switch, toast } from '../../ui';
 import {
-  getNotificationPreferences,
-  updateNotificationPreferences,
-} from '../../services/api';
+  Alert,
+  Badge,
+  Button,
+  Combobox,
+  ErrorState,
+  FieldSet,
+  Input,
+  LoadingRows,
+  SaveBar,
+  SettingGroup,
+  SettingRow,
+  Switch,
+  toast,
+} from '../../ui';
+import { getNotificationPreferences, updateNotificationPreferences } from '../../services/api';
 import { keys } from '../../query/keys';
 import { usePushSubscription } from '../../hooks/usePushSubscription';
 import {
@@ -54,6 +65,7 @@ function timezoneOptions(current: string): string[] {
 }
 
 export function NotificationsSection() {
+  const fieldId = useId();
   const device = usePushSubscription();
 
   const stored = useQuery({
@@ -64,7 +76,10 @@ export function NotificationsSection() {
 
   const [baseline, setBaseline] = useState<PushPreferences>(defaultPreferences);
   const [draft, setDraft] = useState<PushPreferences>(defaultPreferences);
-  const [timeErrors, setTimeErrors] = useState<{ start?: string; end?: string }>({});
+  const [timeErrors, setTimeErrors] = useState<{
+    start?: string;
+    end?: string;
+  }>({});
   const [adopted, setAdopted] = useState(false);
 
   // Adopt the server's copy once, during render. An effect would paint the
@@ -110,24 +125,12 @@ export function NotificationsSection() {
   const silenced = isFullySilenced(draft);
 
   return (
-    <Card>
-      <CardHeader
-        eyebrow="Alerts"
-        title="How we reach you"
-        titleAs="h2"
-        description="A live conversation is only useful if somebody notices it. These decide what is worth interrupting you for."
-      />
-
+    <SettingGroup title="How we reach you" id="alerts">
       {/* ── This device ───────────────────────────────────────────────────── */}
-      <CardBody className="space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-base font-medium text-text-primary">This device</h3>
-            <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-              Browser notifications, so an incoming chat reaches you even when this tab is in the
-              background.
-            </p>
-          </div>
+      <SettingRow
+        label="This device"
+        description="Reaches you when this tab is in the background."
+        badge={
           <Badge tone={device.phase.status === 'subscribed' ? 'success' : 'neutral'}>
             {device.phase.status === 'subscribed'
               ? 'On'
@@ -137,130 +140,132 @@ export function NotificationsSection() {
                   ? 'Unavailable'
                   : 'Off'}
           </Badge>
-        </div>
-
-        {device.actionError ? (
-          <Alert tone="danger" live>
-            {device.actionError}
-          </Alert>
-        ) : null}
-
+        }
+        controlWidth="auto"
+      >
         {device.phase.status === 'checking' ? (
-          <p className="text-xs text-text-secondary">Checking this device…</p>
-        ) : null}
-
-        {device.phase.status === 'unsupported' ? (
-          <Alert tone="neutral">
-            This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on
-            desktop can.
-          </Alert>
-        ) : null}
-
-        {device.phase.status === 'denied' ? (
-          <Alert
-            tone="warning"
-            title="Notifications are blocked in your browser"
-            action={
-              <Button size="sm" variant="secondary" onClick={device.recheck}>
-                Re-check
-              </Button>
-            }
-          >
-            We cannot undo that from here — click the lock icon beside the address bar, allow
-            notifications, then re-check.
-          </Alert>
-        ) : null}
-
-        {device.phase.status === 'disabled' || device.phase.status === 'incomplete' ? (
-          <Alert tone="neutral">
-            Your browser is ready, but push delivery is currently switched off on our side. It will
-            start working here on its own once it is back — there is nothing to do on this device.
-          </Alert>
-        ) : null}
-
-        {device.phase.status === 'error' ? (
-          <Alert
-            tone="danger"
-            live
-            action={
-              <Button size="sm" variant="secondary" onClick={device.recheck}>
-                Try again
-              </Button>
-            }
-          >
-            {device.phase.message}
-          </Alert>
-        ) : null}
-
-        {device.phase.status === 'subscribed' ? (
+          <span className="text-xs text-text-secondary">Checking…</span>
+        ) : device.phase.status === 'denied' ? (
+          <Button size="sm" variant="secondary" onClick={device.recheck}>
+            Re-check
+          </Button>
+        ) : device.phase.status === 'error' ? (
+          <Button size="sm" variant="secondary" onClick={device.recheck}>
+            Try again
+          </Button>
+        ) : device.phase.status === 'subscribed' ? (
           <Button
+            size="sm"
             variant="secondary"
             onClick={() => void device.disable()}
             loading={device.busy}
-            iconLeft={<BellOff aria-hidden className="h-4 w-4" />}
+            iconLeft={<BellOff aria-hidden />}
           >
             Turn off on this device
           </Button>
-        ) : null}
-
-        {device.phase.status === 'default' ? (
+        ) : device.phase.status === 'default' ? (
           <Button
+            size="sm"
             onClick={() => void device.enable()}
             loading={device.busy}
-            iconLeft={<Bell aria-hidden className="h-4 w-4" />}
+            iconLeft={<Bell aria-hidden />}
           >
             Turn on for this device
           </Button>
         ) : null}
-      </CardBody>
+      </SettingRow>
+
+      {/* The device's own failure modes, each of which the reader has to act on
+          — so they stay, beside the row that produced them. */}
+      {device.actionError ||
+      device.phase.status === 'unsupported' ||
+      device.phase.status === 'denied' ||
+      device.phase.status === 'disabled' ||
+      device.phase.status === 'incomplete' ||
+      device.phase.status === 'error' ? (
+        <div className="space-y-3 px-cell py-3">
+          {device.actionError ? (
+            <Alert tone="danger" live>
+              {device.actionError}
+            </Alert>
+          ) : null}
+
+          {device.phase.status === 'unsupported' ? (
+            <Alert tone="neutral">
+              This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on
+              desktop can.
+            </Alert>
+          ) : null}
+
+          {device.phase.status === 'denied' ? (
+            <Alert tone="warning" title="Notifications are blocked in your browser">
+              Click the lock icon beside the address bar, allow notifications, then re-check.
+            </Alert>
+          ) : null}
+
+          {device.phase.status === 'disabled' || device.phase.status === 'incomplete' ? (
+            <Alert tone="neutral">
+              Push delivery is switched off on our side. It starts working here on its own once it
+              is back.
+            </Alert>
+          ) : null}
+
+          {device.phase.status === 'error' ? (
+            <Alert tone="danger" live>
+              {device.phase.message}
+            </Alert>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ── Every device ──────────────────────────────────────────────────── */}
-      <CardSection className="space-y-4">
-        <div>
-          <h3 className="text-base font-medium text-text-primary">Every device</h3>
-          <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-            These follow your account, not this browser, and apply everywhere you are signed in.
-          </p>
-        </div>
-
-        {stored.isPending ? (
+      {stored.isPending ? (
+        <div className="px-cell py-4">
           <LoadingRows rows={3} />
-        ) : stored.isError ? (
-          <ErrorState
-            compact
-            title="We could not load your alert preferences"
-            description={stored.error instanceof Error ? stored.error.message : undefined}
-            onRetry={() => void stored.refetch()}
-          />
-        ) : (
-          <>
-            {save.isError ? (
+        </div>
+      ) : stored.isError ? (
+        <ErrorState
+          size="panel"
+          title="We could not load your alert preferences"
+          description={stored.error instanceof Error ? stored.error.message : undefined}
+          onRetry={() => void stored.refetch()}
+        />
+      ) : (
+        <>
+          {save.isError ? (
+            <div className="px-cell pt-4">
               <Alert tone="danger" live title="We could not save that">
                 {save.error instanceof Error
                   ? save.error.message
                   : 'Something went wrong. Please try again.'}
               </Alert>
-            ) : null}
+            </div>
+          ) : null}
 
+          <SettingRow
+            label="Send me push alerts"
+            description="Applies everywhere you are signed in."
+            controlWidth="auto"
+          >
             <Switch
+              hideLabel
               label="Send me push alerts"
-              description="The master switch. With it off, nothing below applies."
               checked={draft.enabled}
               onCheckedChange={(next) => setDraft((current) => ({ ...current, enabled: next }))}
             />
+          </SettingRow>
 
-            <fieldset
-              className="min-w-0 space-y-3 border-t border-border pt-4"
-              disabled={!draft.enabled}
-            >
-              <legend className="sr-only">Which events are worth a push</legend>
-              <p className="text-base font-medium text-text-primary">Worth interrupting me for</p>
+          {/* One name for the group, visible and in a real `legend`. It used to
+              carry an `sr-only` legend saying "Which events are worth a push"
+              over a `<p>` reading "Worth interrupting me for" — two names for
+              one group, and the visible one was not a heading. */}
+          <FieldSet legend="Worth interrupting me for" className="px-cell py-3">
+            <div className="space-y-3">
               {PUSH_EVENTS.map((event) => (
                 <Switch
                   key={event.key}
                   size="sm"
                   label={event.label}
-                  description={event.description}
                   disabled={!draft.enabled}
                   checked={draft.events[event.key]}
                   onCheckedChange={(next) =>
@@ -271,88 +276,120 @@ export function NotificationsSection() {
                   }
                 />
               ))}
-            </fieldset>
-
-            {silenced ? (
-              <Alert tone="warning">
-                Nothing can reach you right now. Conversations still arrive in the inbox, but
-                nobody will be told about them until someone opens it.
-              </Alert>
-            ) : null}
-
-            <div className="border-t border-border pt-4">
-              <Switch
-                label="Quiet hours"
-                description={describeQuietHours(draft.quietHours)}
-                checked={draft.quietHours !== null}
-                onCheckedChange={(next) =>
-                  setDraft((current) => ({
-                    ...current,
-                    quietHours: next
-                      ? { start: '22:00', end: '07:00', tz: localTimezone() }
-                      : null,
-                  }))
-                }
-              />
-
-              {draft.quietHours ? (
-                <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                  <Field label="From" required error={timeErrors.start}>
-                    <Input
-                      type="time"
-                      className="figure"
-                      value={draft.quietHours.start}
-                      onChange={(event) => {
-                        setTimeErrors((current) => ({ ...current, start: undefined }));
-                        setDraft((current) => ({
-                          ...current,
-                          quietHours: current.quietHours
-                            ? { ...current.quietHours, start: event.target.value }
-                            : null,
-                        }));
-                      }}
-                    />
-                  </Field>
-                  <Field label="Until" required error={timeErrors.end}>
-                    <Input
-                      type="time"
-                      className="figure"
-                      value={draft.quietHours.end}
-                      onChange={(event) => {
-                        setTimeErrors((current) => ({ ...current, end: undefined }));
-                        setDraft((current) => ({
-                          ...current,
-                          quietHours: current.quietHours
-                            ? { ...current.quietHours, end: event.target.value }
-                            : null,
-                        }));
-                      }}
-                    />
-                  </Field>
-                  <Field label="Timezone" hint="Quiet hours are read in this zone.">
-                    <Combobox
-                      label="Quiet hours timezone"
-                      value={draft.quietHours.tz}
-                      options={timezoneOptions(draft.quietHours.tz).map((zone) => ({
-                        value: zone,
-                        label: zone,
-                      }))}
-                      onValueChange={(zone) =>
-                        setDraft((current) => ({
-                          ...current,
-                          quietHours: current.quietHours
-                            ? { ...current.quietHours, tz: zone ?? current.quietHours.tz }
-                            : null,
-                        }))
-                      }
-                    />
-                  </Field>
-                </div>
-              ) : null}
             </div>
-          </>
-        )}
-      </CardSection>
+          </FieldSet>
+
+          {silenced ? (
+            <div className="px-cell pb-3">
+              <Alert tone="warning">
+                Nothing can reach you right now. Conversations still arrive in the inbox.
+              </Alert>
+            </div>
+          ) : null}
+
+          <SettingRow
+            label="Quiet hours"
+            badge={
+              draft.quietHours ? (
+                <Badge tone="neutral">{describeQuietHours(draft.quietHours)}</Badge>
+              ) : undefined
+            }
+            controlWidth="auto"
+          >
+            <Switch
+              hideLabel
+              label="Quiet hours"
+              checked={draft.quietHours !== null}
+              onCheckedChange={(next) =>
+                setDraft((current) => ({
+                  ...current,
+                  quietHours: next ? { start: '22:00', end: '07:00', tz: localTimezone() } : null,
+                }))
+              }
+            />
+          </SettingRow>
+
+          {draft.quietHours ? (
+            <>
+              <SettingRow
+                label="From"
+                htmlFor={`${fieldId}-from`}
+                controlWidth="sm"
+                error={timeErrors.start}
+              >
+                <Input
+                  id={`${fieldId}-from`}
+                  type="time"
+                  required
+                  aria-invalid={timeErrors.start ? true : undefined}
+                  className="figure"
+                  value={draft.quietHours.start}
+                  onChange={(event) => {
+                    setTimeErrors((current) => ({
+                      ...current,
+                      start: undefined,
+                    }));
+                    setDraft((current) => ({
+                      ...current,
+                      quietHours: current.quietHours
+                        ? { ...current.quietHours, start: event.target.value }
+                        : null,
+                    }));
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Until"
+                htmlFor={`${fieldId}-until`}
+                controlWidth="sm"
+                error={timeErrors.end}
+              >
+                <Input
+                  id={`${fieldId}-until`}
+                  type="time"
+                  required
+                  aria-invalid={timeErrors.end ? true : undefined}
+                  className="figure"
+                  value={draft.quietHours.end}
+                  onChange={(event) => {
+                    setTimeErrors((current) => ({
+                      ...current,
+                      end: undefined,
+                    }));
+                    setDraft((current) => ({
+                      ...current,
+                      quietHours: current.quietHours
+                        ? { ...current.quietHours, end: event.target.value }
+                        : null,
+                    }));
+                  }}
+                />
+              </SettingRow>
+              <SettingRow label="Timezone">
+                <Combobox
+                  label="Quiet hours timezone"
+                  value={draft.quietHours.tz}
+                  options={timezoneOptions(draft.quietHours.tz).map((zone) => ({
+                    value: zone,
+                    label: zone,
+                  }))}
+                  onValueChange={(zone) =>
+                    setDraft((current) => ({
+                      ...current,
+                      quietHours: current.quietHours
+                        ? {
+                            ...current.quietHours,
+                            tz: zone ?? current.quietHours.tz,
+                          }
+                        : null,
+                    }))
+                  }
+                />
+              </SettingRow>
+            </>
+          ) : null}
+        </>
+      )}
 
       {!stored.isPending && !stored.isError ? (
         <SaveBar
@@ -366,6 +403,6 @@ export function NotificationsSection() {
           }}
         />
       ) : null}
-    </Card>
+    </SettingGroup>
   );
 }

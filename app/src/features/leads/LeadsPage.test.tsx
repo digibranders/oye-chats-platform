@@ -134,7 +134,9 @@ describe('LeadsPage', () => {
     // this and have it thrown away.
     expect(await screen.findByText('128')).toBeInTheDocument();
     expect(screen.getByText('41')).toBeInTheDocument(); // mql + sal + sql
-    expect(screen.getByText('43')).toBeInTheDocument(); // average score
+    // The denominator is in the figure now, not overloaded into the tile's
+    // `period` slot, which is documented as the window a figure covers.
+    expect(screen.getByText('43/100')).toBeInTheDocument(); // average score
     expect(screen.getByText('4')).toBeInTheDocument(); // not opened
   });
 
@@ -190,7 +192,10 @@ describe('LeadsPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /mark all read/i }));
+    // The page's secondary verbs live in one overflow menu. The header used to
+    // carry three unbounded buttons, two of them ghost, none of them primary.
+    await user.click(await screen.findByRole('button', { name: /lead actions/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /mark all read/i }));
 
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent(/every page/i);

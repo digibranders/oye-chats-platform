@@ -9,8 +9,8 @@ import {
   takeImpersonationTokenFromUrl,
 } from './utils/impersonation'
 import { redeemImpersonation } from './services/api'
-import ErrorFallback from './components/ErrorFallback.jsx'
-import ImpersonationNotice from './components/ImpersonationNotice.jsx'
+import { BootCrashScreen } from './app/errors/AppCrashScreen'
+import { ImpersonationNotice } from './shell/ImpersonationNotice'
 import './index.css'
 // Admin Platform 2.0 entry. The strangler-fig migration is complete for the
 // primary surfaces - the legacy root (./App.jsx) and its dead pages/layouts
@@ -72,7 +72,7 @@ const root = createRoot(document.getElementById('root'));
 function renderApp() {
   root.render(
     <StrictMode>
-      <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
+      <Sentry.ErrorBoundary fallback={<BootCrashScreen />}>
         <App />
       </Sentry.ErrorBoundary>
     </StrictMode>,

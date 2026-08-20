@@ -2,17 +2,18 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Building2 } from 'lucide-react';
 import {
-  ABSENT,
   Alert,
   Button,
   Card,
   CardBody,
   CardHeader,
   Combobox,
-  DefinitionList,
   Dialog,
+  EmptyState,
   Field,
   Input,
+  LoadingRows,
+  PropertyGrid,
 } from '../../../ui';
 import { updateBillingDetails } from '../../../services/api';
 import { keys } from '../../../query/keys';
@@ -126,7 +127,7 @@ export function BillingIdentitySection({
         eyebrow="Tax identity"
         title="Billing details"
         titleAs="h2"
-        description="Printed on every invoice we issue. A GSTIN here is what lets your accountant claim input tax credit on what you spend with us."
+        description="Printed on every invoice."
         actions={
           <Button size="sm" variant="secondary" onClick={startEditing} disabled={loading}>
             {details && !details.isEmpty ? 'Edit' : 'Add details'}
@@ -134,30 +135,40 @@ export function BillingIdentitySection({
         }
       />
       <CardBody>
-        {error ? (
+        {loading ? (
+          // The body used to render the empty list while the request was in
+          // flight, so the card said "no tax identity on record" to every
+          // customer for as long as it took to find out.
+          <LoadingRows rows={3} />
+        ) : error ? (
           <Alert tone="warning">We could not load your billing details. {error}</Alert>
         ) : details && details.isEmpty ? (
-          <div className="flex items-start gap-2.5">
-            <Building2 aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary" />
-            <p className="text-prose text-text-secondary">
-              No tax identity on record. Invoices will be issued to your account email with no legal
-              name or GSTIN, and a registered buyer cannot reclaim the GST on them.
-            </p>
-          </div>
+          <EmptyState
+            size="panel"
+            icon={Building2}
+            title="No tax identity on record"
+            description="Invoices carry no legal name or GSTIN, so a registered buyer cannot reclaim the GST."
+          />
         ) : (
-          <DefinitionList
-            columns={2}
+          <PropertyGrid
+            label="Billing details"
             items={[
-              { label: 'Legal name', value: details?.legalName ?? ABSENT },
-              { label: 'GSTIN', value: details?.gstin ? <span className="figure">{details.gstin}</span> : ABSENT },
-              { label: 'Billing email', value: details?.email ?? details?.accountEmail ?? ABSENT },
+              { label: 'Legal name', value: details?.legalName },
+              {
+                label: 'GSTIN',
+                value: details?.gstin ? <span className="figure">{details.gstin}</span> : undefined,
+              },
+              {
+                label: 'Billing email',
+                value: details?.email ?? details?.accountEmail,
+              },
               {
                 label: 'Place of supply',
                 value: details?.stateCode
                   ? (gstStateName(details.stateCode) ?? details.stateCode)
-                  : (details?.country ?? ABSENT),
+                  : details?.country,
               },
-              { label: 'Address', value: addressLines ?? ABSENT },
+              { label: 'Address', value: addressLines },
             ]}
           />
         )}
@@ -222,7 +233,12 @@ export function BillingIdentitySection({
             >
               <Input
                 value={form.gstin}
-                onChange={(event) => setForm({ ...form, gstin: normalizeGstin(event.target.value) })}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    gstin: normalizeGstin(event.target.value),
+                  })
+                }
                 className="figure"
                 maxLength={15}
               />

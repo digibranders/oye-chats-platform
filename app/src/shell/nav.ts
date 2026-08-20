@@ -29,6 +29,12 @@ import {
  * Experience tab streaming replies from whichever chatbot the shell switcher
  * happened to hold rather than the one in the URL, and an IA that never lets the
  * current object go unnamed makes that class of bug much harder to ship.
+ *
+ * `WORKSPACE_NAV` is the canonical list of workspace destinations — the command
+ * palette, the 404's recovery menu and the breadcrumb all read it, so a
+ * destination missing from here is a destination the product cannot find.
+ * `placement` says only where the *rail* draws each one; it never removes a
+ * destination from the IA.
  */
 
 export interface NavItem {
@@ -41,23 +47,35 @@ export interface NavItem {
   hint: string;
   /** Visible to a plain operator acting in someone else's workspace. */
   operator?: boolean;
+  /**
+   * Where the rail draws it.
+   *
+   * `primary` is the block under the workspace switcher. `footer` is the block
+   * under the hairline, beside the account menu — reached deliberately rather
+   * than scanned. `chatbots` is the tail row of the Chatbots group: the word
+   * used to appear twice, forty pixels apart, as a nav row and again as the
+   * label of the group listing the chatbots themselves.
+   */
+  placement?: 'primary' | 'footer' | 'chatbots';
 }
 
 /**
- * Workspace scope — six destinations.
+ * Workspace scope.
  *
- * Billing is here rather than inside Settings because running out of credits
- * stops the chatbot answering customers. That is an outage, not a preference,
- * and burying it two levels down is the wrong risk posture for the one failure
- * that silently takes the product offline.
+ * Billing sits in the footer rather than the primary block. Running out of
+ * credits stops the chatbot answering customers, which is an outage — but the
+ * urgency is not the same as the frequency, and this is a screen a customer
+ * opens twice a month. Stripe, Linear, Vercel, Intercom and Razorpay all file
+ * billing beside the account and surface a failed payment as a banner instead;
+ * `ShellBanners` is where that belongs, and it is now a real slot.
  */
 export const WORKSPACE_NAV: readonly NavItem[] = [
   { to: '/', label: 'Home', icon: House, end: true, hint: 'What needs you today' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, hint: 'Live chat and messages', operator: true },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', operator: true },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Conversations, journeys and outcomes' },
-  { to: '/chatbots', label: 'Chatbots', icon: Bot, hint: 'Create, train and deploy chatbots' },
-  { to: '/billing', label: 'Billing', icon: CreditCard, hint: 'Plan, credits, invoices and usage' },
+  { to: '/chatbots', label: 'Chatbots', icon: Bot, hint: 'Create, train and deploy chatbots', placement: 'chatbots' },
+  { to: '/billing', label: 'Billing', icon: CreditCard, hint: 'Plan, credits, invoices and usage', placement: 'footer' },
 ];
 
 /**
@@ -84,8 +102,44 @@ export const AGENT_NAV: readonly AgentNavItem[] = [
 
 /** Bottom of the rail. Settings is one home, with its own secondary column. */
 export const FOOTER_NAV: readonly NavItem[] = [
-  { to: '/settings', label: 'Settings', icon: Building2, hint: 'Workspace, team, integrations and your account' },
+  { to: '/settings', label: 'Settings', icon: Building2, hint: 'Workspace, team, integrations and your account', placement: 'footer' },
 ];
+
+/**
+ * Second-level sections, for the breadcrumb.
+ *
+ * Eleven routes used to render a single crumb naming their *parent*, carrying
+ * `aria-current="page"` — so a screen-reader user on `/billing/usage` was told
+ * the current page was "Billing". A shortened trail is fine; a wrong one is not.
+ */
+export const NAV_SECTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  '/analytics': { journey: 'Journeys' },
+  '/billing': { usage: 'Usage', reports: 'Reports' },
+  '/settings': {
+    workspace: 'Workspace',
+    team: 'Team',
+    integrations: 'Integrations',
+    developers: 'Developers',
+    affiliate: 'Affiliate',
+  },
+};
+
+/**
+ * Destinations with no entry in `WORKSPACE_NAV`.
+ *
+ * Onboarding and the account screens are reached from the checklist and the
+ * account menu rather than from the rail, so the trail used to come back empty
+ * on all of them — including `/welcome`, the first screen a new customer sees.
+ */
+export const STANDALONE_CRUMBS: Readonly<Record<string, string>> = {
+  '/setup': 'Setup',
+  '/welcome': 'Welcome',
+  '/account': 'Account',
+};
+
+export const ACCOUNT_SECTIONS: Readonly<Record<string, string>> = {
+  preferences: 'Preferences',
+};
 
 /**
  * What a plain operator may reach.
@@ -104,6 +158,23 @@ export const OPERATOR_PREFIXES: readonly string[] = ['/inbox', '/leads', '/accou
 export function navForRole(items: readonly NavItem[], isOperator: boolean): NavItem[] {
   return isOperator ? items.filter((item) => item.operator) : [...items];
 }
+
+/** The rail's primary block: everything not filed under the fold or the group. */
+export function railPrimary(isOperator: boolean): NavItem[] {
+  return navForRole(WORKSPACE_NAV, isOperator).filter(
+    (item) => (item.placement ?? 'primary') === 'primary',
+  );
+}
+
+/** The rail's footer block, under the hairline: billing, then settings. */
+export function railFooter(isOperator: boolean): NavItem[] {
+  return navForRole([...WORKSPACE_NAV, ...FOOTER_NAV], isOperator).filter(
+    (item) => item.placement === 'footer',
+  );
+}
+
+/** The Chatbots group's tail row — the list of every chatbot. */
+export const CHATBOTS_ITEM: NavItem = WORKSPACE_NAV.find((item) => item.to === '/chatbots')!;
 
 export function isOperatorAllowedPath(pathname: string): boolean {
   return OPERATOR_PREFIXES.some(

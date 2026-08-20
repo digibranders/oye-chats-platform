@@ -5,12 +5,13 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
   ConfirmDialog,
   Field,
+  Grid,
   Input,
   LoadingRows,
   LockedState,
+  SaveBar,
   Section,
   Select,
   Stack,
@@ -19,6 +20,7 @@ import {
   type SelectOption,
 } from '../../ui';
 import { platform } from '../client';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { usePlatformResource } from '../usePlatform';
 import {
   draftFromConfig,
@@ -38,6 +40,20 @@ import type { ModelConfig, ModelConfigWriteResult } from './types';
  * the endpoint existing, and the reason the form confirms with a list of exactly
  * which keys are about to move.
  */
+/** Field labels, for naming the blocking error in the save bar. */
+const FIELD_LABELS: Record<string, string> = {
+  primary_model: 'Primary model',
+  fallback_model: 'Fallback model',
+  gate_model: 'Gate model',
+  chunk_size: 'Chunk size',
+  chunk_overlap: 'Chunk overlap',
+  rerank_top_n: 'Rerank top N',
+  relevance_threshold: 'Relevance threshold',
+  embed_concurrency: 'Embedding concurrency',
+  jina_fetch_concurrency: 'Jina concurrency',
+  spider_fetch_concurrency: 'Spider concurrency',
+};
+
 export function RuntimeScreen() {
   const config = usePlatformResource<ModelConfig>('/model-config');
   const [draft, setDraft] = useState<RuntimeDraft | null>(null);
@@ -62,6 +78,10 @@ export function RuntimeScreen() {
     [draft, config.data],
   );
   const changedKeys = Object.keys(payload);
+  // Named, not "fix the highlighted fields": the reader has to be able to act on
+  // it without hunting across four sections of a form.
+  const firstErrorKey = Object.keys(errors)[0];
+  const firstError = firstErrorKey ? `${FIELD_LABELS[firstErrorKey] ?? firstErrorKey} — ${errors[firstErrorKey]}` : null;
 
   function update(patch: Partial<RuntimeDraft>): void {
     setDraft((current) => (current ? { ...current, ...patch } : current));
@@ -97,8 +117,8 @@ export function RuntimeScreen() {
   if (config.forbidden) {
     return (
       <LockedState
-        title="You cannot read the runtime configuration"
-        description="Your super-admin account is not permitted to load it. Nothing was changed."
+        title={FORBIDDEN_TITLE}
+        description={forbiddenDescription('the runtime configuration')}
       />
     );
   }
@@ -144,45 +164,36 @@ export function RuntimeScreen() {
 
   return (
     <Stack>
-      <Alert tone="warning" title="These take effect without a deploy">
-        The values are cached in memory for a few seconds and the save clears that cache, so the next chat,
-        crawl and upload use them. A bad chunk pair here is an ingestion outage, not a rejected form.
-      </Alert>
-
-      {saveError ? (
-        <Alert tone="danger" live title="Nothing was changed">
-          {saveError}
-        </Alert>
-      ) : null}
-
       <Section title="Models" description="LiteLLM routes to the primary and falls back on failure.">
         <Card>
-          <CardBody className="grid gap-4 md:grid-cols-3">
-            <Field label="Primary model" error={shown.primary_model} hint="Every customer-facing completion.">
-              <Select
-                options={models}
-                value={draft.primary_model}
-                onChange={(event) => update({ primary_model: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Fallback model"
-              error={shown.fallback_model}
-              hint="Used when the primary errors. Pointing both at one provider removes the fallback."
-            >
-              <Select
-                options={fallbackModels}
-                value={draft.fallback_model}
-                onChange={(event) => update({ fallback_model: event.target.value })}
-              />
-            </Field>
-            <Field label="Gate model" error={shown.gate_model} hint="The relevance gate and chunk enrichment.">
-              <Select
-                options={gateModels}
-                value={draft.gate_model}
-                onChange={(event) => update({ gate_model: event.target.value })}
-              />
-            </Field>
+          <CardBody>
+            <Grid cols={3}>
+              <Field label="Primary model" error={shown.primary_model}>
+                <Select
+                  options={models}
+                  value={draft.primary_model}
+                  onChange={(event) => update({ primary_model: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Fallback model"
+                error={shown.fallback_model}
+                hint="Used when the primary errors."
+              >
+                <Select
+                  options={fallbackModels}
+                  value={draft.fallback_model}
+                  onChange={(event) => update({ fallback_model: event.target.value })}
+                />
+              </Field>
+              <Field label="Gate model" error={shown.gate_model} hint="Relevance gate and enrichment.">
+                <Select
+                  options={gateModels}
+                  value={draft.gate_model}
+                  onChange={(event) => update({ gate_model: event.target.value })}
+                />
+              </Field>
+            </Grid>
           </CardBody>
           {draft.primary_model === draft.fallback_model ? (
             <CardBody className="border-t border-border">
@@ -199,7 +210,8 @@ export function RuntimeScreen() {
         description="Chunking is applied at ingestion, so a change here affects documents indexed after it, not the corpus already stored."
       >
         <Card>
-          <CardBody className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <CardBody>
+            <Grid cols={4}>
             <Field label="Chunk size" error={shown.chunk_size} hint="200 to 8,000 characters.">
               <Input
                 className="figure"
@@ -243,7 +255,7 @@ export function RuntimeScreen() {
             <Field
               label="Embedding concurrency"
               error={shown.embed_concurrency}
-              hint="1 to 64 parallel embedding calls. Bounded by the provider's rate limit, not by this."
+              hint="1 to 64 parallel calls."
             >
               <Input
                 className="figure"
@@ -252,13 +264,15 @@ export function RuntimeScreen() {
                 onChange={(event) => update({ embed_concurrency: event.target.value })}
               />
             </Field>
+            </Grid>
           </CardBody>
         </Card>
       </Section>
 
       <Section title="Crawler" description="The fallback provider is always the other one; it is not separately settable.">
         <Card>
-          <CardBody className="grid gap-4 md:grid-cols-3">
+          <CardBody>
+            <Grid cols={3}>
             <Field label="Primary provider" hint={activeProviderNote}>
               <Select
                 options={crawlProviders}
@@ -290,6 +304,7 @@ export function RuntimeScreen() {
                 onChange={(event) => update({ spider_fetch_concurrency: event.target.value })}
               />
             </Field>
+            </Grid>
           </CardBody>
           <CardBody className="border-t border-border">
             <p className="text-xs text-text-secondary">
@@ -326,25 +341,20 @@ export function RuntimeScreen() {
         </Card>
       </Section>
 
-      <Card>
-        <CardHeader
-          titleAs="h2"
-          title="Apply"
-          description="Only the settings that moved are written, so the audit log records the change and nothing else."
-          actions={
-            <Button variant="primary" disabled={changedKeys.length === 0} onClick={attemptSave}>
-              {changedKeys.length === 0
-                ? 'No changes'
-                : `Apply ${changedKeys.length} change${changedKeys.length === 1 ? '' : 's'}`}
-            </Button>
-          }
-        />
-        {changedKeys.length > 0 ? (
-          <CardBody>
-            <p className="figure text-xs text-text-secondary">{changedKeys.join(', ')}</p>
-          </CardBody>
-        ) : null}
-      </Card>
+      <SaveBar
+        dirty={changedKeys.length > 0}
+        summary={<span className="figure">{changedKeys.join(', ')}</span>}
+        saveError={saveError}
+        blockedReason={firstError}
+        saveLabel="Review and apply"
+        onSave={attemptSave}
+        onDiscard={() => {
+          setDraft(draftFromConfig(config.data as ModelConfig));
+          setShowErrors(false);
+          setSaveError(null);
+        }}
+        guard="the runtime configuration"
+      />
 
       <ConfirmDialog
         open={confirmOpen}

@@ -8,8 +8,8 @@ import {
   Card,
   CardBody,
   CardHeader,
-  CardSection,
   ConfirmDialog,
+  PropertyGrid,
   formatDateTime,
   toast,
 } from '../../ui';
@@ -52,7 +52,7 @@ export function AccessCard({ client, onChanged }: { client: ClientDetail; onChan
         titleAs="h3"
         eyebrow="Access"
         title="Credentials and standing"
-        description="Each of these takes effect immediately, on a live account."
+        description="Each takes effect immediately, on a live account."
       />
 
       {error ? (
@@ -66,93 +66,81 @@ export function AccessCard({ client, onChanged }: { client: ClientDetail; onChan
       {rotated ? (
         <CardBody>
           <Alert tone="success" live title="API key rotated">
-            The new key ends <span className="figure">{rotated}</span>. The full value is not returned
-            by the API and cannot be read back — the customer regenerates or retrieves it from their
-            own dashboard.
+            The full value is not returned by the API — the customer reads it from their own
+            dashboard.
           </Alert>
         </CardBody>
       ) : null}
 
-      <CardSection>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-medium text-text-primary">Account standing</p>
-            <p className="mt-0.5 text-xs text-text-secondary">
-              {suspended ? (
-                <>
-                  Suspended <span className="figure">{formatDateTime(client.suspended_at)}</span>. They
-                  cannot sign in or authenticate with their API key.
-                </>
+      <CardBody>
+        {/* Four property rows, not four titled sections with a sentence each:
+            every one of those sentences is stated again — better — in the
+            confirmation that follows the button. */}
+        <PropertyGrid
+          label="Credentials and standing"
+          items={[
+            {
+              label: 'Standing',
+              value: suspended ? (
+                <span className="flex flex-wrap items-center gap-2">
+                  <Badge tone="danger">Suspended</Badge>
+                  <span className="figure text-xs text-text-tertiary">
+                    {formatDateTime(client.suspended_at)}
+                  </span>
+                </span>
               ) : (
-                'Active. The customer can sign in and use their API key normally.'
-              )}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {suspended ? <Badge tone="danger">Suspended</Badge> : <Badge tone="success">Active</Badge>}
-            <Button
-              size="sm"
-              variant={suspended ? 'secondary' : 'danger'}
-              onClick={() => setPending(suspended ? 'restore' : 'suspend')}
-            >
-              <UserX aria-hidden className="h-3.5 w-3.5" />
-              {suspended ? 'Restore access' : 'Suspend account'}
-            </Button>
-          </div>
-        </div>
-      </CardSection>
-
-      <CardSection>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-medium text-text-primary">Password</p>
-            <p className="mt-0.5 text-xs text-text-secondary">
-              Emails the customer a six-digit reset code valid for 15 minutes. You never see or set
-              their password.
-            </p>
-          </div>
-          <Button size="sm" variant="secondary" onClick={() => setPending('reset')}>
-            <Mail aria-hidden className="h-3.5 w-3.5" />
-            Send reset code
-          </Button>
-        </div>
-      </CardSection>
-
-      <CardSection>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-medium text-text-primary">API key</p>
-            <p className="mt-0.5 text-xs text-text-secondary">
-              Rotating issues a new <code className="font-mono text-xs">X-API-Key</code> and
-              invalidates the current one on the next request.
-            </p>
-          </div>
-          <Button size="sm" variant="danger" onClick={() => setPending('rotate')}>
-            <KeyRound aria-hidden className="h-3.5 w-3.5" />
-            Rotate API key
-          </Button>
-        </div>
-      </CardSection>
-
-      <CardSection>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-medium text-text-primary">Super-admin privileges</p>
-            <p className="mt-0.5 text-xs text-text-secondary">
-              {client.is_superadmin
-                ? `Platform console access, tier ${client.superadmin_role ?? 'unset'}.`
-                : 'No platform console access. This is a customer account.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {client.is_superadmin ? <Badge tone="plan">Super-admin</Badge> : null}
-            <Button size="sm" variant="secondary" onClick={() => setPrivileges(true)}>
-              <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
-              Change privileges
-            </Button>
-          </div>
-        </div>
-      </CardSection>
+                <Badge tone="success">Active</Badge>
+              ),
+              action: (
+                <Button
+                  size="sm"
+                  variant={suspended ? 'secondary' : 'danger'}
+                  onClick={() => setPending(suspended ? 'restore' : 'suspend')}
+                >
+                  <UserX aria-hidden />
+                  {suspended ? 'Restore access' : 'Suspend'}
+                </Button>
+              ),
+            },
+            {
+              label: 'Password',
+              note: 'Emails a six-digit reset code valid for 15 minutes. You never see or set their password.',
+              value: 'Set by the customer',
+              action: (
+                <Button size="sm" variant="secondary" onClick={() => setPending('reset')}>
+                  <Mail aria-hidden />
+                  Send reset code
+                </Button>
+              ),
+            },
+            {
+              label: 'API key',
+              note: 'Rotating issues a new X-API-Key and invalidates the current one on the next request.',
+              value: rotated ? <span className="figure">{rotated}</span> : 'Never rotated from here',
+              action: (
+                <Button size="sm" variant="secondary" onClick={() => setPending('rotate')}>
+                  <KeyRound aria-hidden />
+                  Rotate
+                </Button>
+              ),
+            },
+            {
+              label: 'Privileges',
+              value: client.is_superadmin ? (
+                <Badge tone="plan">Super-admin · {client.superadmin_role ?? 'unset'}</Badge>
+              ) : (
+                'Customer account'
+              ),
+              action: (
+                <Button size="sm" variant="secondary" onClick={() => setPrivileges(true)}>
+                  <ShieldCheck aria-hidden />
+                  Change
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </CardBody>
 
       <PrivilegesDialog
         client={client}

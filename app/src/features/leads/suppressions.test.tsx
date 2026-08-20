@@ -74,12 +74,33 @@ describe('SuppressionsDrawer', () => {
   it('says the list cannot be undone, in the place a delete button would be', async () => {
     renderDrawer();
 
-    expect(await screen.findByText('priya@infosys.com')).toBeInTheDocument();
-    expect(screen.getByText(/This list cannot be undone/i)).toBeInTheDocument();
-    expect(screen.getByText(/Nothing removes one — not this panel and not support/i)).toBeInTheDocument();
-    // And there is genuinely no removal control anywhere in the panel.
-    expect(screen.queryByRole('button', { name: /remove|delete|un-?suppress/i })).toBeNull();
+    // A longer wait than the 1s default: this is the first render in the file,
+    // so it pays for the drawer's portal, its focus trap and the first query,
+    // and it times out on a loaded machine at the default.
+    expect(
+      await screen.findByText('priya@infosys.com', {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    // Stated once, in the panel's own description — not as a four-sentence
+    // alert above the list the reader opened the drawer to read.
+    expect(screen.getByText(/Nothing can be removed/i)).toBeInTheDocument();
+
+    // The full explanation is where somebody hunting for a delete button looks.
+    await user.click(screen.getByRole('button', { name: /Why can.t I remove an address/i }));
+    expect(
+      await screen.findByText(/Nothing removes one — not this panel and not support/i),
+    ).toBeInTheDocument();
+
+    // And there is genuinely no removal control anywhere in the panel. Anchored,
+    // so it does not match the disclosure that *explains* why there is none.
+    expect(
+      screen.queryByRole('button', { name: /^(remove|delete|un-?suppress)/i }),
+    ).toBeNull();
   });
+
+  /** The add form is collapsed, so every test that uses it opens it first. */
+  async function openAddForm(): Promise<void> {
+    await user.click(await screen.findByRole('button', { name: /Record an opt-out/i }));
+  }
 
   it('asks the server for the page it is showing, scoped to the chatbot', async () => {
     renderDrawer(2);
@@ -140,6 +161,7 @@ describe('SuppressionsDrawer', () => {
     vi.mocked(createEmailSuppression).mockResolvedValue(row({ id: 12, email: 'sam@acme.com' }));
     renderDrawer();
 
+    await openAddForm();
     await user.type(await screen.findByLabelText(/Email address/i), 'sam@acme.com');
     await user.click(screen.getByRole('button', { name: 'Add to unsubscribes' }));
 
@@ -164,6 +186,7 @@ describe('SuppressionsDrawer', () => {
   it('rejects an unusable address before asking the server about it', async () => {
     renderDrawer();
 
+    await openAddForm();
     await user.type(await screen.findByLabelText(/Email address/i), 'not-an-address');
     await user.click(screen.getByRole('button', { name: 'Add to unsubscribes' }));
 
@@ -178,6 +201,7 @@ describe('SuppressionsDrawer', () => {
     );
     renderDrawer();
 
+    await openAddForm();
     await user.type(await screen.findByLabelText(/Email address/i), 'sam@acme.com');
     await user.click(screen.getByRole('button', { name: 'Add to unsubscribes' }));
     const dialog = await screen.findByRole('alertdialog');
@@ -192,6 +216,7 @@ describe('SuppressionsDrawer', () => {
     // Every chatbot's rows are listed, so the row has to name its chatbot too.
     expect(await screen.findByText('Acme Support')).toBeInTheDocument();
 
+    await openAddForm();
     await user.type(screen.getByLabelText(/Email address/i), 'sam@acme.com');
     await user.click(screen.getByRole('button', { name: 'Add to unsubscribes' }));
 

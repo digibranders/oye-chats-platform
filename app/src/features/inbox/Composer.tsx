@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Paperclip, Send, Zap } from 'lucide-react';
-import { Button, Spinner, cn, formatBytes, toast } from '../../ui';
+import { Button, Kbd, Spinner, Tooltip, cn, formatBytes, toast } from '../../ui';
 import type { CannedResponse } from '../../types/domain';
 
 /** Anything larger is refused before the upload starts, not after it fails. */
@@ -15,7 +15,6 @@ export interface ComposerProps {
   snippets: CannedResponse[];
   /** Blocks sending, with the reason shown in place of the hint. */
   disabledReason?: string | null;
-  sending?: boolean;
   placeholder?: string;
   /** Opens the snippet manager, so the operator never leaves the conversation. */
   onManageSnippets?: () => void;
@@ -44,6 +43,12 @@ function matchSnippets(snippets: CannedResponse[], token: string): CannedRespons
  * with real arrow-key navigation rather than a native `select`. And the draft is
  * owned by the caller, keyed by conversation — so switching to another visitor
  * and back does not silently destroy a half-written reply, which it used to.
+ *
+ * There is no `sending` state. `socket.sendMessage` returns synchronously and
+ * the echo lands in the transcript within a frame, so a spinner would flash for
+ * a frame and never resolve into anything — the prop existed with a branch
+ * behind it and no caller ever passed it. A failed send is an `Alert` above the
+ * transcript, which is where the operator can act on it.
  */
 export function Composer({
   value,
@@ -53,14 +58,17 @@ export function Composer({
   onTyping,
   snippets,
   disabledReason = null,
-  sending = false,
-  placeholder = 'Write a reply…',
+  placeholder = 'Write a reply…   /  for a saved reply',
   onManageSnippets,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  // Escape closes the menu. It used to call `onChange('')`, which destroyed the
+  // whole draft — in every other combobox in the console Escape closes and
+  // leaves the text.
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
   const listId = 'composer-snippets';
 
   const token = value.startsWith('/') ? value.slice(1) : null;
@@ -68,7 +76,7 @@ export function Composer({
     () => (token === null ? [] : matchSnippets(snippets, token)),
     [token, snippets],
   );
-  const menuOpen = token !== null && matches.length > 0;
+  const menuOpen = token !== null && matches.length > 0 && dismissedToken !== token;
 
   // Keep the highlight inside the list as it narrows under the operator's typing.
   useEffect(() => {
@@ -93,7 +101,7 @@ export function Composer({
 
   function submit(): void {
     const text = value.trim();
-    if (!text || disabled || sending) return;
+    if (!text || disabled) return;
     onSend(text);
   }
 
@@ -116,7 +124,7 @@ export function Composer({
       }
       if (event.key === 'Escape') {
         event.preventDefault();
-        onChange('');
+        setDismissedToken(token);
         return;
       }
     }
@@ -146,13 +154,17 @@ export function Composer({
   }
 
   return (
-    <div className="relative shrink-0 border-t border-border bg-surface px-4 py-3 md:px-6">
+    <div className="relative shrink-0 border-t border-border bg-surface px-cell py-3">
       {menuOpen ? (
         <div
           id={listId}
           role="listbox"
           aria-label="Saved replies"
-          className="motion-pop absolute bottom-full left-4 right-4 z-[var(--z-sticky)] mb-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg md:left-6 md:right-6"
+          // The system's menu rungs: `shadow-md` (`lg` is for modals and
+          // drawers), `--z-overlay` (at `--z-sticky` it painted *under* any
+          // sticky toolbar), and the `p-1` inset that stops an option's
+          // highlight bleeding into the container's own radius.
+          className="motion-pop absolute bottom-full left-cell right-cell z-[var(--z-overlay)] mb-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-md"
         >
           {matches.map((snippet, index) => (
             <button
@@ -168,15 +180,13 @@ export function Composer({
               }}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
-                'flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left',
+                'flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-1.5 text-left',
                 index === highlight ? 'bg-accent-50' : 'bg-surface',
               )}
             >
               <span className="flex items-center gap-2">
                 <span className="text-xs font-medium text-text-primary">{snippet.title}</span>
-                {snippet.shortcut ? (
-                  <span className="figure text-2xs text-text-tertiary">/{snippet.shortcut.replace(/^\//, '')}</span>
-                ) : null}
+                {snippet.shortcut ? <Kbd>/{snippet.shortcut.replace(/^\//, '')}</Kbd> : null}
               </span>
               <span className="line-clamp-1 text-2xs text-text-secondary">{snippet.content}</span>
             </button>
@@ -184,11 +194,16 @@ export function Composer({
         </div>
       ) : null}
 
+      {/* `rounded-md` (8), the control radius — `rounded-lg` is the card's, and
+          two `rounded-sm` buttons sitting 4px inside a 10px corner is where the
+          visible crescent came from. The ring is the system's one focus ring:
+          `outline`, at +2, and only on keyboard focus. `:focus-within` alone
+          fired on a mouse click, which no other input in the console does. */}
       <div
         className={cn(
-          'flex items-end gap-2 rounded-lg border border-border-strong bg-surface px-2 py-1.5',
-          'focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-accent-500',
-          disabled && 'opacity-60',
+          'flex items-end gap-1 rounded-md border border-border-strong bg-surface p-1',
+          'has-[:focus-visible]:outline has-[:focus-visible]:outline-2',
+          'has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-500',
         )}
       >
         <label className="sr-only" htmlFor="composer-input">
@@ -200,7 +215,9 @@ export function Composer({
           rows={1}
           value={value}
           disabled={disabled}
-          placeholder={disabled ? '' : placeholder}
+          // The reason rides on the control it explains. `opacity-60` over the
+          // whole box also dragged `border-strong` below its measured 3:1.
+          placeholder={disabledReason ?? placeholder}
           onChange={(event) => {
             onChange(event.target.value);
             onTyping();
@@ -209,47 +226,64 @@ export function Composer({
           aria-controls={menuOpen ? listId : undefined}
           aria-expanded={menuOpen}
           className={cn(
-            'min-h-[1.75rem] flex-1 resize-none border-0 bg-transparent px-1.5 py-1',
+            'min-h-control-sm flex-1 resize-none border-0 bg-transparent px-1.5 py-1',
             'text-prose text-text-primary placeholder:text-text-tertiary focus:outline-none',
           )}
         />
         <input ref={fileRef} type="file" className="hidden" onChange={onFilePicked} />
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Attach a file"
-          disabled={disabled || uploading}
-          onClick={() => fileRef.current?.click()}
+        <Tooltip content="Attach a file">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Attach a file"
+            disabled={disabled || uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            {uploading ? <Spinner className="h-icon-md w-icon-md" /> : <Paperclip aria-hidden />}
+          </Button>
+        </Tooltip>
+        {/* In the composer's own toolbar, beside the paperclip, rather than a
+            ghost button on the footer row where it shared a line with — and
+            competed against — the reason the composer was blocked. */}
+        {onManageSnippets ? (
+          <Tooltip content="Saved replies">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Saved replies"
+              onClick={onManageSnippets}
+            >
+              <Zap aria-hidden />
+            </Button>
+          </Tooltip>
+        ) : null}
+        <Tooltip
+          content={
+            <span className="flex items-center gap-1.5">
+              Send <Kbd>Enter</Kbd>
+            </span>
+          }
         >
-          {uploading ? <Spinner className="h-4 w-4" /> : <Paperclip aria-hidden className="h-4 w-4" />}
-        </Button>
-        <Button
-          size="icon-sm"
-          aria-label="Send reply"
-          disabled={disabled || sending || value.trim().length === 0}
-          onClick={submit}
-        >
-          {sending ? <Spinner className="h-4 w-4" /> : <Send aria-hidden className="h-4 w-4" />}
-        </Button>
+          <Button
+            size="icon-sm"
+            aria-label="Send reply"
+            disabled={disabled || value.trim().length === 0}
+            onClick={submit}
+          >
+            <Send aria-hidden />
+          </Button>
+        </Tooltip>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-between gap-3">
-        {disabledReason ? (
-          <p role="status" className="text-2xs text-warning">
-            {disabledReason}
-          </p>
-        ) : (
-          <p className="text-2xs text-text-tertiary">
-            Enter sends · Shift+Enter starts a line · <span className="figure">/</span> inserts a saved reply
-          </p>
-        )}
-        {onManageSnippets ? (
-          <Button size="sm" variant="ghost" onClick={onManageSnippets}>
-            <Zap aria-hidden className="h-3.5 w-3.5" />
-            Saved replies
-          </Button>
-        ) : null}
-      </div>
+      {/* Only the disabled reason. The permanent "Enter sends · Shift+Enter
+          starts a line · / inserts a saved reply" line was learned in a day and
+          read for a year; the keys live on the send button's tooltip and in the
+          placeholder now. */}
+      {disabledReason ? (
+        <p role="status" className="mt-1.5 text-2xs text-warning">
+          {disabledReason}
+        </p>
+      ) : null}
     </div>
   );
 }

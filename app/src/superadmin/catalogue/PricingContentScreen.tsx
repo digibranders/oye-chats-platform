@@ -7,8 +7,10 @@ import {
   CardHeader,
   ConfirmDialog,
   Field,
+  Grid,
   LoadingRows,
   LockedState,
+  SaveBar,
   Section,
   Stack,
   Textarea,
@@ -16,6 +18,7 @@ import {
   toast,
 } from '../../ui';
 import { platform } from '../client';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { usePlatformResource } from '../usePlatform';
 import {
   CONTENT_BLOBS,
@@ -58,6 +61,13 @@ export function PricingContentScreen() {
   }
 
   const changed = changedBlobs(drafts, original);
+  const changedLabels = changed
+    .map((key) => CONTENT_BLOBS.find((blob) => blob.key === key)?.label ?? key)
+    .join(', ');
+  const blockingKey = (Object.keys(errors) as (keyof PricingContent)[])[0];
+  const blockedReason = blockingKey
+    ? `${CONTENT_BLOBS.find((blob) => blob.key === blockingKey)?.label ?? blockingKey} — ${errors[blockingKey]}`
+    : null;
 
   function attemptSave(): void {
     const nextErrors: Partial<Record<keyof PricingContent, string>> = {};
@@ -91,8 +101,8 @@ export function PricingContentScreen() {
   if (content.forbidden) {
     return (
       <LockedState
-        title="You cannot read the pricing page copy"
-        description="Your super-admin account is not permitted to load this content. Nothing was published."
+        title={FORBIDDEN_TITLE}
+        description={forbiddenDescription('the pricing page copy')}
       />
     );
   }
@@ -115,18 +125,6 @@ export function PricingContentScreen() {
 
   return (
     <Stack>
-      <Alert tone="neutral" title="This is the public site, not the product">
-        Nothing on this screen changes what a customer is charged or what they may do — that is the plan
-        catalogue and the credit pricing. What it changes is what the pricing page says, live, with no
-        staging step in between.
-      </Alert>
-
-      {saveError ? (
-        <Alert tone="danger" live title="Nothing was published">
-          {saveError}
-        </Alert>
-      ) : null}
-
       {content.loading && !content.data ? (
         <Card>
           <CardBody>
@@ -136,16 +134,9 @@ export function PricingContentScreen() {
       ) : (
         <Section
           title="Pricing page copy"
-          description="Each blob is a JSON array. The shape of an item is defined by the marketing site, not by the API."
-          actions={
-            <Button variant="primary" size="sm" disabled={changed.length === 0} onClick={attemptSave}>
-              {changed.length === 0
-                ? 'No changes'
-                : `Publish ${formatNumber(changed.length)} change${changed.length === 1 ? '' : 's'}`}
-            </Button>
-          }
+          description="The public site's marketing copy. Nothing here changes what a customer is charged or may do, and there is no staging step."
         >
-          <div className="flex flex-col gap-4">
+          <Grid cols={2} align="start">
             {CONTENT_BLOBS.map((blob) => {
               const parsed = parseBlob(drafts[blob.key]);
               return (
@@ -165,7 +156,7 @@ export function PricingContentScreen() {
                       label={`${blob.label} JSON`}
                       hideLabel
                       error={errors[blob.key]}
-                      hint={`Sent only if it changes. At most ${MAX_PRICING_ITEMS} items.`}
+                      hint={`At most ${MAX_PRICING_ITEMS} items.`}
                     >
                       <Textarea
                         rows={10}
@@ -181,9 +172,24 @@ export function PricingContentScreen() {
                 </Card>
               );
             })}
-          </div>
+          </Grid>
         </Section>
       )}
+
+      <SaveBar
+        dirty={changed.length > 0}
+        saveError={saveError}
+        blockedReason={blockedReason}
+        summary={changedLabels}
+        saveLabel="Review and publish"
+        onSave={attemptSave}
+        onDiscard={() => {
+          setDrafts(original);
+          setErrors({});
+          setSaveError(null);
+        }}
+        guard="the pricing page copy"
+      />
 
       <ConfirmDialog
         open={confirmOpen}

@@ -27,7 +27,8 @@ vi.mock('../context/EntitlementsContext', () => ({
 vi.mock('../context/UpgradeModalContext', () => ({
   UpgradeModalProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-vi.mock('../components/ImpersonationBanner', () => ({ default: () => null }));
+// The impersonation bar is a shell banner now, rendered by `ShellBanners`
+// inside `AppShell` — nothing this layout mounts.
 
 /** Render the guarded tree at `entry`, with stand-ins for both redirect targets. */
 function renderAt(entry: string) {

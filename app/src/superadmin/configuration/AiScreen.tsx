@@ -16,7 +16,7 @@ import {
   Section,
   SegmentedControl,
   Stack,
-  StatTile,
+  StatRow,
   formatCompact,
   formatMoney,
   formatNumber,
@@ -26,6 +26,7 @@ import {
 } from '../../ui';
 import { CHART_AXIS, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
 import { usePlatformList, usePlatformResource } from '../usePlatform';
+import { PAGE_SIZE } from '../recordListState';
 import type { LangfuseSummary, LlmCostRow, LlmUsageRow, SafetyNetMetrics } from './types';
 
 /**
@@ -171,43 +172,35 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
     <Stack>
       <Section
         title="Spend"
-        description="Metered per call into llm_call_logs. Costs are US cents as the provider reported them."
+        description="Metered per call. Costs are US cents as the provider reported them."
         actions={
           <SegmentedControl size="sm" label="Range" value={days} onChange={onDaysChange} items={RANGES} />
         }
       >
         <Card>
-          <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
-              label="Cost"
-              value={formatMoney(totals.cost, 'USD')}
+          <CardBody flush>
+            <StatRow
+              label="Model spend"
               period={`Last ${days} days`}
               loading={usage.loading && usage.items.length === 0}
-            />
-            <StatTile
-              label="Calls"
-              value={formatNumber(totals.calls)}
-              period={`Last ${days} days`}
-              loading={usage.loading && usage.items.length === 0}
-            />
-            <StatTile
-              label="Fallbacks"
-              value={formatNumber(totals.fallbacks)}
-              period={`Last ${days} days`}
-              tone={totals.fallbacks > 0 ? 'warning' : 'neutral'}
-              hint="Calls the primary model failed and the fallback served."
-              loading={usage.loading && usage.items.length === 0}
-            />
-            <StatTile
-              label="Errors"
-              value={formatNumber(totals.errors)}
-              period={`Last ${days} days`}
-              tone={totals.errors > 0 ? 'danger' : 'neutral'}
-              invertTrend
-              loading={usage.loading && usage.items.length === 0}
+              items={[
+                { label: 'Cost', size: 'hero', value: formatMoney(totals.cost, 'USD') },
+                { label: 'Calls', value: formatNumber(totals.calls) },
+                {
+                  label: 'Fallbacks',
+                  value: formatNumber(totals.fallbacks),
+                  tone: totals.fallbacks > 0 ? 'warning' : 'neutral',
+                },
+                {
+                  label: 'Errors',
+                  value: formatNumber(totals.errors),
+                  tone: totals.errors > 0 ? 'danger' : 'neutral',
+                  invertTrend: true,
+                },
+              ]}
             />
           </CardBody>
-          <CardBody className="border-t border-border">
+          <CardBody>
             <ChartFrame
               summary={chartSummary}
               loading={usage.loading && usage.items.length === 0}
@@ -277,7 +270,7 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
                 description="No metered calls fell inside this window."
               />
             ) : (
-              <RankedBars items={bars} label={`LLM cost by ${by}`} tone="ink" />
+              <RankedBars items={bars} label={`LLM cost by ${by}`} />
             )}
           </CardBody>
         </Card>
@@ -293,7 +286,7 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
           loading={usage.loading && usage.items.length === 0}
           error={usage.error}
           onRetry={usage.reload}
-          pageSize={25}
+          pageSize={PAGE_SIZE}
           defaultSort={{ key: 'date', direction: 'desc' }}
           empty={
             <EmptyState
@@ -306,7 +299,7 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
 
       <Section
         title="Safety nets"
-        description="Rolling counts over the last 24 hours: refusals, groundedness checks, injection attempts and LLM call outcomes."
+        description="Refusals, groundedness checks, injection attempts and call outcomes, over 24 hours."
       >
         <Card>
           {safety.forbidden ? (
@@ -336,17 +329,17 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
               description="Every safety-net counter is zero. That is the healthy reading, not a missing one."
             />
           ) : (
-            <CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {safetyRows
-                .filter((row) => row.count > 0)
-                .map((row) => (
-                  <div key={row.name} className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
-                    <p className="figure text-xs text-text-secondary">{row.name}</p>
-                    <p className="figure mt-1 text-lg font-semibold text-text-primary">
-                      {formatNumber(row.count)}
-                    </p>
-                  </div>
-                ))}
+            <CardBody flush>
+              {/* `StatRow`, not a second hand-rolled tile shape 200px below the
+                  first one on the same page. */}
+              <StatRow
+                columns={3}
+                label="Safety-net counters"
+                period="Last 24 hours"
+                items={safetyRows
+                  .filter((row) => row.count > 0)
+                  .map((row) => ({ label: row.name, value: formatNumber(row.count) }))}
+              />
             </CardBody>
           )}
         </Card>
@@ -357,7 +350,7 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
           <CardHeader
             titleAs="h3"
             title="Langfuse"
-            description="The dashboard is not rebuilt here — this only reports whether tracing is reachable and how much it has."
+            description="Whether tracing is reachable, and how much it holds."
             actions={
               langfuse.data?.configured ? (
                 <Badge tone="success" dot>
@@ -392,31 +385,30 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
                 description={langfuse.data.error ?? 'No Langfuse keys are set, so no traces are being written.'}
               />
             ) : langfuse.data ? (
-              <div className="grid gap-4 sm:grid-cols-3">
-                <StatTile
-                  label="Recent traces"
-                  value={formatNumber(langfuse.data.recent_traces.length)}
+              <div className="flex flex-col gap-3">
+                <StatRow
+                  columns={3}
+                  label="Tracing volume"
                   period="Last 7 days"
-                />
-                <StatTile
-                  label="Scores"
-                  value={formatNumber(langfuse.data.scores.length)}
-                  period="Last 7 days"
-                />
-                <StatTile
-                  label="Daily metric rows"
-                  value={formatNumber(langfuse.data.daily_metrics.length)}
-                  period="Last 7 days"
+                  items={[
+                    {
+                      label: 'Recent traces',
+                      value: formatNumber(langfuse.data.recent_traces.length),
+                    },
+                    { label: 'Scores', value: formatNumber(langfuse.data.scores.length) },
+                    {
+                      label: 'Daily metric rows',
+                      value: formatNumber(langfuse.data.daily_metrics.length),
+                    },
+                  ]}
                 />
                 {langfuse.data.error ? (
-                  <div className="sm:col-span-3">
-                    <Alert tone="warning" title="Langfuse answered partially">
-                      {langfuse.data.error}
-                    </Alert>
-                  </div>
+                  <Alert tone="warning" title="Langfuse answered partially">
+                    {langfuse.data.error}
+                  </Alert>
                 ) : null}
                 {langfuse.data.host ? (
-                  <p className="figure text-xs text-text-tertiary sm:col-span-3">{langfuse.data.host}</p>
+                  <p className="figure text-xs text-text-tertiary">{langfuse.data.host}</p>
                 ) : null}
               </div>
             ) : null}

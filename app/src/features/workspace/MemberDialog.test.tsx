@@ -64,23 +64,26 @@ beforeEach(() => {
 });
 
 describe('MemberDialog', () => {
-  it('says what the chosen role can do, before it is chosen', async () => {
+  it('says what every role can do, without having to choose one to find out', async () => {
     const user = userEvent.setup();
     renderDialog();
 
-    expect(screen.getByText(/Operator can:/i)).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText(/^role/i), 'admin');
-    expect(screen.getByText(/Admin can:/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/cannot make anyone an owner/i),
-    ).toBeInTheDocument();
+    // All three summaries are on screen at once, so they can be compared before
+    // a choice is made rather than read one at a time by changing the value.
+    expect(screen.getByText(/Answers conversations\./i)).toBeInTheDocument();
+    expect(screen.getByText(/plus managing the team and the chatbots/i)).toBeInTheDocument();
+    expect(screen.getByText(/Full control, including billing/i)).toBeInTheDocument();
+
+    expect(screen.getByRole('radio', { name: 'Operator' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('radio', { name: 'Admin' }));
+    expect(screen.getByRole('radio', { name: 'Admin' })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('will not change a role without a confirmation that names the consequence', async () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText(/^role/i), 'owner');
+    await user.click(screen.getByRole('radio', { name: 'Owner' }));
     await user.click(screen.getByRole('button', { name: /review and save/i }));
 
     const dialog = await screen.findByRole('alertdialog');
@@ -102,7 +105,7 @@ describe('MemberDialog', () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText(/^role/i), 'owner');
+    await user.click(screen.getByRole('radio', { name: 'Owner' }));
     await user.click(screen.getByRole('button', { name: /review and save/i }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
@@ -142,15 +145,18 @@ describe('MemberDialog', () => {
 
   it('does not offer Owner to an admin, who cannot grant it', () => {
     renderDialog({ callerRole: 'admin' });
-    const options = within(screen.getByLabelText(/^role/i)).getAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['Operator', 'Admin']);
+    const options = within(screen.getByRole('radiogroup', { name: /role/i })).getAllByRole('radio');
+    expect(options.map((option) => option.getAttribute('aria-label'))).toEqual([
+      'Operator',
+      'Admin',
+    ]);
   });
 
   it('shows the email as read-only, because the server refuses an admin changing it', () => {
     renderDialog();
     const email = screen.getByLabelText(/^email/i);
     expect(email).toBeDisabled();
-    expect(screen.getByText(/Only this person can change their own name and email/i)).toBeInTheDocument();
+    expect(screen.getByText(/Only this person can change their own email/i)).toBeInTheDocument();
   });
 
   it('points the signed-in person at their own account for their name', () => {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Card, CardBody, Spinner } from '../ui';
+import { Alert, Button, Spinner } from '../ui';
+import { AuthShell } from './auth/AuthShell';
 import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
@@ -184,13 +185,16 @@ export default function OAuthCallback() {
     );
   }
 
+  // Through `AuthShell`, like every other signed-out screen. This branch used to
+  // be a bare centred `<main>` with no wordmark and no card, so a slow sign-in
+  // visibly jumped from text on canvas to logo-plus-card at the ten-second mark.
   return (
-    <main className="grid min-h-screen place-items-center bg-canvas px-4">
-      <div className="flex items-center gap-2.5 text-base text-text-secondary">
+    <AuthShell title="Signing you in">
+      <p role="status" className="flex items-center gap-2.5 text-prose text-text-secondary">
         <Spinner label={null} />
-        <p role="status">Signing you in…</p>
-      </div>
-    </main>
+        This will only take a moment.
+      </p>
+    </AuthShell>
   );
 }
 
@@ -209,34 +213,24 @@ function CallbackNotice({
   onRetry?: () => void;
   retrying?: boolean;
 }) {
+  // `AuthShell`, not a fifth auth layout. This rebuilt the shell by hand — the
+  // wordmark, the `mt-8`, the card, the `p-5 sm:p-6`, the `text-lg` heading —
+  // every value copied and none of them shared.
   return (
-    <main className="grid min-h-screen place-items-center bg-canvas px-4 py-10">
-      <div className="w-full max-w-md">
-        <img
-          src="/new_dark.png"
-          alt="OyeChats"
-          className="mx-auto h-7 w-auto object-contain"
-          draggable={false}
-        />
-        <Card className="mt-8">
-          <CardBody className="p-5 sm:p-6">
-            <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
-            <Alert tone={tone} live className="mt-4">
-              {message}
-            </Alert>
-            <div className="mt-5 flex flex-wrap gap-2">
-              {onRetry ? (
-                <Button variant="primary" onClick={onRetry} loading={retrying}>
-                  Try again
-                </Button>
-              ) : null}
-              <Button variant={onRetry ? 'secondary' : 'primary'} onClick={onBack}>
-                Back to sign in
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
+    <AuthShell title={title}>
+      <Alert tone={tone} live>
+        {message}
+      </Alert>
+      <div className="mt-5 flex flex-wrap gap-2">
+        {onRetry ? (
+          <Button variant="primary" onClick={onRetry} loading={retrying}>
+            Try again
+          </Button>
+        ) : null}
+        <Button variant={onRetry ? 'secondary' : 'primary'} onClick={onBack}>
+          Back to sign in
+        </Button>
       </div>
-    </main>
+    </AuthShell>
   );
 }

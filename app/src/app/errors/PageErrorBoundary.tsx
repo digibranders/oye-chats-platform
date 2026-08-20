@@ -5,6 +5,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Measure,
   Page,
   PageHeader,
   buttonClass,
@@ -32,47 +33,49 @@ export function PageErrorBoundary() {
   const { status, title, description, detail } = parseRouteError(error);
 
   return (
-    <Page width="default">
-      <PageHeader
-        eyebrow={status != null ? `Error ${status}` : 'This page'}
-        title={title}
-        description={description}
-        actions={
-          <>
-            <Link to="/" className={buttonClass('primary', 'md')}>
-              Go to Home
-            </Link>
-            <Button
-              variant="secondary"
-              onClick={() => window.location.reload()}
-              iconLeft={<RefreshCw aria-hidden className="h-4 w-4" />}
-            >
-              Reload this page
-            </Button>
-          </>
-        }
-      />
-
-      <Card>
-        <CardHeader
-          title="Everything else still works"
-          titleAs="h2"
-          description="Only this page failed. Your chatbots are unaffected and are still answering visitors, and every other section in the sidebar will open normally."
+    <Page>
+      <Measure width="reading">
+        <PageHeader
+          eyebrow={status != null ? `Error ${status}` : 'This page'}
+          title={title}
+          description={description}
+          actions={
+            <>
+              <Link to="/" className={buttonClass('primary', 'md')}>
+                Go to Home
+              </Link>
+              <Button
+                variant="secondary"
+                onClick={() => window.location.reload()}
+                iconLeft={<RefreshCw aria-hidden />}
+              >
+                Reload this page
+              </Button>
+            </>
+          }
         />
-        <CardBody>
-          <p className="text-base text-text-secondary">
-            If this page keeps failing, email{' '}
-            <a
-              href="mailto:developer@oyechats.com"
-              className="text-accent-600 underline underline-offset-2"
-            >
-              developer@oyechats.com
-            </a>{' '}
-            with the address in your browser bar and what is under Technical details.
-          </p>
-          <ErrorDetails detail={detail} className="mt-4" />
-        </CardBody>
-      </Card>
+
+        <Card>
+          <CardHeader
+            title="Everything else still works"
+            titleAs="h2"
+            description="Only this page failed. Your chatbots are still answering visitors."
+          />
+          <CardBody>
+            <p className="text-base text-text-secondary">
+              If this page keeps failing, email{' '}
+              <a
+                href="mailto:developer@oyechats.com"
+                className="text-accent-600 underline underline-offset-2"
+              >
+                developer@oyechats.com
+              </a>{' '}
+              with the address in your browser bar and what is under Technical details.
+            </p>
+            <ErrorDetails detail={detail} className="mt-4" />
+          </CardBody>
+        </Card>
+      </Measure>
     </Page>
   );
 }

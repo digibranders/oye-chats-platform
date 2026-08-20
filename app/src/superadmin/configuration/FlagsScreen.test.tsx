@@ -24,7 +24,7 @@ const ROWS = [
 
 function renderScreen() {
   return render(
-    <MemoryRouter initialEntries={['/platform/platform?view=flags']}>
+    <MemoryRouter initialEntries={['/platform/platform']}>
       <FlagsScreen />
     </MemoryRouter>,
   );
@@ -55,7 +55,10 @@ describe('FlagsScreen', () => {
     expect(screen.queryByRole('switch', { name: /credit_cost/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: /rag\./ })).not.toBeInTheDocument();
     // …and says where they went instead of hiding them.
-    expect(screen.getByText('Catalogue → Credit pricing')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Credit pricing' })).toHaveAttribute(
+      'href',
+      '/platform/catalogue/pricing',
+    );
   });
 
   it('never writes a flag on the first click', async () => {
@@ -139,6 +142,6 @@ describe('FlagsScreen', () => {
 
     httpClient.get.mockRejectedValue({ response: { status: 403, data: { detail: 'Nope.' } } });
     renderScreen();
-    expect(await screen.findByText('You cannot read the feature flags')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
   });
 });

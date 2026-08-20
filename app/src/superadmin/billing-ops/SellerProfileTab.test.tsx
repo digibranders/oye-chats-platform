@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SellerProfileTab } from './SellerProfileTab';
 import type { SellerProfile } from './types';
@@ -44,12 +44,13 @@ function profile(overrides: Partial<SellerProfile> = {}): SellerProfile {
   };
 }
 
+/**
+ * A data router: the save bar guards navigation while the draft is dirty, and
+ * `useBlocker` exists only on one.
+ */
 function mount() {
-  return render(
-    <MemoryRouter>
-      <SellerProfileTab />
-    </MemoryRouter>,
-  );
+  const router = createMemoryRouter([{ path: '/', element: <SellerProfileTab /> }]);
+  return render(<RouterProvider router={router} />);
 }
 
 describe('SellerProfileTab', () => {
@@ -78,7 +79,7 @@ describe('SellerProfileTab', () => {
     get.mockResolvedValue({ data: profile() });
     mount();
     expect(await screen.findByText('GST tax invoices')).toBeInTheDocument();
-    expect(screen.getByText(/derived by the server, not set here/)).toBeInTheDocument();
+    expect(screen.getByText(/derived by the server/)).toBeInTheDocument();
   });
 
   it('locks the state code while a GSTIN is stored, and says why', async () => {
@@ -87,7 +88,7 @@ describe('SellerProfileTab', () => {
     const field = await screen.findByLabelText(/GST state code/i);
     expect(field).toBeDisabled();
     expect(field).toHaveValue('29');
-    expect(screen.getByText(/Derived from the first two digits/)).toBeInTheDocument();
+    expect(screen.getByText(/Derived from the GSTIN/)).toBeInTheDocument();
   });
 
   it('lets the state code be set when there is no GSTIN', async () => {
@@ -99,7 +100,7 @@ describe('SellerProfileTab', () => {
   it('offers no control for tax-exclusive pricing, which the server rejects', async () => {
     get.mockResolvedValue({ data: profile() });
     mount();
-    expect(await screen.findByText(/Prices are tax-inclusive, and cannot be otherwise/)).toBeInTheDocument();
+    expect(await screen.findByText(/Prices are tax-inclusive and cannot be otherwise/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/price inclusive/i)).not.toBeInTheDocument();
   });
 
@@ -112,7 +113,9 @@ describe('SellerProfileTab', () => {
     await user.clear(prefix);
     await user.type(prefix, 'CN');
 
-    expect(await screen.findByText(/reserved for another document series/)).toBeInTheDocument();
+    // Twice, deliberately: once under the field, once named in the save bar so
+    // the reader does not have to hunt three cards for it.
+    expect(await screen.findAllByText(/reserved for another document series/)).toHaveLength(2);
     expect(screen.getByRole('button', { name: /save seller profile/i })).toBeDisabled();
     expect(put).not.toHaveBeenCalled();
   });
@@ -152,7 +155,9 @@ describe('SellerProfileTab', () => {
     await user.type(name, ' Two');
     await user.click(screen.getByRole('button', { name: /save seller profile/i }));
 
-    expect(await screen.findByText(/keep the snapshot they were made with/)).toBeInTheDocument();
+    expect(await screen.findByText('All changes saved.')).toBeInTheDocument();
+    // The consequence stays on screen whether or not a save just happened.
+    expect(screen.getByText(/keep their own snapshot/)).toBeInTheDocument();
   });
 
   it('shows the server’s 422 rather than claiming a save', async () => {
@@ -170,7 +175,7 @@ describe('SellerProfileTab', () => {
     await user.click(screen.getByRole('button', { name: /save seller profile/i }));
 
     expect(await screen.findByText('GSTIN failed format/checksum validation')).toBeInTheDocument();
-    expect(screen.queryByText(/keep the snapshot/)).not.toBeInTheDocument();
+    expect(screen.queryByText('All changes saved.')).not.toBeInTheDocument();
   });
 
   it('discards edits back to what is stored', async () => {
@@ -181,7 +186,7 @@ describe('SellerProfileTab', () => {
     const name = await screen.findByLabelText(/registered legal name/i);
     await user.clear(name);
     await user.type(name, 'Something else');
-    await user.click(screen.getByRole('button', { name: /discard changes/i }));
+    await user.click(screen.getByRole('button', { name: /^discard$/i }));
 
     expect(screen.getByLabelText(/registered legal name/i)).toHaveValue('Digibranders Private Limited');
   });
@@ -208,7 +213,7 @@ describe('SellerProfileTab', () => {
       }),
     );
     mount();
-    expect(await screen.findByText('You cannot read the seller profile')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.queryByLabelText(/registered legal name/i)).not.toBeInTheDocument();
   });
 });

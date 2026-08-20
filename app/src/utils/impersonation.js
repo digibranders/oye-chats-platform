@@ -40,7 +40,16 @@ export const IMPERSONATION_QUERY_PARAM = 'impersonation';
 /** Window event fired once when a live impersonation session ends. */
 export const IMPERSONATION_ENDED_EVENT = 'oyechats:impersonation-ended';
 
-/** Body class applied while a session is live - drives the layout offset in index.css. */
+/**
+ * Body class applied while a session is live.
+ *
+ * Kept as a hook for anything that needs to know, but it no longer drives a
+ * layout offset: the bar is a flex row inside the shell (`ShellBanners`), so
+ * nothing outside it has to compensate for its height. The rules it used to
+ * carry in `index.css` targeted `[data-app-sidebar]` and `[data-app-topbar]`,
+ * two attributes the rebuilt shell does not have, and the `body` padding they
+ * came with pushed a `h-dvh` grid 36px below the fold.
+ */
 export const IMPERSONATION_BODY_CLASS = 'oc-impersonating';
 
 /** Copy shown when the backend's write guard refuses a non-allowlisted action. */

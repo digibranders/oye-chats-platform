@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, Bot, CheckCircle2, PanelRight, Sparkles, UserPlus, X } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  Bot,
+  CheckCircle2,
+  MoreHorizontal,
+  PanelRight,
+  Sparkles,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import {
   Alert,
   Avatar,
   Badge,
   Button,
   ConfirmDialog,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  PaneHeader,
   StatusDot,
-  cn,
   toast,
 } from '../../ui';
 import {
@@ -39,8 +52,6 @@ export interface ChatPaneProps {
   now: number;
   /** Called after the conversation leaves this operator's board. */
   onLeft: () => void;
-  /** Present only when the list is not on screen beside this pane (small viewports). */
-  onBack?: () => void;
   /** Present only when the details pane is not on screen beside this pane. */
   onShowDetails?: () => void;
 }
@@ -55,55 +66,60 @@ function Header({
   online,
   children,
   now,
-  onBack,
   onShowDetails,
 }: {
   item: InboxItem;
   online: boolean;
   children: React.ReactNode;
   now: number;
-  onBack?: () => void;
   onShowDetails?: () => void;
 }) {
   const wait = item.kind === 'waiting' ? waitLabel(item.at, now) : '';
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface px-4 py-3 md:px-6">
-      {onBack ? (
-        <Button size="icon-sm" variant="ghost" aria-label="Back to the list" onClick={onBack}>
-          <ArrowLeft aria-hidden className="h-4 w-4" />
-        </Button>
-      ) : null}
-      <Avatar size="md" name={item.name} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h2 className="truncate text-lg font-semibold text-text-primary">{item.name}</h2>
-          {online ? <StatusDot tone="success" pulse label="Visitor is on the page" /> : null}
-        </div>
-        <p className="truncate text-2xs text-text-tertiary">
-          {item.botName ? `${item.botName} · ` : ''}
-          {item.kind === 'waiting'
-            ? 'Waiting for a person'
-            : item.kind === 'qualified'
-              ? 'The AI is handling this'
-              : online
-                ? 'On the page now'
-                : 'Left the page'}
-        </p>
-      </div>
-      {wait ? (
-        <Badge tone={waitTone(item.at, now)} className="figure">
-          Waiting {wait}
-        </Badge>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        {children}
-        {onShowDetails ? (
-          <Button size="icon-sm" variant="ghost" aria-label="Show visitor details" onClick={onShowDetails}>
-            <PanelRight aria-hidden className="h-4 w-4" />
-          </Button>
-        ) : null}
-      </div>
-    </header>
+    <PaneHeader
+      titleAs="h2"
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          <Avatar size="md" name={item.name} className="shrink-0" />
+          <span className="min-w-0">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate">{item.name}</span>
+              {online ? <StatusDot tone="success" pulse label="Visitor is on the page" /> : null}
+            </span>
+            <span className="block truncate text-2xs font-normal text-text-tertiary">
+              {item.botName ? `${item.botName} · ` : ''}
+              {item.kind === 'waiting'
+                ? 'Waiting for a person'
+                : item.kind === 'qualified'
+                  ? 'The AI is handling this'
+                  : online
+                    ? 'On the page now'
+                    : 'Left the page'}
+            </span>
+          </span>
+        </span>
+      }
+      actions={
+        <>
+          {wait ? (
+            <Badge tone={waitTone(item.at, now)} className="figure">
+              Waiting {wait}
+            </Badge>
+          ) : null}
+          {children}
+          {onShowDetails ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Show visitor details"
+              onClick={onShowDetails}
+            >
+              <PanelRight aria-hidden />
+            </Button>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -125,7 +141,6 @@ export function ChatPane({
   onManageSnippets,
   now,
   onLeft,
-  onBack,
   onShowDetails,
 }: ChatPaneProps) {
   const socket = useInboxSocket();
@@ -267,23 +282,35 @@ export function ChatPane({
 
   return (
     <section aria-label={`Conversation with ${item.name}`} className="flex h-full min-h-0 flex-col bg-canvas">
-      <Header item={item} online={online} now={now} onBack={onBack} onShowDetails={onShowDetails}>
+      <Header item={item} online={online} now={now} onShowDetails={onShowDetails}>
         {item.kind === 'waiting' ? (
-          <Button onClick={accept} loading={busy} disabled={busy}>
-            <UserPlus aria-hidden className="h-4 w-4" />
+          <Button size="sm" variant="primary" onClick={accept} loading={busy} disabled={busy}>
+            <UserPlus aria-hidden />
             Accept and reply
           </Button>
         ) : null}
 
         {item.kind === 'qualified' ? (
           invited ? (
-            <Button variant="secondary" onClick={withdraw} loading={connecting} disabled={connecting}>
-              <X aria-hidden className="h-4 w-4" />
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={withdraw}
+              loading={connecting}
+              disabled={connecting}
+            >
+              <X aria-hidden />
               Withdraw invitation
             </Button>
           ) : (
-            <Button onClick={invite} loading={connecting} disabled={connecting}>
-              <Sparkles aria-hidden className="h-4 w-4" />
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={invite}
+              loading={connecting}
+              disabled={connecting}
+            >
+              <Sparkles aria-hidden />
               Offer to take over
             </Button>
           )
@@ -291,16 +318,29 @@ export function ChatPane({
 
         {live && !ended ? (
           <>
-            <Button variant="ghost" onClick={() => setTransferOpen(true)} disabled={busy}>
-              <ArrowRightLeft aria-hidden className="h-4 w-4" />
-              Transfer
-            </Button>
-            <Button variant="ghost" onClick={() => setConfirm('return')} disabled={busy}>
-              <Bot aria-hidden className="h-4 w-4" />
-              Back to AI
-            </Button>
-            <Button onClick={() => setConfirm('resolve')} disabled={busy}>
-              <CheckCircle2 aria-hidden className="h-4 w-4" />
+            {/* The two secondary actions collapse into an overflow menu, so the
+                header cannot squeeze the visitor's name to nothing on a narrow
+                centre pane. Resolve stays secondary: with Accept primary in the
+                other posture, each posture has exactly one filled button. */}
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <Button size="icon-sm" variant="ghost" aria-label="More actions" disabled={busy}>
+                    <MoreHorizontal aria-hidden />
+                  </Button>
+                }
+              />
+              <MenuContent>
+                <MenuItem icon={<ArrowRightLeft aria-hidden />} onSelect={() => setTransferOpen(true)}>
+                  Transfer
+                </MenuItem>
+                <MenuItem icon={<Bot aria-hidden />} onSelect={() => setConfirm('return')}>
+                  Back to AI
+                </MenuItem>
+              </MenuContent>
+            </MenuRoot>
+            <Button size="sm" onClick={() => setConfirm('resolve')} disabled={busy}>
+              <CheckCircle2 aria-hidden />
               Resolve
             </Button>
           </>
@@ -308,13 +348,13 @@ export function ChatPane({
       </Header>
 
       {error ? (
-        <Alert tone="danger" live className="mx-4 mt-3 md:mx-6">
+        <Alert tone="danger" live className="mx-cell mt-3">
           {error}
         </Alert>
       ) : null}
 
       {item.kind === 'waiting' ? (
-        <p className="border-b border-border bg-surface-sunken px-4 py-2 text-xs text-text-secondary md:px-6">
+        <p className="border-b border-border bg-surface-sunken px-cell py-2 text-xs text-text-secondary">
           Read what they have already said before you take the conversation — they are still with the AI until you accept.
         </p>
       ) : null}
@@ -325,16 +365,18 @@ export function ChatPane({
         visitorTyping={live && Boolean(socket.typingBySession[sessionId])}
         visitorReadAt={live ? (socket.visitorReadAtBySession[sessionId] ?? null) : null}
         loading={live ? messages.length === 0 && connected : readOnly.loading}
+        error={live ? null : readOnly.error}
+        onRetry={live ? undefined : readOnly.reload}
         onLoadOlder={
           live && socket.hasMoreBySession[sessionId] ? () => void socket.loadOlder(sessionId) : undefined
         }
         footnote={
           ended ? (
-            <p className="rounded-md bg-surface-sunken px-3 py-2 text-center text-2xs text-text-secondary">
+            <Alert tone="neutral">
               {ended.reason === 'transferred'
                 ? `You handed this conversation to ${ended.transferredTo ?? 'a colleague'}. The transcript stays here until you leave the inbox.`
                 : 'This conversation has ended. The transcript stays here until you leave the inbox.'}
-            </p>
+            </Alert>
           ) : null
         }
       />
@@ -351,7 +393,7 @@ export function ChatPane({
           disabledReason={composerBlock}
         />
       ) : (
-        <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-xs text-text-secondary md:px-6">
+        <div className="shrink-0 border-t border-border bg-surface px-cell py-3 text-xs text-text-secondary">
           {item.kind === 'waiting'
             ? 'Accept the conversation to reply.'
             : item.kind === 'qualified'
@@ -395,12 +437,5 @@ export function ChatPane({
         }}
       />
     </section>
-  );
-}
-
-/** Shared shell for the “nothing selected” centre pane. */
-export function ChatPanePlaceholder({ children }: { children: React.ReactNode }) {
-  return (
-    <section className={cn('flex h-full items-center justify-center bg-canvas p-6')}>{children}</section>
   );
 }

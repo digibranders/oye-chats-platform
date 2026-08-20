@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MailCheck, RotateCcw } from 'lucide-react';
-import { Alert, Button, Spinner } from '../ui';
+import { Alert, Button, Spinner, buttonClass } from '../ui';
 import { getCurrentUser, resendVerification, verifyEmail } from '../services/api';
 import {
   clearAuthStorage,
@@ -146,6 +146,29 @@ export default function VerifyEmail() {
   return (
     <AuthShell
       title="Confirm your email"
+      // The resend row lives in the card's own hairline-divided section rather
+      // than drawing a rule inside `CardBody`'s padding, where it floated 20px
+      // short of both edges. And signing out is not a peer of resending a code,
+      // so it is a link, not a second ghost button beside it.
+      secondary={
+        stranded ? undefined : (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => resend.mutate()}
+              loading={resend.isPending}
+              disabled={cooldown.active || !email}
+              iconLeft={<RotateCcw aria-hidden />}
+            >
+              {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
+            </Button>
+            <button type="button" onClick={signOut} className={buttonClass('link')}>
+              Sign in as someone else
+            </button>
+          </div>
+        )
+      }
       description={
         email ? (
           <>
@@ -161,8 +184,7 @@ export default function VerifyEmail() {
       {stranded ? (
         <div className="space-y-4">
           <Alert tone="danger" title="We could not tell which account to verify" live>
-            This can happen when a sign-in link is opened in a different browser. Sign in again and
-            we will send a fresh code.
+            Sign in again and we will send a fresh code.
           </Alert>
           <Button variant="primary" size="lg" block onClick={signOut}>
             Sign in again
@@ -178,7 +200,7 @@ export default function VerifyEmail() {
 
           {resend.isSuccess ? (
             <Alert tone="success" live>
-              New code sent — check your inbox, and your spam folder.
+              New code sent. Check your spam folder too.
             </Alert>
           ) : null}
 
@@ -207,9 +229,7 @@ export default function VerifyEmail() {
                     <Spinner size="sm" label={null} />
                     Looking up your account…
                   </span>
-                ) : (
-                  'Paste it, or let your phone fill it in.'
-                )
+                ) : undefined
               }
             />
 
@@ -225,22 +245,6 @@ export default function VerifyEmail() {
               Confirm email
             </Button>
           </form>
-
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => resend.mutate()}
-              loading={resend.isPending}
-              disabled={cooldown.active || !email}
-              iconLeft={<RotateCcw aria-hidden className="h-3.5 w-3.5" />}
-            >
-              {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={signOut}>
-              Sign in as someone else
-            </Button>
-          </div>
         </div>
       )}
     </AuthShell>

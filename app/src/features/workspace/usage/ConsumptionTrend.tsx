@@ -1,10 +1,21 @@
 import { useMemo } from 'react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import {
   CHART_AXIS,
   CHART_GRID,
+  CHART_CURSOR,
   CHART_MARGIN,
+  ChartDataTable,
   ChartFrame,
+  ChartTooltip,
   formatCompact,
   formatDate,
   formatNumber,
@@ -18,16 +29,33 @@ interface Row {
   credits: number;
 }
 
-function TrendTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: Row }> }) {
+/**
+ * Recharts' `content` adapter over the system's tooltip.
+ *
+ * The panel itself is `ChartTooltip`; this only unwraps Recharts' payload and
+ * formats the two values. It used to be a hand-drawn `rounded-sm border` box —
+ * one of three chart tooltips in the app with three geometries.
+ */
+function TrendTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: Row }>;
+}) {
   if (!active || !payload?.length) return null;
   const row = payload[0].payload;
   return (
-    <div className="rounded-sm border border-border bg-surface px-2 py-1.5 shadow-md">
-      <p className="text-xs text-text-secondary">{formatDate(row.date)}</p>
-      <p className="figure text-sm font-medium text-text-primary">
-        {formatNumber(row.credits)} credits
-      </p>
-    </div>
+    <ChartTooltip
+      label={formatDate(row.date)}
+      rows={[
+        {
+          name: 'Credits used',
+          value: formatNumber(row.credits),
+          seriesIndex: 0,
+        },
+      ]}
+    />
   );
 }
 
@@ -65,7 +93,10 @@ export function ConsumptionTrend({
   );
 
   const total = rows.reduce((sum, row) => sum + row.credits, 0);
-  const peak = rows.reduce<Row | null>((best, row) => (!best || row.credits > best.credits ? row : best), null);
+  const peak = rows.reduce<Row | null>(
+    (best, row) => (!best || row.credits > best.credits ? row : best),
+    null,
+  );
 
   return (
     <ChartFrame
@@ -82,33 +113,18 @@ export function ConsumptionTrend({
           : `${scopeLabel} spent ${formatNumber(total)} credits over the last ${days} days, averaging ${formatNumber(Math.round(total / Math.max(rows.length, 1)))} a day${peak ? `, with a peak of ${formatNumber(peak.credits)} on ${formatDate(peak.date)}` : ''}.`
       }
       dataTable={
-        <table className="w-full text-xs">
-          <caption className="sr-only">
-            Credits consumed per day in {scopeLabel} over the last {days} days
-          </caption>
-          <thead>
-            <tr className="text-text-tertiary">
-              <th scope="col" className="py-1 pr-4 text-left font-medium">
-                Day
-              </th>
-              <th scope="col" className="py-1 text-right font-medium">
-                Credits used
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.date} className="border-t border-border">
-                <th scope="row" className="py-1 pr-4 text-left font-normal text-text-secondary">
-                  {formatDate(row.date)}
-                </th>
-                <td className="figure py-1 text-right text-text-primary">
-                  {formatNumber(row.credits)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ChartDataTable
+          caption={`Credits consumed per day in ${scopeLabel} over the last ${days} days`}
+          columns={[
+            { key: 'day', header: 'Day' },
+            { key: 'credits', header: 'Credits used', numeric: true },
+          ]}
+          rows={rows.map((row) => ({
+            day: formatDate(row.date),
+            credits: formatNumber(row.credits),
+          }))}
+          rowKey={(_row, index) => rows[index].date}
+        />
       }
     >
       <ResponsiveContainer width="100%" height="100%">
@@ -121,7 +137,7 @@ export function ConsumptionTrend({
             allowDecimals={false}
             tickFormatter={(value: number) => formatCompact(value)}
           />
-          <Tooltip content={<TrendTooltip />} />
+          <Tooltip cursor={CHART_CURSOR} content={<TrendTooltip />} />
           <Area
             type="monotone"
             dataKey="credits"

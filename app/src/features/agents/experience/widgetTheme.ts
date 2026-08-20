@@ -40,3 +40,20 @@ export const DEFAULT_USER_BUBBLE_COLOR = '#DBE9FF';
 /** White sits on the brand colour: the launcher glyph, the send button, the
  *  mascot avatar's icon. This is the pair the brand-colour check measures. */
 export const WIDGET_ON_PRIMARY = '#FFFFFF';
+
+/**
+ * The widget's own corner radii, beside its colours and for the same reason.
+ *
+ * The mock was drawing five different radii inside one 340px panel — 16 on the
+ * window and the bubbles, 10 on the composer, 8 on the offline CTA, and a stray
+ * 7 on the send button, which is not a value in the widget's language either.
+ * They are constants here so the preview cannot invent a sixth.
+ */
+export const WIDGET_RADIUS = {
+  /** The chat window and the message bubbles. */
+  panel: 16,
+  /** The composer well. */
+  composer: 10,
+  /** A control inside the window: the send button, the offline CTA. */
+  control: 8,
+} as const;

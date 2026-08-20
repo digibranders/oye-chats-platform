@@ -57,11 +57,18 @@ function ledger(overrides: Partial<CreditLedgerRow> = {}): CreditLedgerRow {
   };
 }
 
-/** Both lists load in parallel, so the mock answers by path. */
+/**
+ * Three lists load in parallel — the two the tab is about, plus the account
+ * directory the one filter picks from — so the mock answers by path.
+ */
 function respond(usageRows: UsageRecordRow[], ledgerRows: CreditLedgerRow[]) {
-  get.mockImplementation((path: string) =>
-    Promise.resolve({ data: path.includes('usage-records') ? usageRows : ledgerRows }),
-  );
+  get.mockImplementation((path: string) => {
+    if (path.includes('usage-records')) return Promise.resolve({ data: usageRows });
+    if (path.includes('credits/ledger')) return Promise.resolve({ data: ledgerRows });
+    return Promise.resolve({
+      data: [{ id: 42, name: 'Northwind Security', email: 'ops@northwind.test' }],
+    });
+  });
 }
 
 function UrlProbe() {
@@ -91,13 +98,18 @@ describe('UsageCreditsTab', () => {
     expect(get).toHaveBeenCalledWith('/superadmin/credits/ledger', { params: {} });
   });
 
-  it('applies one client id filter to both lists, through the URL', async () => {
+  /**
+   * The filter names the account. It used to ask the operator to type its
+   * integer primary key, which nobody knows.
+   */
+  it('applies one client filter to both lists, through the URL', async () => {
     const user = userEvent.setup();
     respond([usage()], [ledger()]);
     mount();
 
-    await screen.findByText('Northwind Security');
-    await user.type(screen.getByLabelText(/filter both lists by client id/i), '42');
+    await screen.findAllByText('Northwind Security');
+    await user.click(screen.getByLabelText(/filter both lists by account/i));
+    await user.click(await screen.findByRole('option', { name: /Northwind Security/ }));
 
     await waitFor(() => expect(screen.getByTestId('url').textContent).toContain('client=42'));
     await waitFor(() =>
@@ -130,7 +142,7 @@ describe('UsageCreditsTab', () => {
     respond([usage({ overage_messages: 40, overage_amount_cents: 250 })], []);
     mount();
     expect(await screen.findByText('$2.50')).toBeInTheDocument();
-    expect(screen.getByText(/already US dollars/)).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /already US dollars/i })).toBeInTheDocument();
   });
 
   /**
@@ -144,7 +156,7 @@ describe('UsageCreditsTab', () => {
     mount();
     expect(await screen.findByRole('columnheader', { name: /running total/i })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: /^balance$/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/is not the account balance/)).toBeInTheDocument();
+    expect(screen.getByText(/not the account balance/)).toBeInTheDocument();
   });
 
   it('marks a credit that never expires rather than leaving the cell blank', async () => {
@@ -190,7 +202,7 @@ describe('UsageCreditsTab', () => {
         : Promise.resolve({ data: [usage()] }),
     );
     mount();
-    expect(await screen.findByText('You cannot read the credit ledger')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     // The half it can read still renders.
     expect(screen.getByText('Northwind Security')).toBeInTheDocument();
   });

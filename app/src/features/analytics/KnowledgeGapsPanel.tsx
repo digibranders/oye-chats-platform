@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Button,
   Card,
+  CardBody,
   CardHeader,
   DataTable,
   EmptyState,
@@ -81,14 +82,9 @@ export function KnowledgeGapsPanel({
         titleAs="h2"
         description={`Questions the chatbot had nothing to answer from · ${range.label.toLowerCase()}`}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {questions.length > 0 ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onExport}
-                iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-              >
+              <Button size="sm" variant="secondary" onClick={onExport} iconLeft={<Download aria-hidden />}>
                 Export
               </Button>
             ) : null}
@@ -97,28 +93,32 @@ export function KnowledgeGapsPanel({
                 Add knowledge
               </Link>
             ) : null}
-          </div>
+          </>
         }
       />
-      <DataTable
-        caption="Questions the chatbot could not answer in the selected period"
-        columns={columns}
-        rows={questions}
-        rowKey={(row) => row.question}
-        loading={loading}
-        error={error ? errorMessage(error, 'The request for knowledge gaps failed.') : null}
-        onRetry={() => void refetch()}
-        defaultSort={{ key: 'count', direction: 'desc' }}
-        pageSize={10}
-        empty={
-          <EmptyState
-            compact
-            icon={HelpCircle}
-            title="Nothing went unanswered"
-            description={`Every question asked in ${range.label.toLowerCase()} was answered from what the chatbot already knows.`}
-          />
-        }
-      />
+      <CardBody flush>
+        <DataTable
+          seated
+          caption="Questions the chatbot could not answer in the selected period"
+          columns={columns}
+          rows={questions}
+          rowKey={(row) => row.question}
+          loading={loading}
+          error={error ? errorMessage(error, 'The request for knowledge gaps failed.') : null}
+          onRetry={() => void refetch()}
+          defaultSort={{ key: 'count', direction: 'desc' }}
+          pageSize={10}
+          rowNoun="question"
+          empty={
+            <EmptyState
+              size="inline"
+              icon={HelpCircle}
+              title="Nothing went unanswered"
+              description={`Every question asked in ${range.label.toLowerCase()} was answered from what the chatbot already knows.`}
+            />
+          }
+        />
+      </CardBody>
     </Card>
   );
 }

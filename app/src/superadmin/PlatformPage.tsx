@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
-import { ErrorState, LockedState, Page, PageHeader, cn } from '../ui';
+import { ErrorState, LockedState, Page, PageHeader, cn, type PageWidth } from '../ui';
+import { FORBIDDEN_TITLE, forbiddenDescription } from './forbidden';
 
 export interface PlatformPageProps {
   title: string;
@@ -7,6 +8,16 @@ export interface PlatformPageProps {
   eyebrow?: string;
   actions?: ReactNode;
   toolbar?: ReactNode;
+  /** Runs the toolbar's own hairline to the edges of the content area. */
+  toolbarBleed?: boolean;
+  /**
+   * `full` for a record table that wants every pixel; `page` for a form or a
+   * dashboard, whose fields would otherwise stop at 768 inside a 1,830px card
+   * and leave a thousand pixels of white beside every input.
+   */
+  width?: PageWidth;
+  /** Names what could not be read, for the forbidden state. */
+  what?: string;
   /** Renders the forbidden state instead of the body. */
   forbidden?: boolean;
   /** Renders the error state instead of the body. */
@@ -25,6 +36,10 @@ export interface PlatformPageProps {
  * come back 403 for someone who is otherwise inside the console. It says so
  * rather than rendering an empty table, which is what the customer-facing app
  * used to do for plan-gated data.
+ *
+ * Every page in this console is **dense**. It is an ops tool read by a handful
+ * of people who live in it all day; the comfortable density is for a customer
+ * meeting a screen once a month.
  */
 export function PlatformPage({
   title,
@@ -32,6 +47,9 @@ export function PlatformPage({
   eyebrow,
   actions,
   toolbar,
+  toolbarBleed = false,
+  width = 'full',
+  what = 'these records',
   forbidden = false,
   error = null,
   onRetry,
@@ -39,19 +57,17 @@ export function PlatformPage({
   className,
 }: PlatformPageProps) {
   return (
-    <Page width="full" className={cn(className)}>
+    <Page width={width} density="dense" className={cn(className)}>
       <PageHeader
         eyebrow={eyebrow}
         title={title}
         description={description}
         actions={actions}
         toolbar={forbidden ? undefined : toolbar}
+        toolbarBleed={toolbarBleed}
       />
       {forbidden ? (
-        <LockedState
-          title="You do not have access to this"
-          description="Your super-admin account is not permitted to read these records. Nothing was loaded."
-        />
+        <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription(what)} />
       ) : error ? (
         <ErrorState description={error} onRetry={onRetry} />
       ) : (

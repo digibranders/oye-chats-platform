@@ -3,12 +3,11 @@ import {
   Alert,
   Badge,
   Button,
-  DataTable,
+  Combobox,
   Drawer,
   EmptyState,
   Field,
   Input,
-  LockedState,
   Section,
   Select,
   Stack,
@@ -20,7 +19,10 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { RecordList } from '../RecordList';
+import { byDate, byNumber, byText, usePagedRows } from '../recordListState';
 import { SUBSCRIPTION_STATUSES, subscriptionLabel, subscriptionTone } from './status';
+import type { Plan } from '../catalogue/types';
 import type { SubscriptionOverride, SubscriptionRow } from './types';
 
 /**
@@ -28,9 +30,11 @@ import type { SubscriptionOverride, SubscriptionRow } from './types';
  *
  * The endpoint is honest about its limits and so is this screen: it returns at
  * most **200 rows**, newest first, and accepts exactly two filters (`status`,
- * `plan_id`). There is no page parameter and no total, so there is no pager —
- * a client-side pager over a truncated set would report "1–50 of 200" for a
- * platform with two thousand subscriptions and read as the whole book.
+ * `plan_id`). It has no page parameter, so the console pages and sorts the
+ * *whole* response through `usePagedRows` and says plainly when that response
+ * was the server's cap. It used to page twenty-five at a time over the same
+ * 200 and sort the slice, which reported "1–25 of 200" for a platform with two
+ * thousand subscriptions and ordered a quarter of a truncated window.
  */
 
 /** `list_subscriptions` caps its query at 200 (`superadmin_plan_routes.py`). */
@@ -56,6 +60,21 @@ export function SubscriptionsTab() {
   const list = usePlatformList<SubscriptionRow>('/subscriptions', {
     params: { status: status || undefined, plan_id: planId || undefined },
   });
+  // The catalogue, so the plan filter can be a name rather than an integer id
+  // nobody knows. It is the same list the Catalogue section reads.
+  const plans = usePlatformList<Plan>('/plans');
+
+  const paged = usePagedRows(list.items, {
+    url,
+    comparators: {
+      client: byText((row) => row.client_name),
+      plan: byText((row) => row.plan_name),
+      status: byText((row) => row.status),
+      seats: byNumber((row) => row.operator_quantity),
+      period_end: byDate((row) => row.current_period_end),
+      trial_end: byDate((row) => row.trial_end),
+    },
+  });
 
   const columns: readonly Column<SubscriptionRow>[] = [
     {
@@ -63,7 +82,7 @@ export function SubscriptionsTab() {
       header: 'Customer',
       pinned: true,
       width: '16rem',
-      sortable: (a, b) => a.client_name.localeCompare(b.client_name),
+      sortable: true,
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-text-primary">{row.client_name}</p>
@@ -76,7 +95,7 @@ export function SubscriptionsTab() {
     {
       key: 'plan',
       header: 'Plan',
-      sortable: (a, b) => a.plan_name.localeCompare(b.plan_name),
+      sortable: true,
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm text-text-primary">{row.plan_name}</p>
@@ -90,7 +109,7 @@ export function SubscriptionsTab() {
       key: 'status',
       header: 'Status',
       width: '9rem',
-      sortable: (a, b) => a.status.localeCompare(b.status),
+      sortable: true,
       render: (row) => (
         <Badge tone={subscriptionTone(row.status)} dot>
           {subscriptionLabel(row.status)}
@@ -103,7 +122,7 @@ export function SubscriptionsTab() {
       align: 'right',
       width: '6rem',
       secondary: true,
-      sortable: (a, b) => (a.operator_quantity ?? 0) - (b.operator_quantity ?? 0),
+      sortable: true,
       render: (row) => (
         <span className="figure">
           {row.operator_quantity == null ? '—' : formatNumber(row.operator_quantity)}
@@ -115,7 +134,7 @@ export function SubscriptionsTab() {
       header: 'Period ends',
       width: '10rem',
       secondary: true,
-      sortable: (a, b) => (a.current_period_end ?? '').localeCompare(b.current_period_end ?? ''),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDate(row.current_period_end)}</span>,
     },
     {
@@ -123,7 +142,7 @@ export function SubscriptionsTab() {
       header: 'Trial ends',
       width: '10rem',
       secondary: true,
-      sortable: (a, b) => (a.trial_end ?? '').localeCompare(b.trial_end ?? ''),
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDate(row.trial_end)}</span>,
     },
     {
@@ -137,86 +156,77 @@ export function SubscriptionsTab() {
 
   return (
     <Stack>
-      <Section
-        title="Subscriptions"
-        description="Newest first. The endpoint returns at most 200 rows and offers no paging — narrow with the filters rather than scrolling."
-      >
-        <Toolbar className="mb-3">
-          <Select
-            size="sm"
-            aria-label="Filter by status"
-            options={STATUS_OPTIONS}
-            value={status}
-            onChange={(event) => url.set({ status: event.target.value })}
-          />
-          <Input
-            size="sm"
-            type="number"
-            min={1}
-            inputMode="numeric"
-            aria-label="Filter by plan id"
-            placeholder="Plan id"
-            className="w-32"
-            value={planId}
-            onChange={(event) => url.set({ plan_id: event.target.value })}
-          />
+      <Section title="Subscriptions">
+        <Toolbar sticky className="mb-3">
+          <div className="w-48">
+            <Select
+              size="sm"
+              aria-label="Filter by status"
+              options={STATUS_OPTIONS}
+              value={status}
+              onChange={(event) => url.set({ status: event.target.value })}
+            />
+          </div>
+          <div className="w-48">
+            <Combobox
+              size="sm"
+              label="Filter by plan"
+              value={planId || null}
+              onValueChange={(next) => url.set({ plan_id: next })}
+              options={plans.items.map((entry) => ({
+                value: String(entry.id),
+                label: entry.name,
+                keywords: entry.slug,
+              }))}
+              placeholder="Any plan"
+              clearable
+            />
+          </div>
           {status || planId ? (
             <Button size="sm" variant="ghost" onClick={() => url.set({ status: null, plan_id: null })}>
               Clear filters
             </Button>
           ) : null}
-          <span className="figure ml-auto text-xs text-text-tertiary">
-            {list.loading ? 'Loading…' : `${formatNumber(list.items.length)} shown`}
-          </span>
         </Toolbar>
 
-        {list.items.length >= SERVER_CAP ? (
-          <Alert tone="warning" className="mb-3" title="This is a truncated list">
-            The endpoint stops at {SERVER_CAP} rows and does not paginate, so there are almost
-            certainly subscriptions it did not return. Filter by status or plan to see the rest.
-          </Alert>
-        ) : null}
-
-        {list.forbidden ? (
-          <LockedState
-            title="You cannot read subscriptions"
-            description="Your super-admin account is not permitted to read the subscription book. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Subscriptions, newest first"
-            columns={columns}
-            rows={list.items}
-            rowKey={(row) => String(row.id)}
-            rowLabel={(row) => `${row.client_name}, ${row.plan_name}`}
-            loading={list.loading}
-            error={list.error}
-            onRetry={list.reload}
-            onRowClick={setEditing}
-            pageSize={25}
-            empty={
-              <EmptyState
-                title={status || planId ? 'Nothing matched those filters' : 'No subscriptions yet'}
-                description={
-                  status || planId
-                    ? 'No subscription has that status and plan combination. Clear the filters to see the whole book.'
-                    : 'Nobody has started a subscription — not even a trial. Check the catalogue has a plan with checkout wired.'
-                }
-                action={
-                  status || planId ? (
-                    <Button size="sm" onClick={() => url.set({ status: null, plan_id: null })}>
-                      Clear filters
-                    </Button>
-                  ) : undefined
-                }
-              />
-            }
-          />
-        )}
+        <RecordList
+          caption="Subscriptions, newest first"
+          columns={columns}
+          paged={paged}
+          rowKey={(row) => String(row.id)}
+          rowNoun="subscription"
+          what="the subscription book"
+          loading={list.loading}
+          error={list.error}
+          forbidden={list.forbidden}
+          onRetry={list.reload}
+          onRowClick={setEditing}
+          loaded={list.items.length}
+          cap={SERVER_CAP}
+          note="Newest first, and filtered by the server. Narrow by status or plan rather than scrolling."
+          empty={
+            <EmptyState
+              title={status || planId ? 'Nothing matched those filters' : 'No subscriptions yet'}
+              description={
+                status || planId
+                  ? 'No subscription has that status and plan combination.'
+                  : 'Nobody has started a subscription — not even a trial. Check the catalogue has a plan with checkout wired.'
+              }
+              action={
+                status || planId ? (
+                  <Button size="sm" onClick={() => url.set({ status: null, plan_id: null })}>
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+            />
+          }
+        />
       </Section>
 
       <OverrideDrawer
         subscription={editing}
+        plans={plans.items}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -260,10 +270,13 @@ function emptyDraft(subscription: SubscriptionRow | null): DraftState {
  */
 function OverrideDrawer({
   subscription,
+  plans,
   onClose,
   onSaved,
 }: {
   subscription: SubscriptionRow | null;
+  /** The catalogue, so the plan is picked by name rather than by integer id. */
+  plans: readonly Plan[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -334,8 +347,9 @@ function OverrideDrawer({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
+      eyebrow={`${subscription.client_name} · ${subscription.plan_name}`}
       title={`Override subscription #${subscription.id}`}
-      description={`${subscription.client_name} · ${subscription.plan_name}`}
+      description="Writes to the customer's account and not to the gateway: nothing here charges, refunds or re-mandates anything at Razorpay."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -353,32 +367,29 @@ function OverrideDrawer({
       }
     >
       <div className="flex flex-col gap-5">
-        <Alert tone="warning" title="This writes to the customer's account and not to the gateway">
-          Nothing here charges, refunds or re-mandates anything at Razorpay. Setting a subscription
-          active gives the customer their entitlements back without a payment having been taken; the
-          next gateway event can move it again.
-        </Alert>
-
         {error ? (
           <Alert tone="danger" live title="The override was refused">
             {error}
           </Alert>
         ) : null}
 
-        <Field
-          label="Plan"
-          hint="The plan's numeric id, from the Catalogue section. A plan that includes unlimited agents can only be applied to an account-scoped subscription; the server refuses the rest with an explanation."
-        >
-          <Input
-            type="number"
-            min={1}
-            inputMode="numeric"
-            value={draft.plan_id}
-            onChange={(event) => setDraft({ ...draft, plan_id: event.target.value })}
+        <Field label="Plan">
+          <Combobox
+            label="Plan"
+            value={draft.plan_id || null}
+            onValueChange={(next) => setDraft({ ...draft, plan_id: next ?? '' })}
+            options={plans.map((entry) => ({
+              value: String(entry.id),
+              label: entry.name,
+              description: entry.slug,
+              keywords: entry.slug,
+            }))}
+            placeholder="Leave unchanged"
+            clearable
           />
         </Field>
 
-        <Field label="Status" hint="One of the six lifecycle states the server accepts.">
+        <Field label="Status">
           <Select
             options={SUBSCRIPTION_STATUSES.map((value) => ({ value, label: subscriptionLabel(value) }))}
             value={draft.status}
@@ -388,7 +399,7 @@ function OverrideDrawer({
 
         <Field
           label="Operator seats"
-          hint="The total seat count, including the seats the plan already includes. Seats above the plan's allowance are what the seat add-on bills for."
+          hint="The total, including the seats the plan already covers."
         >
           <Input
             type="number"
@@ -414,7 +425,7 @@ function OverrideDrawer({
           hint={
             hasTrial
               ? `Added to the current trial end, ${formatDate(subscription.trial_end)}. Maximum 365.`
-              : 'This subscription has no trial end date, so the server ignores a trial extension entirely. Nothing would happen.'
+              : 'No trial end date, so the server would ignore this.'
           }
         >
           <Input
@@ -428,7 +439,7 @@ function OverrideDrawer({
           />
         </Field>
 
-        <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
+        <div className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
           <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
             What will be sent
           </p>

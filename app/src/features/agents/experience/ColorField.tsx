@@ -1,5 +1,5 @@
-import { type ReactElement, useId } from 'react';
-import { Badge, Button, Field, Input, cn } from '../../../ui';
+import { type ReactElement } from 'react';
+import { Badge, Button, ColorInput, Field } from '../../../ui';
 import {
   TEXT_CONTRAST_MIN,
   checkContrast,
@@ -25,16 +25,14 @@ import {
  * measured number, and one button that swaps in the nearest shade of the same
  * hue that clears every bar on the card at once.
  *
- * **`src/ui` has no colour input**, so this composes a native `<input
- * type="color">` — which brings the platform's own picker, eyedropper and
- * keyboard handling — with the system's `Input` for the hex value. It is
- * reported as a gap rather than smuggled into the design system from a feature.
- *
- * The two of them are one value, so `Field` labels the hex box (it is the one
- * that can be read aloud and typed into) and the swatch carries its own name
- * with an explicit id. Letting both take the field's id would put the same
- * `id` on two elements and leave the label pointing at whichever the browser
- * found first.
+ * **The control itself is `ColorInput` now.** This file used to compose a bare
+ * `<input type="color">` with `Input`'s classes and say in writing that the
+ * system had no colour input — which rendered three different ways across
+ * Chrome, Firefox and Safari, because Firefox ignores padding on the element
+ * entirely and Safari draws its own bezel. `src/ui` owns the swatch geometry
+ * now. What stays here is the judgement: whether a pair clears 4.5:1 is domain
+ * knowledge about where the widget paints that colour, not a property of a text
+ * field.
  */
 
 export interface ContrastPair {
@@ -71,7 +69,6 @@ export function ColorField({
   error,
   disabled = false,
 }: ColorFieldProps): ReactElement {
-  const pickerId = useId();
   const valid = isHexColor(value);
   const checks = pairs.map((pair) =>
     checkContrast(pair.foreground, pair.background, pair.label, pair.min ?? TEXT_CONTRAST_MIN),
@@ -90,60 +87,17 @@ export function ColorField({
   return (
     <Field label={label} hint={hint} error={error} disabled={disabled}>
       <div className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <Input
-            id={pickerId}
-            type="color"
-            // The native picker's own value must always be a colour, or Chrome
-            // silently resets the swatch to black while the user is mid-typing
-            // in the hex field beside it.
-            value={valid ? value : '#000000'}
-            onChange={(event) => onChange(event.target.value)}
-            disabled={disabled}
-            aria-label={`${label} — swatch`}
-            className="h-control-md w-12 shrink-0 cursor-pointer p-1"
-          />
-          {/* No `aria-label`: this is the control the field's own label names,
-              so adding one would replace "Brand colour" with a second string. */}
-          <Input
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            disabled={disabled}
-            spellCheck={false}
-            inputMode="text"
-            className="figure w-32 shrink-0"
-          />
-          {swatches.length > 0 ? (
-            <ul className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {swatches.map((swatch) => {
-                const active = swatch.toLowerCase() === value.toLowerCase();
-                return (
-                  <li key={swatch}>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => onChange(swatch)}
-                      aria-label={`Use ${swatch}`}
-                      aria-pressed={active}
-                      style={{ backgroundColor: swatch }}
-                      // The selected swatch is marked by border WEIGHT, not by a
-                      // tick: a glyph drawn on an arbitrary customer colour has
-                      // no contrast guarantee, which would be an odd thing for
-                      // this component of all of them to ship.
-                      className={cn(
-                        'h-6 w-6 rounded-xs',
-                        active ? 'border-2 border-ink' : 'border border-border-strong',
-                        'disabled:cursor-not-allowed disabled:opacity-50',
-                      )}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-        </div>
+        <ColorInput
+          value={value}
+          onChange={onChange}
+          swatches={swatches}
+          disabled={disabled}
+          aria-label={label}
+        />
 
-        <ul className="flex flex-col gap-1.5 rounded-sm bg-surface-sunken px-3 py-2">
+        {/* One well, one radius: `rounded-md` is DESIGN.md §4's inner panel, and
+            this used to be the only `rounded-sm` well in the feature. */}
+        <ul className="flex flex-col gap-1.5 rounded-md bg-surface-sunken px-3 py-2.5">
           {checks.map((check) => (
             <li key={check.label} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <span className="min-w-0 text-xs text-text-secondary">{check.label}</span>
@@ -162,7 +116,7 @@ export function ColorField({
         </ul>
 
         {failing.length > 0 ? (
-          <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-danger">
+          <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
             <span className="min-w-0">
               {failing.length === 1
                 ? `${failing[0].label} is hard to read at this contrast.`

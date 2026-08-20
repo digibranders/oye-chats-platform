@@ -6,6 +6,7 @@ import { ProtectedLayout } from './ProtectedLayout';
 import { OperatorRouteGuard } from './OperatorRouteGuard';
 import { AgentScope } from './AgentScope';
 import { Moved, MovedAgent } from './Moved';
+import { LEGACY_AGENT_SEGMENTS, LEGACY_PATHS } from './redirects';
 
 // Eager on purpose: the sign-in form is the most common cold entry into the
 // app, and making a signed-out visitor wait on a second round trip to see a
@@ -150,6 +151,9 @@ export const router = createBrowserRouter([
           {
             path: '/',
             element: <AppShell />,
+            // Shell or provider crash: full-screen, because there is no rail
+            // left to render into. The outer registration on the root route
+            // object catches what fails above this one.
             errorElement: <RootErrorBoundary />,
             children: [
               {
@@ -216,34 +220,19 @@ export const router = createBrowserRouter([
 
                   // Your own account, distinct from the workspace's settings.
                   { path: 'account', element: <Route><SettingsPage /></Route> },
-                  { path: 'account/preferences', element: <Route><SettingsPage /></Route> },
 
                   // ── Moved ───────────────────────────────────────────────
-                  { path: 'agents', element: <Moved to="/chatbots" /> },
-                  { path: 'agents/:agentId', element: <MovedAgent /> },
-                  { path: 'agents/:agentId/overview', element: <MovedAgent segment="overview" /> },
-                  { path: 'agents/:agentId/knowledge', element: <MovedAgent segment="knowledge" /> },
-                  { path: 'agents/:agentId/experience', element: <MovedAgent segment="experience" /> },
-                  { path: 'agents/:agentId/channels', element: <MovedAgent segment="deploy" /> },
-                  { path: 'agents/:agentId/advanced', element: <MovedAgent segment="behaviour" /> },
-                  { path: 'agents/:agentId/analytics', element: <MovedAgent segment="overview" /> },
-                  { path: 'journey', element: <Moved to="/analytics/journey" /> },
-                  { path: 'support', element: <Moved to="/inbox" /> },
-                  { path: 'build', element: <Moved to="/setup" /> },
-                  { path: 'launch', element: <Moved to="/setup" /> },
-                  { path: 'launch/:step', element: <Moved to="/setup" /> },
-                  { path: 'workspace', element: <Moved to="/settings/workspace" /> },
-                  { path: 'workspace/general', element: <Moved to="/settings/workspace" /> },
-                  { path: 'workspace/members', element: <Moved to="/settings/team" /> },
-                  { path: 'workspace/billing', element: <Moved to="/billing" /> },
-                  { path: 'workspace/usage', element: <Moved to="/billing/usage" /> },
-                  { path: 'workspace/reports', element: <Moved to="/billing/reports" /> },
-                  { path: 'workspace/api-keys', element: <Moved to="/settings/developers" /> },
-                  { path: 'workspace/integrations', element: <Moved to="/settings/integrations" /> },
-                  { path: 'workspace/affiliate', element: <Moved to="/settings/affiliate" /> },
-                  { path: 'workspace/settings', element: <Moved to="/account" /> },
-                  { path: 'workspace/security', element: <Moved to="/account" /> },
-                  { path: 'billing/affiliate', element: <Moved to="/settings/affiliate" /> },
+                  // Declared as data in `redirects.ts`. Twenty-five lines of
+                  // this router were a rename table, and it was going to keep
+                  // growing.
+                  ...LEGACY_AGENT_SEGMENTS.map(([from, segment]) => ({
+                    path: from,
+                    element: <MovedAgent segment={segment} />,
+                  })),
+                  ...LEGACY_PATHS.map(([from, to]) => ({
+                    path: from,
+                    element: <Moved to={to} />,
+                  })),
 
                   { path: '*', element: <NotFoundPage /> },
                 ],

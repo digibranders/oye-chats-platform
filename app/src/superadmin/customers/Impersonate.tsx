@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { UserCheck } from 'lucide-react';
-import { Alert, Button, Card, CardBody, CardHeader, ConfirmDialog, DefinitionList, toast } from '../../ui';
+import { Alert, Button, Card, CardBody, CardHeader, ConfirmDialog, PropertyGrid, toast } from '../../ui';
 import { platform } from '../client';
 import { useSupportSessions } from './supportSessionStore';
 import type { ClientDetail, ImpersonationGrant } from './types';
@@ -37,7 +37,7 @@ export function ImpersonateCard({ client }: { client: ClientDetail }) {
         titleAs="h3"
         eyebrow="Impersonation"
         title="Act as this customer"
-        description="Opens their workspace in a new tab under a one-time token. Everything you do is done as them."
+        description="Opens their workspace in a new tab under a one-time token, as them."
       />
       <CardBody className="flex flex-col gap-4">
         {error ? (
@@ -53,28 +53,30 @@ export function ImpersonateCard({ client }: { client: ClientDetail }) {
           </Alert>
         ) : null}
 
-        <DefinitionList
+        {/* Four facts, not four sentences: the consequence is in the confirm,
+            which is where it is actually read. */}
+        <PropertyGrid
           columns={2}
+          density="compact"
           items={[
             { label: 'Token lifetime', value: <span className="figure">30 minutes</span> },
-            { label: 'Scope', value: 'One browser tab. Closing it ends the session.' },
+            { label: 'Scope', value: 'One browser tab' },
             {
               label: 'Recorded',
-              value: 'Your account, the target account, the token id and the expiry — in the audit log.',
+              value: 'Both accounts, the token id and the expiry',
+              note: 'Written to the audit log against your own account.',
             },
-            { label: 'Reason', value: 'Not accepted by this endpoint. Nothing is stored.' },
+            {
+              label: 'Reason',
+              value: undefined,
+              note: 'Not accepted by this endpoint, so nothing is stored.',
+            },
           ]}
         />
 
-        <Alert tone="warning" title="What the customer sees, and what you can do">
-          The customer is not notified. Writes are allow-listed server-side during a support session,
-          so destructive actions in their workspace are refused — but everything readable is readable,
-          including their conversations, leads and billing detail.
-        </Alert>
-
         <div>
           <Button variant="secondary" disabled={blocked} onClick={() => setConfirming(true)}>
-            <UserCheck aria-hidden className="h-4 w-4" />
+            <UserCheck aria-hidden />
             Open a support session
           </Button>
         </div>
@@ -90,8 +92,9 @@ export function ImpersonateCard({ client }: { client: ClientDetail }) {
           <>
             This mints a token that signs you in as <strong>{client.name}</strong> (
             {client.email}) for 30 minutes. You will be able to read everything in their workspace —
-            conversations, leads, documents and billing. The action is audit-logged against your
-            account, and this endpoint stores no reason.
+            conversations, leads, documents and billing, and they are not notified. Destructive
+            writes are refused server-side. The action is audit-logged against your account, and this
+            endpoint stores no reason.
           </>
         }
         confirmPhrase={client.email}

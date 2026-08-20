@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { UserPlus } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Alert,
   Badge,
@@ -10,19 +10,17 @@ import {
   Field,
   Input,
   SearchField,
+  NavTabs,
   Section,
   Select,
   Stack,
-  StatTile,
+  StatRow,
   Toolbar,
   formatDate,
-  formatMoney,
   formatNumber,
   toast,
   validateEmail,
   type Column,
-  Tabs,
-  TabPanel,
 } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { platform } from '../client';
@@ -34,14 +32,17 @@ import { CredentialsTab, DevicesTab, IdentitiesTab, NotificationsTab, OperatorsT
 import { SupportSessionsPanel } from './SupportSessions';
 import { useSupportSessions } from './supportSessionStore';
 import { SUBSCRIPTION_TONES, type ClientRow } from './types';
+import { USD_NORMALISED_SHORT, usdCentsRounded } from '../money';
+
+const BASE = `${PLATFORM_ROOT}/customers`;
 
 const TABS = [
-  { value: 'accounts', label: 'Accounts' },
-  { value: 'operators', label: 'Operators' },
-  { value: 'identities', label: 'Sign-in identities' },
-  { value: 'credentials', label: 'API keys' },
-  { value: 'devices', label: 'Devices' },
-  { value: 'notifications', label: 'Notifications' },
+  { to: BASE, label: 'Accounts', end: true },
+  { to: `${BASE}/operators`, label: 'Operators' },
+  { to: `${BASE}/identities`, label: 'Sign-in identities' },
+  { to: `${BASE}/credentials`, label: 'API keys' },
+  { to: `${BASE}/devices`, label: 'Devices' },
+  { to: `${BASE}/notifications`, label: 'Notifications' },
 ];
 
 const STATUSES = [
@@ -118,7 +119,7 @@ function CreateAccountDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Create a customer account"
-      description="Provisions an unverified account. They build their own chatbots from their dashboard."
+      description="Nobody sets the password, including you: a random one is generated and discarded, and the customer sets their own from the verification email."
       dismissible={!busy}
       footer={
         <>
@@ -137,18 +138,13 @@ function CreateAccountDialog({
         </Alert>
       ) : null}
       <div className="flex flex-col gap-4">
-        <Alert tone="neutral" title="Nobody sets their password, including you">
-          A random password is generated and discarded. The customer receives a verification code by
-          email, then sets their own password through the reset flow. Their API key is not shown here
-          — they read it from their own dashboard.
-        </Alert>
         <Field label="Account name" required>
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Ltd" />
         </Field>
         <Field
           label="Login email"
           required
-          hint="Where the verification code goes. It becomes the account's identity."
+          hint="Where the verification code goes, and the account's identity."
           error={email.trim() ? emailProblem : null}
         >
           <Input
@@ -244,10 +240,10 @@ function AccountsTab() {
     },
     {
       key: 'mrr_cents',
-      header: 'MRR',
+      header: `MRR (${USD_NORMALISED_SHORT})`,
       align: 'right',
       sortable: true,
-      render: (row) => formatMoney(row.mrr_cents, 'USD'),
+      render: (row) => usdCentsRounded(row.mrr_cents),
     },
     {
       key: 'credits_balance',
@@ -274,36 +270,28 @@ function AccountsTab() {
 
   return (
     <Stack>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label="Accounts"
-          value={list.loading ? undefined : formatNumber(list.items.length)}
-          period="All time"
-          loading={list.loading}
-        />
-        <StatTile
-          label="Suspended"
-          value={list.loading ? undefined : formatNumber(suspended)}
-          period="Right now"
-          tone={suspended > 0 ? 'warning' : 'neutral'}
-          loading={list.loading}
-        />
-        <StatTile
-          label="Monthly recurring"
-          value={list.loading ? undefined : formatMoney(totalMrr, 'USD')}
-          period="Active and trialing"
-          loading={list.loading}
-        />
-        <StatTile
-          label="Showing"
-          value={list.loading ? undefined : formatNumber(paged.total)}
-          period="After this filter"
-          loading={list.loading}
-        />
-      </div>
+      <StatRow
+        label="Platform totals"
+        period="Right now"
+        loading={list.loading}
+        items={[
+          { label: 'Accounts', value: formatNumber(list.items.length), period: 'All time' },
+          {
+            label: 'Suspended',
+            value: formatNumber(suspended),
+            tone: suspended > 0 ? 'warning' : 'neutral',
+          },
+          {
+            label: 'Monthly recurring',
+            value: usdCentsRounded(totalMrr),
+            period: USD_NORMALISED_SHORT,
+          },
+          { label: 'Showing', value: formatNumber(paged.total), period: 'After this filter' },
+        ]}
+      />
 
-      <Toolbar>
-        <div className="w-full max-w-xs">
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search accounts"
             value={query}
@@ -311,7 +299,7 @@ function AccountsTab() {
             placeholder="Name, email, website or plan"
           />
         </div>
-        <div className="w-52">
+        <div className="w-48">
           <Select
             aria-label="Filter by subscription status"
             value={status}
@@ -327,6 +315,8 @@ function AccountsTab() {
 
       <RecordList
         caption="Every account on the platform"
+        rowNoun="account"
+        what="the account list"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -335,7 +325,6 @@ function AccountsTab() {
         forbidden={list.forbidden}
         onRetry={list.reload}
         onRowClick={(row) => navigate(`${PLATFORM_ROOT}/customers/${row.id}`)}
-        note="This endpoint returns every account and accepts no parameters, so the search and the status filter are applied in this console. Nothing is hidden by a server-side cap."
         empty={
           <EmptyState
             compact
@@ -361,6 +350,16 @@ function AccountsTab() {
   );
 }
 
+/** The panel each directory route shows. Keyed by the segment after `/customers`. */
+const PANELS: Record<string, () => ReactElement> = {
+  '': AccountsTab,
+  operators: OperatorsTab,
+  identities: IdentitiesTab,
+  credentials: CredentialsTab,
+  devices: DevicesTab,
+  notifications: NotificationsTab,
+};
+
 /**
  * The customer directory.
  *
@@ -370,14 +369,16 @@ function AccountsTab() {
  * across six rail entries would have made the rail longer than the work.
  */
 export function CustomerListPage() {
-  const url = useUrlState();
-  const tab = url.get('tab', 'accounts');
+  const { pathname } = useLocation();
   const { sessions } = useSupportSessions();
+  const segment = pathname.startsWith(BASE) ? pathname.slice(BASE.length).replace(/^\//, '') : '';
+  const Panel = PANELS[segment] ?? AccountsTab;
 
   return (
     <PlatformPage
       title="Customers"
-      description="Accounts, the people inside them, and everything that authenticates."
+      toolbarBleed
+      toolbar={<NavTabs label="Customer directory" items={TABS} />}
     >
       <Stack>
         {sessions.length > 0 ? (
@@ -385,24 +386,7 @@ export function CustomerListPage() {
             <SupportSessionsPanel />
           </Section>
         ) : null}
-
-        <Tabs
-          label="Customer directory"
-          items={TABS}
-          value={tab}
-          onValueChange={(next) => url.set({ tab: next, q: null, status: null, role: null, type: null })}
-        >
-          {/* Only the selected panel's body is mounted. Rendering all six would
-              fire six requests on load for five lists nobody is looking at. */}
-          <TabPanel value="accounts">{tab === 'accounts' ? <AccountsTab /> : null}</TabPanel>
-          <TabPanel value="operators">{tab === 'operators' ? <OperatorsTab /> : null}</TabPanel>
-          <TabPanel value="identities">{tab === 'identities' ? <IdentitiesTab /> : null}</TabPanel>
-          <TabPanel value="credentials">{tab === 'credentials' ? <CredentialsTab /> : null}</TabPanel>
-          <TabPanel value="devices">{tab === 'devices' ? <DevicesTab /> : null}</TabPanel>
-          <TabPanel value="notifications">
-            {tab === 'notifications' ? <NotificationsTab /> : null}
-          </TabPanel>
-        </Tabs>
+        <Panel />
       </Stack>
     </PlatformPage>
   );

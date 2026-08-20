@@ -5,13 +5,14 @@ import {
   Badge,
   Button,
   Drawer,
+  CodeBlock,
   EmptyState,
   Field,
+  Grid,
   SearchField,
-  SegmentedControl,
   Select,
-  Stack,
   Textarea,
+  Stack,
   Toolbar,
   formatDateTime,
   toast,
@@ -33,30 +34,8 @@ import {
   type PlatformFeedbackRow,
 } from './types';
 
-const VIEWS = [
-  { value: 'platform', label: 'Product feedback' },
-  { value: 'chat', label: 'Chat ratings' },
-];
-
-/** What people told us: about the product, and about an answer a chatbot gave. */
-export function FeedbackTab() {
-  const url = useUrlState();
-  const view = url.get('view', 'platform');
-
-  return (
-    <Stack>
-      <SegmentedControl
-        label="Feedback view"
-        value={view}
-        onChange={(next) => url.set({ view: next, q: null, status: null, type: null, area: null, severity: null })}
-        items={VIEWS}
-      />
-      {view === 'chat' ? <ChatFeedbackList /> : <PlatformFeedbackList />}
-    </Stack>
-  );
-}
-
-function ChatFeedbackList() {
+/** What a visitor thought of one chatbot answer. */
+export function ChatRatingsTab() {
   const url = useUrlState();
   const query = url.get('q');
   const rating = url.get('rating');
@@ -85,12 +64,12 @@ function ChatFeedbackList() {
       render: (row) =>
         row.feedback > 0 ? (
           <Badge tone="success">
-            <ThumbsUp aria-hidden className="mr-1 inline h-3 w-3" />
+            <ThumbsUp aria-hidden className="h-3 w-3" />
             Helpful
           </Badge>
         ) : (
           <Badge tone="danger">
-            <ThumbsDown aria-hidden className="mr-1 inline h-3 w-3" />
+            <ThumbsDown aria-hidden className="h-3 w-3" />
             Not helpful
           </Badge>
         ),
@@ -98,12 +77,12 @@ function ChatFeedbackList() {
     {
       key: 'question',
       header: 'Asked',
-      render: (row) => <span className="line-clamp-2 text-text-primary">{row.question}</span>,
+      render: (row) => <span className="text-text-primary">{row.question}</span>,
     },
     {
       key: 'answer',
       header: 'Answered',
-      render: (row) => <span className="line-clamp-2 text-text-secondary">{row.answer}</span>,
+      render: (row) => <span className="text-text-secondary">{row.answer}</span>,
     },
     { key: 'client_name', header: 'Account', sortable: true, render: (row) => row.client_name },
     { key: 'user', header: 'Visitor', secondary: true, render: (row) => row.user },
@@ -117,9 +96,9 @@ function ChatFeedbackList() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search chat ratings"
             value={query}
@@ -127,7 +106,7 @@ function ChatFeedbackList() {
             placeholder="Question, answer or account"
           />
         </div>
-        <div className="w-44">
+        <div className="w-48">
           <Select
             aria-label="Filter by rating"
             value={rating}
@@ -142,6 +121,8 @@ function ChatFeedbackList() {
       </Toolbar>
       <RecordList
         caption="Visitor ratings on individual chatbot answers"
+        rowNoun="rating"
+        what="chat ratings"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.message_id)}
@@ -149,7 +130,7 @@ function ChatFeedbackList() {
         error={list.error}
         forbidden={list.forbidden}
         onRetry={list.reload}
-        note="Visitors are pseudonymised per account by the server and the conversation id is stripped before the row is returned, so a rating cannot be traced back to a conversation from here. The endpoint accepts no parameters, so both filters are applied in this console."
+        note="Visitors are pseudonymised and the conversation id is stripped by the server, so a rating cannot be traced back to a conversation from here."
         empty={
           <EmptyState
             compact
@@ -162,14 +143,14 @@ function ChatFeedbackList() {
           />
         }
       />
-    </div>
+    </Stack>
   );
 }
 
 const TRIAGE_NOTE =
-  'Status, type, area and severity are filtered by the server. Moving a report into resolved or closed stamps you as the resolver and sends the customer an in-app notification carrying your response — so write the response before you resolve it.';
+  'Resolving or closing a report stamps you as the resolver and sends the customer your response — so write it before you resolve.';
 
-function PlatformFeedbackList() {
+export function ProductFeedbackTab() {
   const url = useUrlState();
   const query = url.get('q');
   const status = url.get('status');
@@ -201,7 +182,7 @@ function PlatformFeedbackList() {
       pinned: true,
       render: (row) => (
         <div className="min-w-0">
-          <p className="line-clamp-2 font-medium">{row.message}</p>
+          <p className="truncate font-medium">{row.message}</p>
           <p className="truncate text-xs text-text-secondary">{row.client_name}</p>
         </div>
       ),
@@ -260,9 +241,9 @@ function PlatformFeedbackList() {
   const filtered = Boolean(query || status || type || area || severity);
 
   return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <div className="w-full max-w-xs">
+    <Stack>
+      <Toolbar sticky>
+        <div className="w-72 max-w-full">
           <SearchField
             label="Search product feedback"
             value={query}
@@ -270,7 +251,7 @@ function PlatformFeedbackList() {
             placeholder="Message, account or email"
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Select
             aria-label="Filter by status"
             value={status}
@@ -281,7 +262,7 @@ function PlatformFeedbackList() {
             ]}
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Select
             aria-label="Filter by type"
             value={type}
@@ -292,7 +273,7 @@ function PlatformFeedbackList() {
             ]}
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Select
             aria-label="Filter by area"
             value={area}
@@ -303,7 +284,7 @@ function PlatformFeedbackList() {
             ]}
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <Select
             aria-label="Filter by severity"
             value={severity}
@@ -317,6 +298,8 @@ function PlatformFeedbackList() {
       </Toolbar>
       <RecordList
         caption="Product feedback submitted by customers"
+        rowNoun="report"
+        what="product feedback"
         columns={columns}
         paged={paged}
         rowKey={(row) => String(row.id)}
@@ -346,7 +329,7 @@ function PlatformFeedbackList() {
           list.reload();
         }}
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -469,15 +452,13 @@ function TriageDrawer({
           ) : null}
 
           {report.context ? (
-            <div>
-              <p className="text-xs text-text-tertiary">Context the app captured</p>
-              <pre className="mt-1 overflow-x-auto rounded-md bg-surface-sunken px-3 py-2 font-mono text-xs text-text-secondary">
-                {JSON.stringify(report.context, null, 2)}
-              </pre>
-            </div>
+            <CodeBlock
+              label="Context the app captured"
+              code={JSON.stringify(report.context, null, 2)}
+            />
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <Grid cols={2}>
             <Field label="Status">
               <Select
                 value={status}
@@ -511,11 +492,11 @@ function TriageDrawer({
                 options={FEEDBACK_SEVERITIES.map((value) => ({ value, label: value }))}
               />
             </Field>
-          </div>
+          </Grid>
 
           <Field
             label="Response to the customer"
-            hint="Sent with the notification when this is resolved or closed. Up to 5,000 characters."
+            hint="Sent with the notification when this is resolved or closed."
           >
             <Textarea
               rows={4}

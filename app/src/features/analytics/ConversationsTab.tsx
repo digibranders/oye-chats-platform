@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Download } from 'lucide-react';
-import { Button, Card, CardBody, CardHeader, Stack, StatTile, formatNumber } from '../../ui';
+import { Button, Card, CardBody, CardHeader, Grid, Stack, StatRow, formatNumber } from '../../ui';
 import { csvFilename, exportRows } from './exportCsv';
 import { delta, type ResolvedRange } from './range';
 import { comparisonPoints, splitWindows, summarize } from './series';
@@ -60,43 +60,40 @@ export function ConversationsTab({
           }
           actions={
             points.length > 0 ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onExport}
-                iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-              >
+              <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
                 Export
               </Button>
             ) : undefined
           }
         />
+        <CardBody flush>
+          <StatRow
+            label="Message volume"
+            period={range.label}
+            columns={3}
+            loading={messages.loading}
+            items={[
+              {
+                label: 'Messages',
+                value: formatNumber(current.total),
+                delta: messageDelta
+                  ? {
+                      value: messageDelta.value,
+                      direction: messageDelta.direction,
+                      label: range.comparisonLabel ? `vs ${range.comparisonLabel}` : undefined,
+                    }
+                  : undefined,
+              },
+              { label: 'Daily average', value: formatNumber(current.dailyAverage) },
+              {
+                label: 'Busiest day',
+                value: current.peakLabel ? formatNumber(current.peak) : undefined,
+                period: current.peakLabel ?? range.label,
+              },
+            ]}
+          />
+        </CardBody>
         <CardBody>
-          <div className="mb-5 grid grid-cols-3 gap-6">
-            <StatTile
-              label="Messages"
-              value={formatNumber(current.total)}
-              period={range.label}
-              delta={
-                messageDelta
-                  ? { value: messageDelta.value, direction: messageDelta.direction }
-                  : undefined
-              }
-              loading={messages.loading}
-            />
-            <StatTile
-              label="Daily average"
-              value={formatNumber(current.dailyAverage)}
-              period={range.label}
-              loading={messages.loading}
-            />
-            <StatTile
-              label="Busiest day"
-              value={current.peakLabel ? formatNumber(current.peak) : undefined}
-              period={current.peakLabel ?? range.label}
-              loading={messages.loading}
-            />
-          </div>
           <MessageVolumeChart
             points={points}
             rangeLabel={range.label}
@@ -117,8 +114,12 @@ export function ConversationsTab({
         </CardBody>
       </Card>
 
-      <TopQuestionsPanel botId={botId} />
-      <KnowledgeGapsPanel botId={botId} range={range} />
+      {/* Peers: "what they asked" and "what we could not answer" are the same
+          question from two sides, and the reader reads one against the other. */}
+      <Grid cols={2} gap="section" align="start">
+        <TopQuestionsPanel botId={botId} />
+        <KnowledgeGapsPanel botId={botId} range={range} />
+      </Grid>
     </Stack>
   );
 }

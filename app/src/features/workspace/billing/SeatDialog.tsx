@@ -102,7 +102,7 @@ export function SeatDialog({
       <div className="space-y-4">
         <Field
           label="Total operator seats"
-          hint={`${seatsUsed} of your ${currentSeats} current seats are filled.`}
+          hint={`${seatsUsed} of ${currentSeats} filled.`}
           error={
             belowUsed
               ? `You have ${seatsUsed} active operators. Deactivate one before reducing to ${parsed}.`

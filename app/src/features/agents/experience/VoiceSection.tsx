@@ -2,16 +2,16 @@ import { type ReactElement, useCallback, useEffect, useState } from 'react';
 import { MessageSquareQuote, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import {
   Alert,
-  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
+  CardSection,
   Field,
   Input,
+  RadioCards,
   Textarea,
   Tooltip,
-  cn,
 } from '../../../ui';
 import { detectTone, errorMessage, fetchTonePresets, sampleTone, type TonePreset } from './experience-api';
 import {
@@ -150,7 +150,7 @@ export function VoiceSection({
           eyebrow="Instructions"
           titleAs="h2"
           title="How it should behave"
-          description="Layered on top of everything the chatbot has read. Leave it empty to use the platform's default behaviour."
+          description="Layered on top of what it has read."
         />
         <CardBody>
           <Field
@@ -174,7 +174,6 @@ export function VoiceSection({
           eyebrow="Voice"
           titleAs="h2"
           title="How it should sound"
-          description="Visitors feel this in every sentence. Describe the tone, or start from a preset."
           actions={
             <Tooltip
               content={
@@ -188,7 +187,7 @@ export function VoiceSection({
                 size="sm"
                 loading={detecting}
                 disabled={readOnly || agentId === null || !meta.trained}
-                iconLeft={<Sparkles aria-hidden className="h-3.5 w-3.5" />}
+                iconLeft={<Sparkles aria-hidden />}
                 onClick={() => void detect()}
               >
                 Detect from my site
@@ -198,43 +197,34 @@ export function VoiceSection({
         />
         <CardBody className="flex flex-col gap-4">
           {presets.length > 0 ? (
-            <ul className="flex flex-wrap gap-2" aria-label="Tone presets">
-              {presets.map((preset) => {
-                const active = draft.brandTonePreset === preset.key;
-                return (
-                  <li key={preset.key}>
-                    <button
-                      type="button"
-                      disabled={readOnly}
-                      aria-pressed={active}
-                      onClick={() => {
-                        setDetected(false);
-                        onChange({ brandTone: preset.text, brandTonePreset: preset.key });
-                      }}
-                      className={cn(
-                        'rounded-sm border px-2.5 py-1 text-xs font-medium transition-colors duration-[var(--dur-fast)]',
-                        active
-                          ? 'border-ink bg-ink text-text-inverse'
-                          : 'border-border-strong bg-surface text-text-primary hover:bg-surface-hover',
-                        'disabled:cursor-not-allowed disabled:opacity-50',
-                      )}
-                    >
-                      {preset.label}
-                    </button>
-                  </li>
-                );
-              })}
-              {draft.brandTonePreset === CUSTOM_PRESET ? (
-                <li>
-                  <Badge tone="neutral">Custom</Badge>
-                </li>
-              ) : null}
-            </ul>
+            /* `RadioCards`, not hand-rolled chips. The chips were a
+               feature-defined primitive — `rounded-sm border px-2.5 py-1 text-xs`
+               inverting to `bg-ink` when pressed — whose computed height was
+               26px, which is neither 28 nor 34, so a row of them sat two pixels
+               short of every other control on the page. Each preset arrives with
+               its own sentence, which is DESIGN.md's stated test for cards over
+               a segmented control. */
+            <RadioCards
+              label="Tone preset"
+              columns={2}
+              value={draft.brandTonePreset ?? ''}
+              onChange={(key) => {
+                const preset = presets.find((item) => item.key === key);
+                if (!preset) return;
+                setDetected(false);
+                onChange({ brandTone: preset.text, brandTonePreset: preset.key });
+              }}
+              items={presets.map((preset) => ({
+                value: preset.key,
+                label: preset.label,
+                description: preset.text,
+              }))}
+            />
           ) : null}
 
           <Field
             label="Voice and tone"
-            hint="Two or three sentences is plenty. Say what to avoid as well as what to aim for."
+            hint="Say what to avoid as well as what to aim for."
           >
             <Textarea
               rows={3}
@@ -257,26 +247,28 @@ export function VoiceSection({
             </Alert>
           ) : null}
 
-          <div className="flex flex-col gap-3 border-t border-border pt-4">
+          {/* `CardSection`, not a hand-drawn `border-t` inside a padded body:
+              the section rule is full-bleed and the inline one is inset 20px on
+              both sides, which is two divider treatments in one card. */}
+        </CardBody>
+        <CardSection className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={sampling}
-                disabled={readOnly || agentId === null || draft.brandTone.trim().length === 0}
-                iconLeft={<Volume2 aria-hidden className="h-3.5 w-3.5" />}
-                onClick={() => void hear()}
-              >
-                Hear this voice
-              </Button>
-              <span className="text-xs text-text-secondary">
-                Writes one sample sentence in the tone above — including the part you have not saved
-                yet.
-              </span>
+              <Tooltip content="Writes one sample sentence in the tone above, including the part you have not saved yet">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={sampling}
+                  disabled={readOnly || agentId === null || draft.brandTone.trim().length === 0}
+                  iconLeft={<Volume2 aria-hidden />}
+                  onClick={() => void hear()}
+                >
+                  Hear this voice
+                </Button>
+              </Tooltip>
             </div>
             {sample ? (
               <p className="flex items-start gap-2 rounded-md bg-surface-sunken px-3 py-2.5 text-prose text-text-primary">
-                <MessageSquareQuote aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary" />
+                <MessageSquareQuote aria-hidden className="mt-0.5 h-icon-md w-icon-md shrink-0 text-text-tertiary" />
                 <span>{sample}</span>
               </p>
             ) : null}
@@ -285,8 +277,7 @@ export function VoiceSection({
                 {sampleError}
               </Alert>
             ) : null}
-          </div>
-        </CardBody>
+        </CardSection>
       </Card>
 
       <Card>
@@ -294,10 +285,10 @@ export function VoiceSection({
           eyebrow="Business"
           titleAs="h2"
           title="Who the chatbot says you are"
-          description="Used whenever a visitor asks what you do. Filled in from your website while training, and yours to correct."
+          description="Filled in from your website. Yours to correct."
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Company name" hint="Exactly as you want it written.">
+          <Field label="Company name">
             <Input
               value={draft.companyName}
               maxLength={LIMITS.companyName}
@@ -307,7 +298,7 @@ export function VoiceSection({
               className="max-w-sm"
             />
           </Field>
-          <Field label="What you do" hint="A couple of sentences, in your own words.">
+          <Field label="What you do">
             <Textarea
               rows={3}
               value={draft.companyDescription}
@@ -325,15 +316,10 @@ export function VoiceSection({
           eyebrow="Scope"
           titleAs="h2"
           title="What it is allowed to talk about"
-          description="List your services and the chatbot answers about those and nothing else. An empty list means it answers from everything it has read."
+          description="An empty list lets it answer from everything it has read."
         />
         <CardBody className="flex flex-col gap-4">
-          {draft.services.length === 0 ? (
-            <p className="text-prose text-text-secondary">
-              No list, so the chatbot answers about anything in its knowledge. Add services to hold
-              it to them.
-            </p>
-          ) : (
+          {draft.services.length === 0 ? null : (
             <ul className="flex flex-col gap-3">
               {draft.services.map((service, index) => (
                 <li key={index} className="flex flex-col gap-2">
@@ -368,7 +354,7 @@ export function VoiceSection({
                           onChange({ services: draft.services.filter((_, i) => i !== index) })
                         }
                       >
-                        <Trash2 aria-hidden className="h-4 w-4" />
+                        <Trash2 aria-hidden />
                       </Button>
                     </Tooltip>
                   </div>
@@ -388,7 +374,7 @@ export function VoiceSection({
               disabled={readOnly || draft.services.length >= LIMITS.services}
               onClick={() => onChange({ services: [...draft.services, { name: '', url: '' }] })}
             >
-              <Plus aria-hidden className="h-3.5 w-3.5" />
+              <Plus aria-hidden />
               Add a service
             </Button>
           </div>
@@ -400,14 +386,10 @@ export function VoiceSection({
           eyebrow="Links"
           titleAs="h2"
           title="Words the chatbot turns into links"
-          description="When an answer happens to mention the keyword, it becomes a link to the page you name. It never changes what the chatbot may answer."
+          description="A keyword in an answer becomes a link."
         />
         <CardBody className="flex flex-col gap-4">
-          {draft.smartLinks.length === 0 ? (
-            <p className="text-prose text-text-secondary">
-              None yet. Mapping “pricing” to your pricing page is the usual first one.
-            </p>
-          ) : (
+          {draft.smartLinks.length === 0 ? null : (
             <ul className="flex flex-col gap-3">
               {draft.smartLinks.map((link, index) => (
                 <li key={index} className="flex flex-col gap-2">
@@ -442,7 +424,7 @@ export function VoiceSection({
                           onChange({ smartLinks: draft.smartLinks.filter((_, i) => i !== index) })
                         }
                       >
-                        <Trash2 aria-hidden className="h-4 w-4" />
+                        <Trash2 aria-hidden />
                       </Button>
                     </Tooltip>
                   </div>
@@ -464,7 +446,7 @@ export function VoiceSection({
                 onChange({ smartLinks: [...draft.smartLinks, { keyword: '', url: '' }] })
               }
             >
-              <Plus aria-hidden className="h-3.5 w-3.5" />
+              <Plus aria-hidden />
               Add a link
             </Button>
           </div>

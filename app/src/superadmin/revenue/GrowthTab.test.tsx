@@ -173,7 +173,7 @@ describe('GrowthTab', () => {
         : Promise.resolve({ data: path.includes('/funnel') ? FUNNEL : [referral()] }),
     );
     mount();
-    expect(await screen.findByText('You cannot read growth events')).toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
     expect(screen.getByText('Acme Partners')).toBeInTheDocument();
   });
 });

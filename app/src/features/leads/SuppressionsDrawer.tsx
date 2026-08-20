@@ -6,6 +6,7 @@ import {
   Button,
   ConfirmDialog,
   DataTable,
+  Disclosure,
   Drawer,
   EmptyState,
   Field,
@@ -95,9 +96,13 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
     {
       key: 'email',
       header: 'Address',
-      pinned: true,
+      // No `pinned`. It exists for a wide table that scrolls sideways; in a
+      // four-column drawer nothing scrolls, so all it drew was a vertical rule
+      // down one column that the others did not have.
       width: '18rem',
-      render: (row) => <span className="figure text-sm text-text-primary">{row.email}</span>,
+      // Not `figure`: an email address is not a number, and monospace at 13px
+      // is both wider and harder to read than Inter for one.
+      render: (row) => <span className="text-text-primary">{row.email}</span>,
     },
     {
       key: 'reason',
@@ -175,24 +180,16 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
       open={open}
       onOpenChange={onOpenChange}
       title="Unsubscribes"
-      description="Addresses that have asked not to receive follow-up emails. Every send is checked against this list."
+      description="Checked before every follow-up. Nothing can be removed."
       width="lg"
     >
       {data.forbidden ? (
         <LockedState
           title="You cannot see this workspace's unsubscribes"
-          description="This list contains visitors' email addresses, so it is limited to the chatbots your account owns. If you believe you should have access, ask a workspace owner."
+          description="Limited to chatbots your account owns. Ask a workspace owner for access."
         />
       ) : (
         <div className="space-y-5">
-          <Alert tone="neutral" title="This list cannot be undone">
-            An address is added when somebody clicks unsubscribe, when their mail bounces
-            permanently, or when you record it here. Nothing removes one — not this panel and not
-            support. We may only email a visitor with their consent, and consent that has been
-            withdrawn cannot be restored from here. If they want to hear from you again, they have
-            to reach out themselves.
-          </Alert>
-
           <SearchField
             label="Search unsubscribed addresses"
             placeholder="Search by address"
@@ -218,7 +215,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
                   compact
                   icon={MailX}
                   title="No address matches"
-                  description="Nothing on the unsubscribe list contains that text. Clear the search to see the whole list."
+                  description="No address contains that text."
                   action={
                     <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
                       Clear search
@@ -230,29 +227,26 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
                   compact
                   icon={MailX}
                   title="Nobody has unsubscribed"
-                  description="Every address you have captured can still be emailed. Anyone who clicks unsubscribe in a follow-up appears here immediately."
+                  description="Every captured address can still be emailed."
                 />
               )
             }
           />
 
-          {/* `noValidate`: the address is validated by this form, in this
-              design system's error slot, rather than by the browser's own
-              bubble — which is unstyleable, disappears on the next keystroke,
-              and (with `type="email"`) silently refuses to submit at all. */}
-          <form noValidate onSubmit={submit} className="space-y-3 border-t border-border pt-5">
-            <div>
-              <h3 className="text-base font-medium text-text-primary">
-                Record an opt-out you were given elsewhere
-              </h3>
-              <p className="mt-0.5 text-xs text-text-secondary">
-                Somebody asked you to stop on a call, in a reply, or in a ticket. Adding them here
-                is what makes that stick — it is the same list the unsubscribe link writes to.
-              </p>
-            </div>
+          {/* A `Disclosure`, not a form loose at the bottom of a scroll that also
+              holds a paginated table: after paging to page 3 the submit button
+              was 400px below the fold. And the rule it used to draw stopped 20px
+              short of the panel's edges on both sides, because the drawer body
+              has its own gutter.
 
+              `noValidate`: the address is validated by this form, in this design
+              system's error slot, rather than by the browser's own bubble —
+              which is unstyleable, disappears on the next keystroke, and (with
+              `type="email"`) silently refuses to submit at all. */}
+          <Disclosure summary="Record an opt-out" divider headingLevel={3}>
+          <form noValidate onSubmit={submit} className="space-y-3 pt-2">
             {botId === null ? (
-              <Field label="Chatbot" required hint="Unsubscribes are per chatbot, never workspace-wide.">
+              <Field label="Chatbot" required>
                 <Select
                   value={target}
                   onChange={(event) => setTarget(event.target.value)}
@@ -298,6 +292,18 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
               Add to unsubscribes
             </Button>
           </form>
+          </Disclosure>
+
+          {/* The reason a reader hunts for a delete button — answered where they
+              hunt for it, and not above the list on every open. */}
+          <Disclosure summary="Why can’t I remove an address?" divider headingLevel={3}>
+            <p className="text-prose text-text-secondary">
+              An address is added when somebody clicks unsubscribe, when their mail bounces
+              permanently, or when you record it here. Nothing removes one — not this panel and
+              not support. We may only email a visitor with their consent, and consent that has
+              been withdrawn cannot be restored from here.
+            </p>
+          </Disclosure>
         </div>
       )}
 

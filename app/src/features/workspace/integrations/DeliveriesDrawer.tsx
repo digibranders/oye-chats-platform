@@ -121,7 +121,7 @@ export function DeliveriesDrawer({ webhook, onOpenChange }: DeliveriesDrawerProp
         empty={
           <EmptyState
             icon={Radio}
-            compact
+            size="panel"
             title="Nothing sent yet"
             description="Attempts appear here as soon as one of the subscribed events happens. Use Send test to check the endpoint now."
           />

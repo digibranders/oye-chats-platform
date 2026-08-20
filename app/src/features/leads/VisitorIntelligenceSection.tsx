@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Send } from 'lucide-react';
-import { Alert, Badge, Button, ConfirmDialog, LockedState, buttonClass } from '../../ui';
+import { Alert, Badge, Button, ConfirmDialog, LockedState, Tooltip, buttonClass } from '../../ui';
 import { sendLeadFollowUp } from '../../services/api';
 import type { Lead } from '../../types/domain';
+import { LeadSection } from './LeadSection';
 
 /**
  * The Professional-only network and email signal, plus the manual follow-up.
@@ -54,26 +55,25 @@ function NetworkSignal({ intel }: { intel: Record<string, unknown> }) {
   // hosting range, ISP range and carrier brand, so anything reaching here is a
   // range somebody could actually be employed by. Two different things are
   // rendered — a company, or the network that routed them — never one hedged.
+  // Not a box. The drawer is the surface; a section here is a heading and a
+  // hairline, and this one already sits under both.
   return (
-    <div className="space-y-2 rounded-md border border-border px-3.5 py-3">
+    <div className="space-y-2">
       {company ? (
         <div>
-          <p className="text-base font-medium text-text-primary">{company}</p>
+          <Tooltip content="Derived from the visitor’s network. Not a confirmed employer.">
+            <p className="inline-block cursor-default text-base font-medium text-text-primary">
+              {company}
+            </p>
+          </Tooltip>
           {domain ? <p className="break-all text-xs text-text-secondary">{domain}</p> : null}
-          <p className="mt-1 text-xs text-text-tertiary">
-            Derived from the visitor&rsquo;s network. Not a confirmed employer.
-          </p>
         </div>
       ) : asn ? (
         <p className="text-prose text-text-secondary">
           Connecting via <span className="text-text-primary">{asn}</span>
         </p>
       ) : null}
-      {masked ? (
-        <Alert tone="warning">
-          Connecting through a VPN or proxy, so the network signal is unreliable.
-        </Alert>
-      ) : null}
+      {masked ? <Alert tone="warning">VPN or proxy — signal unreliable.</Alert> : null}
     </div>
   );
 }
@@ -123,31 +123,44 @@ function FollowUp({ sessionId, isValidEmail, email }: {
     );
   }
 
+  // The caveats are the button's tooltip, not three stacked paragraphs about one
+  // email address.
+  const caveat = blocked
+    ? 'Failed validation'
+    : isValidEmail !== true
+      ? 'Not validated — you will confirm'
+      : null;
+
   return (
     <div className="space-y-2">
       {/* Always rendered unless there is no address at all. An earlier version
           hid it whenever `is_valid_email` was not exactly `true`, which made the
           feature invisible on every lead captured before validation existed —
           indistinguishable, to the operator, from it being broken. */}
-      <Button
-        variant="secondary"
-        size="sm"
-        disabled={blocked}
-        iconLeft={<Send aria-hidden className="h-3.5 w-3.5" />}
-        onClick={() => setConfirming(true)}
-      >
-        Send a follow-up email
-      </Button>
-
-      {blocked ? (
-        <p className="text-xs text-text-secondary">
-          This address failed validation, so it cannot be contacted.
-        </p>
-      ) : isValidEmail !== true ? (
-        <p className="text-xs text-text-secondary">
-          This address has not been validated yet. You will be asked to confirm.
-        </p>
-      ) : null}
+      {caveat ? (
+        <Tooltip content={caveat}>
+          <span className="inline-flex">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={blocked}
+              iconLeft={<Send aria-hidden />}
+              onClick={() => setConfirming(true)}
+            >
+              Send a follow-up email
+            </Button>
+          </span>
+        </Tooltip>
+      ) : (
+        <Button
+          variant="secondary"
+          size="sm"
+          iconLeft={<Send aria-hidden />}
+          onClick={() => setConfirming(true)}
+        >
+          Send a follow-up email
+        </Button>
+      )}
 
       {state === 'needs-override' && message ? (
         <Alert
@@ -164,8 +177,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
       ) : null}
       {state === 'paused' && message ? (
         <Alert tone="warning" live title="Follow-ups are paused for this chatbot">
-          {message} Somebody with access to the chatbot can turn them back on under Behaviour ▸
-          Lead follow-up emails. Nothing is queued in the meantime.
+          {message} Turn them back on under Behaviour → Lead follow-up emails.
         </Alert>
       ) : null}
       {state === 'error' && message ? (
@@ -200,19 +212,18 @@ export function VisitorIntelligenceSection({
 }) {
   if (!unlocked) {
     return (
-      <section className="space-y-2">
-        <h3 className="text-lg font-semibold text-text-primary">Network and email</h3>
+      <LeadSection title="Network and email">
         <LockedState
-          compact
+          size="inline"
           title="Included on the Professional plan"
-          description="See the company behind a visitor's network, whether their email address is deliverable, and send them a follow-up from here."
+          description="Company from the visitor's network, email deliverability, and one-click follow-up."
           action={
             <Link to="/billing" className={buttonClass('secondary', 'sm')}>
               See plans
             </Link>
           }
         />
-      </section>
+      </LeadSection>
     );
   }
 
@@ -224,19 +235,18 @@ export function VisitorIntelligenceSection({
   const emailScore = lead.contact?.email_score;
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-lg font-semibold text-text-primary">Network and email</h3>
-
+    <LeadSection title="Network and email">
       {hasNetworkSignal(intel) ? (
         <NetworkSignal intel={intel} />
       ) : (
-        <p className="rounded-md border border-border px-3.5 py-3 text-prose text-text-secondary">
-          No network details resolved for this visitor.
-        </p>
+        <p className="text-prose text-text-secondary">No network details resolved.</p>
       )}
 
       {email ? (
-        <div className="space-y-2">
+        // One row: the verdict and the action about one address, on one line —
+        // they used to be a badge, a button 8px under it, and up to two more
+        // hint paragraphs under that.
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           {isValidEmail === true ? (
             <Badge tone="success">
               Deliverable{typeof emailScore === 'number' ? ` · ${emailScore}/100` : ''}
@@ -249,6 +259,6 @@ export function VisitorIntelligenceSection({
           <FollowUp sessionId={lead.session_id} isValidEmail={isValidEmail} email={email} />
         </div>
       ) : null}
-    </section>
+    </LeadSection>
   );
 }

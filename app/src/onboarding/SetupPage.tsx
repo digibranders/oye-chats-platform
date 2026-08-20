@@ -3,6 +3,7 @@ import { ArrowRight, Check } from 'lucide-react';
 import {
   Card,
   CardBody,
+  Measure,
   Page,
   PageHeader,
   Progress,
@@ -27,88 +28,95 @@ export function SetupPage() {
   const { steps, done, total, complete } = useSetupChecklist();
 
   return (
-    <Page width="default">
-      <PageHeader
-        eyebrow="Setup"
-        title={complete ? 'You are all set' : 'Get your chatbot working'}
-        description={
-          complete
-            ? 'Everything is in place. This checklist will stop appearing in the sidebar.'
-            : 'Six things, in any order. Each one opens the page where you actually do it.'
-        }
-      />
+    <Page>
+      <Measure width="form">
+        <PageHeader
+          eyebrow="Setup"
+          title={complete ? 'You are all set' : 'Get your chatbot working'}
+          description={complete ? 'This checklist will stop appearing in the sidebar.' : undefined}
+        />
 
-      <Card>
-        <CardBody className="border-b border-border">
-          <div className="flex items-baseline justify-between gap-3">
+        <Card>
+          {/* One mechanism for the seam, not two. The `border-b` here and the
+              `border-t` on the first row both drew the same hairline, so which one
+              won depended on render order. The list's rows own it. */}
+          <CardBody>
             <p className="text-base font-medium text-text-primary">
               <span className="figure">{done}</span> of <span className="figure">{total}</span> done
             </p>
-          </div>
-          <Progress
-            className="mt-2"
-            value={(done / total) * 100}
-            label={`Setup progress, ${done} of ${total} complete`}
-          />
-        </CardBody>
+            <Progress
+              className="mt-2"
+              value={(done / total) * 100}
+              label={`Setup progress, ${done} of ${total} complete`}
+            />
+          </CardBody>
 
-        <ul>
-          {steps.map((step, index) => (
-            <li key={step.id} className={cn(index > 0 && 'border-t border-border')}>
-              <Link
-                to={step.to}
-                className={cn(
-                  'group flex items-start gap-3.5 px-5 py-4 transition-colors',
-                  'hover:bg-surface-hover',
-                )}
-              >
-                <span
-                  aria-hidden
+          <ul>
+            {steps.map((step, index) => (
+              <li key={step.id} className="border-t border-border first:border-t-0">
+                <Link
+                  to={step.to}
                   className={cn(
-                    'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                    step.done
-                      ? 'border-success-fill bg-success-fill text-text-inverse'
-                      : 'border-border-strong text-text-tertiary',
+                    'group flex items-start gap-3.5 px-5 py-4 transition-colors',
+                    'hover:bg-surface-hover',
                   )}
                 >
-                  {step.done ? (
-                    <Check className="h-3 w-3" strokeWidth={3} />
-                  ) : (
-                    <span className="figure text-2xs">{index + 1}</span>
-                  )}
-                </span>
-
-                <span className="min-w-0 flex-1">
                   <span
+                    aria-hidden
                     className={cn(
-                      'block text-base font-medium',
-                      step.done ? 'text-text-tertiary line-through' : 'text-text-primary',
+                      'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                      step.done
+                        ? 'border-success-fill bg-success-fill text-text-inverse'
+                        : 'border-border-strong text-text-tertiary',
                     )}
                   >
-                    {step.label}
+                    {step.done ? (
+                      <Check className="h-3 w-3" strokeWidth={3} />
+                    ) : (
+                      <span className="figure text-2xs">{index + 1}</span>
+                    )}
                   </span>
-                  <span className="mt-0.5 block text-prose text-text-secondary">
-                    {step.description}
+
+                  <span className="min-w-0 flex-1">
+                    {/* No strikethrough. `line-through` plus tertiary text on a
+                        live link reads as disabled; the filled green check is the
+                        signal, and the row is still a way into the page. */}
+                    <span
+                      className={cn(
+                        'block text-base font-medium',
+                        step.done ? 'text-text-secondary' : 'text-text-primary',
+                      )}
+                    >
+                      {step.label}
+                    </span>
+                    {step.description ? (
+                      <span className="mt-0.5 block text-xs text-text-secondary">
+                        {step.description}
+                      </span>
+                    ) : null}
                   </span>
-                </span>
 
-                <ArrowRight
-                  aria-hidden
-                  className="mt-1 h-4 w-4 shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover:opacity-100"
-                />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </Card>
+                  {/* Never gate the *existence* of an affordance on hover: on
+                      touch there is no hover, so the only mark saying "this row is
+                      a link" never rendered at all. */}
+                  <ArrowRight
+                    aria-hidden
+                    className="mt-1 h-icon-md w-icon-md shrink-0 text-text-tertiary opacity-40 transition-opacity group-hover:opacity-100"
+                  />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
 
-      {complete ? (
-        <div className="mt-6 flex justify-center">
-          <Link to="/" className={buttonClass('primary', 'md')}>
-            Go to Home
-          </Link>
-        </div>
-      ) : null}
+        {complete ? (
+          <div className="mt-6 flex justify-center">
+            <Link to="/" className={buttonClass('primary', 'md')}>
+              Go to Home
+            </Link>
+          </div>
+        ) : null}
+      </Measure>
     </Page>
   );
 }

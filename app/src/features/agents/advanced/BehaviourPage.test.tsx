@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,7 +26,12 @@ vi.mock('../../../services/api', () => ({
   updateBot: vi.fn(),
 }));
 
-const agent: Bot = { id: 7, name: 'Support Concierge', plan_slug: 'professional' };
+const agent: Bot = {
+  id: 7,
+  name: 'Support Concierge',
+  plan_slug: 'professional',
+  website: 'https://www.acme.com',
+};
 
 const SETTINGS: Record<string, unknown> = {
   relevance_threshold: 0.55,
@@ -89,7 +94,7 @@ function renderPage() {
 
 async function renderSettled() {
   const result = renderPage();
-  expect(await screen.findByRole('heading', { name: 'Answering scope' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Answering' })).toBeInTheDocument();
   return result;
 }
 
@@ -116,6 +121,7 @@ describe('the four states', () => {
     mountAgent(null, { loading: true });
     renderPage();
     expect(screen.getByRole('heading', { level: 1, name: 'Behaviour' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Answering' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Answering scope' })).not.toBeInTheDocument();
   });
 
@@ -131,7 +137,7 @@ describe('the four states', () => {
 
     expect(await screen.findByText('Gateway timeout')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('heading', { name: 'Answering scope' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Answering' })).toBeInTheDocument();
   });
 
   it('is NOT locked as a whole for a Free workspace', async () => {
@@ -144,7 +150,7 @@ describe('the four states', () => {
     expect(screen.getByRole('radiogroup', { name: 'Answering strictness' })).toBeInTheDocument();
   });
 
-  it('locks only the operator window when the plan has no live chat', async () => {
+  it('states the plan on the operator window when there is no live chat', async () => {
     mountEntitlements({ hasFeature: (key) => key !== 'live_chat' });
     await renderSettled();
 
@@ -250,12 +256,14 @@ describe('the operator response window', () => {
 });
 
 describe('timing and reliability', () => {
-  it('is behind a real disclosure button, not a hidden div', async () => {
+  it('is behind a real disclosure that unmounts its panel, not a hidden div', async () => {
     await renderSettled();
 
-    const toggle = screen.getByRole('button', { name: /Show settings/ });
+    const toggle = screen.getByRole('button', { name: /Timing and reliability/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByLabelText(/Greeting bubble delay/)).not.toBeVisible();
+    // Unmounted, not `hidden`: a hidden subtree keeps nine number inputs in the
+    // tab order and re-rendering on every keystroke of the page draft.
+    expect(screen.queryByLabelText(/Greeting bubble delay/)).not.toBeInTheDocument();
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -264,7 +272,7 @@ describe('timing and reliability', () => {
 
   it('clamps a value the server would happily store and the widget could not survive', async () => {
     await renderSettled();
-    await user.click(screen.getByRole('button', { name: /Show settings/ }));
+    await user.click(screen.getByRole('button', { name: /Timing and reliability/ }));
 
     const field = screen.getByLabelText('Heartbeat, widget open (seconds)');
     await user.clear(field);
@@ -308,34 +316,87 @@ describe('the dirty / save contract', () => {
   });
 });
 
-describe('capability nothing reads', () => {
-  it('names each inert setting rather than omitting it', async () => {
+describe('what the console does not publish', () => {
+  it('never renders backend source paths or private function names', async () => {
+    /* The page used to end on a "Not configurable yet" card listing two inert
+       `Bot` columns, complete with `api/app/services/....py:85 (select_operator,
+       uncalled)`. That is engineering notes shipped as product, on a customer's
+       settings page. The reasoning is preserved as a doc comment in
+       `behaviour.config.ts`, which is where it belongs. */
     await renderSettled();
 
-    expect(screen.getByRole('heading', { name: 'Not configurable yet' })).toBeInTheDocument();
-    for (const title of ['Routing strategy', 'Operator disconnect grace period']) {
-      expect(screen.getAllByText(title).length).toBeGreaterThan(0);
-    }
+    const body = document.body.textContent ?? '';
+    expect(body).not.toMatch(/api\/app\/services/);
+    expect(body).not.toMatch(/select_operator/);
+    expect(body).not.toMatch(/_operator_disconnect_timeout/);
+    expect(screen.queryByRole('heading', { name: 'Not configurable yet' })).toBeNull();
   });
 
-  it('no longer claims the three settings that became reachable are blocked', async () => {
-    await renderSettled();
-
-    // Each of these is now writable and owned by a real surface. Leaving them
-    // on the "not configurable" list would be the page telling the customer
-    // their own product cannot do something it does.
-    const blocked = screen.getByRole('heading', { name: 'Not configurable yet' }).closest('[data-card]');
-    expect(blocked).not.toBeNull();
-    expect(blocked?.textContent).not.toMatch(/visitor_disconnect_timeout/i);
-    expect(blocked?.textContent).not.toMatch(/followup_sending_paused/i);
-    expect(blocked?.textContent).not.toMatch(/Pause this chatbot/i);
-  });
-
-  it('offers the follow-up kill switch the page used to call unreachable', async () => {
+  it('offers the follow-up kill switch, and says it does not wait for the save bar', async () => {
     await renderSettled();
 
     expect(
       await screen.findByRole('switch', { name: 'Pause follow-up emails' }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Takes effect immediately/)).toBeInTheDocument();
+  });
+});
+
+describe('access, moved here from Deploy', () => {
+  it('edits the allow-list under the page’s own draft and save bar', async () => {
+    // No website on the chatbot, so the lock-out guard has nothing to compare
+    // against and the save goes straight through — that guard has its own test.
+    mountAgent({ ...agent, website: undefined });
+    vi.mocked(getClientSettings).mockResolvedValue({
+      ...SETTINGS,
+      allowed_domains: ['acme.com'],
+      domain_check_enabled: true,
+    });
+    await renderSettled();
+
+    expect(screen.getByRole('heading', { name: 'Access' })).toBeInTheDocument();
+    // No save button of its own — the three that used to live on Deploy are gone.
+    expect(screen.queryByRole('button', { name: 'Save domains' })).toBeNull();
+
+    await user.type(screen.getByRole('textbox', { name: 'Domains' }), 'shop.acme.com{Enter}');
+    await user.click(await screen.findByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateBot).toHaveBeenCalled());
+    const payloads = vi.mocked(updateBot).mock.calls.map(([, body]) => body);
+    const access = payloads.find((body) => 'allowed_domains' in body);
+    expect(access?.allowed_domains).toEqual(['acme.com', 'shop.acme.com']);
+  });
+
+  it('confirms before saving a list that would block the customer’s own website', async () => {
+    // `_enforce_bot_origin` fails open on an empty list, so the guard only ever
+    // fires once enforcement is on AND the list has an entry that misses the
+    // customer's own host — `www.acme.com` against a bare `acme.com`.
+    vi.mocked(getClientSettings).mockResolvedValue({
+      ...SETTINGS,
+      allowed_domains: ['acme.com'],
+      domain_check_enabled: false,
+    });
+    await renderSettled();
+
+    await user.click(screen.getByRole('checkbox', { name: /Only allow the domains/i }));
+    await user.click(await screen.findByRole('button', { name: 'Save changes' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/will block your own website/i);
+    // Nothing is written until the customer accepts the consequence.
+    expect(updateBot).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save anyway' }));
+    await waitFor(() => expect(updateBot).toHaveBeenCalled());
+  });
+
+  it('refuses a pinned parent the cookie API cannot express, and says why', async () => {
+    await renderSettled();
+
+    await user.type(screen.getByRole('textbox', { name: 'Pin a parent domain' }), '*.acme.com');
+
+    expect(await screen.findByText(/A wildcard will not work here/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(updateBot).not.toHaveBeenCalled();
   });
 });

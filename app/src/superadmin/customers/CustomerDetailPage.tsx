@@ -9,22 +9,24 @@ import {
   CardBody,
   CardHeader,
   DataTable,
-  DefinitionList,
+  Grid,
+  PropertyGrid,
   EmptyState,
   Section,
   Skeleton,
   Stack,
-  StatTile,
+  StatRow,
   buttonClass,
   formatDate,
   formatDateTime,
-  formatMoney,
   formatNumber,
   type Column,
 } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { usePlatformResource } from '../usePlatform';
 import { PLATFORM_ROOT } from '../nav';
+import { USD_NORMALISED_SHORT, usdCentsRounded } from '../money';
+import { PAGE_SIZE } from '../recordListState';
 import { AccessCard, DeleteAccountCard } from './AccessActions';
 import { BillingCountryDialog, CreditsDialog, EditAccountDialog } from './AccountDialogs';
 import { ImpersonateCard } from './Impersonate';
@@ -108,32 +110,37 @@ export function CustomerDetailPage() {
         <Stack>
           {client.suspended_at ? (
             <Alert tone="danger" title="This account is suspended">
-              Signed out since {formatDateTime(client.suspended_at)}. They cannot sign in or use their
-              API key until access is restored below.
+              Signed out since {formatDateTime(client.suspended_at)}. They cannot sign in or use
+              their API key until access is restored.
             </Alert>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
-              label="Monthly recurring"
-              value={formatMoney(client.mrr_cents, 'USD')}
-              period="Current subscription"
-            />
-            <StatTile
-              label="Credit balance"
-              value={formatNumber(client.credits_balance)}
-              period="Ledger sum, all time"
-              tone={client.credits_balance < 0 ? 'danger' : 'neutral'}
-            />
-            <StatTile
-              label="Conversations"
-              value={formatNumber(client.total_sessions)}
-              period="All time"
-            />
-            <StatTile label="Messages" value={formatNumber(client.total_messages)} period="All time" />
-          </div>
+          <Card>
+            <CardBody flush>
+              <StatRow
+                label="Account totals"
+                period="All time"
+                items={[
+                  {
+                    label: 'Monthly recurring',
+                    size: 'lg',
+                    value: usdCentsRounded(client.mrr_cents),
+                    period: USD_NORMALISED_SHORT,
+                  },
+                  {
+                    label: 'Credit balance',
+                    value: formatNumber(client.credits_balance),
+                    period: 'Ledger sum',
+                    tone: client.credits_balance < 0 ? 'danger' : 'neutral',
+                  },
+                  { label: 'Conversations', value: formatNumber(client.total_sessions) },
+                  { label: 'Messages', value: formatNumber(client.total_messages) },
+                ]}
+              />
+            </CardBody>
+          </Card>
 
-          <Section title="Account">
+          <Grid cols={2} align="start">
             <Card>
               <CardHeader
                 titleAs="h3"
@@ -156,8 +163,7 @@ export function CustomerDetailPage() {
                 }
               />
               <CardBody>
-                <DefinitionList
-                  columns={2}
+                <PropertyGrid
                   items={[
                     { label: 'Account id', value: <span className="figure">{client.id}</span> },
                     { label: 'Login email', value: client.email },
@@ -179,8 +185,11 @@ export function CustomerDetailPage() {
                       value: <span className="figure">{formatDateTime(client.created_at)}</span>,
                     },
                     {
+                      // Absent, not explained: the endpoint's shortcoming is not
+                      // the operator's reading material, and rule 10 asks for
+                      // an em dash. The accounts list carries the value.
                       label: 'Billing country',
-                      value: 'Not returned by this endpoint — the accounts list carries it.',
+                      value: undefined,
                     },
                     {
                       label: 'Platform role',
@@ -194,14 +203,12 @@ export function CustomerDetailPage() {
                 />
               </CardBody>
             </Card>
-          </Section>
 
-          <Section title="Subscription">
             <Card>
+              <CardHeader titleAs="h3" title="Subscription" />
               {subscription ? (
                 <CardBody>
-                  <DefinitionList
-                    columns={2}
+                  <PropertyGrid
                     items={[
                       { label: 'Plan', value: subscription.plan_name || '—' },
                       {
@@ -246,22 +253,22 @@ export function CustomerDetailPage() {
                 <EmptyState
                   compact
                   title="No subscription on record"
-                  description="This account has never held one, or every subscription it held was hard-deleted. Revenue carries the platform-wide view."
+                  description="This account has never held one, or every subscription it held was hard-deleted."
                 />
               )}
             </Card>
-          </Section>
+          </Grid>
 
           <Section
             title="Chatbots"
-            description="Every bot this account owns. Open one in Records for its conversation and message counts."
+            description="Open one in Records for its conversation and message counts."
           >
             <DataTable<ClientBot>
               caption={`Chatbots owned by ${client.name}`}
               columns={BOT_COLUMNS}
               rows={client.bots}
               rowKey={(bot) => String(bot.id)}
-              pageSize={10}
+              pageSize={PAGE_SIZE}
               defaultSort={{ key: 'name', direction: 'asc' }}
               empty={
                 <EmptyState
@@ -274,10 +281,10 @@ export function CustomerDetailPage() {
           </Section>
 
           <Section title="Support session" description="The most dangerous control in the product.">
-            <div className="grid gap-4 lg:grid-cols-2">
+            <Grid cols={2} align="start">
               <ImpersonateCard client={client} />
               <SupportSessionsPanel clientId={client.id} />
-            </div>
+            </Grid>
           </Section>
 
           <Section title="Controls">

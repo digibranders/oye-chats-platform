@@ -85,3 +85,35 @@ export function crawlFraction(crawled: number | undefined, total: number | undef
 export function isCrawlFinished(status: string | undefined): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
+
+/**
+ * "Skip for now", from the first run.
+ *
+ * Home redirects a workspace with no chatbot to `/welcome`, and `/welcome`
+ * redirects a workspace that has one back to Home — which is right as a default
+ * and was, until this flag, inescapable: clicking Home in the rail bounced
+ * silently, and Home's own empty state was unreachable code. Linear's onboarding
+ * is skippable at every step; this one was skippable at none.
+ *
+ * Deliberately `sessionStorage`: skipping is a "not right now", not a decision
+ * about the account. The next visit opens on the first run again, which is where
+ * a workspace with no chatbot should start.
+ */
+const SKIP_FIRST_RUN_KEY = 'oyechats_skip_first_run';
+
+export function skipFirstRun(): void {
+  try {
+    window.sessionStorage.setItem(SKIP_FIRST_RUN_KEY, 'true');
+  } catch {
+    /* private mode: the navigation still happens, the redirect just returns */
+  }
+}
+
+/** True when the user asked to see Home without creating a chatbot first. */
+export function wantsEmptyHome(): boolean {
+  try {
+    return window.sessionStorage.getItem(SKIP_FIRST_RUN_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}

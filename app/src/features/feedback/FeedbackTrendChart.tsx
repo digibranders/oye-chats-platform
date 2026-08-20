@@ -11,9 +11,12 @@ import {
 } from 'recharts';
 import {
   CHART_AXIS,
+  CHART_CURSOR,
   CHART_GRID,
   CHART_MARGIN,
+  ChartDataTable,
   ChartFrame,
+  ChartTooltip,
   formatNumber,
   seriesColor,
 } from '../../ui';
@@ -27,13 +30,16 @@ function TrendTooltip({ active, payload }: TooltipProps<number, string>) {
   const point = payload[0]?.payload as FeedbackTrendPoint | undefined;
   if (!point) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-2.5 py-2 shadow-md">
-      <p className="text-2xs text-text-tertiary">{point.date}</p>
-      <p className="figure text-xs text-text-primary">{point.rate}% helpful</p>
-      <p className="figure text-2xs text-text-secondary">
-        {formatNumber(point.total)} {point.total === 1 ? 'rating' : 'ratings'}
-      </p>
-    </div>
+    <ChartTooltip
+      label={point.date}
+      rows={[
+        { name: 'Helpful share', value: `${point.rate}%`, seriesIndex: RATE_SERIES },
+        {
+          name: point.total === 1 ? 'Rating' : 'Ratings',
+          value: formatNumber(point.total),
+        },
+      ]}
+    />
   );
 }
 
@@ -44,8 +50,6 @@ export interface FeedbackTrendChartProps {
   /** Helpful share across the whole window, 0-100. */
   overallRate: number;
   loading?: boolean;
-  error?: string | null;
-  onRetry?: () => void;
 }
 
 /**
@@ -66,8 +70,6 @@ export function FeedbackTrendChart({
   rangeLabel,
   overallRate,
   loading = false,
-  error = null,
-  onRetry,
 }: FeedbackTrendChartProps) {
   const first = points[0];
   const last = points[points.length - 1];
@@ -82,14 +84,12 @@ export function FeedbackTrendChart({
       : '';
   const trough =
     worst && points.length > 1 ? ` The lowest day was ${worst.date}, at ${worst.rate}%.` : '';
-  const summary = `The share of answers rated helpful, by day, over ${rangeLabel.toLowerCase()}: ${overallRate}% across the whole window.${movement}${trough}`;
+  const summary = `The share of answers rated helpful, by day, over ${rangeLabel.toLowerCase()}: ${overallRate}% across the whole window.${movement}${trough} The dashed line marks the window's average of ${overallRate}%.`;
 
   return (
     <ChartFrame
       height={220}
       loading={loading}
-      error={error}
-      onRetry={onRetry}
       // Fewer than two days is not a trend: one point draws a lone dot under a
       // heading that promises movement. The tiles above already state the
       // single day's figure, so the honest answer here is to say so.
@@ -98,33 +98,20 @@ export function FeedbackTrendChart({
       emptyDescription="A trend needs ratings on more than one day. Once visitors have rated answers across a few days, the line appears here."
       summary={summary}
       dataTable={
-        <table className="w-full text-left text-xs">
-          <caption className="sr-only">Helpful share by day</caption>
-          <thead>
-            <tr className="text-text-tertiary">
-              <th scope="col" className="py-1 pr-4 font-medium">
-                Day
-              </th>
-              <th scope="col" className="py-1 pr-4 font-medium">
-                Helpful share
-              </th>
-              <th scope="col" className="py-1 font-medium">
-                Ratings
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {points.map((point, index) => (
-              <tr key={`${point.date}-${index}`} className="border-t border-border">
-                <th scope="row" className="py-1 pr-4 font-normal text-text-secondary">
-                  {point.date}
-                </th>
-                <td className="figure py-1 pr-4 text-text-primary">{point.rate}%</td>
-                <td className="figure py-1 text-text-secondary">{formatNumber(point.total)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ChartDataTable
+          caption="Helpful share by day"
+          columns={[
+            { key: 'day', header: 'Day' },
+            { key: 'rate', header: 'Helpful share', numeric: true },
+            { key: 'total', header: 'Ratings', numeric: true },
+          ]}
+          rowKey={(_row, index) => `${points[index].date}-${index}`}
+          rows={points.map((point) => ({
+            day: point.date,
+            rate: `${point.rate}%`,
+            total: formatNumber(point.total),
+          }))}
+        />
       }
     >
       <ResponsiveContainer width="100%" height="100%">
@@ -143,8 +130,14 @@ export function FeedbackTrendChart({
             y={overallRate}
             stroke="var(--color-border-strong)"
             strokeDasharray="4 3"
+            label={{
+              value: `Average ${overallRate}%`,
+              position: 'insideTopRight',
+              fill: 'var(--color-text-tertiary)',
+              fontSize: 11,
+            }}
           />
-          <Tooltip content={<TrendTooltip />} />
+          <Tooltip content={<TrendTooltip />} cursor={CHART_CURSOR} />
           <Line
             type="monotone"
             dataKey="rate"

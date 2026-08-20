@@ -4,7 +4,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
-import { Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Field, Input, buttonClass, validateEmail } from '../ui';
 import { registerClient } from '../services/api';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
@@ -12,6 +12,7 @@ import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
 import { PasswordRules } from './auth/PasswordRules';
+import { useGoogleAuthAvailable } from './auth/useGoogleAuth';
 import {
   currentSessionDoor,
   errorMessage,
@@ -81,6 +82,9 @@ export default function Register() {
     () => Boolean(getAuthItem('admin_token')) && !isSessionExpired(),
   );
   const [revealPassword, setRevealPassword] = useState(false);
+  // See `Login`: the button renders nothing without an OAuth client, so the
+  // divider cannot be unconditional.
+  const googleAvailable = useGoogleAuthAvailable();
 
   // In an effect, not in the component body. This write used to run during
   // render — on every render, and twice per mount under StrictMode.
@@ -167,7 +171,6 @@ export default function Register() {
   return (
     <AuthShell
       title="Create your account"
-      description="Point a chatbot at your website and it will start answering in minutes."
       footer={
         <>
           Already have an account?{' '}
@@ -184,32 +187,7 @@ export default function Register() {
         next={postAuthDestination({ next, affiliateToken, door: 'client' })}
       />
 
-      {/* One consent statement covering both paths, under the primary action so
-          it is visible whichever one the visitor takes. Signing up is the
-          consenting act; there is no checkbox to forget to tick. */}
-      <p className="mt-3 text-xs leading-relaxed text-text-secondary">
-        By continuing you agree to our{' '}
-        <a
-          href="https://www.oyechats.com/legal/terms"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
-        >
-          Terms
-        </a>{' '}
-        and{' '}
-        <a
-          href="https://www.oyechats.com/legal/privacy"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
-        >
-          Privacy Policy
-        </a>
-        .
-      </p>
-
-      <AuthDivider />
+      {googleAvailable ? <AuthDivider /> : null}
 
       {/* The address is already taken. This used to navigate silently to the
           sign-in page with the error cleared, so from the visitor's side
@@ -242,7 +220,6 @@ export default function Register() {
             autoComplete="name"
             autoFocus
             placeholder="Priya Sharma"
-            leading={<User aria-hidden className="h-4 w-4" />}
             {...form.register('name')}
           />
         </Field>
@@ -252,7 +229,6 @@ export default function Register() {
             type="email"
             autoComplete="email"
             placeholder="you@company.com"
-            leading={<Mail aria-hidden className="h-4 w-4" />}
             {...form.register('email')}
           />
         </Field>
@@ -267,7 +243,6 @@ export default function Register() {
             type={revealPassword ? 'text' : 'password'}
             autoComplete="new-password"
             placeholder="Choose a password"
-            leading={<Lock aria-hidden className="h-4 w-4" />}
             trailing={
               <button
                 type="button"
@@ -290,6 +265,33 @@ export default function Register() {
         <Button type="submit" variant="primary" size="lg" block loading={signUp.isPending}>
           Create account
         </Button>
+
+        {/* One consent statement covering both paths, under the primary submit.
+            It used to sit between the Google button and the divider, where it
+            read as a footnote to Google sign-in while "Create account" 100px
+            below had no legal text near it at all. Signing up is the consenting
+            act; there is no checkbox to forget to tick. */}
+        <p className="text-xs leading-relaxed text-text-secondary">
+          By creating an account you agree to our{' '}
+          <a
+            href="https://www.oyechats.com/legal/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+          >
+            Terms
+          </a>{' '}
+          and{' '}
+          <a
+            href="https://www.oyechats.com/legal/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+          >
+            Privacy Policy
+          </a>
+          .
+        </p>
       </form>
     </AuthShell>
   );

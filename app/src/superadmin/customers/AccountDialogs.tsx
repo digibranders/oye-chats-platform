@@ -4,6 +4,8 @@ import {
   Button,
   Dialog,
   Field,
+  FigureList,
+  FigureRow,
   Input,
   SegmentedControl,
   Select,
@@ -166,31 +168,19 @@ export function CreditsDialog({ client, open, onOpenChange, onSaved }: AccountDi
             The credit ledger is append-only. This entry cannot be edited or deleted afterwards — only
             offset by a second, opposite entry.
           </Alert>
-          <dl className="flex flex-col gap-2 rounded-md border border-border bg-surface-sunken px-3 py-3">
-            <div className="flex items-baseline justify-between gap-4">
-              <dt className="text-xs text-text-tertiary">Account</dt>
-              <dd className="text-sm font-medium text-text-primary">{client.name}</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4">
-              <dt className="text-xs text-text-tertiary">Balance now</dt>
-              <dd className="figure text-sm text-text-primary">{formatNumber(client.credits_balance)}</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4">
-              <dt className="text-xs text-text-tertiary">
-                {direction === 'remove' ? 'Removing' : 'Adding'}
-              </dt>
-              <dd
-                className={`figure text-sm font-medium ${direction === 'remove' ? 'text-danger' : 'text-success'}`}
-              >
-                {direction === 'remove' ? '−' : '+'}
-                {formatNumber(Math.abs(delta))}
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4 border-t border-border pt-2">
-              <dt className="text-sm font-medium text-text-primary">Balance after</dt>
-              <dd className="figure text-sm font-semibold text-text-primary">{formatNumber(after)}</dd>
-            </div>
-          </dl>
+          {/* `FigureList` draws the rule above the total itself; this was
+              twenty-five lines re-implementing it, with the one class in the
+              console built by string concatenation rather than by `cn`. */}
+          <FigureList>
+            <FigureRow label="Account" value={client.name} />
+            <FigureRow label="Balance now" value={formatNumber(client.credits_balance)} />
+            <FigureRow
+              label={direction === 'remove' ? 'Removing' : 'Adding'}
+              tone={direction === 'remove' ? 'danger' : 'success'}
+              value={`${direction === 'remove' ? '−' : '+'}${formatNumber(Math.abs(delta))}`}
+            />
+            <FigureRow emphasis label="Balance after" value={formatNumber(after)} />
+          </FigureList>
           <div>
             <p className="text-xs text-text-tertiary">Reason recorded</p>
             <p className="mt-0.5 text-prose text-text-primary">{reason.trim()}</p>
@@ -326,7 +316,7 @@ export function BillingCountryDialog({ client, open, onOpenChange, onSaved }: Ac
       open={open}
       onOpenChange={onOpenChange}
       title="Override billing country"
-      description={`Re-classifies every future invoice issued to ${client.name}.`}
+      description={`Re-classifies every future invoice issued to ${client.name}. It does not move the payment rail — re-point their Razorpay mandate first.`}
       dismissible={!busy}
       footer={
         <>
@@ -350,11 +340,6 @@ export function BillingCountryDialog({ client, open, onOpenChange, onSaved }: Ac
         </Alert>
       ) : null}
       <div className="flex flex-col gap-4">
-        <Alert tone="warning" title="Do the mandate first">
-          This records the new country; it does not move the payment rail. Verify the customer and
-          re-point their Razorpay mandate before setting it. An account with a GSTIN on record cannot
-          be moved off IN — the server answers 422 until the GSTIN is cleared.
-        </Alert>
         <Field label="New billing country" required hint="ISO 3166-1 alpha-2." error={country ? codeProblem : null}>
           <Input
             value={country}
@@ -430,14 +415,21 @@ export function PrivilegesDialog({ client, open, onOpenChange, onSaved }: Accoun
       open={open}
       onOpenChange={onOpenChange}
       title="Super-admin privileges"
-      description={`Grants or removes platform-console access for ${client.name}.`}
+      description={`A super-admin reads and acts on every account on the platform. Granting or removing it for ${client.name}.`}
       dismissible={!busy}
       footer={
         <>
           <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="danger" loading={busy} disabled={!changed} onClick={() => void submit()}>
+          {/* The weight follows the direction: granting is additive, removing
+              is what takes something away. */}
+          <Button
+            variant={isSuperadmin ? 'primary' : 'danger'}
+            loading={busy}
+            disabled={!changed}
+            onClick={() => void submit()}
+          >
             {isSuperadmin ? 'Grant super-admin' : 'Remove super-admin'}
           </Button>
         </>
@@ -449,18 +441,14 @@ export function PrivilegesDialog({ client, open, onOpenChange, onSaved }: Accoun
         </Alert>
       ) : null}
       <div className="flex flex-col gap-4">
-        <Alert tone="danger" title="This grants access to every customer's data">
-          A super-admin can read and act on every account on the platform. Only an owner-tier
-          super-admin may make this change, and nobody may change their own privileges here.
-        </Alert>
         <Switch
           checked={isSuperadmin}
           onCheckedChange={setIsSuperadmin}
           label="Platform console access"
-          description="Signs this account into /platform with the super-admin persona."
+          description="Signs this account into /platform."
         />
         {isSuperadmin ? (
-          <Field label="Tier" hint="Read-only cannot write anything, including revoking its own tokens' peers.">
+          <Field label="Tier" hint="Read-only cannot write anything.">
             <Select options={ROLES} value={role} onChange={(event) => setRole(event.target.value)} />
           </Field>
         ) : null}

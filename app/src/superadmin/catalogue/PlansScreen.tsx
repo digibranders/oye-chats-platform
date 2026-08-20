@@ -4,8 +4,6 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
-  CardBody,
   ConfirmDialog,
   DataTable,
   EmptyState,
@@ -18,6 +16,7 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { PlanEditor } from './PlanEditor';
 import { formatInr, formatLimit, formatSeats, formatUsd } from './plan-model';
 import type { Plan } from './types';
@@ -162,12 +161,12 @@ export function PlansScreen() {
     },
     {
       key: 'actions',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (plan) => (
         <Button
           size="sm"
-          variant="danger"
+          variant="ghost"
           disabled={plan.active_subscriptions > 0}
           onClick={() => {
             setActionError(null);
@@ -182,10 +181,7 @@ export function PlansScreen() {
 
   if (plans.forbidden) {
     return (
-      <LockedState
-        title="You cannot read the plan catalogue"
-        description="Your super-admin account is not permitted to load plans. Nothing was requested beyond the list itself."
-      />
+      <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription('the plan catalogue')} />
     );
   }
 
@@ -197,19 +193,28 @@ export function PlansScreen() {
         </Alert>
       ) : null}
 
-      <Alert tone="neutral" title="A plan row is a permission set">
-        Limits and features here are what <span className="figure">plan_entitlements_service</span> resolves
-        for every account on the plan, cached for sixty seconds. There is no draft state and no rollback:
-        saving changes what live customers may do.
-      </Alert>
-
       <Section
         title="Plans"
         description="Ordered as the pricing page lists them."
         actions={
-          <Button variant="primary" size="sm" onClick={() => openPlan(null)} iconLeft={<Plus aria-hidden className="h-3.5 w-3.5" />}>
-            New plan
-          </Button>
+          <>
+            {/* The three figures the catalogue is judged on, beside the control
+                that changes them — they used to be a card of three hand-rolled
+                stat tiles under the table. */}
+            <p className="text-xs text-text-tertiary">
+              <span className="figure">{formatNumber(rows.filter((plan) => plan.is_active).length)}</span>{' '}
+              listed ·{' '}
+              <span className="figure">
+                {formatNumber(rows.reduce((total, plan) => total + plan.active_subscriptions, 0))}
+              </span>{' '}
+              subscriptions · default{' '}
+              {rows.find((plan) => plan.is_default)?.name ??
+                'none — new accounts fall back to Free limits'}
+            </p>
+            <Button variant="primary" size="sm" onClick={() => openPlan(null)} iconLeft={<Plus aria-hidden />}>
+              New plan
+            </Button>
+          </>
         }
       >
         <DataTable
@@ -237,30 +242,6 @@ export function PlansScreen() {
         />
       </Section>
 
-      <Section title="What the catalogue costs to run" description="Read straight from the rows above.">
-        <Card>
-          <CardBody className="grid gap-4 sm:grid-cols-3">
-            <div>
-              <p className="text-xs text-text-tertiary">Listed plans</p>
-              <p className="figure mt-1 text-lg font-semibold text-text-primary">
-                {formatNumber(rows.filter((plan) => plan.is_active).length)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-text-tertiary">Subscriptions across all plans</p>
-              <p className="figure mt-1 text-lg font-semibold text-text-primary">
-                {formatNumber(rows.reduce((total, plan) => total + plan.active_subscriptions, 0))}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-text-tertiary">Default plan</p>
-              <p className="mt-1 text-lg font-semibold text-text-primary">
-                {rows.find((plan) => plan.is_default)?.name ?? 'None — new accounts fall back to Free limits'}
-              </p>
-            </div>
-          </CardBody>
-        </Card>
-      </Section>
 
       <PlanEditor
         open={editorOpen}

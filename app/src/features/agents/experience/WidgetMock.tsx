@@ -10,6 +10,7 @@ import {
   WIDGET_SURFACE,
   WIDGET_TEXT,
   WIDGET_TEXT_MUTED,
+  WIDGET_RADIUS,
 } from './widgetTheme';
 import { PLACEHOLDERS, type ExperienceDraft } from './experience-model';
 
@@ -44,14 +45,21 @@ export interface WidgetMockProps {
   pending: boolean;
   /** Mirrors the widget config endpoint's plan gate on the handoff control. */
   liveChatVisible: boolean;
-  /** The credit line's wording. Owned by Deploy, rendered here so the preview
-   *  shows the badge a visitor actually reads rather than the default. */
+  /** The credit line's wording, so the preview shows the badge a visitor
+   *  actually reads rather than the default. */
   brandingText: string;
   /** Absent while the chatbot is still loading, which disables the composer. */
   onSend?: (question: string) => void;
 }
 
-const PANEL_WIDTH = 340;
+/**
+ * The mock fills its column rather than sitting at a fixed 340.
+ *
+ * A fixed panel right-aligned inside a 384px aside left 44px of dead space on
+ * its left, under a heading, a badge and a segmented control that were all
+ * left-aligned at x=0 — so nothing in the preview column lined up with anything
+ * else in the preview column.
+ */
 const PANEL_HEIGHT = 460;
 
 function text(value: string, fallback: string): string {
@@ -110,7 +118,7 @@ function Bubble({
           backgroundColor: background,
           color: WIDGET_TEXT,
           border: background === WIDGET_BOT_BUBBLE ? `1px solid ${WIDGET_BORDER}` : undefined,
-          borderRadius: 16,
+          borderRadius: WIDGET_RADIUS.panel,
           padding: '8px 12px',
           fontSize: 13,
           lineHeight: 1.45,
@@ -142,11 +150,11 @@ export function WidgetMock({
   const branding = splitBranding(text(brandingText, PLACEHOLDERS.brandingText));
 
   const panel: CSSProperties = {
-    width: PANEL_WIDTH,
+    width: '100%',
     height: PANEL_HEIGHT,
     backgroundColor: WIDGET_SURFACE,
     border: `1px solid ${WIDGET_BORDER}`,
-    borderRadius: 16,
+    borderRadius: WIDGET_RADIUS.panel,
     color: WIDGET_TEXT,
     overflow: 'hidden',
   };
@@ -159,7 +167,7 @@ export function WidgetMock({
   }
 
   return (
-    <div className="flex flex-col items-end gap-3">
+    <div className="flex flex-col items-stretch gap-3">
       {/* The chat window. `aria-label` rather than a heading: this is a picture
           of another product, and giving it a real heading would put a second
           document outline inside the page's own. */}
@@ -189,7 +197,7 @@ export function WidgetMock({
                 style={{
                   backgroundColor: primary,
                   color: WIDGET_ON_PRIMARY,
-                  borderRadius: 8,
+                  borderRadius: WIDGET_RADIUS.control,
                   padding: '7px 14px',
                   fontSize: 12,
                   fontWeight: 600,
@@ -242,6 +250,12 @@ export function WidgetMock({
                           padding: '6px 11px',
                           fontSize: 12,
                           maxWidth: '100%',
+                          // A starter question at the model's own character
+                          // limit made the panel scroll sideways: the chip had
+                          // no truncation and a flex row will not shrink it.
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
                           textAlign: 'left',
                           cursor: onSend ? 'pointer' : 'default',
                         }}
@@ -291,7 +305,7 @@ export function WidgetMock({
             style={{
               backgroundColor: WIDGET_BOT_BUBBLE,
               border: `1px solid ${WIDGET_BORDER}`,
-              borderRadius: 10,
+              borderRadius: WIDGET_RADIUS.composer,
               padding: '6px 8px 6px 10px',
             }}
           >
@@ -319,7 +333,7 @@ export function WidgetMock({
               style={{
                 width: 26,
                 height: 26,
-                borderRadius: 7,
+                borderRadius: WIDGET_RADIUS.control,
                 backgroundColor: composed.trim().length > 0 ? primary : WIDGET_BORDER,
                 cursor: composed.trim().length > 0 ? 'pointer' : 'default',
               }}
@@ -348,7 +362,7 @@ export function WidgetMock({
 
       {/* The launcher, closed. It is the only part of the widget most visitors
           ever see, so a branding preview that omits it is missing the point. */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-end gap-2">
         <span
           style={{
             backgroundColor: WIDGET_BOT_BUBBLE,

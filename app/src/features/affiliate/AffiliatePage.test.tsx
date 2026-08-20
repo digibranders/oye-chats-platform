@@ -136,7 +136,8 @@ describe('AffiliatePage — codes', () => {
     await user.click(await screen.findByRole('menuitem', { name: /pause code/i }));
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText(/no longer attributed to you/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/new signups stop earning/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/existing referrals are unaffected/i)).toBeInTheDocument();
     expect(api.updateAffiliateCode).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: /pause code/i }));

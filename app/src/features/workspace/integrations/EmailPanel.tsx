@@ -1,15 +1,21 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, buttonClass, Card, CardBody, CardHeader, CardSection, Field, SaveBar, Stack, Switch, TagInput, toast, validateEmail } from '../../../ui';
+import {
+  Alert,
+  buttonClass,
+  SaveBar,
+  SettingGroup,
+  SettingRow,
+  Stack,
+  Switch,
+  TagInput,
+  toast,
+  validateEmail,
+} from '../../../ui';
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
-import {
-  readEmailRouting,
-  routingChanged,
-  toBotPatch,
-  type EmailRouting,
-} from './emailModel';
+import { readEmailRouting, routingChanged, toBotPatch, type EmailRouting } from './emailModel';
 
 export interface EmailPanelProps {
   bot: Bot;
@@ -33,9 +39,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
   const [showOverrides, setShowOverrides] = useState(() => {
     const initial = readEmailRouting(bot);
     return (
-      initial.qualifiedLead.length > 0 ||
-      initial.handoff.length > 0 ||
-      initial.offline.length > 0
+      initial.qualifiedLead.length > 0 || initial.handoff.length > 0 || initial.offline.length > 0
     );
   });
 
@@ -79,9 +83,8 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
             </Link>
           }
         >
-          You can set the reply-to address, so a visitor's reply reaches you. Choosing who gets
-          notified — and routing different events to different inboxes — needs a paid plan. Until
-          then notifications go to the workspace owner's email.
+          Reply-to is available on every plan. Routing notifications to chosen inboxes needs a paid
+          plan; until then they go to the owner.
         </Alert>
       ) : null}
 
@@ -93,50 +96,38 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
         </Alert>
       ) : null}
 
-      <Card>
-        <CardHeader
-          title="Addresses"
-          titleAs="h2"
-          description="We send from notifications@oyechats.com. These decide where the replies and the alerts go."
-        />
-        <CardBody className="space-y-5">
-          <Field
+      <SettingGroup title="Addresses" description="Sent from notifications@oyechats.com.">
+        <SettingRow label="Reply-to" description="Empty uses the owner's address." stacked>
+          <TagInput
             label="Reply-to address"
-            hint="When someone replies to one of our emails, it lands here. Leave it empty to use the workspace owner's address."
-          >
-            <TagInput
-              label="Reply-to address"
-              values={draft.replyTo ? [draft.replyTo] : []}
-              maxValues={1}
-              placeholder="support@yourdomain.com"
-              validate={validateEmail}
-              normalize={(value) => value.trim().toLowerCase()}
-              onValuesChange={(values) => set('replyTo', values[0] ?? '')}
-            />
-          </Field>
+            values={draft.replyTo ? [draft.replyTo] : []}
+            maxValues={1}
+            placeholder="support@yourdomain.com"
+            validate={validateEmail}
+            normalize={(value) => value.trim().toLowerCase()}
+            onValuesChange={(values) => set('replyTo', values[0] ?? '')}
+          />
+        </SettingRow>
 
-          <Field
+        <SettingRow label="Default recipients" stacked disabled={restricted}>
+          <TagInput
             label="Default recipients"
-            hint="Everyone here is emailed about every event you have switched on below."
+            values={draft.recipients}
             disabled={restricted}
-          >
-            <TagInput
-              label="Default recipients"
-              values={draft.recipients}
-              disabled={restricted}
-              placeholder="sales@yourdomain.com"
-              validate={validateEmail}
-              normalize={(value) => value.trim().toLowerCase()}
-              onValuesChange={(values) => set('recipients', values)}
-            />
-          </Field>
+            placeholder="sales@yourdomain.com"
+            validate={validateEmail}
+            normalize={(value) => value.trim().toLowerCase()}
+            onValuesChange={(values) => set('recipients', values)}
+          />
+        </SettingRow>
 
-          {!restricted ? (
-            <div>
+        {!restricted ? (
+          <>
+            <SettingRow label="Route some events elsewhere" controlWidth="auto">
               <Switch
                 size="sm"
+                hideLabel
                 label="Route some events elsewhere"
-                description="Send qualified leads, handoffs or offline messages to different inboxes."
                 checked={showOverrides}
                 onCheckedChange={(next) => {
                   setShowOverrides(next);
@@ -152,93 +143,100 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                   }
                 }}
               />
-              {showOverrides ? (
-                <div className="mt-4 space-y-5 border-t border-border pt-4">
-                  <Field
-                    label="Qualified leads go to"
-                    hint="Leave empty to use the default recipients."
-                  >
-                    <TagInput
-                      label="Qualified lead recipients"
-                      values={draft.qualifiedLead}
-                      placeholder="sales@yourdomain.com"
-                      validate={validateEmail}
-                      normalize={(value) => value.trim().toLowerCase()}
-                      onValuesChange={(values) => set('qualifiedLead', values)}
-                    />
-                  </Field>
-                  <Field
-                    label="Handoff requests go to"
-                    hint="Leave empty to use the default recipients."
-                  >
-                    <TagInput
-                      label="Handoff request recipients"
-                      values={draft.handoff}
-                      placeholder="support@yourdomain.com"
-                      validate={validateEmail}
-                      normalize={(value) => value.trim().toLowerCase()}
-                      onValuesChange={(values) => set('handoff', values)}
-                    />
-                  </Field>
-                  <Field
-                    label="Offline messages go to"
-                    hint="Leave empty to use the default recipients."
-                  >
-                    <TagInput
-                      label="Offline message recipients"
-                      values={draft.offline}
-                      placeholder="inbox@yourdomain.com"
-                      validate={validateEmail}
-                      normalize={(value) => value.trim().toLowerCase()}
-                      onValuesChange={(values) => set('offline', values)}
-                    />
-                  </Field>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </CardBody>
-        {/* A `CardSection`, not a second card: two cards over one draft would
-            need two save bars, and a page with two save bars for one form is a
-            page where the user cannot tell which button keeps their work. */}
-        <CardSection className="space-y-4">
-          <div>
-            <h3 className="text-base font-semibold text-text-primary">What we email about</h3>
-            <p className="mt-1 text-xs text-text-secondary">
-              Switched off means no email. The event still happens, and still fires webhooks.
-            </p>
-          </div>
+            </SettingRow>
+            {showOverrides ? (
+              <>
+                <SettingRow
+                  label="Qualified leads go to"
+                  description="Leave empty to use the default recipients."
+                  stacked
+                >
+                  <TagInput
+                    label="Qualified lead recipients"
+                    values={draft.qualifiedLead}
+                    placeholder="sales@yourdomain.com"
+                    validate={validateEmail}
+                    normalize={(value) => value.trim().toLowerCase()}
+                    onValuesChange={(values) => set('qualifiedLead', values)}
+                  />
+                </SettingRow>
+                <SettingRow label="Handoff requests go to" stacked>
+                  <TagInput
+                    label="Handoff request recipients"
+                    values={draft.handoff}
+                    placeholder="support@yourdomain.com"
+                    validate={validateEmail}
+                    normalize={(value) => value.trim().toLowerCase()}
+                    onValuesChange={(values) => set('handoff', values)}
+                  />
+                </SettingRow>
+                <SettingRow label="Offline messages go to" stacked>
+                  <TagInput
+                    label="Offline message recipients"
+                    values={draft.offline}
+                    placeholder="inbox@yourdomain.com"
+                    validate={validateEmail}
+                    normalize={(value) => value.trim().toLowerCase()}
+                    onValuesChange={(values) => set('offline', values)}
+                  />
+                </SettingRow>
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </SettingGroup>
+
+      {/* One group, one save bar. Five switches in a `space-y-4` stack with no
+          hairlines and a description under each label read as one wall of text
+          — the "arranged vertically line by line" complaint exactly. */}
+      <SettingGroup
+        title="What we email about"
+        description="Off means no email — the event still fires webhooks."
+      >
+        <SettingRow label="A lead qualifies" controlWidth="auto">
           <Switch
+            hideLabel
             label="A lead qualifies"
-            description="Someone reached the qualified tier and is worth calling."
             checked={draft.onQualified}
             onCheckedChange={(next) => set('onQualified', next)}
           />
+        </SettingRow>
+        <SettingRow label="A visitor asks for a person" controlWidth="auto">
           <Switch
+            hideLabel
             label="A visitor asks for a person"
-            description="Sent the moment a handoff is requested, so somebody can pick it up."
             checked={draft.onHandoff}
             onCheckedChange={(next) => set('onHandoff', next)}
           />
+        </SettingRow>
+        <SettingRow label="An offline message arrives" controlWidth="auto">
           <Switch
-            label="A visitor leaves a message while you are away"
-            description="The offline form's submissions."
+            hideLabel
+            label="An offline message arrives"
             checked={draft.onOffline}
             onCheckedChange={(next) => set('onOffline', next)}
           />
+        </SettingRow>
+        <SettingRow label="Send the visitor a receipt" controlWidth="auto">
           <Switch
-            label="Confirm to the visitor that we got their message"
-            description="A short receipt to the visitor, not to you."
+            hideLabel
+            label="Send the visitor a receipt"
             checked={draft.visitorConfirmation}
             onCheckedChange={(next) => set('visitorConfirmation', next)}
           />
+        </SettingRow>
+        <SettingRow
+          label="Attach the transcript"
+          description="Think twice on a shared inbox."
+          controlWidth="auto"
+        >
           <Switch
-            label="Attach the conversation transcript"
-            description="Includes the full exchange in the notification. Useful for context; think about it if your inbox is shared widely."
+            hideLabel
+            label="Attach the transcript"
             checked={draft.transcript}
             onCheckedChange={(next) => set('transcript', next)}
           />
-        </CardSection>
+        </SettingRow>
         <SaveBar
           variant="footer"
           dirty={dirty}
@@ -246,7 +244,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
           onSave={() => save.mutate()}
           onDiscard={() => setDraft(baseline)}
         />
-      </Card>
+      </SettingGroup>
     </Stack>
   );
 }

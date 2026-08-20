@@ -8,7 +8,7 @@ import type { Bot } from '../types/domain';
 export interface SetupStep {
   id: string;
   label: string;
-  /** What the user gets, not what the system wants. */
+  /** One clause, only where the label cannot carry it. Empty when it can. */
   description: string;
   done: boolean;
   /** Where the step is actually performed. Never a wizard screen. */
@@ -73,14 +73,14 @@ export function useSetupChecklist() {
     {
       id: 'create',
       label: 'Create your chatbot',
-      description: 'Give it a name and the website it should learn from.',
+      description: '',
       done: bots.length > 0,
       to: '/welcome',
     },
     {
       id: 'train',
       label: 'Give it something to know',
-      description: 'Crawl your site, or upload the documents your customers ask about.',
+      description: 'Crawl your site or upload documents',
       done: indexedChunks > 0,
       to: primary ? agentPath(primary.id, 'knowledge') : '/chatbots',
     },
@@ -94,21 +94,21 @@ export function useSetupChecklist() {
     {
       id: 'test',
       label: 'Ask it a question',
-      description: 'See what a visitor would get before anyone else does.',
+      description: '',
       done: conversations > 0,
       to: primary ? agentPath(primary.id, 'overview') : '/chatbots',
     },
     {
       id: 'install',
       label: 'Put it on your website',
-      description: 'One script tag. We will confirm it here the moment it goes live.',
+      description: 'One script tag',
       done: installed,
       to: primary ? agentPath(primary.id, 'deploy') : '/chatbots',
     },
     {
       id: 'lead',
       label: 'Capture your first lead',
-      description: 'The point of all of it. This one happens on its own.',
+      description: 'Happens on its own',
       done: capturedLeads > 0,
       to: '/leads',
     },

@@ -1,37 +1,55 @@
-import { useCallback } from 'react';
-import { Card, CardBody, ErrorState, Page, PageHeader, SaveBar, Skeleton, Stack } from '../../../ui';
+import { useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Badge,
+  Card,
+  CardBody,
+  ConfirmDialog,
+  ErrorState,
+  Page,
+  PageHeader,
+  SaveBar,
+  SettingGroup,
+  Skeleton,
+  Stack,
+  buttonClass,
+} from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getClientSettings, updateBot } from '../../../services/api';
+import { ownSiteRisk } from '../channels/deployModel';
 import { useSettingsDraft } from './useSettingsDraft';
 import { ScopeSection } from './ScopeSection';
 import { WidgetBehaviourSection } from './WidgetBehaviourSection';
 import { OperatorResponseSection } from './OperatorResponseSection';
 import { TimingSection } from './TimingSection';
 import { FollowUpSection } from './FollowUpSection';
-import { BlockedCapabilitiesSection } from './BlockedCapabilitiesSection';
+import { AccessSection } from './AccessSection';
 import {
   type BehaviourDraft,
+  accessChanged,
+  behaviourChanged,
   operatorTimeoutError,
   parseBehaviour,
+  sessionShareDomainError,
+  toAccessPayload,
   toBehaviourPayload,
 } from './behaviour.config';
 
 const TITLE = 'Behaviour';
-const DESCRIPTION =
-  'How strictly this chatbot answers, what the widget offers, and how it holds up when the connection does not.';
 
+/** One block per real group, so the page does not grow when the data lands. */
 function BehaviourSkeleton() {
   return (
-    <Page width="wide">
-      <PageHeader title={TITLE} description={DESCRIPTION} />
+    <Page>
+      <PageHeader title={TITLE} />
       <Stack>
-        {[0, 1, 2].map((index) => (
+        {[0, 1, 2, 3].map((index) => (
           <Card key={index}>
             <CardBody className="space-y-3">
-              <Skeleton className="h-5 w-44" />
-              <Skeleton className="h-3 w-full max-w-md" />
-              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-row w-full" />
+              <Skeleton className="h-row w-full" />
             </CardBody>
           </Card>
         ))}
@@ -40,19 +58,41 @@ function BehaviourSkeleton() {
   );
 }
 
-function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveChatAllowed: boolean }) {
+function BehaviourContent({
+  agentId,
+  agentName,
+  website,
+  liveChatAllowed,
+}: {
+  agentId: number;
+  agentName: string;
+  website: string | null;
+  liveChatAllowed: boolean;
+}) {
   const { isFree } = useEntitlements();
+  const [confirmingLockout, setConfirmingLockout] = useState(false);
 
   const load = useCallback(async (id: number): Promise<BehaviourDraft> => {
     return parseBehaviour(await getClientSettings(id));
   }, []);
 
-  const save = useCallback(async (id: number, draft: BehaviourDraft) => {
-    await updateBot(id, toBehaviourPayload(draft));
-  }, []);
+  // Two PATCHes, each sent only when its own slice moved. Access and behaviour
+  // are separate concerns on one row, and writing an untouched allow-list back
+  // on every save of an unrelated flag is how a security control gets rewritten
+  // by someone who never opened it.
+  const save = useCallback(
+    async (id: number, draft: BehaviourDraft, initial: BehaviourDraft) => {
+      const tasks: Array<Promise<unknown>> = [];
+      if (behaviourChanged(draft, initial)) tasks.push(updateBot(id, toBehaviourPayload(draft)));
+      if (accessChanged(draft, initial)) tasks.push(updateBot(id, toAccessPayload(draft)));
+      await Promise.all(tasks);
+    },
+    [],
+  );
 
   const state = useSettingsDraft<BehaviourDraft>({ agentId, load, save });
   const draft = state.draft;
+  const initial = state.initial;
 
   // `update` is stable where `state` is not, so the memoised sections below
   // actually stay memoised instead of taking a fresh callback every render.
@@ -83,60 +123,102 @@ function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveC
       })),
     [update],
   );
+  const setAccess = useCallback(
+    (patch: {
+      allowedDomains?: string[];
+      domainCheckEnabled?: boolean;
+      sessionShareDomain?: string;
+    }) => update((previous) => ({ ...previous, ...patch })),
+    [update],
+  );
 
   if (state.loadError) {
     return (
-      <Page width="wide">
-        <PageHeader title={TITLE} description={DESCRIPTION} />
-        <Card>
-          <ErrorState
-            title="We could not load this chatbot's behaviour settings"
-            description={state.loadError}
-            onRetry={state.retry}
-          />
-        </Card>
+      <Page>
+        <PageHeader title={TITLE} />
+        <ErrorState
+          framed
+          title="We could not load this chatbot's behaviour settings"
+          description={state.loadError}
+          onRetry={state.retry}
+        />
       </Page>
     );
   }
 
-  if (!draft) return <BehaviourSkeleton />;
+  if (!draft || !initial) return <BehaviourSkeleton />;
 
-  // The one field on this page the server will reject outright. Everything else
-  // is clamped as it is typed, so it cannot reach an invalid state at all.
+  // The two fields the server will reject outright. Everything else is clamped
+  // as it is typed, so it cannot reach an invalid state at all.
   const timeoutError = operatorTimeoutError(draft.operatorTimeoutSeconds);
+  const sessionError = sessionShareDomainError(draft.sessionShareDomain);
+
+  // The one save on this page that can take the customer's own widget offline.
+  const risk = ownSiteRisk({
+    website,
+    domains: draft.allowedDomains,
+    enabled: draft.domainCheckEnabled,
+  });
+  const lockingOut = risk !== null && accessChanged(draft, initial);
 
   return (
-    <Page width="wide">
-      <PageHeader title={TITLE} description={DESCRIPTION} />
+    <Page>
+      <PageHeader title={TITLE} eyebrow={agentName} />
 
       <Stack>
-        <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
+        <SettingGroup title="Answering">
+          <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
+          <OperatorResponseSection
+            value={draft.operatorTimeoutSeconds}
+            liveChatAllowed={liveChatAllowed}
+            onChange={setOperatorTimeout}
+          />
+        </SettingGroup>
 
-        <WidgetBehaviourSection
-          agentId={agentId}
-          flags={draft.featureFlags}
-          isFree={isFree}
-          liveChatAllowed={liveChatAllowed}
-          onToggle={setFlag}
-        />
+        <SettingGroup
+          title="What the widget offers"
+          description={
+            isFree
+              ? 'These are switched off for visitors on the Free plan — saved, but ignored by the widget until you upgrade.'
+              : undefined
+          }
+          actions={
+            isFree ? (
+              <>
+                <Badge tone="plan">Off on Free</Badge>
+                <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                  See plans
+                </Link>
+              </>
+            ) : undefined
+          }
+        >
+          <WidgetBehaviourSection
+            agentId={agentId}
+            flags={draft.featureFlags}
+            liveChatAllowed={liveChatAllowed}
+            onToggle={setFlag}
+          />
+          {/* Its own read and its own write, deliberately outside the draft: a
+              kill switch takes effect when it is pressed, not when a save bar at
+              the bottom of a long page is eventually noticed. */}
+          <FollowUpSection agentId={agentId} />
+        </SettingGroup>
 
-        <OperatorResponseSection
-          value={draft.operatorTimeoutSeconds}
-          liveChatAllowed={liveChatAllowed}
-          onChange={setOperatorTimeout}
-        />
+        <SettingGroup
+          title="Access"
+          description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+        >
+          <AccessSection
+            website={website}
+            domains={draft.allowedDomains}
+            domainCheckEnabled={draft.domainCheckEnabled}
+            sessionShareDomain={draft.sessionShareDomain}
+            onChange={setAccess}
+          />
+        </SettingGroup>
 
-        <TimingSection
-          config={draft.widgetConfig}
-          onChange={setConfigField}
-        />
-
-        {/* Its own read and its own write, deliberately outside the draft: a
-            kill switch takes effect when it is pressed, not when a save bar at
-            the bottom of a long page is eventually noticed. */}
-        <FollowUpSection agentId={agentId} />
-
-        <BlockedCapabilitiesSection />
+        <TimingSection config={draft.widgetConfig} onChange={setConfigField} />
 
         <SaveBar
           dirty={state.dirty}
@@ -146,13 +228,41 @@ function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveC
           blockedReason={
             timeoutError
               ? `The operator response window must be between 5 and 3600 seconds. ${draft.operatorTimeoutSeconds} would be rejected.`
-              : null
+              : sessionError
+                ? 'Fix the pinned parent domain under Access to save.'
+                : null
           }
-          onSave={() => void state.commit()}
+          onSave={() => {
+            if (lockingOut) setConfirmingLockout(true);
+            else void state.commit();
+          }}
           onDiscard={state.discard}
           guard="this chatbot’s behaviour settings"
         />
       </Stack>
+
+      {/* The allow-list is the fastest way in the product for a customer to take
+          their own widget offline, so saving one that does not cover their own
+          site is confirmed rather than merely accepted. The guard exists because
+          of one exact asymmetry: the backend strips `www.` from a stored entry
+          and does not strip it from the browser's `Origin` header. */}
+      <ConfirmDialog
+        open={confirmingLockout}
+        onOpenChange={setConfirmingLockout}
+        title="This will block your own website"
+        description={
+          risk
+            ? `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there — visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
+            : ''
+        }
+        confirmLabel="Save anyway"
+        cancelLabel="Go back and fix it"
+        destructive
+        onConfirm={async () => {
+          await state.commit();
+          setConfirmingLockout(false);
+        }}
+      />
     </Page>
   );
 }
@@ -167,6 +277,16 @@ function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveC
  * the Free plan overriding every widget flag, live chat gating the operator
  * window — is stated on the control it affects.
  *
+ * **It is rows, not cards.** Six full-width cards, each with a title and a
+ * description, carried ten controls between them: roughly 900px of chrome to
+ * reach six switches, three numbers and a segmented control. A settings page is
+ * one card per *group* and one row per *setting*.
+ *
+ * **Access moved here from Deploy.** The origin allow-list and the
+ * session-continuity parent are not install steps, and on Deploy they were two
+ * of three hand-rolled save contracts on a page that had no business holding
+ * any. They are under this page's single draft and single save bar now.
+ *
  * Qualification is no longer here. It decides which conversations a salesperson
  * hears about, which makes it a revenue surface, and it has its own page.
  */
@@ -178,19 +298,18 @@ export function BehaviourPage() {
 
   if (!agent) {
     return (
-      <Page width="wide">
+      <Page>
         <PageHeader title={TITLE} />
-        <Card>
-          <ErrorState
-            title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
-            description={
-              error
-                ? error.message || 'Something went wrong while loading this workspace.'
-                : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
-            }
-            onRetry={() => void refresh()}
-          />
-        </Card>
+        <ErrorState
+          framed
+          title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
+          description={
+            error
+              ? error.message || 'Something went wrong while loading this workspace.'
+              : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
+          }
+          onRetry={() => void refresh()}
+        />
       </Page>
     );
   }
@@ -199,6 +318,8 @@ export function BehaviourPage() {
     <BehaviourContent
       key={agent.id}
       agentId={agent.id}
+      agentName={agent.name}
+      website={agent.website ?? null}
       liveChatAllowed={hasFeature('live_chat')}
     />
   );

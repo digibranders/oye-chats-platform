@@ -7,8 +7,11 @@ import {
   CardBody,
   ErrorState,
   LoadingRows,
+  Measure,
   Page,
   PageHeader,
+  SettingGroup,
+  SettingRow,
   Stack,
   buttonClass,
 } from '../../ui';
@@ -55,37 +58,36 @@ export function SettingsPage() {
     void queryClient.invalidateQueries({ queryKey: keys.session.me() });
   }
 
-  const header = (
-    <PageHeader
-      title="Your account"
-      description="Your name, how you sign in, and what we are allowed to interrupt you for."
-    />
-  );
+  const header = <PageHeader title="Your account" />;
 
   if (me.isPending) {
     return (
-      <Page width="default">
+      <Page>
         {header}
-        <Card>
-          <CardBody>
-            <LoadingRows rows={4} />
-          </CardBody>
-        </Card>
+        <Measure width="form">
+          <Card>
+            <CardBody>
+              <LoadingRows rows={4} />
+            </CardBody>
+          </Card>
+        </Measure>
       </Page>
     );
   }
 
   if (me.isError || !user) {
     return (
-      <Page width="default">
+      <Page>
         {header}
-        <Card>
-          <ErrorState
-            title="We could not load your account"
-            description={me.error instanceof Error ? me.error.message : undefined}
-            onRetry={() => void me.refetch()}
-          />
-        </Card>
+        <Measure width="form">
+          <Card>
+            <ErrorState
+              title="We could not load your account"
+              description={me.error instanceof Error ? me.error.message : undefined}
+              onRetry={() => void me.refetch()}
+            />
+          </Card>
+        </Measure>
       </Page>
     );
   }
@@ -93,50 +95,51 @@ export function SettingsPage() {
   const isOperator = user.kind === 'operator';
 
   return (
-    <Page width="default">
+    <Page>
       {header}
-      <Stack>
-        <ProfileSection user={user} onSaved={applyPatch} />
+      {/* One column, deliberately: five groups of two or three rows, and a
+          second column would leave one of them orphaned. `Measure` gives it a
+          form measure inside a full-width page — the page itself no longer
+          narrows, so its title stands on the same left edge as every other
+          page's. */}
+      <Measure width="form">
+        <Stack>
+          <ProfileSection user={user} onSaved={applyPatch} />
 
-        {isOperator ? (
-          <Card>
-            <CardBody>
-              <Alert tone="neutral" title="This is a team seat">
-                You are a member of someone else's workspace. The chatbots, plan and billing belong
-                to them — what you can change is on this page.
-              </Alert>
-            </CardBody>
-          </Card>
-        ) : (
-          <ChangeEmailCard user={user} onEmailChange={applyPatch} />
-        )}
+          {isOperator ? (
+            // A direct child of the `Stack`. Wrapped in a `Card` + `CardBody`
+            // this was a `rounded-md` bordered box inside a `rounded-lg` one
+            // with a 20px dead ring between them — the card-in-card DESIGN.md §4
+            // bans.
+            <Alert tone="neutral" title="This is a team seat">
+              The workspace's chatbots, plan and billing belong to its owner.
+            </Alert>
+          ) : (
+            <ChangeEmailCard user={user} onEmailChange={applyPatch} />
+          )}
 
-        <ChangePasswordCard isOperator={isOperator} />
+          <ChangePasswordCard isOperator={isOperator} />
 
-        <NotificationsSection />
+          <NotificationsSection />
 
-        <AccountSessionsSection email={user.email ?? ''} />
+          <AccountSessionsSection email={user.email ?? ''} />
 
-        <ContactSection />
+          <ContactSection />
 
-        {!isOperator ? (
-          <Card>
-            <CardBody>
-              <Alert
-                tone="neutral"
-                action={
-                  <Link to="/settings/workspace" className={buttonClass('secondary', 'sm')}>
-                    Workspace settings
-                  </Link>
-                }
+          {!isOperator ? (
+            <SettingGroup>
+              <SettingRow
+                label="Workspace settings"
+                description="Company name, team, integrations and the API key."
               >
-                Looking for the company name, your team, integrations or the API key? Those belong
-                to the workspace rather than to you.
-              </Alert>
-            </CardBody>
-          </Card>
-        ) : null}
-      </Stack>
+                <Link to="/settings/workspace" className={buttonClass('secondary', 'sm')}>
+                  Open
+                </Link>
+              </SettingRow>
+            </SettingGroup>
+          ) : null}
+        </Stack>
+      </Measure>
     </Page>
   );
 }

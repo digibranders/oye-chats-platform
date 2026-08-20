@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   Button,
   Card,
+  CardBody,
   CardHeader,
   DataTable,
   EmptyState,
@@ -108,6 +109,7 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
   if (locked) {
     return (
       <LockedState
+        size="page"
         title="Visitor history is limited on your plan"
         description="Your plan keeps a short window of conversation history, and this list is built from it. A longer retention window comes with Standard and above."
         action={
@@ -125,43 +127,42 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
         eyebrow="Audience"
         title="Who visited"
         titleAs="h2"
-        description={`One row per visitor, last seen in ${range.label.toLowerCase()} · ${formatNumber(rows.length)} ${rows.length === 1 ? 'visitor' : 'visitors'}`}
+        description={`One row per visitor, last seen in ${range.label.toLowerCase()}`}
         actions={
           rows.length > 0 ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onExport}
-              iconLeft={<Download aria-hidden className="h-3.5 w-3.5" />}
-            >
+            <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
               Export
             </Button>
           ) : undefined
         }
       />
-      <DataTable
-        caption="Visitors who spoke to the chatbot in the selected period"
-        columns={columns}
-        rows={rows}
-        rowKey={(row) => row.id}
-        loading={loading}
-        error={error ? errorMessage(error, 'The request for visitors failed.') : null}
-        onRetry={() => void refetch()}
-        defaultSort={{ key: 'lastActiveAt', direction: 'desc' }}
-        pageSize={25}
-        empty={
-          <EmptyState
-            compact
-            icon={Users}
-            title={visitors.length > 0 ? 'Nobody in this period' : 'No visitors yet'}
-            description={
-              visitors.length > 0
-                ? 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
-                : 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
-            }
-          />
-        }
-      />
+      <CardBody flush>
+        <DataTable
+          seated
+          caption="Visitors who spoke to the chatbot in the selected period"
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          loading={loading}
+          error={error ? errorMessage(error, 'The request for visitors failed.') : null}
+          onRetry={() => void refetch()}
+          defaultSort={{ key: 'lastActiveAt', direction: 'desc' }}
+          pageSize={25}
+          rowNoun="visitor"
+          empty={
+            <EmptyState
+              size="inline"
+              icon={Users}
+              title={visitors.length > 0 ? 'Nobody in this period' : 'No visitors yet'}
+              description={
+                visitors.length > 0
+                  ? 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
+                  : 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
+              }
+            />
+          }
+        />
+      </CardBody>
     </Card>
   );
 }

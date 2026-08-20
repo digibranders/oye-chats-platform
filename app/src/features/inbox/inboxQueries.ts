@@ -189,6 +189,8 @@ export interface TranscriptState {
   messages: OperatorMessage[];
   loading: boolean;
   error: string | null;
+  /** Re-run the fetch. Wired to the transcript's own "Try again". */
+  reload: () => void;
 }
 
 const TRANSCRIPT_POLL_MS = 5000;
@@ -206,6 +208,9 @@ export function useTranscript(sessionId: string | null, poll: boolean): Transcri
   const [messages, setMessages] = useState<OperatorMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by `reload`, which re-runs the effect from the top — the same path
+  // a session change takes, so a retry cannot diverge from a first load.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -249,7 +254,9 @@ export function useTranscript(sessionId: string | null, poll: boolean): Transcri
       active = false;
       window.clearInterval(timer);
     };
-  }, [sessionId, poll]);
+  }, [sessionId, poll, attempt]);
 
-  return { messages, loading, error };
+  const reload = useCallback(() => setAttempt((count) => count + 1), []);
+
+  return { messages, loading, error, reload };
 }

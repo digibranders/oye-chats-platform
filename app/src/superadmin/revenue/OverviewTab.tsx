@@ -6,17 +6,20 @@ import {
   CardBody,
   DataTable,
   EmptyState,
+  LoadingBars,
   LockedState,
   RankedBars,
   Section,
   Stack,
-  StatTile,
+  StatRow,
   formatNumber,
   formatPercent,
   type Column,
 } from '../../ui';
 import { usePlatformList, usePlatformResource } from '../usePlatform';
-import { USD_NORMALISED_NOTE, USD_NORMALISED_SHORT, usdCents, usdCentsRounded } from './money';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
+import { PAGE_SIZE } from '../recordListState';
+import { USD_NORMALISED_NOTE, USD_NORMALISED_SHORT, usdCents, usdCentsRounded } from '../money';
 import { subscriptionLabel, SUBSCRIPTION_STATUSES } from './status';
 import type { RevenueCohort, RevenueMetrics } from './types';
 
@@ -107,16 +110,15 @@ export function OverviewTab() {
 
   return (
     <Stack>
-      <Alert tone="neutral" title="Every figure on this tab is normalised">
-        {USD_NORMALISED_NOTE} An invoice&rsquo;s own amount is never converted — see the Invoices tab
-        for what each customer was actually charged.
-      </Alert>
-
-      <Section title="Recurring revenue">
+      <Section
+        title="Recurring revenue"
+        description={`Every figure on this tab is normalised. ${USD_NORMALISED_NOTE}`}
+      >
         {metrics.forbidden ? (
           <LockedState
-            title="You cannot read revenue"
-            description="Your super-admin account is not permitted to read the revenue aggregates. Nothing was loaded."
+            size="panel"
+            title={FORBIDDEN_TITLE}
+            description={forbiddenDescription('the revenue aggregates')}
           />
         ) : metrics.error && !metrics.data ? (
           <Card>
@@ -137,38 +139,42 @@ export function OverviewTab() {
           </Card>
         ) : (
           <Card>
-            <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatTile
-                label="MRR"
-                size="lg"
-                loading={metrics.loading}
-                value={metrics.data ? usdCentsRounded(metrics.data.mrr_cents) : undefined}
-                period={USD_NORMALISED_SHORT}
-                hint="Active and trialing subscriptions, plan price plus billable seat add-ons."
-              />
-              <StatTile
-                label="ARR"
-                size="lg"
-                loading={metrics.loading}
-                value={metrics.data ? usdCentsRounded(metrics.data.arr_cents) : undefined}
-                period={USD_NORMALISED_SHORT}
-                hint="MRR × 12. A projection, not booked revenue."
-              />
-              <StatTile
-                label="Collected, all time"
-                size="lg"
-                loading={metrics.loading}
-                value={metrics.data ? usdCentsRounded(metrics.data.total_revenue_cents) : undefined}
-                period={USD_NORMALISED_SHORT}
-                hint="Every invoice with status paid, converted where it was issued in rupees."
-              />
-              <StatTile
-                label="Paying customers"
-                size="lg"
-                loading={metrics.loading}
-                value={metrics.data ? formatNumber(metrics.data.total_paying_customers) : undefined}
+            <CardBody flush>
+              {/* One strip, one statement of the window, hairline-divided. The
+                  four hints under the tiles wrapped to one, one, two and two
+                  lines, so two of the four ended at a different height inside a
+                  grid that had already equalised the cells. */}
+              <StatRow
+                label="Recurring revenue"
                 period="Right now"
-                hint="Active plus past due — a past-due account is still on the books."
+                loading={metrics.loading}
+                items={[
+                  {
+                    label: 'MRR',
+                    size: 'hero',
+                    period: USD_NORMALISED_SHORT,
+                    value: metrics.data ? usdCentsRounded(metrics.data.mrr_cents) : undefined,
+                  },
+                  {
+                    label: 'ARR',
+                    period: USD_NORMALISED_SHORT,
+                    value: metrics.data ? usdCentsRounded(metrics.data.arr_cents) : undefined,
+                  },
+                  {
+                    label: 'Collected, all time',
+                    period: USD_NORMALISED_SHORT,
+                    value: metrics.data
+                      ? usdCentsRounded(metrics.data.total_revenue_cents)
+                      : undefined,
+                  },
+                  {
+                    label: 'Paying customers',
+                    period: 'Active and past due',
+                    value: metrics.data
+                      ? formatNumber(metrics.data.total_paying_customers)
+                      : undefined,
+                  },
+                ]}
               />
             </CardBody>
           </Card>
@@ -179,16 +185,18 @@ export function OverviewTab() {
         <Card>
           {metrics.loading && !metrics.data ? (
             <CardBody>
-              <EmptyState compact title="Reading subscriptions…" />
+              <LoadingBars rows={5} />
             </CardBody>
           ) : !counts ? (
             <EmptyState
               compact
               title="No subscription counts"
-              description="The revenue endpoint returned no status breakdown. That is unusual on a platform with any customers at all, and worth checking."
+              description="The revenue endpoint returned no status breakdown — unusual on a platform with any customers at all."
             />
           ) : (
-            <RankedBars label="Subscriptions by status" items={mix} tone="ink" />
+            <CardBody>
+              <RankedBars label="Subscriptions by status" items={mix} />
+            </CardBody>
           )}
         </Card>
         {counts ? (
@@ -202,31 +210,30 @@ export function OverviewTab() {
 
       <Section
         title="Cohorts"
-        description="Accounts grouped by the month they signed up, how many still hold a subscription, and what they have paid since."
+        description="Grouped by signup month: how many still hold a subscription, and what they have paid since."
       >
-        {cohorts.forbidden ? (
-          <LockedState
-            title="You cannot read cohorts"
-            description="Your super-admin account is not permitted to read cohort retention. Nothing was loaded."
-          />
-        ) : (
-          <DataTable
-            caption="Signup cohorts with retention and lifetime value"
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => row.cohort}
-            loading={cohorts.loading}
-            error={cohorts.error}
-            onRetry={cohorts.reload}
-            pageSize={12}
-            empty={
-              <EmptyState
-                title="No cohorts yet"
-                description="A cohort appears once an account exists with a creation date. Either nobody has signed up, or every client row predates the created_at column."
-              />
-            }
-          />
-        )}
+        <DataTable
+          caption="Signup cohorts with retention and lifetime value"
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.cohort}
+          rowNoun="cohort"
+          loading={cohorts.loading}
+          error={cohorts.error}
+          forbidden={
+            cohorts.forbidden
+              ? { title: FORBIDDEN_TITLE, description: forbiddenDescription('cohort retention') }
+              : null
+          }
+          onRetry={cohorts.reload}
+          pageSize={PAGE_SIZE}
+          empty={
+            <EmptyState
+              title="No cohorts yet"
+              description="A cohort appears once an account exists with a creation date."
+            />
+          }
+        />
       </Section>
     </Stack>
   );

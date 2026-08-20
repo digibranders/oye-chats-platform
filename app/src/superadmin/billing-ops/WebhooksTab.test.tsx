@@ -92,7 +92,7 @@ describe('WebhooksTab', () => {
       data: Array.from({ length: 500 }, (_, index) => event({ event_id: `evt_${index}` })),
     });
     mount();
-    expect(await screen.findByText('Truncated at 500 events')).toBeInTheDocument();
+    expect(await screen.findByText(/Most recent/)).toBeInTheDocument();
   });
 
   /* --------------------------------------------------------- four states */
@@ -107,7 +107,7 @@ describe('WebhooksTab', () => {
     get.mockResolvedValue({ data: [] });
     mount();
     expect(await screen.findByText('No webhook has been processed')).toBeInTheDocument();
-    expect(screen.getByText(/webhooks are not reaching the API at all/)).toBeInTheDocument();
+    expect(screen.getByText(/webhooks are not reaching the API/)).toBeInTheDocument();
   });
 
   it('separates an empty log from an unmatched provider', async () => {
@@ -130,7 +130,9 @@ describe('WebhooksTab', () => {
       }),
     );
     mount();
-    expect(await screen.findByText('You cannot read the webhook log')).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(await screen.findByText('You do not have access to this')).toBeInTheDocument();
+    // The column heads stay so the reader can see what they are locked out of;
+    // no event row is rendered.
+    expect(screen.queryAllByRole('cell')).toHaveLength(1);
   });
 });

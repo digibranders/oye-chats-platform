@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { ExternalLink, FileText, Mail, RefreshCw } from 'lucide-react';
 import {
   Alert,
   Badge,
   Button,
   ConfirmDialog,
-  DefinitionList,
   Drawer,
   FigureRow,
   LoadingRows,
   LockedState,
+  PropertyGrid,
   Separator,
   Skeleton,
+  Tooltip,
   buttonClass,
   formatDate,
   formatDateTime,
@@ -19,8 +20,9 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformResource } from '../usePlatform';
+import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import type { InvoiceDetail, InvoiceRow } from '../revenue/types';
-import { bpsLabel, docMoney, docMoneyWithCode, normaliseCurrency } from '../revenue/money';
+import { bpsLabel, docMoney, docMoneyWithCode, normaliseCurrency } from '../money';
 import {
   canMarkPaid,
   canRefund,
@@ -140,67 +142,28 @@ export function InvoiceDrawer({ invoiceId, fallback, onOpenChange, onChanged }: 
             : 'Reading the document…'
         }
         footer={
-          <div className="flex w-full flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!regenerable.allowed}
-                loading={busy === 'regenerate'}
-                onClick={() =>
-                  void run(
-                    'regenerate',
-                    () => platform.post(`/invoices/${invoiceId}/regenerate-pdf`),
-                    'A fresh render is queued. The worker sweep picks it up within about five minutes; reopen this document to see the new PDF.',
-                  ).catch(() => undefined)
-                }
-                iconLeft={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}
-              >
-                Regenerate PDF
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!resendable.allowed}
-                loading={busy === 'resend'}
-                onClick={() =>
-                  void run(
-                    'resend',
-                    () => platform.post(`/invoices/${invoiceId}/resend-email`),
-                    'The document was re-sent to the buyer address on the invoice.',
-                  ).catch(() => undefined)
-                }
-                iconLeft={<Mail aria-hidden className="h-3.5 w-3.5" />}
-              >
-                Resend email
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!markable.allowed}
-                onClick={() => setConfirming('mark-paid')}
-              >
-                Mark paid
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={!refundable.allowed}
-                onClick={() => setConfirming('refund')}
-              >
-                Refund
-              </Button>
-            </div>
-          </div>
+          <>
+            {/* Two buttons, not four in two nested flex groups that fought the
+                footer's own row and wrapped into an unpredictable 2×2 block.
+                The two document actions live beside the PDF section they act
+                on. Each disabled control carries its own reason, on itself —
+                the reason used to be a bullet in an alert 600px below. */}
+            <ActionButton
+              label="Mark paid"
+              gate={markable}
+              onClick={() => setConfirming('mark-paid')}
+            />
+            <ActionButton
+              label="Refund"
+              variant="danger"
+              gate={refundable}
+              onClick={() => setConfirming('refund')}
+            />
+          </>
         }
       >
         {detail.forbidden ? (
-          <LockedState
-            title="You cannot read this document"
-            description="Your super-admin account is not permitted to read invoices. Nothing was loaded."
-          />
+          <LockedState title={FORBIDDEN_TITLE} description={forbiddenDescription('invoices')} />
         ) : (
           <div className="flex flex-col gap-5">
             {outcome ? (
@@ -234,20 +197,44 @@ export function InvoiceDrawer({ invoiceId, fallback, onOpenChange, onChanged }: 
             {!record ? (
               <LoadingRows rows={6} />
             ) : (
-              <InvoiceBody record={record} full={full} loading={detail.loading} />
+              <InvoiceBody
+                record={record}
+                full={full}
+                loading={detail.loading}
+                regenerate={
+                  <ActionButton
+                    label="Regenerate PDF"
+                    variant="secondary"
+                    gate={regenerable}
+                    loading={busy === 'regenerate'}
+                    icon={<RefreshCw aria-hidden />}
+                    onClick={() =>
+                      void run(
+                        'regenerate',
+                        () => platform.post(`/invoices/${invoiceId}/regenerate-pdf`),
+                        'A fresh render is queued. The worker sweep picks it up within about five minutes.',
+                      ).catch(() => undefined)
+                    }
+                  />
+                }
+                resend={
+                  <ActionButton
+                    label="Resend email"
+                    variant="secondary"
+                    gate={resendable}
+                    loading={busy === 'resend'}
+                    icon={<Mail aria-hidden />}
+                    onClick={() =>
+                      void run(
+                        'resend',
+                        () => platform.post(`/invoices/${invoiceId}/resend-email`),
+                        'The document was re-sent to the buyer address on the invoice.',
+                      ).catch(() => undefined)
+                    }
+                  />
+                }
+              />
             )}
-
-            {record &&
-            (!regenerable.allowed || !resendable.allowed || !refundable.allowed || !markable.allowed) ? (
-              <Alert tone="neutral" title="Some actions are unavailable for this document">
-                <ul className="list-disc space-y-1 pl-4">
-                  {!refundable.allowed ? <li>Refund — {refundable.reason}</li> : null}
-                  {!markable.allowed ? <li>Mark paid — {markable.reason}</li> : null}
-                  {!regenerable.allowed ? <li>Regenerate PDF — {regenerable.reason}</li> : null}
-                  {!resendable.allowed ? <li>Resend email — {resendable.reason}</li> : null}
-                </ul>
-              </Alert>
-            ) : null}
           </div>
         )}
       </Drawer>
@@ -319,15 +306,66 @@ export function InvoiceDrawer({ invoiceId, fallback, onOpenChange, onChanged }: 
   );
 }
 
+/**
+ * A control whose reason for being disabled travels with it.
+ *
+ * A greyed-out button with the explanation somewhere else on the page is a
+ * reader pressing it, getting nothing, and then hunting. `Tooltip` handles the
+ * disabled trigger; the reason is also the accessible description.
+ */
+function ActionButton({
+  label,
+  gate,
+  onClick,
+  variant = 'secondary',
+  loading = false,
+  icon,
+}: {
+  label: string;
+  gate: { allowed: boolean; reason?: string };
+  onClick: () => void;
+  variant?: 'secondary' | 'danger';
+  loading?: boolean;
+  icon?: ReactElement;
+}) {
+  const button = (
+    <Button
+      size="sm"
+      variant={variant}
+      disabled={!gate.allowed}
+      loading={loading}
+      onClick={onClick}
+      iconLeft={icon}
+      title={undefined}
+    >
+      {label}
+    </Button>
+  );
+  if (gate.allowed || !gate.reason) return button;
+  // A disabled button takes no pointer events, so the tooltip needs something
+  // that does — the wrapper is focusable so a keyboard user reaches the reason.
+  return (
+    <Tooltip content={gate.reason}>
+      <span tabIndex={0} className="inline-flex rounded-sm">
+        {button}
+      </span>
+    </Tooltip>
+  );
+}
+
 /** The read-only half of the drawer. Split out so the actions above stay legible. */
 function InvoiceBody({
   record,
   full,
   loading,
+  regenerate,
+  resend,
 }: {
   record: InvoiceRow;
   full: InvoiceDetail | null;
   loading: boolean;
+  regenerate: ReactNode;
+  resend: ReactNode;
 }) {
   const pdf = pdfStatus(record);
   const currency = normaliseCurrency(record.currency);
@@ -352,8 +390,7 @@ function InvoiceBody({
           Amount
         </h3>
         <p className="mt-1 text-xs text-text-secondary">
-          Stated in the document&rsquo;s own currency
-          {currency ? ` (${currency})` : ''}. Nothing on this panel is converted.
+          {currency ? `${currency}, as issued. ` : 'As issued. '}Nothing here is converted.
         </p>
         <dl className="mt-2">
           <FigureRow
@@ -384,18 +421,22 @@ function InvoiceBody({
           PDF
         </h3>
         <p className="mt-1 text-xs leading-relaxed text-text-secondary">{pdf.detail}</p>
-        {record.pdf_url ? (
-          <a
-            href={record.pdf_url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className={buttonClass('secondary', 'sm', 'mt-2')}
-          >
-            <FileText aria-hidden className="h-3.5 w-3.5" />
-            Open PDF
-            <ExternalLink aria-hidden className="h-3 w-3" />
-          </a>
-        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {record.pdf_url ? (
+            <a
+              href={record.pdf_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className={buttonClass('secondary', 'sm')}
+            >
+              <FileText aria-hidden />
+              Open PDF
+              <ExternalLink aria-hidden className="h-3 w-3" />
+            </a>
+          ) : null}
+          {regenerate}
+          {resend}
+        </div>
       </section>
 
       <Separator />
@@ -404,8 +445,9 @@ function InvoiceBody({
         <h3 id="invoice-record" className="text-base font-semibold text-text-primary">
           Record
         </h3>
-        <DefinitionList
+        <PropertyGrid
           columns={2}
+          density="compact"
           className="mt-3"
           items={[
             { label: 'Document number', value: record.invoice_number ?? 'Not numbered' },
@@ -448,7 +490,7 @@ function InvoiceBody({
                 '—'
               ),
             },
-            { label: 'Description', value: full?.description ?? '—' },
+            { label: 'Description', value: full?.description },
           ]}
         />
       </section>

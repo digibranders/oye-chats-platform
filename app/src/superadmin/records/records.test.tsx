@@ -8,7 +8,7 @@ import { platform } from '../client';
 import { useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
 import { usePagedRows } from '../recordListState';
-import { KnowledgeTab } from './KnowledgeTab';
+import { DocumentsTab } from './KnowledgeTab';
 import { SessionDetailPage } from './ConversationsTab';
 
 vi.mock('../client', async (importOriginal) => {
@@ -105,8 +105,11 @@ describe('RecordList — the four states', () => {
         error="Forbidden"
       />,
     );
-    expect(screen.getByText('You do not have access to these records')).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.getByText('You do not have access to this')).toBeInTheDocument();
+    // The column heads stay, so the reader can see what they are locked out of;
+    // the locked state occupies the body. What must not appear is a data row, or
+    // the server's raw refusal.
+    expect(screen.queryAllByRole('cell')).toHaveLength(1);
     expect(screen.queryByText('Forbidden')).not.toBeInTheDocument();
   });
 });
@@ -123,7 +126,7 @@ describe('RecordList — the endpoint cap', () => {
         cap={500}
       />,
     );
-    expect(screen.getByText('This is not the whole set')).toBeInTheDocument();
+    expect(screen.getByText(/Most recent/)).toBeInTheDocument();
   });
 
   it('stays quiet when the endpoint returned everything it had', () => {
@@ -137,7 +140,7 @@ describe('RecordList — the endpoint cap', () => {
         cap={500}
       />,
     );
-    expect(screen.queryByText('This is not the whole set')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Most recent/)).not.toBeInTheDocument();
   });
 });
 
@@ -279,8 +282,8 @@ describe('Documents', () => {
       },
     ]);
     render(
-      <MemoryRouter initialEntries={['/platform/records?tab=knowledge']}>
-        <KnowledgeTab />
+      <MemoryRouter initialEntries={['/platform/records/knowledge']}>
+        <DocumentsTab />
       </MemoryRouter>,
     );
 
@@ -305,8 +308,8 @@ describe('Documents', () => {
       },
     ]);
     render(
-      <MemoryRouter initialEntries={['/platform/records?tab=knowledge']}>
-        <KnowledgeTab />
+      <MemoryRouter initialEntries={['/platform/records/knowledge']}>
+        <DocumentsTab />
       </MemoryRouter>,
     );
 
@@ -399,7 +402,10 @@ describe('Conversation detail', () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText('Priya Raman')).toBeInTheDocument();
+    // The visitor names the page, rather than a 36-character opaque id set as
+    // a proportional headline — and the same name is a fact in the record grid.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Priya Raman' })).toBeInTheDocument();
+    expect(screen.getAllByText('Priya Raman')).toHaveLength(2);
     expect(screen.getByText('priya@northwind.test')).toBeInTheDocument();
     expect(screen.getByText('Last active')).toBeInTheDocument();
   });
