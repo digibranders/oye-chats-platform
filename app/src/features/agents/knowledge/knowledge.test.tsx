@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -123,6 +123,10 @@ function sourcesTable(overrides: Partial<Parameters<typeof SourcesTable>[0]> = {
       busySource={null}
       crawlRunning={false}
       crawlingDomain={null}
+      query=""
+      onQueryChange={vi.fn()}
+      kind="all"
+      onKindChange={vi.fn()}
       onViewPages={vi.fn()}
       onRecrawl={onRecrawl}
       onDelete={onDelete}
@@ -208,6 +212,72 @@ describe('SourcesTable — deleting indexed knowledge', () => {
     expect(full).toHaveAttribute('aria-disabled', 'true');
     await user.click(full);
     expect(onRecrawl).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The state of an ingestion, which this table did not carry at all.
+ *
+ * Its only badge said *Website* or *Document* — a type — so a source that failed
+ * to extract, one still being read, and one fully trained were identical apart
+ * from an em dash in a column hidden below `md`. "Did that upload work?" is the
+ * central question on this page.
+ */
+describe('SourcesTable — what a source is doing', () => {
+  const FAILED = [{ name: 'scan.pdf', chunk_count: 0, ingested_at: '2026-08-01T09:00:00Z' }];
+
+  it('separates a trained source from one that produced no passages', () => {
+    sourcesTable();
+    expect(screen.getAllByText('Trained')).toHaveLength(2);
+
+    cleanup();
+    sourcesTable({ sources: FAILED });
+    expect(screen.getByText('Not indexed')).toBeInTheDocument();
+  });
+
+  it('reads an in-flight crawl of that site as training, not as what it held before', () => {
+    sourcesTable({ crawlingDomain: 'acme.com' });
+
+    expect(screen.getByText('Training')).toBeInTheDocument();
+    // The document is untouched by a website crawl.
+    expect(screen.getByText('Trained')).toBeInTheDocument();
+  });
+
+  it('filters by type without asking the server again', () => {
+    sourcesTable({ kind: 'documents' });
+
+    expect(screen.getByText('handbook.pdf')).toBeInTheDocument();
+    expect(screen.queryByText('https://acme.com')).not.toBeInTheDocument();
+  });
+
+  it('says a filter found nothing, rather than that there is nothing', () => {
+    sourcesTable({ query: 'nothing-matches-this' });
+
+    expect(screen.getByText('No source matches')).toBeInTheDocument();
+    expect(
+      screen.queryByText('This chatbot has nothing to answer from yet'),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * A customer who crawled a site and wants nine of its documents gone used to
+   * do it nine times, each behind its own confirmation.
+   */
+  it('removes a whole selection behind one confirmation that names the cost', async () => {
+    const user = userEvent.setup();
+    const { onDelete } = sourcesTable();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select https://acme.com' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select handbook.pdf' }));
+    await user.click(screen.getByRole('button', { name: 'Remove 2' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    // 900 + 130 passages, named — not "2 items".
+    expect(dialog).toHaveTextContent(/1,030 indexed passages/);
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove 2' }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(2));
   });
 });
 

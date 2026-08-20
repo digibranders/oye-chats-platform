@@ -42,6 +42,7 @@ import {
   rootDomainOf,
   summarise,
   type GapWindow,
+  type SourceKind,
   type RecrawlDiff,
   type RecrawlMode,
 } from './knowledge-model';
@@ -151,6 +152,12 @@ export function KnowledgePage() {
 function KnowledgeContent({ agent }: { agent: Bot }) {
   const [params, setParams] = useSearchParams();
   const gapWindow = parseGapWindow(params.get('gaps'));
+  // The source search and type filter live in the URL for the same reason the
+  // chatbot list's do: "open Knowledge, filter to documents" should be a link.
+  const sourceQuery = params.get('q') ?? '';
+  const sourceKindParam = params.get('kind');
+  const sourceKind: SourceKind =
+    sourceKindParam === 'websites' || sourceKindParam === 'documents' ? sourceKindParam : 'all';
   const { entitlements, limitFor, planSlug, planName, loading: planLoading } = useEntitlements();
   const { crawl, startCrawl } = useCrawl();
   const knowledge = useKnowledgeData(agent.id, gapWindow);
@@ -184,6 +191,21 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
    */
   const crawlingDomain =
     crawlRunning && crawl.rootUrl ? rootDomainOf(crawl.rootUrl) : null;
+
+  const setParam = useCallback(
+    (key: string, value: string | null) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current);
+          if (value === null || value === '') updated.delete(key);
+          else updated.set(key, value);
+          return updated;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
 
   const setGapWindow = useCallback(
     (next: GapWindow) => {
@@ -485,6 +507,10 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
                   busySource={recrawl?.loading ? recrawl.sourceName : null}
                   crawlRunning={crawlRunning}
                   crawlingDomain={crawlingDomain}
+                  query={sourceQuery}
+                  onQueryChange={(next) => setParam('q', next)}
+                  kind={sourceKind}
+                  onKindChange={(next) => setParam('kind', next === 'all' ? null : next)}
                   onViewPages={(source) => setDrawerSource(source.name)}
                   onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
                   onDelete={removeSource}

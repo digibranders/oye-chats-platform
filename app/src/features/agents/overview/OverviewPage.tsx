@@ -252,7 +252,11 @@ function OverviewContent({ agent }: { agent: Bot }) {
           asideLabel="Top questions"
           main={
             <Card>
-              <CardHeader size="sm" title="Activity" titleAs="h2" />
+              {/* The chart is trimmed to the selected range client-side, so it
+                  states that range. Its neighbour states "All time", because
+                  `/analytics/top-questions` takes no window at all — two cards
+                  in one row, each honest about a different one. */}
+              <CardHeader eyebrow={rangeLabel(days)} title="Activity" titleAs="h2" />
               <CardBody>
                 <ActivityChart section={activity} days={days} />
               </CardBody>
@@ -260,7 +264,7 @@ function OverviewContent({ agent }: { agent: Bot }) {
           }
           aside={
             <Card className="h-full">
-              <CardHeader size="sm" title="Top questions" titleAs="h2" />
+              <CardHeader eyebrow="All time" title="Top questions" titleAs="h2" />
               <TopQuestions section={questions} />
             </Card>
           }

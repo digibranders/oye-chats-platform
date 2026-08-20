@@ -15,6 +15,7 @@ import {
   DataTable,
   EmptyState,
   ErrorState,
+  LockedState,
   Page,
   PageHeader,
   SearchField,
@@ -548,7 +549,15 @@ export function AgentsPage() {
         }
       />
 
-      {error ? (
+      {error?.status === 403 ? (
+        // Defence in depth: the router already keeps a plain operator out of
+        // `/chatbots`, and CLAUDE.md's own wording is that hiding a rail row can
+        // never be the only line of defence. Four states, on every surface.
+        <LockedState
+          title="These chatbots are not yours to see"
+          description="Ask an owner or admin of this workspace for access."
+        />
+      ) : error ? (
         <Card>
           <ErrorState
             title="We could not load your chatbots"

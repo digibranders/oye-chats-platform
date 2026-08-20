@@ -60,6 +60,28 @@ export function sourceUnits(source: KnowledgeSource): { count: number; label: st
   return { count, label: `${formatNumber(count)} ${unit}${count === 1 ? '' : 's'}` };
 }
 
+/** The type filter above the source table. */
+export type SourceKind = 'all' | 'websites' | 'documents';
+
+/**
+ * The visible set, given the search and the type filter.
+ *
+ * The table caps at 25 rows a page and had neither control, so a workspace with
+ * sixty sources paged through three screens with no way to find `pricing.pdf`.
+ */
+export function filterSources(
+  sources: readonly KnowledgeSource[],
+  query: string,
+  kind: SourceKind,
+): KnowledgeSource[] {
+  const needle = query.trim().toLowerCase();
+  return sources.filter((source) => {
+    if (kind === 'websites' && !isWebsiteSource(source.name)) return false;
+    if (kind === 'documents' && isWebsiteSource(source.name)) return false;
+    return !needle || source.name.toLowerCase().includes(needle);
+  });
+}
+
 /** What a source is doing, in the four words a customer needs. */
 export type SourceStateKind = 'training' | 'trained' | 'failed';
 

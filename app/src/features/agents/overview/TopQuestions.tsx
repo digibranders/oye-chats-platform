@@ -52,7 +52,6 @@ export function TopQuestions({ section }: { section: Section<TopQuestion[]> }) {
       loading={section.loading}
       loadingRows={TOP_N}
       emptyTitle="Nothing asked yet"
-      emptyDescription="All time."
       items={section.data.slice(0, TOP_N).map((item, index) => ({
         id: `${item.question}-${index}`,
         label: item.question,

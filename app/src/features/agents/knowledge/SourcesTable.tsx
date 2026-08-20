@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookOpen, FileText, Globe, MoreHorizontal, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { BookOpen, FileText, Globe, MoreHorizontal, RefreshCw, SearchX, Sparkles, Trash2 } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -11,6 +11,9 @@ import {
   MenuRoot,
   MenuSeparator,
   MenuTrigger,
+  SearchField,
+  SegmentedControl,
+  Toolbar,
   Tooltip,
   WorkingDots,
   formatDate,
@@ -18,7 +21,14 @@ import {
   type Column,
 } from '../../../ui';
 import type { KnowledgeSource } from '../../../types/domain';
-import { isWebsiteSource, sourceState, sourceUnits, type RecrawlMode } from './knowledge-model';
+import {
+  filterSources,
+  isWebsiteSource,
+  sourceState,
+  sourceUnits,
+  type RecrawlMode,
+  type SourceKind,
+} from './knowledge-model';
 
 export interface SourcesTableProps {
   sources: readonly KnowledgeSource[];
@@ -40,6 +50,12 @@ export interface SourcesTableProps {
   onDelete: (source: KnowledgeSource) => Promise<void>;
   /** Blocks every action while a crawl is already running for this chatbot. */
   crawlRunning: boolean;
+  /** Free-text filter over source names, held in the URL by the page. */
+  query: string;
+  onQueryChange: (next: string) => void;
+  /** All / websites / documents, also in the URL. */
+  kind: SourceKind;
+  onKindChange: (next: SourceKind) => void;
 }
 
 /**
@@ -69,8 +85,22 @@ export function SourcesTable({
   onRecrawl,
   onDelete,
   crawlRunning,
+  query,
+  onQueryChange,
+  kind,
+  onKindChange,
 }: SourcesTableProps) {
   const [confirming, setConfirming] = useState<KnowledgeSource | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  const visible = useMemo(() => filterSources(sources, query, kind), [sources, query, kind]);
+  const chosen = useMemo(
+    () => visible.filter((source) => selected.has(source.name)),
+    [visible, selected],
+  );
+  const chosenPassages = chosen.reduce((total, source) => total + (source.chunk_count ?? 0), 0);
 
   const columns = useMemo<Column<KnowledgeSource>[]>(
     () => [
@@ -145,7 +175,10 @@ export function SourcesTable({
       },
       {
         key: 'ingested_at',
-        header: 'Trained',
+        // "Last trained", not "Trained": the State column beside it says
+        // *Trained*, and one word meaning both a date and a state in adjacent
+        // columns is the kind of collision a reader has to stop and resolve.
+        header: 'Last trained',
         type: 'number',
         width: '9rem',
         sortable: (a, b) => Date.parse(a.ingested_at ?? '') - Date.parse(b.ingested_at ?? ''),
@@ -210,13 +243,61 @@ export function SourcesTable({
   );
 
   const confirmingUnits = confirming ? sourceUnits(confirming) : null;
+  const filtered = query.trim() !== '' || kind !== 'all';
 
   return (
     <>
+      {/* Search and a type filter, on a table capped at 25 rows a page: a
+          workspace with sixty sources paged through three screens with no way to
+          find `pricing.pdf`. Both controls are 28px, on one line. */}
+      <Toolbar className="px-cell py-3">
+        <div className="w-full sm:w-64">
+          <SearchField
+            label="Search sources"
+            size="sm"
+            placeholder="Search by name"
+            value={query}
+            onValueChange={onQueryChange}
+          />
+        </div>
+        <SegmentedControl<SourceKind>
+          label="Source type"
+          size="sm"
+          value={kind}
+          onChange={onKindChange}
+          items={[
+            { value: 'all', label: 'All', count: sources.length },
+            {
+              value: 'websites',
+              label: 'Websites',
+              count: sources.filter((source) => isWebsiteSource(source.name)).length,
+            },
+            {
+              value: 'documents',
+              label: 'Documents',
+              count: sources.filter((source) => !isWebsiteSource(source.name)).length,
+            },
+          ]}
+        />
+      </Toolbar>
+
       <DataTable
         seated
         columns={columns}
-        rows={sources}
+        rows={visible}
+        selectedKeys={selected}
+        onSelectionChange={setSelected}
+        rowLabel={(row) => row.name}
+        bulkActions={
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={crawlRunning || removing}
+            onClick={() => setConfirmingBulk(true)}
+          >
+            Remove {formatNumber(chosen.length)}
+          </Button>
+        }
         rowKey={(row) => row.name}
         rowNoun="source"
         caption="Websites and documents this chatbot has learned from"
@@ -226,11 +307,19 @@ export function SourcesTable({
         defaultSort={{ key: 'ingested_at', direction: 'desc' }}
         pageSize={25}
         empty={
-          <EmptyState
-            icon={BookOpen}
-            title="This chatbot has nothing to answer from yet"
-            description="Train it on your website, or upload a document."
-          />
+          filtered ? (
+            <EmptyState
+              icon={SearchX}
+              title="No source matches"
+              description="Nothing here matches that search and filter."
+            />
+          ) : (
+            <EmptyState
+              icon={BookOpen}
+              title="This chatbot has nothing to answer from yet"
+              description="Train it on your website, or upload a document."
+            />
+          )
         }
       />
 
@@ -264,6 +353,34 @@ export function SourcesTable({
           if (!confirming) return;
           await onDelete(confirming);
           setConfirming(null);
+        }}
+      />
+
+      {/* One confirmation for the whole selection. A customer who crawled a site
+          and wants nine of its documents gone did it nine times, each behind its
+          own dialog. The count and the passages it takes with it are both named,
+          because that is the consequence — not "9 items". */}
+      <ConfirmDialog
+        open={confirmingBulk}
+        onOpenChange={(open) => {
+          if (!open) setConfirmingBulk(false);
+        }}
+        destructive
+        title={`Remove ${formatNumber(chosen.length)} source${chosen.length === 1 ? '' : 's'}?`}
+        description={`This deletes ${formatNumber(chosenPassages)} indexed passage${chosenPassages === 1 ? '' : 's'}. The chatbot stops answering from them immediately, and the credits already spent on them are not returned.`}
+        confirmLabel={`Remove ${formatNumber(chosen.length)}`}
+        onConfirm={async () => {
+          setRemoving(true);
+          try {
+            // Sequential, not parallel: each removal is a separate write on the
+            // same chatbot, and firing nine at once is how a partial failure
+            // becomes an unreadable one.
+            for (const source of chosen) await onDelete(source);
+            setSelected(new Set());
+            setConfirmingBulk(false);
+          } finally {
+            setRemoving(false);
+          }
         }}
       />
     </>
