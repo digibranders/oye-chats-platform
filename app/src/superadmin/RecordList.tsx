@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Alert, DataTable, LockedState, type Column, type SortState } from '../ui';
-import type { PagedRows } from './recordList';
-import { isTruncated } from './recordList';
+import type { PagedRows } from './recordListState';
+import { isTruncated } from './recordListState';
 
 export interface RecordListProps<T> {
   /** Names the table for assistive tech. Required by `DataTable`. */

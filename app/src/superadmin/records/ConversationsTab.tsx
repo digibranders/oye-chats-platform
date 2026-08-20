@@ -23,7 +23,7 @@ import { PlatformPage } from '../PlatformPage';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { PLATFORM_ROOT } from '../nav';
 import { RecordList } from '../RecordList';
-import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import { SESSION_STATUS_TONES, isFetchableSessionId, type SessionDetail, type SessionRow } from './types';
 
 const VIEWS = [

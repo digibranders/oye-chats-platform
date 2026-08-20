@@ -101,7 +101,7 @@ export {
 export { PopoverRoot, PopoverTrigger, PopoverContent, PopoverClose } from './overlays/Popover';
 export { Tooltip, TooltipProvider } from './overlays/Tooltip';
 export type { TooltipProps } from './overlays/Tooltip';
-export { Toaster } from './overlays/Toast';
+export { Toaster } from './overlays/Toaster';
 export { toast } from './overlays/toast';
 
 /* -------------------------------------------------------------- feedback */

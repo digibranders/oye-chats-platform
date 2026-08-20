@@ -9,7 +9,7 @@ import {
   isTruncated,
   pageSlice,
   parseSort,
-} from './recordList';
+} from './recordListState';
 import { humanise, isFetchableSessionId } from './records/types';
 
 /**

@@ -23,7 +23,7 @@ import {
 import { CHART_AXIS, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
-import { byDate, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byText, includesText, usePagedRows } from '../recordListState';
 import { humanise, type GrowthEventRow, type VisitorAnalytics } from './types';
 
 const VIEWS = [

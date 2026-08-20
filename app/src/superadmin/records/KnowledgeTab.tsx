@@ -12,7 +12,7 @@ import {
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
-import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import type { CrawlRow, DocumentRow } from './types';
 
 const VIEWS = [

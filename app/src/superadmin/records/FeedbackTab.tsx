@@ -20,7 +20,7 @@ import {
 import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
-import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import {
   FEEDBACK_AREAS,
   FEEDBACK_SEVERITIES,

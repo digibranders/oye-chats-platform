@@ -23,7 +23,7 @@ import { PlatformPage } from '../PlatformPage';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { PLATFORM_ROOT } from '../nav';
 import { RecordList } from '../RecordList';
-import { byDate, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byText, includesText, usePagedRows } from '../recordListState';
 import type { BotDetail, BotRow } from './types';
 
 /** Every chatbot on the platform, whoever owns it. */

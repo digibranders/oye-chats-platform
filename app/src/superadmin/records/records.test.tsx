@@ -7,7 +7,7 @@ import type { Column } from '../../ui';
 import { platform } from '../client';
 import { useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
-import { usePagedRows } from '../recordList';
+import { usePagedRows } from '../recordListState';
 import { KnowledgeTab } from './KnowledgeTab';
 import { SessionDetailPage } from './ConversationsTab';
 

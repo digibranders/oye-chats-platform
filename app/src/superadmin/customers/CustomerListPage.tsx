@@ -29,7 +29,7 @@ import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
 import { PLATFORM_ROOT } from '../nav';
 import { RecordList } from '../RecordList';
-import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordList';
+import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordListState';
 import { CredentialsTab, DevicesTab, IdentitiesTab, NotificationsTab, OperatorsTab } from './DirectoryTabs';
 import { SupportSessionsPanel } from './SupportSessions';
 import { useSupportSessions } from './supportSessionStore';
