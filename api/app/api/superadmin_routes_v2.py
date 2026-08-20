@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
-from app.config import APP_URL, IMPERSONATION_ENABLED
+from app.config import APP_URL, CHECKOUT_TEST_CLIENT_IDS, IMPERSONATION_ENABLED
 from app.core.csv_safety import csv_safe
 from app.core.pricing import charge_currency
 from app.db.models import (
@@ -45,6 +45,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.schemas.validators import EmailAddress, RequiredName, RowId, SessionId, bounded_list
 from app.services.audit_service import record_audit
+from app.services.discount_service import resolve_customer_discount_bps
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
 from app.services.runtime_config import is_impersonation_enabled
@@ -1045,6 +1046,45 @@ class FlagWrite(BaseModel):
     value: Any
 
 
+def _validate_credit_cost_write(key: str, value: Any) -> None:
+    """Reject a ``credit_cost.*`` value that is not a whole number of credits.
+
+    ``value`` is untyped JSONB, and this editor is a free-text field, so a
+    cleared box, a typo'd sign, a decimal or a stray word all used to land in
+    the database exactly as typed. Both readers survive that now
+    (``credit_service._coerce_credit_cost`` fails closed and
+    ``_credit_costs_payload`` serves what the ledger charges), but surviving is
+    not the same as being right: a super admin who typed ``fre`` into
+    ``credit_cost.ai_chat`` saw the panel accept it, while chats went on being
+    charged the fail-closed default. The panel's own confirmation was the lie.
+
+    Refusing at the boundary is what makes the saved value mean what it says.
+    The read-side clamps stay as defence in depth: rows written before this
+    check, seeds, and direct SQL are all still possible.
+
+    Every ``credit_cost.*`` key is a whole non-negative number of credits, and
+    ``document_upload_words_per_credit`` is additionally a divisor, so 0 is
+    refused there rather than silently falling back to the shipped rate.
+    """
+    if not key.startswith("credit_cost."):
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{key}' must be a whole number of credits (got {value!r}).",
+        )
+    if value < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{key}' cannot be negative (got {value!r}).",
+        )
+    if key == "credit_cost.document_upload_words_per_credit" and value == 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{key}' is a divisor and must be at least 1 (got {value!r}).",
+        )
+
+
 @router.put("/pricing-config/{key}")
 def update_pricing_config(
     key: str,
@@ -1058,6 +1098,7 @@ def update_pricing_config(
             status_code=422,
             detail=f"'{key}' has a dedicated validated endpoint; use PUT /superadmin/billing/... instead.",
         )
+    _validate_credit_cost_write(key, body.value)
     with get_session() as session:
         existing = session.get(PricingConfig, key)
         before = existing.value if existing else None
@@ -2303,7 +2344,12 @@ def gstr_export_csv(
     )
 
 
-def _cycle_at_risk_minor(plan: Plan | None, billing_cycle: str | None, currency: str) -> int | None:
+def _cycle_at_risk_minor(
+    plan: Plan | None,
+    billing_cycle: str | None,
+    currency: str,
+    discount_bps: int = 0,
+) -> int | None:
     """The ONE billing cycle a past-due subscription is about to lose, in minor units.
 
     ``currency`` is the rail the customer is actually charged on, so the price
@@ -2311,6 +2357,18 @@ def _cycle_at_risk_minor(plan: Plan | None, billing_cycle: str | None, currency:
     ``*_usd_cents`` columns for a USD-rail one. ``billing_cycle`` picks annual
     or monthly; reading ``monthly_price_cents`` regardless of cycle understates
     an annual subscription by a factor of roughly twelve.
+
+    ``discount_bps`` is the third axis, and it is not decoration either. A
+    standing referral discount is applied by swapping in a DISCOUNTED Razorpay
+    plan (``razorpay_service.resolve_discounted_plan``), so it recurs on every
+    cycle, while ENTITLEMENTS deliberately follow the base ``plan_id``. Reading
+    the base plan's price column therefore quotes list price for a customer who
+    has never paid it: at the platform's 50% cap
+    (``affiliate_service.MAX_CUSTOMER_DISCOUNT_BPS``) that is double the truth,
+    in a field a super admin reads as money at risk, and in the
+    ``at_risk_by_currency`` totals built from it. The arithmetic is
+    ``resolve_discounted_plan``'s own — ``base - floor(base × bps / 10000)`` —
+    so the two cannot round apart.
 
     Returns ``None`` when the amount cannot be stated honestly:
 
@@ -2345,7 +2403,10 @@ def _cycle_at_risk_minor(plan: Plan | None, billing_cycle: str | None, currency:
         price = plan.annual_price_cents if annual else plan.monthly_price_cents
     if price is None or int(price) <= 0:
         return None
-    return int(price)
+    price = int(price)
+    if discount_bps:
+        price -= (price * int(discount_bps)) // 10000
+    return price
 
 
 @router.get("/billing/dunning")
@@ -2358,10 +2419,24 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
 
     **What the money field is.** ``cycle_at_risk_minor`` is the value of the
     ONE billing cycle this subscription is about to lose, in the minor units of
-    ``currency``. It is not arrears and not "amount owed": Razorpay does NOT
-    re-attempt the missed charge when a halted subscription returns to active,
-    so a recovery leaves that one cycle uncollected unless somebody charges it
-    manually. A customer three cycles into failure still shows one cycle here.
+    ``currency``, NET of any standing referral discount. It is not arrears and
+    not "amount owed": Razorpay does NOT re-attempt the missed charge when a
+    halted subscription returns to active, so a recovery leaves that one cycle
+    uncollected unless somebody charges it manually. A customer three cycles
+    into failure still shows one cycle here. ``discount_bps`` is served beside
+    it so a figure below the plan's list price is explicable on the row rather
+    than looking like a bug.
+
+    **Where the discount comes from.** ``discount_service.resolve_customer_discount_bps``,
+    the same resolver the checkout path uses, read live off the customer's
+    attributed referral code. There is no stored per-subscription amount to read
+    instead: ``Subscription.razorpay_billing_plan_id`` was added for exactly
+    this and is never written by any code path. So a code whose percentage was
+    edited, or deactivated, AFTER this subscription was created resolves to
+    today's value while the Razorpay mandate keeps billing the amount it was
+    minted at. That residual gap is a fraction of the up-to-2x one it replaces,
+    and it closes properly only by persisting the billed plan (see the column's
+    own comment).
 
     **Where the currency comes from.** ``Plan.currency`` is not the answer, and
     reading it was wrong in both the number and the label: the plan routes
@@ -2382,7 +2457,9 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
 
     with get_session() as session:
         rows = session.execute(
-            select(Subscription, Client.email, Client.billing_country, Plan)
+            # The whole ``Client``, not two columns: the standing discount is
+            # resolved off ``Client.referral_code_id``.
+            select(Subscription, Client, Plan)
             .join(Client, Subscription.client_id == Client.id)
             .outerjoin(Plan, Subscription.plan_id == Plan.id)
             .where(Subscription.status == "past_due")
@@ -2392,20 +2469,25 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
         now = datetime.now(UTC)
         items: list[dict[str, Any]] = []
         totals: dict[str, int] = {}
-        for sub, email, billing_country, plan in rows:
+        for sub, client, plan in rows:
             since = sub.past_due_since
             if since is not None and since.tzinfo is None:
                 since = since.replace(tzinfo=UTC)
             elapsed = (now - since).days if since else None
-            currency = charge_currency(billing_country)
-            at_risk = _cycle_at_risk_minor(plan, sub.billing_cycle, currency)
+            currency = charge_currency(client.billing_country)
+            # Mirrors the checkout path, which skips the discount for QA
+            # clients so their flows quote list price.
+            discount_bps = 0
+            if client.id not in CHECKOUT_TEST_CLIENT_IDS:
+                discount_bps, _ = resolve_customer_discount_bps(session, client)
+            at_risk = _cycle_at_risk_minor(plan, sub.billing_cycle, currency, discount_bps)
             if at_risk is not None:
                 totals[currency] = totals.get(currency, 0) + at_risk
             items.append(
                 {
                     "subscription_id": sub.id,
                     "client_id": sub.client_id,
-                    "client_email": email,
+                    "client_email": client.email,
                     "plan_name": plan.name if plan else None,
                     "billing_cycle": sub.billing_cycle,
                     "past_due_since": since.isoformat() if since else None,
@@ -2413,6 +2495,7 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
                     "days_left": max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed) if elapsed is not None else None,
                     "emails_sent": sorted((sub.dunning_emails_sent or {}).keys()),
                     "cycle_at_risk_minor": at_risk,
+                    "discount_bps": discount_bps,
                     "currency": currency,
                 }
             )

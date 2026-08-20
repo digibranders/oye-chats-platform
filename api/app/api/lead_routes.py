@@ -75,16 +75,42 @@ router = APIRouter(
 def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int]:
     """Return the list of bot IDs this caller can act on.
 
-    If `bot_id` is provided, verify the caller owns it (raises 403 otherwise).
-    If not, return every bot owned by the caller's client.
+    Two boundaries, not one:
+
+    * **Tenant.** Only bots owned by ``auth["client_id"]``, the workspace owner.
+    * **Operator.** ``Operator.bot_id`` is a NOT NULL one-to-one binding, and
+      for an operator ``auth["client_id"]`` is the workspace OWNER's id — so
+      scoping on it alone hands an operator bound to bot A every bot in the
+      workspace. The rest of the product already treats that binding as a hard
+      boundary: ``bot_routes.list_bots`` filters to it because "operators must
+      not see or switch to other bots in the workspace", and
+      ``offline_message_routes.list_offline_messages`` scopes the visitor
+      contact details it serves the same way. Leads are the widest of those
+      three surfaces (name, email, phone, company, transcript, and a WRITE that
+      silences a bot's follow-ups), so it gets the same rule.
+
+    An explicit ``bot_id`` is verified against the resulting set, so a sibling
+    bot's id in the URL is a 403 rather than an escape hatch. Absent (defensive
+    only, the column is NOT NULL) an operator binding, the caller resolves to no
+    bots at all — the same fail-closed answer ``list_bots`` gives.
+
+    Not covered here: the owner's ``X-Acting-Role: operator`` self-operator hat,
+    which ``list_bots`` and the offline-message list both honour. That one is an
+    owner looking at their own workspace's data, so it is a UI-consistency gap
+    rather than a boundary, and it needs the header threaded through each route.
     """
     client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+
+    if auth.get("type") == "operator":
+        # Fall back to the entity attribute when the resolver's cached
+        # ``bot_id`` isn't populated, mirroring ``list_bots`` / the
+        # offline-message list.
+        operator_bot_id = auth.get("bot_id") or getattr(auth.get("entity"), "bot_id", None)
+        client_bot_ids = [b for b in client_bot_ids if b == operator_bot_id]
+
     if bot_id is None:
         return client_bot_ids
-    owns_bot = session.execute(
-        select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-    ).scalar_one_or_none()
-    if not owns_bot:
+    if bot_id not in client_bot_ids:
         raise HTTPException(status_code=403, detail="Bot not found or access denied.")
     return [bot_id]
 
@@ -101,18 +127,9 @@ def list_leads(
 ):
     """List leads with BANT data, scores, and optional filters."""
     with get_session() as session:
-        # Get bot IDs for this client (always scoped to authenticated client)
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            # Verify the bot belongs to the authenticated client
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        # The caller's bots: the workspace's for an owner, the ONE bound bot
+        # for an operator. See ``_resolve_client_bot_ids``.
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
 
         if not bot_ids:
             return {"leads": [], "total": 0, "page": page, "limit": limit}
@@ -195,16 +212,7 @@ def lead_stats(
 ):
     """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
     with get_session() as session:
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
 
         if not is_lead_intelligence_enabled(auth["client_id"], session):
             # Free plan: total + unread keep the list header and sidebar badge
@@ -306,7 +314,7 @@ def mark_lead_viewed(
     Returns 204 (no body) so the frontend can fire-and-forget on drawer open.
     """
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
         if not bot_ids:
             raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -370,16 +378,7 @@ def export_leads_csv(
                     ),
                 },
             )
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
 
         results = session.execute(
             select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -570,13 +569,15 @@ def list_suppressions(
     search: SearchTerm | None = Query(None, description="Case-insensitive substring match on the email address"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """List the addresses suppressed for this workspace's bots.
+    """List the addresses suppressed for the bots this caller can act on.
 
-    TENANT SCOPING: ``EmailSuppression`` carries no ``client_id``, only
-    ``bot_id``. Every row returned here is therefore filtered through the
-    caller's own bot ids (``_resolve_client_bot_ids``, the same helper /
-    same 403 ``list_leads`` uses). Without that filter this endpoint would
-    hand out other tenants' visitors' email addresses.
+    SCOPING: ``EmailSuppression`` carries no ``client_id``, only ``bot_id``.
+    Every row returned here is therefore filtered through the caller's own bot
+    ids (``_resolve_client_bot_ids``, the same helper / same 403 ``list_leads``
+    uses) — the workspace's bots for an owner, the single bound bot for an
+    operator. Without that filter this endpoint would hand out other tenants'
+    visitors' email addresses, and, before the operator half of the helper
+    existed, a sibling bot's.
     """
     with get_session() as session:
         bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
@@ -624,9 +625,11 @@ def create_suppression(
 ):
     """Suppress an address for one of the caller's bots. Idempotent.
 
-    Same tenant scoping as the list above: ``_resolve_client_bot_ids``
-    raises the 403 ``list_leads`` raises when ``bot_id`` is not the caller's,
-    so nobody can seed a suppression on another workspace's bot.
+    Same scoping as the list above: ``_resolve_client_bot_ids`` raises the 403
+    ``list_leads`` raises when ``bot_id`` is not one the caller can act on, so
+    nobody can seed a suppression on another workspace's bot — or, for an
+    operator, on a sibling bot in their own workspace. This is a write that
+    permanently silences that bot's follow-ups to an address.
 
     The insert mirrors ``unsubscribe_routes._do_unsubscribe``: read-then-add,
     with an ``IntegrityError`` rollback against ``uq_email_suppressions_bot_email``
@@ -679,7 +682,7 @@ def get_lead_detail(
 ):
     """Get full lead detail: BANT + contact info + chat history."""
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
 
         chat_session = session.execute(
             select(ChatSession).where(
@@ -786,7 +789,7 @@ def send_manual_follow_up(
     confirm_override = bool(body and body.confirm_override)
 
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
 
         chat_session = session.execute(
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id.in_(bot_ids))

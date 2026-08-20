@@ -26,6 +26,7 @@ Pricing (credit costs, top-up packs, kill switch) is read from the
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -270,25 +271,65 @@ _DEFAULT_WORDS_PER_CREDIT = 250
 _MIN_DOCUMENT_UPLOAD_COST = 1
 
 
+def _coerce_credit_cost(raw: Any) -> int | None:
+    """Turn one raw ``pricing_config`` value into a chargeable credit count.
+
+    Returns ``None`` when the value cannot be read as a price, so the caller can
+    fail closed. ``pricing_config.value`` is untyped JSONB written by
+    ``PUT /superadmin/pricing-config/{key}``, so every one of these is reachable
+    from the pricing panel:
+
+    * ``None`` — a cleared field. NOT "free": a price nobody set is unknown.
+    * a negative — a typo'd sign. The previous ``max(int(raw), 0)`` turned this
+      into a FREE action, which is a revenue leak on the exact input this
+      helper exists to survive.
+    * a string or a list — ``int()`` RAISES on these, and this value is read by
+      ``GET /credits/balance`` as well as by the charge path, so the raise took
+      the Usage and Billing pages down for every customer in the platform.
+    * ``NaN`` / ``inf`` — ``float()`` accepts both and neither is a price.
+
+    A numeric string (``"3"``) is accepted: a JSON text field invites one, and
+    it states a price unambiguously. A fraction is rounded UP to a whole credit
+    — credits are whole units and a partial one is charged as one, matching
+    ``get_document_upload_cost_for_size``. Truncating 1.5 to 1 would have
+    undercharged silently.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return math.ceil(value)
+
+
 def get_credit_cost(session: Session, action: str) -> int:
     """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``).
 
-    Fails CLOSED: an unknown action or a non-numeric config value yields
-    ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so pricing gaps surface
-    as a charge rather than a silent free ride.
+    Fails CLOSED: an unknown action, or a config value that is not a usable
+    price, yields ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so
+    pricing gaps surface as a charge rather than a silent free ride. An
+    explicit ``0`` is honoured — that is a super admin deliberately making an
+    action free, not a malformed value. See :func:`_coerce_credit_cost`.
+
+    Every consumer of a per-action price goes through here, the charge path and
+    the read path that shows a customer what an action costs
+    (``subscription_routes._credit_costs_payload``) alike. That is what makes
+    the price shown and the price charged one value rather than two readings of
+    the same raw config with different clamping.
     """
     pricing = get_pricing(session)
     raw = pricing.get(f"credit_cost.{action}", _DEFAULT_CREDIT_COST)
-    try:
-        return max(int(raw), 0)
-    except (TypeError, ValueError):
+    cost = _coerce_credit_cost(raw)
+    if cost is None:
         logger.warning(
-            "credit_cost.%s is non-numeric (%r). Failing closed to %d",
+            "credit_cost.%s is not a usable price (%r). Failing closed to %d",
             action,
             raw,
             _DEFAULT_CREDIT_COST,
         )
         return _DEFAULT_CREDIT_COST
+    return cost
 
 
 def count_words(text: str) -> int:
@@ -298,9 +339,9 @@ def count_words(text: str) -> int:
     length. Punctuation attached to words counts as one word; hyphenated
     compounds count as one. Good enough for a 250-words-per-credit rate, where
     a 10-word imprecision moves the charge only on an exact multiple of 250.
-    Empty / whitespace-only input returns 0 (which prices at the per-file
-    minimum via ``get_document_upload_cost_for_size``; the ingest route skips
-    billing zero-word files outright).
+    Empty / whitespace-only input returns 0, which prices at 0 credits via
+    ``get_document_upload_cost_for_size``: nothing was extracted, so nothing
+    reaches the knowledge base and nothing is charged.
     """
     if not text:
         return 0
@@ -372,10 +413,22 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     bounded boundary advertised one price and charged the next bucket up, 3x
     at 100 words. A single rate has no edges to restate.
 
+    A file with NO extractable words costs 0, not the floor. The floor is the
+    minimum for storing content; a file that yielded none (an empty .txt, a
+    scanned PDF with no text layer, an extraction that failed) puts nothing in
+    the knowledge base and is not billed. The ingest route has always skipped
+    billing those, so the floor was quoted by ``POST /ingest/preview-cost``
+    for a file the very next request charged 0 for — a shown price and a
+    charged price disagreeing inside one money surface. The rule lives here, in
+    the one function both the quote and the charge call, rather than in an
+    ``if words > 0`` at each of them.
+
     Fails CLOSED: a missing or non-numeric rate falls back to the shipped 250
     rather than to a divisor that would make an upload free.
     """
     word_count = max(int(word_count or 0), 0)
+    if word_count == 0:
+        return 0
     minimum = get_document_upload_floor(session)
     words_per_credit = get_document_upload_words_per_credit(session)
 

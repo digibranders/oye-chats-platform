@@ -831,7 +831,9 @@ def ingest_documents(
             fname = saved_path.name
             ext = saved_path.suffix.lower()
             words = _extract_words_for_cost(saved_path, ext)
-            cost = credit_service.get_document_upload_cost_for_size(db, words) if words > 0 else 0
+            # ``words == 0`` (extraction failed or the file had no text) prices
+            # at 0 inside the helper, which is what ``preview-cost`` quotes.
+            cost = credit_service.get_document_upload_cost_for_size(db, words)
             per_file_costs.append((fname, words, cost))
             total_cost += cost
 

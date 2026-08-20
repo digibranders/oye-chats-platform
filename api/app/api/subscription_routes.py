@@ -3256,33 +3256,38 @@ def _credit_costs_payload(session: Session) -> dict[str, int]:
     grep the console's TSX for a hard-coded sentence, across two repositories,
     and that guard broke the moment the console was rebuilt.
 
-    ``document_upload`` is the per-file FLOOR, not the price: a document is
-    charged ``ceil(words / document_upload_words_per_credit)`` credits, never
-    below that floor (``credit_service.get_document_upload_cost_for_size``).
-    Serving only the floor left the console unable to state what an upload
-    actually costs, so the rate is served beside it. Both are read through
-    ``credit_service.get_document_upload_floor`` /
-    ``get_document_upload_words_per_credit``, the same clamping accessors the
-    deduction path uses, so the price shown and the price charged are one value.
-    """
-    pricing = credit_service.get_pricing(session)
+    ``document_upload`` is the per-file FLOOR, not the price: a document with
+    at least one extractable word is charged
+    ``ceil(words / document_upload_words_per_credit)`` credits, never below that
+    floor (``credit_service.get_document_upload_cost_for_size``). Serving only
+    the floor left the console unable to state what an upload actually costs, so
+    the rate is served beside it.
 
-    # BOTH document-upload numbers come from the deduction path's own clamping
-    # accessors, not from a re-read of the raw config. ``value`` is untyped
-    # JSONB and a super admin can save 0, a negative, null or a string into
-    # either key: a 0 rate would reach the console as "1 credit per 0 words",
-    # and a 0 floor would advertise a free upload that
-    # ``get_document_upload_cost_for_size`` still charges 1 credit for. Reading
-    # what the charge path reads is the only way the two cannot disagree.
-    # ``warn=False`` because the deduction path already logs a bad rate on every
-    # upload; repeating it on every balance poll would bury it.
+    Every field is read through the accessor the deduction path uses —
+    ``credit_service.get_credit_cost`` for the per-action prices,
+    ``get_document_upload_floor`` / ``get_document_upload_words_per_credit`` for
+    the upload pair — so the price shown and the price charged are one value,
+    including when the stored config is unusable.
+    """
+    # EVERY number here comes from the deduction path's own accessors, never
+    # from a re-read of the raw config. ``value`` is untyped JSONB and a super
+    # admin can save 0, a negative, null, a decimal or a word into any of these
+    # keys: a 0 rate would reach the console as "1 credit per 0 words", a 0
+    # floor would advertise a free upload that
+    # ``get_document_upload_cost_for_size`` still charges 1 credit for, and a
+    # bare ``int(...)`` on a word or a list RAISES — which turned one typo in an
+    # internal pricing panel into a 500 on the Usage and Billing pages for every
+    # customer, while billing carried on charging correctly. Reading what the
+    # charge path reads is the only way the two cannot disagree.
+    # ``warn=False`` on the rate because the deduction path already logs a bad
+    # one on every upload; repeating it on every balance poll would bury it.
     return {
-        "ai_chat": int(pricing.get("credit_cost.ai_chat", 1) or 0),
-        "url_scan": int(pricing.get("credit_cost.url_scan", 3) or 0),
-        "email_send": int(pricing.get("credit_cost.email_send", 1) or 0),
+        "ai_chat": credit_service.get_credit_cost(session, "ai_chat"),
+        "url_scan": credit_service.get_credit_cost(session, "url_scan"),
+        "email_send": credit_service.get_credit_cost(session, "email_send"),
         "document_upload": credit_service.get_document_upload_floor(session),
-        "email_verification": int(pricing.get("credit_cost.email_verification", 10) or 0),
-        "company_name": int(pricing.get("credit_cost.company_name", 10) or 0),
+        "email_verification": credit_service.get_credit_cost(session, "email_verification"),
+        "company_name": credit_service.get_credit_cost(session, "company_name"),
         "document_upload_words_per_credit": credit_service.get_document_upload_words_per_credit(session, warn=False),
     }
 
