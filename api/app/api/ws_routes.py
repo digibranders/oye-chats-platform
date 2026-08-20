@@ -625,6 +625,12 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
     """Resolve operator_id, operator_name, client_id, department_id, is_online from an api_key or operator_key.
 
     Returns (operator_id, operator_name, client_id, department_id, is_online) or None if auth fails.
+
+    BOTH branches refuse a deactivated operator. That symmetry is the point:
+    each one sets ``is_online = True`` as a side effect, and the seat cap this
+    module enforces counts ``is_online`` with no ``is_active`` filter, so a
+    branch that skipped the check would hand a deactivated operator back both
+    their seat and their queue.
     """
     with get_session() as session:
         if key_type == "operator_key":
@@ -644,6 +650,20 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
         operator = session.execute(
             select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
         ).scalar_one_or_none()
+
+        if operator is not None and not operator.is_active:
+            # Same refusal the ``operator_key`` branch makes above, which this
+            # branch was missing. Without it, deactivation is not a control:
+            # ``PATCH /operators/{id} {"is_active": false}`` frees the seat and
+            # closes the socket, and then a reconnect with the CLIENT api key
+            # walks straight past it, sets ``is_online = True`` on the way, and
+            # re-occupies the seat that was just freed. Refusing here is what
+            # makes the deactivation stick.
+            #
+            # This does not lock an account out of its own console: the row is
+            # reactivated through ``PATCH /operators/{id}``, which authenticates
+            # with the client api key rather than through this socket.
+            return None
 
         if not operator:
             # bot_id is NOT NULL on operators (one operator, one bot. See

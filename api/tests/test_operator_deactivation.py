@@ -528,3 +528,61 @@ def test_deactivating_an_operator_from_another_workspace_404s(db):
 
     db.expire_all()
     assert db.get(Operator, victim.id).is_active is True
+
+
+# ── Reconnection after deactivation ──────────────────────────────────────────
+
+
+def _resolve(monkeypatch, db, key: str, key_type: str):
+    """Run the socket's key resolver against the test transaction."""
+    from contextlib import contextmanager
+
+    from app.api import ws_routes
+
+    @contextmanager
+    def _ctx():
+        yield db
+
+    monkeypatch.setattr(ws_routes, "get_session", _ctx)
+    return ws_routes._resolve_operator_from_key(key, key_type)
+
+
+def test_a_deactivated_operator_cannot_reconnect_with_their_operator_key(db, monkeypatch):
+    client, bot = _workspace(db, "recon-opkey", operator_seats=5)
+    operator = _operator(db, client, bot, "recon-opkey", is_active=False)
+    operator.is_online = False
+    db.flush()
+
+    assert _resolve(monkeypatch, db, operator.operator_api_key, "operator_key") is None
+    db.refresh(operator)
+    assert operator.is_online is False
+
+
+def test_a_deactivated_owner_cannot_reconnect_with_the_client_api_key(db, monkeypatch):
+    """The branch that made deactivation reversible by the person deactivated.
+
+    Both resolver branches set ``is_online = True`` as a side effect, and the
+    seat cap counts ``is_online`` with no ``is_active`` filter. The
+    ``operator_key`` branch refused an inactive operator; the ``api_key``
+    branch did not, so a deactivated owner row reconnected through the client
+    key, took its seat back and was offered chats again.
+    """
+    client, bot = _workspace(db, "recon-apikey", operator_seats=5)
+    owner = _operator(db, client, bot, "recon-apikey", is_active=False, role="owner")
+    owner.is_online = False
+    db.flush()
+
+    assert _resolve(monkeypatch, db, client.api_key, "api_key") is None
+    db.refresh(owner)
+    assert owner.is_online is False, "a refused connection must not hand back the freed seat"
+
+
+def test_an_active_owner_still_resolves_through_the_client_api_key(db, monkeypatch):
+    """The refusal is scoped to deactivation, not to the branch."""
+    client, bot = _workspace(db, "recon-ok", operator_seats=5)
+    owner = _operator(db, client, bot, "recon-ok", is_active=True, role="owner")
+    db.flush()
+
+    result = _resolve(monkeypatch, db, client.api_key, "api_key")
+    assert result is not None
+    assert result[0] == owner.id
