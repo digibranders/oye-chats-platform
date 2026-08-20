@@ -158,7 +158,7 @@ export function AnalyticsPage() {
           <VisitorsTab botId={botId} range={range} />
         </TabPanel>
         <TabPanel value="feedback">
-          <FeedbackTab botId={botId} />
+          <FeedbackTab botId={botId} range={range} />
         </TabPanel>
       </Tabs>
     </Page>

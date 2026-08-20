@@ -118,7 +118,7 @@ export function GoogleAuthButton({
  *
  * The four hex values are the only ones in this surface. They are Google's
  * brand asset, reproduced under its identity guidelines, and are not ours to
- * substitute with a design-system token.
+ * substitute with a design token.
  */
 function GoogleMark() {
   return (

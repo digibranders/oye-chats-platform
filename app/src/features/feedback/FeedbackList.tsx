@@ -1,17 +1,22 @@
-import { type ReactElement } from 'react';
 import { FeedbackRow } from './FeedbackRow';
 import { type FeedbackItem } from './types';
 
-interface FeedbackListProps {
-  items: FeedbackItem[];
+export interface FeedbackListProps {
+  items: readonly FeedbackItem[];
   expandedId: number | null;
   onToggle: (messageId: number) => void;
 }
 
-/** FeedbackList - the itemized, expandable feedback cards for the active filter. */
-export function FeedbackList({ items, expandedId, onToggle }: FeedbackListProps): ReactElement {
+/**
+ * The rated answers for the active filter, as one list.
+ *
+ * `ol` rather than a stack of divs: the order is the data — newest rating
+ * first — and a list tells a screen-reader user how many there are before they
+ * start walking it.
+ */
+export function FeedbackList({ items, expandedId, onToggle }: FeedbackListProps) {
   return (
-    <div className="space-y-3">
+    <ol>
       {items.map((item) => (
         <FeedbackRow
           key={item.message_id}
@@ -20,6 +25,6 @@ export function FeedbackList({ items, expandedId, onToggle }: FeedbackListProps)
           onToggle={() => onToggle(item.message_id)}
         />
       ))}
-    </div>
+    </ol>
   );
 }

@@ -1,61 +1,49 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getFeedbackData } from '../../services/api';
+import { keys } from '../../query/keys';
+import { isForbidden } from '../analytics/useAnalyticsData';
 import { type FeedbackItem } from './types';
 
 export interface UseFeedbackResult {
   items: FeedbackItem[];
   loading: boolean;
-  error: string | null;
+  /** The workspace's plan does not include this endpoint (402/403). */
+  locked: boolean;
+  error: unknown;
   /** Re-run the fetch. Safe to wire to a "Try again" button. */
-  refresh: () => void;
-}
-
-function errorMessage(cause: unknown): string {
-  if (cause instanceof Error && cause.message) return cause.message;
-  return 'Failed to load feedback data.';
+  refetch: () => void;
 }
 
 /**
- * useFeedback - loads the itemized thumbs-up/down feedback log for either the
- * whole workspace (`agentId` omitted) or a single agent (`agentId` provided,
- * matching the URL-scoped agent's string route param). Filtering/bucketing
- * happens entirely client-side (see `feedback-helpers.ts`) - the endpoint has
- * no pagination or server-side filters.
+ * The itemized thumbs-up/down feedback log for one chatbot.
+ *
+ * On react-query, under `keys.analytics.feedback`, for one reason that is not
+ * tidiness: `useAnalyticsRefresh` invalidates the whole `['analytics']` subtree
+ * from the page header, and while this panel held its own `useState`/`useEffect`
+ * fetch it was the one tab on `/analytics` that the page's Refresh button did
+ * not refresh. Nothing on screen said so.
+ *
+ * Filtering and bucketing still happen entirely client-side (see
+ * `feedback-helpers.ts`) — `/analytics/feedback` has no pagination and no
+ * server-side filters, so the window the page selects is applied to the full
+ * set here rather than being sent.
  */
-export function useFeedback(agentId?: string): UseFeedbackResult {
-  const [items, setItems] = useState<FeedbackItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
+export function useFeedback(botId: number | null): UseFeedbackResult {
+  const query = useQuery({
+    queryKey: keys.analytics.feedback(botId),
+    queryFn: () => getFeedbackData(botId ?? undefined),
+    enabled: botId != null,
+  });
 
-  useEffect(() => {
-    let active = true;
-    const numericAgentId = agentId !== undefined ? Number(agentId) : undefined;
-    const validAgentId =
-      numericAgentId !== undefined && Number.isFinite(numericAgentId) ? numericAgentId : undefined;
-
-    void (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await getFeedbackData(validAgentId);
-        if (!active) return;
-        setItems(data);
-      } catch (cause) {
-        if (!active) return;
-        setItems([]);
-        setError(errorMessage(cause));
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [agentId, reloadToken]);
-
-  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
-
-  return { items, loading, error, refresh };
+  return {
+    items: query.data ?? [],
+    // `isPending` is true for a disabled query too, which is right: with no
+    // chatbot selected there is nothing to show yet, and the panel would
+    // otherwise flash "no feedback" at a workspace that simply has not
+    // resolved its agent list.
+    loading: query.isPending,
+    locked: isForbidden(query.error),
+    error: query.error,
+    refetch: () => void query.refetch(),
+  };
 }

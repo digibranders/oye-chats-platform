@@ -20,34 +20,13 @@
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#010B23" />
-  <meta name="color-scheme" content="dark light" />
+  <meta name="color-scheme" content="light" />
   <meta name="application-name" content="OyeChats" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="OyeChats" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>OyeChats Admin</title>
-  <script>
-    // Apply the persisted theme + contrast before first paint to avoid a flash.
-    // Mirrors the design-system ThemeProvider: keys 'oc_theme' (DEFAULT 'system',
-    // unset resolves against the OS preference) and 'oc_contrast' (DEFAULT
-    // 'default'). Keep this in sync with STORAGE_KEY / CONTRAST_STORAGE_KEY in
-    // src/design-system/theme/ThemeProvider.tsx.
-    (function () {
-      try {
-        var m = localStorage.getItem('oc_theme');           // 'light' | 'dark' | 'system' | null
-        var prefersDark = window.matchMedia &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches;
-        var dark = m === 'dark' || (m !== 'light' && prefersDark); // unset/'system' => follow OS
-        var el = document.documentElement;
-        el.classList.toggle('dark', dark);
-        el.style.colorScheme = dark ? 'dark' : 'light';
-        if (localStorage.getItem('oc_contrast') === 'high') {
-          el.setAttribute('data-contrast', 'high');
-        }
-      } catch (e) { /* localStorage unavailable - ignore */ }
-    })();
-  </script>
 </head>
 
 <body>

@@ -51,6 +51,7 @@ export const keys = {
     topQuestions: (agentId: number | null) => ['analytics', 'top-questions', agentId] as const,
     unanswered: (agentId: number | null, days: number | null) =>
       ['analytics', 'unanswered', agentId, days] as const,
+    feedback: (agentId: number | null) => ['analytics', 'feedback', agentId] as const,
     ratings: (agentId: number | null) => ['analytics', 'ratings', agentId] as const,
     resolution: (agentId: number | null) => ['analytics', 'resolution', agentId] as const,
     visitors: (agentId: number | null) => ['analytics', 'visitors', agentId] as const,
