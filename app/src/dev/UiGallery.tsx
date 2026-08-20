@@ -40,6 +40,7 @@ import {
   Page,
   PageHeader,
   Progress,
+  Disclosure,
   NavTabs,
   RadioCards,
   RankedBars,
@@ -390,6 +391,22 @@ export function UiGallery() {
                         </>
                       }
                     />
+                  </Section>
+
+                  <Section
+                    title="Show more, on request"
+                    description="A button with aria-expanded over a labelled region. Optionally a heading, so a log of them is navigable by heading."
+                  >
+                    <Card>
+                      <CardBody>
+                        <Disclosure summary="Why this answer was unhelpful" headingLevel={3}>
+                          <p className="text-prose text-text-secondary">
+                            The panel is unmounted when closed, not hidden — a hidden subtree keeps
+                            its focusable children in the tab order.
+                          </p>
+                        </Disclosure>
+                      </CardBody>
+                    </Card>
                   </Section>
 
                   <Section

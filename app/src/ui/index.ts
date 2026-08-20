@@ -72,6 +72,8 @@ export { Page, PageHeader, Section, Stack, Toolbar } from './layout/Page';
 export type { PageProps, PageHeaderProps, SectionProps, PageWidth } from './layout/Page';
 export { Tabs, TabPanel } from './layout/Tabs';
 export type { TabsProps, TabItem } from './layout/Tabs';
+export { Disclosure } from './layout/Disclosure';
+export type { DisclosureProps } from './layout/Disclosure';
 export { SaveBar } from './layout/SaveBar';
 export type { SaveBarProps } from './layout/SaveBar';
 export { NavTabs } from './layout/NavTabs';

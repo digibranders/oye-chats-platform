@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Download, MessageSquareHeart } from 'lucide-react';
 import {
   Button,
@@ -9,10 +8,8 @@ import {
   EmptyState,
   ErrorState,
   LoadingRows,
-  LockedState,
   Stack,
   StatTile,
-  buttonClass,
   formatNumber,
 } from '../../ui';
 import { errorMessage } from '../analytics/useAnalyticsData';
@@ -54,9 +51,16 @@ export interface FeedbackPanelProps {
  * moved day by day, the questions that keep getting a thumbs-down, and the
  * exchanges themselves. The order is the argument — the share is the headline,
  * the repeat offenders are what you act on, and the log is the evidence.
+ *
+ * **Not plan-gated, so there is no locked state.** `/analytics/feedback` carries
+ * no entitlement check — it can answer, 404 on an unowned chatbot, or 500, and
+ * that is the whole set. A lock rendered on a 403 would therefore be a wall in
+ * front of data the customer already has, and would name a tier that does not
+ * gate anything; the same argument `SatisfactionPanel` makes for the ratings
+ * summary next door. A refusal is an error here, and is rendered as one.
  */
 export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
-  const { items, loading, locked, error, refetch } = useFeedback(botId);
+  const { items, loading, error, refetch } = useFeedback(botId);
   const [filter, setFilter] = useState<FeedbackFilter>('all');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
@@ -92,20 +96,6 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       row.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
     });
-  }
-
-  if (locked) {
-    return (
-      <LockedState
-        title="Answer ratings are not included in your plan"
-        description="Visitors can already rate answers in the widget. Seeing which ones they marked unhelpful — and which questions they keep marking — comes with Standard and above."
-        action={
-          <Link to="/billing" className={buttonClass('primary', 'sm')}>
-            See plans
-          </Link>
-        }
-      />
-    );
   }
 
   if (error) {

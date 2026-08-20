@@ -1,5 +1,4 @@
-import { ChevronDown } from 'lucide-react';
-import { Badge, Button, cn, formatDateTime, useClipboard } from '../../ui';
+import { Badge, Button, Disclosure, formatDateTime, useClipboard } from '../../ui';
 import { type FeedbackItem } from './types';
 
 export interface FeedbackRowProps {
@@ -18,14 +17,13 @@ export interface FeedbackRowProps {
  * from the red exactly nothing. The verdict is now a `Badge`, which always
  * carries its word.
  *
- * The disclosure is a real `aria-expanded` button over a `region` labelled by
- * it, so a screen reader is told there is more and what opening it reveals.
+ * The disclosure comes from the design system, wrapped in a heading so a log of
+ * a hundred ratings is navigable by heading — which is the whole reason the
+ * rows are collapsed in the first place.
  */
 export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
   const positive = item.feedback === 1;
   const { state, copy } = useClipboard();
-  const panelId = `feedback-detail-${item.message_id}`;
-  const buttonId = `feedback-toggle-${item.message_id}`;
 
   function copyIssue() {
     void copy(
@@ -43,39 +41,32 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
 
   return (
     <li data-feedback-id={item.message_id} className="border-t border-border first:border-t-0">
-      <h3>
-        <button
-          id={buttonId}
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          aria-controls={panelId}
-          className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-hover"
-        >
-          <Badge tone={positive ? 'success' : 'danger'} dot>
-            {positive ? 'Helpful' : 'Not helpful'}
-          </Badge>
-          <span className="min-w-0 flex-1 truncate text-base text-text-primary">
-            {item.question}
+      <Disclosure
+        headingLevel={3}
+        open={expanded}
+        onOpenChange={onToggle}
+        regionLabel={`Full exchange: ${item.question}`}
+        className="px-4 py-1"
+        panelClassName="pb-3"
+        summary={
+          <span className="flex min-w-0 items-center gap-3">
+            <Badge tone={positive ? 'success' : 'danger'} dot>
+              {positive ? 'Helpful' : 'Not helpful'}
+            </Badge>
+            <span className="min-w-0 flex-1 truncate text-base text-text-primary">
+              {item.question}
+            </span>
           </span>
-          <span className="figure hidden shrink-0 text-xs text-text-tertiary sm:inline">
-            {item.user}
+        }
+        trailing={
+          <span className="flex items-center gap-3">
+            <span className="figure hidden text-xs text-text-tertiary sm:inline">{item.user}</span>
+            <span className="figure text-xs text-text-secondary">
+              {formatDateTime(item.created_at)}
+            </span>
           </span>
-          <span className="figure shrink-0 text-xs text-text-secondary">
-            {formatDateTime(item.created_at)}
-          </span>
-          <ChevronDown
-            aria-hidden
-            className={cn(
-              'h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-[var(--dur-fast)] motion-reduce:transition-none',
-              expanded && 'rotate-180',
-            )}
-          />
-        </button>
-      </h3>
-
-      {expanded ? (
-        <div id={panelId} role="region" aria-labelledby={buttonId} className="px-5 pb-4">
+        }
+      >
           <dl className="grid gap-3">
             <div className="rounded-md bg-surface-sunken px-3 py-2.5">
               <dt className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
@@ -105,8 +96,7 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
               </span>
             </div>
           ) : null}
-        </div>
-      ) : null}
+      </Disclosure>
     </li>
   );
 }

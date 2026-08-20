@@ -138,16 +138,18 @@ describe('FeedbackPanel — the four states', () => {
     await screen.findByText('How much does it cost?');
   });
 
-  it('renders a plan answer, not an outage, when the endpoint is refused', async () => {
-    vi.mocked(getFeedbackData).mockRejectedValue(Object.assign(new Error('Payment required'), {
-      status: 402,
-    }));
+  it('calls a refusal what it is, rather than inventing a plan gate', async () => {
+    /* `/analytics/feedback` carries no entitlement check — it answers, 404s on
+       an unowned chatbot, or 500s. A lock here would name a tier that gates
+       nothing and put a wall in front of data the customer already has. */
+    vi.mocked(getFeedbackData).mockRejectedValue(
+      Object.assign(new Error('Forbidden'), { status: 403 }),
+    );
     renderPanel();
 
-    expect(
-      await screen.findByText('Answer ratings are not included in your plan'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /see plans/i })).toHaveAttribute('href', '/billing');
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Ratings could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /see plans/i })).toBeNull();
   });
 });
 

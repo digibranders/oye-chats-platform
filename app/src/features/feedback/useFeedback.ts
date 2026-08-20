@@ -1,14 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { getFeedbackData } from '../../services/api';
 import { keys } from '../../query/keys';
-import { isForbidden } from '../analytics/useAnalyticsData';
 import { type FeedbackItem } from './types';
 
 export interface UseFeedbackResult {
   items: FeedbackItem[];
   loading: boolean;
-  /** The workspace's plan does not include this endpoint (402/403). */
-  locked: boolean;
   error: unknown;
   /** Re-run the fetch. Safe to wire to a "Try again" button. */
   refetch: () => void;
@@ -27,6 +24,10 @@ export interface UseFeedbackResult {
  * `feedback-helpers.ts`) — `/analytics/feedback` has no pagination and no
  * server-side filters, so the window the page selects is applied to the full
  * set here rather than being sent.
+ *
+ * No `locked` flag, unlike the sibling analytics hooks: the endpoint carries no
+ * entitlement check, so a refusal from it is a failure and not a plan answer.
+ * See the note on `FeedbackPanel`.
  */
 export function useFeedback(botId: number | null): UseFeedbackResult {
   const query = useQuery({
@@ -42,7 +43,6 @@ export function useFeedback(botId: number | null): UseFeedbackResult {
     // otherwise flash "no feedback" at a workspace that simply has not
     // resolved its agent list.
     loading: query.isPending,
-    locked: isForbidden(query.error),
     error: query.error,
     refetch: () => void query.refetch(),
   };

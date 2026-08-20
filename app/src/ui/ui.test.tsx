@@ -11,6 +11,7 @@ import { CodeBlock } from './data/Copyable';
 import { Tooltip, TooltipProvider } from './overlays/Tooltip';
 import { NavTabs } from './layout/NavTabs';
 import { SaveBar } from './layout/SaveBar';
+import { Disclosure } from './layout/Disclosure';
 import { RadioCards } from './primitives/RadioCards';
 import { Select } from './primitives/Select';
 import { Meter } from './primitives/Progress';
@@ -783,5 +784,47 @@ describe('Select', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Department' }), '');
     expect(onChange).toHaveBeenCalled();
     expect(screen.getByRole('option', { name: 'No department' })).not.toBeDisabled();
+  });
+});
+
+describe('Disclosure', () => {
+  it('announces itself as expandable and names what it reveals', async () => {
+    const user = userEvent.setup();
+    render(
+      <Disclosure summary="Technical details" regionLabel="Technical details">
+        <p>Stack goes here</p>
+      </Disclosure>,
+    );
+
+    const toggle = screen.getByRole('button', { name: /technical details/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Stack goes here')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: /technical details/i })).toBeInTheDocument();
+  });
+
+  it('unmounts the panel rather than hiding it', async () => {
+    // A hidden subtree keeps its focusable children in the tab order unless
+    // every one of them is disabled, and these panels are often long.
+    const user = userEvent.setup();
+    render(
+      <Disclosure summary="More" defaultOpen>
+        <button type="button">Inside</button>
+      </Disclosure>,
+    );
+    expect(screen.getByRole('button', { name: 'Inside' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('button', { name: 'Inside' })).not.toBeInTheDocument();
+  });
+
+  it('can be a heading, so a log of them is navigable by heading', () => {
+    render(
+      <Disclosure summary="One rated answer" headingLevel={3}>
+        <p>Detail</p>
+      </Disclosure>,
+    );
+    expect(screen.getByRole('heading', { level: 3, name: /one rated answer/i })).toBeInTheDocument();
   });
 });

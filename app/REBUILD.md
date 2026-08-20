@@ -23,8 +23,8 @@ So each slice goes all the way down, and ships.
 | **4 — Home · Leads · Analytics** ✅ | Daily operations, with the date range the backend has always supported | The reporting surfaces |
 | **5 — Billing · Usage · Settings** ✅ | Billing and usage as a top-level destination; one settings home | The money surfaces |
 | **6 — Auth** ✅ | Login, register, verify, reset, OAuth callback | The last screens on the legacy palette |
-| **7 — Sweep** | Delete the legacy bridge · a11y and performance pass · capability-ledger audit | That nothing was dropped |
-| **8 — Super-admin** | A separate shell and URL space for ~110 endpoints with no UI today | Operations |
+| **7 — Sweep** ✅ | Delete the legacy bridge · a11y and performance pass · capability-ledger audit | That nothing was dropped |
+| **8 — Super-admin** ✅ | A separate shell and URL space for ~110 endpoints with no UI today | Operations |
 
 **Slice 1 is where the risk is.** The inbox is real-time, three-pane, stateful,
 and the audit found it tearing down its own websocket on a tab switch. Building

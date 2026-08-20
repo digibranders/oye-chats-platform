@@ -17,6 +17,15 @@ export interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  /**
+   * A short line above the title, naming the object or the situation — "You
+   * already have one chatbot on Free".
+   *
+   * Sentence case and full size, not the mono uppercase `Eyebrow`: these are
+   * sentences, and 11px uppercase mono mangles a sentence. It sits outside the
+   * accessible name, so the dialog is still announced by its title.
+   */
+  eyebrow?: ReactNode;
   /** Wired to `aria-describedby`, so it is read with the title on open. */
   description?: string;
   children: ReactNode;
@@ -49,6 +58,7 @@ export function Dialog({
   open,
   onOpenChange,
   title,
+  eyebrow,
   description,
   children,
   footer,
@@ -78,6 +88,9 @@ export function Dialog({
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">
+              {eyebrow ? (
+                <p className="mb-1 text-xs leading-relaxed text-text-secondary">{eyebrow}</p>
+              ) : null}
               <BaseDialog.Title className="text-lg font-semibold text-text-primary">
                 {title}
               </BaseDialog.Title>

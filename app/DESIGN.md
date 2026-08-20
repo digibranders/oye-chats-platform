@@ -308,3 +308,17 @@ the first keystroke pushes the card down while the user is typing in it;
 `sticky` floats and so appears only when there is something to save. The
 router-dependent half is a separate component, so a form that opted out of the
 guard does not inherit a data-router requirement.
+
+**One disclosure.** A button carrying `aria-expanded` over a labelled `region`,
+optionally wrapped in a heading so a log of a hundred collapsed rows is navigable
+by heading — which is the whole reason the rows are collapsed. The panel is
+unmounted rather than hidden: a hidden subtree keeps its focusable children in
+the tab order unless every one of them is disabled. The one place a native
+`<details>` is still right is content that must stay findable by the browser's
+own in-page search while collapsed, and `ErrorDetails` makes exactly that case
+for a stack trace, in writing.
+
+**`Dialog` takes an eyebrow.** The upgrade intents carry a contextual sentence
+that belongs above the title — "You already have one chatbot on Free". It is set
+in sentence case at full size, not in the mono uppercase `Eyebrow`, because
+these are sentences and 11px uppercase mono mangles a sentence.
