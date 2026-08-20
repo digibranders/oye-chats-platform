@@ -5,16 +5,32 @@ import { cn } from '../lib/cn';
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
 
 /**
- * Initials are set one rung below the box they sit in, and never smaller than
- * the scale's floor. Two characters at 11px in a 20px circle is legible; the
- * 9px an earlier version used was not, and it was also a size the system does
- * not have.
+ * Initials are set on a rung that keeps roughly the same proportion of the box,
+ * and never smaller than the scale's floor. The earlier map claimed "one rung
+ * below the box" but the ratio halved across the set — 55% at `xs` down to 32%
+ * at `lg` — so a 40px avatar was a tiny pair of letters floating in a large
+ * tint. These are 55 / 46 / 41 / 35, and every one is a real rung.
  */
 const SIZES: Record<AvatarSize, string> = {
   xs: 'h-5 w-5 text-2xs',
   sm: 'h-6 w-6 text-2xs',
-  md: 'h-8 w-8 text-xs',
-  lg: 'h-10 w-10 text-sm',
+  md: 'h-8 w-8 text-sm',
+  lg: 'h-10 w-10 text-base',
+};
+
+/**
+ * The `rounded` shape, scaled with the box.
+ *
+ * One radius for a 20px square and a 40px square is two different shapes: 8px on
+ * 20 is 40% of the side — a squircle — and 8px on 40 is barely rounded. The same
+ * prop has to produce the same *shape*, which means the radius moves with the
+ * size.
+ */
+const SHAPE: Record<AvatarSize, string> = {
+  xs: 'rounded-xs',
+  sm: 'rounded-xs',
+  md: 'rounded-sm',
+  lg: 'rounded-md',
 };
 
 /**
@@ -72,7 +88,7 @@ export function Avatar({ name, src, size = 'md', shape = 'circle', className }: 
     <BaseAvatar.Root
       className={cn(
         'inline-flex shrink-0 select-none items-center justify-center overflow-hidden',
-        shape === 'circle' ? 'rounded-full' : 'rounded-md',
+        shape === 'circle' ? 'rounded-full' : SHAPE[size],
         SIZES[size],
         className,
       )}

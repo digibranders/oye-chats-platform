@@ -1,9 +1,11 @@
 import { useMemo, type ReactNode } from 'react';
 import { Combobox as BaseCombobox } from '@base-ui/react/combobox';
-import { Check, ChevronsUpDown, Search } from 'lucide-react';
+import { Check, ChevronDown, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
-import { useFieldControlProps } from './fieldContext';
+import { CONTROL_SIZE, controlClass } from './controlStyles';
+import { PANEL_BASE, PANEL_POSITIONER } from '../overlays/panelStyles';
+import { useField, useFieldControlProps } from './fieldContext';
 
 export interface ComboboxOption<T extends string> {
   value: T;
@@ -25,6 +27,15 @@ export interface ComboboxProps<T extends string> {
   placeholder?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  /**
+   * Offer a way back to "none".
+   *
+   * `Select` carries this lesson in its own docblock — a placeholder-only field
+   * can be set but never cleared, which is how the previous department picker
+   * shipped. The `T | null` signature here could always express the empty
+   * answer; until this prop, the UI could not produce it.
+   */
+  clearable?: boolean;
   disabled?: boolean;
   size?: 'sm' | 'md';
   className?: string;
@@ -45,6 +56,17 @@ export interface ComboboxProps<T extends string> {
  * announces nothing as the user arrows through the options. Filtering,
  * highlighting, the ARIA relationships and the portalled positioning are all
  * owned by the library here, so there is nothing left for us to get wrong.
+ *
+ * The search row carries no magnifier. It had one, and the icon plus its gap
+ * pushed the text the user types to a 34px indent while the option labels it
+ * filters started at 12 — the most visible mis-alignment in any dropdown in the
+ * app. The placeholder already says "Search…", so the glyph was buying nothing
+ * and costing 22px of disagreement.
+ *
+ * The trigger's chevron is `ChevronDown`, the same glyph `Select` uses.
+ * `ChevronsUpDown` is a listbox-trigger convention; this control is a dropdown
+ * with search, and the two sat in adjacent grid cells announcing the same
+ * affordance with two different icons at two different sizes.
  */
 export function Combobox<T extends string>({
   options,
@@ -54,11 +76,14 @@ export function Combobox<T extends string>({
   placeholder = 'Select…',
   searchPlaceholder = 'Search…',
   emptyMessage = 'No matches',
+  clearable = false,
   disabled = false,
   size = 'md',
   className,
 }: ComboboxProps<T>) {
+  const field = useField();
   const fieldProps = useFieldControlProps();
+  const geometry = CONTROL_SIZE[size];
   const selected = useMemo(
     () => options.find((option) => option.value === value) ?? null,
     [options, value],
@@ -77,11 +102,16 @@ export function Combobox<T extends string>({
       onValueChange={(next) => onValueChange(next?.value ?? null)}
     >
       <BaseCombobox.Trigger
-        aria-label={label}
+        // Only self-labelling outside a `Field`. Inside one the visible
+        // `<label>` is wired by `htmlFor`, but `aria-label` wins the accessible
+        // name computation — so a field labelled "Search" announced as "Search
+        // leads", which is an SC 2.5.3 Label-in-Name failure the gallery was
+        // modelling as correct usage.
+        aria-label={field ? undefined : label}
         className={cn(
           CONTROL_BASE,
           'flex items-center justify-between gap-2 text-left',
-          size === 'sm' ? 'h-control-sm px-2.5 text-xs' : 'h-control-md px-3 text-base',
+          controlClass(size),
           className,
         )}
         {...fieldProps}
@@ -89,51 +119,89 @@ export function Combobox<T extends string>({
         <span className={cn('min-w-0 flex-1 truncate', !selected && 'text-text-disabled')}>
           {selected?.label ?? placeholder}
         </span>
-        <ChevronsUpDown aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+        {clearable && selected ? (
+          // `role="button"` on a span, not a nested `<button>`: the trigger is
+          // itself a button, and a button inside a button is invalid and is
+          // dropped by the parser in some engines.
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={`Clear ${label}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              event.preventDefault();
+              onValueChange(null);
+            }}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+          >
+            <X aria-hidden className="h-icon-sm w-icon-sm" />
+          </span>
+        ) : null}
+        <ChevronDown aria-hidden className={cn('shrink-0 text-text-tertiary', geometry.icon)} />
       </BaseCombobox.Trigger>
 
       <BaseCombobox.Portal>
-        <BaseCombobox.Positioner sideOffset={6} collisionPadding={8}>
+        <BaseCombobox.Positioner
+          className={PANEL_POSITIONER}
+          sideOffset={6}
+          collisionPadding={8}
+        >
           {/* Matched to the trigger's width, so the list belongs to the control
               it came from rather than floating at some unrelated size. */}
-          <BaseCombobox.Popup className="motion-pop z-[var(--z-overlay)] w-[var(--anchor-width)] min-w-56 rounded-lg border border-border bg-surface shadow-md focus:outline-none">
-            <div className="flex items-center gap-2 border-b border-border px-3">
-              <Search aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+          <BaseCombobox.Popup className={cn(PANEL_BASE, 'w-[var(--anchor-width)] min-w-52')}>
+            {/* 12px of inset, which is where the option labels below start:
+                4px of list padding plus the item's own 8px. */}
+            <div className="border-b border-border px-3">
               <BaseCombobox.Input
                 placeholder={searchPlaceholder}
-                className="h-9 w-full bg-transparent text-base text-text-primary outline-none placeholder:text-text-disabled"
+                className="h-control-md w-full bg-transparent text-base text-text-primary outline-none placeholder:text-text-disabled"
               />
             </div>
-            <BaseCombobox.Empty className="px-2 py-6 text-center text-xs text-text-secondary">
-              {emptyMessage}
-            </BaseCombobox.Empty>
-            <BaseCombobox.List className="max-h-64 overflow-y-auto p-1">
-              {(option: ComboboxOption<T>) => (
-                <BaseCombobox.Item
-                  key={option.value}
-                  value={option}
-                  disabled={option.disabled}
-                  className={cn(
-                    'flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5 text-base text-text-primary',
-                    'outline-none data-[highlighted]:bg-surface-hover',
-                    'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
-                  )}
-                >
-                  {option.icon ? <span className="mt-0.5 shrink-0">{option.icon}</span> : null}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{option.label}</span>
-                    {option.description ? (
-                      <span className="block truncate text-xs text-text-secondary">
-                        {option.description}
+            {/* A fixed floor under the list region, so the panel does not jump
+                from 270px to 96px as the user types past the last match. */}
+            <div className="min-h-16">
+              <BaseCombobox.Empty className="px-2 py-4 text-center text-xs text-text-secondary">
+                {emptyMessage}
+              </BaseCombobox.Empty>
+              <BaseCombobox.List className="max-h-64 overflow-y-auto p-1">
+                {(option: ComboboxOption<T>) => (
+                  <BaseCombobox.Item
+                    key={option.value}
+                    value={option}
+                    disabled={option.disabled}
+                    className={cn(
+                      'flex cursor-pointer gap-2 rounded-sm px-2 py-1.5 text-base text-text-primary',
+                      // Single-line rows centre; only a row with a second line
+                      // needs its glyphs pinned to the first one.
+                      option.description ? 'items-start' : 'items-center',
+                      'outline-none data-[highlighted]:bg-surface-hover',
+                      'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
+                    )}
+                  >
+                    {option.icon ? (
+                      <span className={cn('shrink-0', option.description && 'mt-1')}>
+                        {option.icon}
                       </span>
                     ) : null}
-                  </span>
-                  <BaseCombobox.ItemIndicator className="mt-0.5 shrink-0 text-accent-600">
-                    <Check aria-hidden className="h-3.5 w-3.5" />
-                  </BaseCombobox.ItemIndicator>
-                </BaseCombobox.Item>
-              )}
-            </BaseCombobox.List>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{option.label}</span>
+                      {option.description ? (
+                        <span className="block truncate text-xs text-text-secondary">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </span>
+                    {/* 4px, not 2: optically centring a 14px glyph in a 22px
+                        line box needs (22 − 14) / 2. */}
+                    <BaseCombobox.ItemIndicator
+                      className={cn('shrink-0 text-accent-600', option.description && 'mt-1')}
+                    >
+                      <Check aria-hidden className="h-icon-sm w-icon-sm" />
+                    </BaseCombobox.ItemIndicator>
+                  </BaseCombobox.Item>
+                )}
+              </BaseCombobox.List>
+            </div>
           </BaseCombobox.Popup>
         </BaseCombobox.Positioner>
       </BaseCombobox.Portal>

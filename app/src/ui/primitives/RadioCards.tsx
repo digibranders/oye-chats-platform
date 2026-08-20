@@ -1,6 +1,6 @@
 import { useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { useFieldControlProps } from './fieldContext';
+import { useFieldGroupProps } from './fieldContext';
 
 export interface RadioCardItem<T extends string> {
   value: T;
@@ -43,6 +43,19 @@ export interface RadioCardsProps<T extends string> {
  * beside a two-line description puts the description inside the control's
  * accessible name unless every label is wired by hand, which is precisely the
  * mistake the toggle primitives already document.
+ *
+ * **It draws a real radio mark.** Selection used to be a hue change on a 1px
+ * border and a pale tint — colour as the only signal, in the one control in the
+ * system whose entire job is expressing a choice, against DESIGN.md §1.4 and
+ * §6.3. Printed, in forced-colors mode, or for the roughly one reader in twelve
+ * who cannot separate those hues, a three-option group was three identical
+ * paragraphs. The mark says which one is chosen; the accent border and the inset
+ * ring only reinforce it.
+ *
+ * The card's edge is `--color-border-strong`, not the decorative hairline: at
+ * 1.28:1 the *unselected* options had no visible boundary at all. The radius is
+ * a control's 8, not a card's 10 — these are not cards, and a grid of 10px boxes
+ * inside a 10px card reads as the nested cards DESIGN.md §4 forbids.
  */
 export function RadioCards<T extends string>({
   items,
@@ -54,7 +67,7 @@ export function RadioCards<T extends string>({
 }: RadioCardsProps<T>) {
   const groupRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
-  const fieldProps = useFieldControlProps();
+  const group = useFieldGroupProps();
   const enabled = items.filter((item) => !item.disabled);
 
   function move(delta: number): void {
@@ -102,13 +115,18 @@ export function RadioCards<T extends string>({
     <div
       ref={groupRef}
       role="radiogroup"
-      aria-label={label}
-      aria-describedby={fieldProps['aria-describedby'] as string | undefined}
+      // Inside a `Field` the visible label names the group; outside one it names
+      // itself. Never both.
+      aria-label={group['aria-labelledby'] ? undefined : label}
+      aria-labelledby={group['aria-labelledby']}
+      aria-describedby={group['aria-describedby']}
       onKeyDown={onKeyDown}
       className={cn(
+        // Two across at `md`, three only at `lg`: `sm` is 640px, where three
+        // cards with a sentence each are about 200px wide on a tablet.
         'grid gap-2',
-        columns === 2 && 'sm:grid-cols-2',
-        columns === 3 && 'sm:grid-cols-3',
+        columns === 2 && 'md:grid-cols-2',
+        columns === 3 && 'md:grid-cols-2 lg:grid-cols-3',
         className,
       )}
     >
@@ -128,30 +146,65 @@ export function RadioCards<T extends string>({
             // reachable, as a description.
             aria-label={item.label}
             aria-describedby={descriptionId}
-            disabled={item.disabled}
+            disabled={item.disabled || group.disabled}
             tabIndex={item.value === focusable ? 0 : -1}
             data-value={item.value}
             onClick={() => onChange(item.value)}
             className={cn(
-              'flex flex-col items-start gap-1 rounded-lg border p-3 text-left',
+              'flex flex-col items-start rounded-md border p-3 text-left',
               'transition-colors duration-[var(--dur-fast)]',
-              'disabled:cursor-not-allowed disabled:opacity-60',
+              'disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-sunken',
               selected
-                ? 'border-accent-500 bg-accent-50'
-                : 'border-border bg-surface hover:bg-surface-hover',
+                // An inset box-shadow used as structure, which DESIGN.md §5
+                // explicitly sanctions: it doubles the selected edge's weight
+                // without reflowing the card, and it survives the focus outline
+                // because an outline is a separate property.
+                ? 'border-accent-500 bg-accent-50 shadow-[inset_0_0_0_1px_var(--color-accent-500)]'
+                : 'border-border-strong bg-surface enabled:hover:border-text-tertiary enabled:hover:bg-surface-hover',
             )}
           >
-            <span className="flex w-full items-center gap-2">
-              <span className="min-w-0 flex-1 text-base font-medium text-text-primary">
-                {item.label}
+            <span className="flex w-full items-start gap-2">
+              {/* The mark, not the tint, is what says "chosen". */}
+              <span
+                aria-hidden
+                className={cn(
+                  'mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
+                  selected ? 'border-accent-500 bg-accent-500' : 'border-border-strong bg-surface',
+                  item.disabled && 'border-border bg-surface-sunken',
+                )}
+              >
+                {selected ? <span className="h-1.5 w-1.5 rounded-full bg-text-inverse" /> : null}
               </span>
-              {item.badge}
+              {/* One text column, so the description starts on the label's own
+                  left edge rather than under the radio mark. */}
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="flex w-full items-center gap-2">
+                  <span
+                    className={cn(
+                      'min-w-0 flex-1 text-base font-medium',
+                      item.disabled ? 'text-text-disabled' : 'text-text-primary',
+                    )}
+                  >
+                    {item.label}
+                  </span>
+                  {/* Never dimmed: on a locked card the badge is the plan lock,
+                      and it is the one thing the reader needs in order to
+                      understand why the card is unavailable. */}
+                  {item.badge}
+                </span>
+                {item.description ? (
+                  <span
+                    id={descriptionId}
+                    className={cn(
+                      'text-xs',
+                      item.disabled ? 'text-text-disabled' : 'text-text-secondary',
+                    )}
+                  >
+                    {item.description}
+                  </span>
+                ) : null}
+              </span>
             </span>
-            {item.description ? (
-              <span id={descriptionId} className="text-xs leading-relaxed text-text-secondary">
-                {item.description}
-              </span>
-            ) : null}
           </button>
         );
       })}

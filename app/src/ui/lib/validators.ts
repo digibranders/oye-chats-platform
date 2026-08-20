@@ -31,3 +31,14 @@ export function normalizeUrl(value: string): string {
   if (!trimmed) return '';
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
+
+/**
+ * A six-digit hex colour, with the hash.
+ *
+ * Six and not three: `<input type="color">` only accepts the long form, and
+ * handing it a short one makes Chrome silently reset its swatch to black while
+ * the user is still typing in the hex field beside it.
+ */
+export function isHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value.trim());
+}

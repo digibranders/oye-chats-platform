@@ -3,6 +3,15 @@ import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
+import {
+  OVERLAY_BODY,
+  OVERLAY_DESCRIPTION,
+  OVERLAY_EYEBROW,
+  OVERLAY_FOOTER,
+  OVERLAY_SCRIM,
+  OVERLAY_TITLE,
+  OverlayHeader,
+} from './overlayParts';
 
 export type DrawerWidth = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -17,6 +26,8 @@ export interface DrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  /** A short line above the title, naming the record's type. */
+  eyebrow?: ReactNode;
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
@@ -34,12 +45,22 @@ export interface DrawerProps {
  * instead of moving it, so closing it puts them back exactly where they were.
  *
  * Full width below `sm` — a 420px panel on a 375px phone is a modal with a
- * useless gutter, so it simply becomes one.
+ * useless gutter, so it simply becomes one, and it drops its radius at the same
+ * breakpoint because a full-bleed panel has no leading edge to round.
+ *
+ * **The leading edge is `--radius-xl`, 14px.** DESIGN.md §4 assigns modals and
+ * drawers 14 and this panel shipped flush square on every corner, which is one
+ * of the two things a review of the rendered pixels caught. The doc is right and
+ * the code was wrong: the three edges anchored to the viewport stay square, and
+ * the one edge that is actually a boundary between the panel and the page it
+ * covers is rounded. Header, body and footer come from `overlayParts`, so this
+ * and `Dialog` cannot drift again.
  */
 export function Drawer({
   open,
   onOpenChange,
   title,
+  eyebrow,
   description,
   children,
   footer,
@@ -57,44 +78,41 @@ export function Drawer({
       disablePointerDismissal={!dismissible}
     >
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
+        <BaseDialog.Backdrop className={OVERLAY_SCRIM} />
         <BaseDialog.Popup
           className={cn(
             'motion-slide-right fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col',
-            'border-l border-border bg-surface shadow-lg focus:outline-none',
+            'overflow-hidden border-l border-border bg-surface shadow-lg focus:outline-none',
+            'sm:rounded-l-xl',
             WIDTHS[width],
             className,
           )}
         >
-          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
-            <div className="min-w-0">
-              <BaseDialog.Title className="text-lg font-semibold text-text-primary">
-                {title}
-              </BaseDialog.Title>
-              {description ? (
-                <BaseDialog.Description className="mt-1 text-xs leading-relaxed text-text-secondary">
-                  {description}
-                </BaseDialog.Description>
-              ) : null}
-            </div>
-            {dismissible ? (
-              <BaseDialog.Close
-                render={
-                  <Button variant="ghost" size="icon-sm" aria-label="Close">
-                    <X aria-hidden className="h-4 w-4" />
-                  </Button>
-                }
-              />
+          <OverlayHeader
+            close={
+              dismissible ? (
+                <BaseDialog.Close
+                  render={
+                    <Button variant="ghost" size="icon-sm" aria-label="Close">
+                      <X aria-hidden />
+                    </Button>
+                  }
+                />
+              ) : null
+            }
+          >
+            {eyebrow ? <p className={OVERLAY_EYEBROW}>{eyebrow}</p> : null}
+            <BaseDialog.Title className={OVERLAY_TITLE}>{title}</BaseDialog.Title>
+            {description ? (
+              <BaseDialog.Description className={OVERLAY_DESCRIPTION}>
+                {description}
+              </BaseDialog.Description>
             ) : null}
-          </div>
+          </OverlayHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div className={OVERLAY_BODY}>{children}</div>
 
-          {footer ? (
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-surface-sunken px-5 py-3">
-              {footer}
-            </div>
-          ) : null}
+          {footer ? <div className={OVERLAY_FOOTER}>{footer}</div> : null}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

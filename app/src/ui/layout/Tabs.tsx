@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { Tabs as BaseTabs } from '@base-ui/react/tabs';
 import { cn } from '../lib/cn';
+import { TAB_IDLE, TAB_ITEM, TAB_LIST, TAB_SELECTED } from './tabStyles';
 
 export interface TabItem {
   value: string;
@@ -33,9 +34,13 @@ export interface TabsProps {
  * keyboard user who was only passing through, and how an expensive panel gets
  * mounted three times on the way to the fourth tab.
  *
- * The row scrolls horizontally rather than wrapping: a wrapped tab row changes
- * the page height when the active tab changes, shifting content under the
- * user's cursor.
+ * **A routed tab row is `NavTabs`, not this.** If switching tabs changes the
+ * URL, the panels are not all in the document and a `tablist` is a promise the
+ * surface cannot keep. The largest reporting surface in the app was shipping
+ * `Tabs` plus `navigate()`.
+ *
+ * Its geometry comes from `tabStyles`, shared with `NavTabs`: the two rows have
+ * to be indistinguishable, because to the reader they are one control.
  */
 export function Tabs({ items, value, onValueChange, label, children, className }: TabsProps) {
   return (
@@ -44,38 +49,34 @@ export function Tabs({ items, value, onValueChange, label, children, className }
       onValueChange={(next) => onValueChange(String(next))}
       className={className}
     >
-      <BaseTabs.List
-        aria-label={label}
-        activateOnFocus={false}
-        className="flex gap-1 overflow-x-auto border-b border-border"
-      >
-        {items.map((item) => (
-          <BaseTabs.Tab
-            key={item.value}
-            value={item.value}
-            disabled={item.disabled}
-            className={cn(
-              'relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5',
-              'text-base font-medium text-text-secondary',
-              'transition-colors duration-[var(--dur-fast)] hover:text-text-primary',
-              'disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:text-text-disabled',
-              // The active marker is an inset shadow rather than a border, so it
-              // sits exactly on the list's own hairline instead of one pixel
-              // above it, nudging the label.
-              'data-[selected]:text-text-primary',
-              'data-[selected]:shadow-[inset_0_-2px_0_var(--color-ink)]',
-            )}
-          >
-            {item.label}
-            {item.badge}
-          </BaseTabs.Tab>
-        ))}
-      </BaseTabs.List>
+      {/* The hairline is on a wrapper, not on the scroller: on the scroller its
+          own `overflow-x-auto` clips the rule at both ends. */}
+      <div className="border-b border-border">
+        <BaseTabs.List aria-label={label} activateOnFocus={false} className={TAB_LIST}>
+          {items.map((item) => (
+            <BaseTabs.Tab
+              key={item.value}
+              value={item.value}
+              disabled={item.disabled}
+              className={cn(
+                TAB_ITEM,
+                TAB_IDLE,
+                'disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:text-text-disabled',
+                TAB_SELECTED,
+              )}
+            >
+              {item.label}
+              {item.badge}
+            </BaseTabs.Tab>
+          ))}
+        </BaseTabs.List>
+      </div>
       {children}
     </BaseTabs.Root>
   );
 }
 
+/** The panel below the row. `pt-6` matches `PageHeader`'s toolbar gap. */
 export function TabPanel({
   value,
   children,

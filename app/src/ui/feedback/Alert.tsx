@@ -11,13 +11,33 @@ import type { Tone } from '../primitives/Badge';
  * unstyled well rather than as a notice. The rule is what makes it a message,
  * and it is why this system needs no `info` hue (which would have had to be
  * blue, colliding with the interactive accent).
+ *
+ * **The rule is a block, not a border.** It was `border-l-[3px]`, and CSS mitres
+ * a border into the corner arc of a rounded box: on an 8px radius a 3px left
+ * border tapers to a point at both ends and reads as a smudge rather than as a
+ * deliberate rule. The signature element of the system's own notice was visibly
+ * broken in every place it appeared. Drawn as a `::before` block inside an
+ * `overflow-hidden` box, it squares off against the rounded edge cleanly.
+ *
+ * **The tinted tones carry no visible border.** They had `border-success/25` and
+ * friends — a token at 25% over its own tint measures about 1.3:1, which is not
+ * a boundary, and it is the same banned pattern as an opacity modifier on a text
+ * token. The honest choices were a mid-strength tint-border token per tone,
+ * which the token layer does not have, or none at all. None: the tint carries
+ * the tone, the geometry stays identical to the neutral case because the border
+ * is still 1px of transparent, and the `[data-tone]` rule at the bottom of
+ * `tokens.css` already draws a real border in forced-colors mode, which is the
+ * only place the edge is load-bearing.
  */
 const TONE_STYLE: Record<Tone, string> = {
-  neutral: 'border-border bg-surface-sunken text-text-primary border-l-[3px] border-l-ink',
-  success: 'border-success/25 bg-success-tint text-success',
-  warning: 'border-warning/25 bg-warning-tint text-warning',
-  danger: 'border-danger/25 bg-danger-tint text-danger',
-  plan: 'border-plan/25 bg-plan-tint text-plan',
+  neutral: cn(
+    'border-border bg-surface-sunken text-text-primary',
+    'before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-ink before:content-[""]',
+  ),
+  success: 'border-transparent bg-success-tint text-success',
+  warning: 'border-transparent bg-warning-tint text-warning',
+  danger: 'border-transparent bg-danger-tint text-danger',
+  plan: 'border-transparent bg-plan-tint text-plan',
 };
 
 const TONE_ICON: Record<Tone, typeof Info> = {
@@ -58,7 +78,15 @@ export interface AlertProps {
  * The body is `text-prose`, not the smallest size in the system. An earlier
  * version set the title at 14 and the body — the part carrying "your card was
  * declined and your chatbot has stopped answering" — at 12, which made the most
- * consequential prose in the console its least readable.
+ * consequential prose in the console its least readable. For the same reason the
+ * body is no longer forced to `--text-secondary`: the measured table in
+ * DESIGN.md §2.6 guarantees "status text on its own tint", and the body is the
+ * half that most needs that guarantee. Hierarchy is weight, not colour.
+ *
+ * On a tinted ground the action is transparent with the tone's own edge, and
+ * lifts to the surface colour on hover. A `bg-surface` button at rest on a tint
+ * is a white rectangle that reads as a rendering seam — which is what the "Buy
+ * credits" and "Update card" buttons looked like in the gallery.
  */
 export function Alert({
   tone = 'neutral',
@@ -76,17 +104,34 @@ export function Alert({
       role={live ? 'status' : undefined}
       aria-live={live ? 'polite' : undefined}
       className={cn(
-        'flex items-start gap-2.5 rounded-md border px-3 py-2.5',
+        'relative flex items-start gap-2.5 overflow-hidden rounded-md border px-3 py-3',
         TONE_STYLE[tone],
         className,
       )}
     >
-      <span className="mt-0.5 shrink-0">{icon ?? <Icon aria-hidden className="h-4 w-4" />}</span>
+      {/* 4px, not 2: optically centring a 16px glyph in a 24px `text-prose`
+          line box needs (24 − 16) / 2. */}
+      <span className="mt-1 shrink-0">
+        {icon ?? <Icon aria-hidden className="h-icon-md w-icon-md" />}
+      </span>
       <div className="min-w-0 flex-1 text-prose">
         {title ? <p className="font-medium">{title}</p> : null}
-        <div className={cn(title && 'mt-0.5', 'text-text-secondary')}>{children}</div>
+        <div className={cn(title && 'mt-0.5')}>{children}</div>
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? (
+        // A one-line alert centres its action against the line; a titled one
+        // pins it to the title, because the block's optical centre is lower.
+        <div
+          className={cn(
+            'shrink-0',
+            title ? 'self-start' : 'self-center',
+            tone !== 'neutral' &&
+              '[&_button]:border-current [&_button]:bg-transparent [&_button]:text-current [&_button]:hover:bg-surface',
+          )}
+        >
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }

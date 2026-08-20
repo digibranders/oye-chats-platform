@@ -3,14 +3,30 @@ import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
+import {
+  OVERLAY_BODY,
+  OVERLAY_DESCRIPTION,
+  OVERLAY_EYEBROW,
+  OVERLAY_FOOTER,
+  OVERLAY_SCRIM,
+  OVERLAY_TITLE,
+  OverlayHeader,
+} from './overlayParts';
 
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
 
+/**
+ * The only four widths a dialog may have.
+ *
+ * `xl` is `max-w-reading` — the system's own named width for a reading column —
+ * rather than Tailwind's `max-w-4xl`, which is the same 896px under a name that
+ * belongs to a scale this design system otherwise does not use.
+ */
 const SIZES: Record<DialogSize, string> = {
   sm: 'max-w-md',
   md: 'max-w-lg',
   lg: 'max-w-2xl',
-  xl: 'max-w-4xl',
+  xl: 'max-w-reading',
 };
 
 export interface DialogProps {
@@ -53,6 +69,16 @@ export interface DialogProps {
  * The system this replaces hand-rolled that four times, and its two scroll locks
  * kept separate counters — closing a drawer that had a dialog open restored page
  * scrolling underneath the dialog.
+ *
+ * The panel clips its own children. A footerless dialog whose body scrolled
+ * painted the last row of content square across the panel's two bottom corners —
+ * a 14px crescent of content sitting outside the panel's own shape, and the
+ * clearest instance of the owner's "corners are broken". `overflow-hidden` is
+ * safe here because everything that has to escape the panel — `Select`, `Menu`,
+ * `Combobox`, `Tooltip` — portals out of it.
+ *
+ * `100dvw` rather than `100vw`: `vw` includes the scrollbar, so on Windows the
+ * panel was a scrollbar's width wider than the space it had.
  */
 export function Dialog({
   open,
@@ -76,50 +102,43 @@ export function Dialog({
       disablePointerDismissal={!dismissible}
     >
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
+        <BaseDialog.Backdrop className={OVERLAY_SCRIM} />
         <BaseDialog.Popup
           className={cn(
             'motion-panel fixed left-1/2 top-1/2 z-[var(--z-overlay)] flex max-h-[calc(100dvh-2rem)]',
-            'w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col',
-            'rounded-xl border border-border bg-surface shadow-lg focus:outline-none',
+            'w-[calc(100dvw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col',
+            'overflow-hidden rounded-xl border border-border bg-surface shadow-lg focus:outline-none',
             SIZES[size],
             className,
           )}
         >
-          <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-            <div className="min-w-0">
-              {eyebrow ? (
-                <p className="mb-1 text-xs leading-relaxed text-text-secondary">{eyebrow}</p>
-              ) : null}
-              <BaseDialog.Title className="text-lg font-semibold text-text-primary">
-                {title}
-              </BaseDialog.Title>
-              {description ? (
-                <BaseDialog.Description className="mt-1 text-xs leading-relaxed text-text-secondary">
-                  {description}
-                </BaseDialog.Description>
-              ) : null}
-            </div>
-            {dismissible ? (
-              <BaseDialog.Close
-                render={
-                  <Button variant="ghost" size="icon-sm" aria-label="Close">
-                    <X aria-hidden className="h-4 w-4" />
-                  </Button>
-                }
-              />
+          <OverlayHeader
+            close={
+              dismissible ? (
+                <BaseDialog.Close
+                  render={
+                    <Button variant="ghost" size="icon-sm" aria-label="Close">
+                      <X aria-hidden />
+                    </Button>
+                  }
+                />
+              ) : null
+            }
+          >
+            {eyebrow ? <p className={OVERLAY_EYEBROW}>{eyebrow}</p> : null}
+            <BaseDialog.Title className={OVERLAY_TITLE}>{title}</BaseDialog.Title>
+            {description ? (
+              <BaseDialog.Description className={OVERLAY_DESCRIPTION}>
+                {description}
+              </BaseDialog.Description>
             ) : null}
-          </div>
+          </OverlayHeader>
 
           {/* The body scrolls, not the dialog: a footer that scrolls away takes
               the confirm button with it on a short viewport. */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div className={OVERLAY_BODY}>{children}</div>
 
-          {footer ? (
-            <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
-              {footer}
-            </div>
-          ) : null}
+          {footer ? <div className={OVERLAY_FOOTER}>{footer}</div> : null}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

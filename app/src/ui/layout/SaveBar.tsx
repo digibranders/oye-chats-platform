@@ -187,8 +187,15 @@ export function SaveBar({
   return (
     <>
       {dirty ? (
-        <div className={cn('sticky bottom-4 z-[var(--z-sticky)]', className)}>
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-strong bg-surface px-4 py-3 shadow-md">
+        <div
+          className={cn('sticky bottom-gutter z-[var(--z-sticky)] lg:bottom-gutter-lg', className)}
+        >
+          {/* One geometry for both forms. They used to share none: 20 vs 16
+              horizontal, sunken vs white, hairline vs control-weight border —
+              two versions of one control, and a user who saves in a footer on
+              one page and a floating bar on the next met both. Floating is
+              expressed by the shadow and nothing else. */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-sunken px-cell py-3 shadow-md">
             {controls}
           </div>
         </div>
@@ -198,7 +205,7 @@ export function SaveBar({
           aria-live="polite"
           className={cn('flex items-center gap-2 text-prose font-medium text-success', className)}
         >
-          <CheckCircle2 aria-hidden className="h-4 w-4" />
+          <CheckCircle2 aria-hidden className="h-icon-md w-icon-md" />
           All changes saved.
         </p>
       ) : null}

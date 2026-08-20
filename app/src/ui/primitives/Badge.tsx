@@ -16,27 +16,51 @@ import { cn } from '../lib/cn';
  */
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'plan';
 
-const TONE_TINT: Record<Tone, string> = {
+/**
+ * `Badge` alone can also be ink.
+ *
+ * An ink chip is not a status — it is emphasis: a count on a filter, the
+ * workspace's own name beside a list of others, "you" in a roster. It is scoped
+ * to this component rather than added to `Tone` because `Tone` is the status
+ * vocabulary that `Alert`, `StatusDot` and every `Record<Tone, …>` in the app
+ * are keyed by, and emphasis is not a status.
+ */
+export type BadgeTone = Tone | 'ink';
+
+const TONE_TINT: Record<BadgeTone, string> = {
   neutral: 'bg-neutral-tint text-neutral',
   success: 'bg-success-tint text-success',
   warning: 'bg-warning-tint text-warning',
   danger: 'bg-danger-tint text-danger',
   plan: 'bg-plan-tint text-plan',
+  ink: 'bg-ink text-text-inverse',
 };
 
-const TONE_DOT: Record<Tone, string> = {
+const TONE_DOT: Record<BadgeTone, string> = {
   neutral: 'bg-neutral-fill',
   success: 'bg-success-fill',
   warning: 'bg-warning-fill',
   danger: 'bg-danger-fill',
   plan: 'bg-plan',
+  ink: 'bg-text-inverse',
 };
 
+/**
+ * One dot size for the whole system.
+ *
+ * `Badge`'s dot was 6px and `StatusDot` was 8px, so the same fact rendered at
+ * two sizes in one table. 6px is right against 12px text; a `StatusDot` standing
+ * on its own with no label beside it can ask for `md`.
+ */
+const DOT = { sm: 'h-1.5 w-1.5', md: 'h-2 w-2' } as const;
+
 export interface BadgeProps {
-  tone?: Tone;
+  tone?: BadgeTone;
   children: ReactNode;
   /** Adds the tone's dot. Use on states a user scans for down a column. */
   dot?: boolean;
+  /** `sm` (16px) for a table cell, `md` (20px) beside a heading. */
+  size?: 'sm' | 'md';
   className?: string;
 }
 
@@ -56,20 +80,43 @@ export interface BadgeProps {
  * `data-tone` is read by the forced-colors rule in the token layer, which gives
  * every tinted surface a border — Windows High Contrast strips backgrounds, and
  * without it all five tones render identically.
+ *
+ * **A badge is a 4px chip, not a pill.** DESIGN.md §4 says *"Full only for
+ * avatars, badges and toggles"*; the code has always shipped `rounded-xs` and
+ * the code is right — a 4px chip sits properly against a 6px input in a table
+ * cell, where a pill reads as marketing. §4 should read *"4 chip and badge …
+ * Full only for avatars, status dots and toggles"*.
+ *
+ * The height is a token and the glyphs are centred by `leading-none`, not by the
+ * line box: `items-center` centres an 18px line box, and Inter's cap height sits
+ * above that box's centre, so the label rendered about a pixel high — visibly
+ * tilted next to a dot, which *is* geometrically centred.
  */
-export function Badge({ tone = 'neutral', children, dot = false, className }: BadgeProps) {
+export function Badge({
+  tone = 'neutral',
+  children,
+  dot = false,
+  size = 'md',
+  className,
+}: BadgeProps) {
   return (
     <span
       data-tone={tone}
       className={cn(
-        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-xs px-1.5 py-0.5',
-        'text-xs font-medium',
+        // Bounded, because a badge rendering a user-supplied value — a plan
+        // name, a status straight off the API — will otherwise push a table
+        // column open, and `whitespace-nowrap` guarantees it.
+        'inline-flex max-w-40 items-center gap-1.5 rounded-xs px-1.5',
+        'text-xs font-medium leading-none',
+        size === 'sm' ? 'h-4' : 'h-5',
         TONE_TINT[tone],
         className,
       )}
     >
-      {dot ? <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', TONE_DOT[tone])} /> : null}
-      {children}
+      {dot ? (
+        <span aria-hidden className={cn('shrink-0 rounded-full', DOT.sm, TONE_DOT[tone])} />
+      ) : null}
+      <span className="truncate">{children}</span>
     </span>
   );
 }
@@ -84,6 +131,8 @@ export interface StatusDotProps {
   pulse?: boolean;
   /** Required: the dot is meaningless to anyone who cannot see it. */
   label: string;
+  /** `sm` (6px) beside text, `md` (8px) standing alone. */
+  size?: 'sm' | 'md';
   className?: string;
 }
 
@@ -94,9 +143,15 @@ export interface StatusDotProps {
  * The label is required rather than optional because a dot with no accessible
  * name is decoration that happens to carry the most important fact on the row.
  */
-export function StatusDot({ tone = 'neutral', pulse = false, label, className }: StatusDotProps) {
+export function StatusDot({
+  tone = 'neutral',
+  pulse = false,
+  label,
+  size = 'md',
+  className,
+}: StatusDotProps) {
   return (
-    <span className={cn('relative inline-flex h-2 w-2 shrink-0', className)}>
+    <span className={cn('relative inline-flex shrink-0', DOT[size], className)}>
       {pulse ? (
         <span
           aria-hidden
@@ -109,7 +164,7 @@ export function StatusDot({ tone = 'neutral', pulse = false, label, className }:
           )}
         />
       ) : null}
-      <span className={cn('relative inline-flex h-2 w-2 rounded-full', TONE_DOT[tone])} />
+      <span className={cn('relative inline-flex rounded-full', DOT[size], TONE_DOT[tone])} />
       <span className="sr-only">{label}</span>
     </span>
   );

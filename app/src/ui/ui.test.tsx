@@ -441,6 +441,8 @@ describe('DataTable server paging', () => {
     expect(pager).toHaveTextContent('1–2');
     expect(pager).toHaveTextContent('900');
     expect(pager).toHaveTextContent('450');
+    // And it names what a row is: "1–2 of 900 rows", never a bare figure.
+    expect(pager).toHaveTextContent('rows');
   });
 
   it('asks the caller for the next page instead of slicing what it has', async () => {
@@ -468,7 +470,6 @@ describe('DataTable server paging', () => {
   });
 
   it('refuses to sort one page of a server-paged set behind the user’s back', async () => {
-    const user = userEvent.setup();
     const sortable: Column<Row>[] = [
       { key: 'name', header: 'Name', render: (row) => row.name, sortable: (a, b) => a.name.localeCompare(b.name) },
     ];
@@ -488,10 +489,12 @@ describe('DataTable server paging', () => {
         onPageChange={() => {}}
       />,
     );
-    await user.click(screen.getByRole('button', { name: /name/i }));
+    // It does not even offer the affordance: the arrow used to flip and nothing
+    // moved. Sorting fifty of nine thousand rows and calling it "sorted by
+    // name" is a lie the table will not tell, so it does not invite it either.
+    expect(screen.queryByRole('button', { name: /name/i })).not.toBeInTheDocument();
     const cells = screen.getAllByRole('cell').map((cell) => cell.textContent);
-    // Still the server's order. Sorting fifty of nine thousand rows and calling
-    // it "sorted by name" is a lie the table will not tell.
+    // Still the server's order.
     expect(cells[0]).toBe('Ben');
   });
 });

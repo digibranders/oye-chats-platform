@@ -20,6 +20,18 @@ export interface DisclosureProps {
   /** Rendered at the end of the summary row: a badge, a count, a copy button. */
   trailing?: ReactNode;
   /**
+   * Run the summary row's hover band to the edges of the container.
+   *
+   * Inside a `CardBody` the row used to be inset 4px from its own text and 20px
+   * from the card's edge, so the highlight read as a floating pill in the middle
+   * of the card — and the stated use case is a log of a hundred collapsed rows,
+   * which made a hundred floating pills. `bleed` cancels the card's 20px gutter
+   * and gives it back as padding, so the band is a row.
+   */
+  bleed?: boolean;
+  /** A hairline under the row, so a stack of these reads as a list. */
+  divider?: boolean;
+  /**
    * Wrap the toggle in a heading, so a list of these is navigable by heading.
    *
    * A log of expandable rows is a list of *sections*, and a screen-reader user
@@ -62,6 +74,8 @@ export function Disclosure({
   onOpenChange,
   regionLabel,
   trailing,
+  bleed = false,
+  divider = false,
   headingLevel,
   className,
   panelClassName,
@@ -90,26 +104,32 @@ export function Disclosure({
       aria-controls={open ? panelId : undefined}
       onClick={toggle}
       className={cn(
-        'flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left',
+        // 36 (`row-compact`) rather than the old 34: a row of these is a list,
+        // and a list's row height is a row token, not a control token.
+        'flex min-h-row-compact w-full items-center gap-2 py-1.5 text-left',
         'text-base text-text-primary transition-colors duration-[var(--dur-fast)]',
         'hover:bg-surface-hover',
+        bleed ? '-mx-cell px-cell' : 'rounded-md',
       )}
     >
-        <ChevronRight
-          aria-hidden
-          className={cn(
-            'h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-[var(--dur-fast)]',
-            'motion-reduce:transition-none',
-            open && 'rotate-90',
-          )}
-        />
+      <ChevronRight
+        aria-hidden
+        className={cn(
+          'h-icon-md w-icon-md shrink-0 text-text-tertiary transition-transform duration-[var(--dur-fast)]',
+          'motion-reduce:transition-none',
+          open && 'rotate-90',
+        )}
+      />
       <span className="min-w-0 flex-1">{summary}</span>
-      {trailing ? <span className="shrink-0">{trailing}</span> : null}
+      {/* `ml-auto`, so a count sits at the row's right edge rather than
+          immediately after a short summary — which put the badge in a different
+          place on every row of a list. */}
+      {trailing ? <span className="ml-auto shrink-0 self-center">{trailing}</span> : null}
     </button>
   );
 
   return (
-    <div className={cn('min-w-0', className)}>
+    <div className={cn('min-w-0', divider && 'border-b border-border', className)}>
       {Heading ? <Heading>{toggleButton}</Heading> : toggleButton}
 
       {open ? (
@@ -120,7 +140,10 @@ export function Disclosure({
           // and the control that opened it announce as the same thing.
           aria-labelledby={label ? undefined : buttonId}
           aria-label={label}
-          className={cn('pl-7 pr-1 pt-1', panelClassName)}
+          // 24, not the 28 that fell out of 4 + 16 + 8: 28 is not a step on
+          // the scale the rest of the system indents on, so a panel never lined
+          // up with the card content beside it.
+          className={cn('pb-1 pl-6 pt-1', panelClassName)}
         >
           {children}
         </div>

@@ -2,6 +2,7 @@ import { forwardRef, type SelectHTMLAttributes } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
+import { CONTROL_SIZE, controlClass, type ControlSize } from './controlStyles';
 import { useFieldControlProps } from './fieldContext';
 
 export interface SelectOption<T extends string = string> {
@@ -13,7 +14,7 @@ export interface SelectOption<T extends string = string> {
 export interface SelectProps<T extends string = string>
   extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'children'> {
   options: readonly SelectOption<T>[];
-  size?: 'sm' | 'md' | 'lg';
+  size?: ControlSize;
   /**
    * A first option the user cannot choose — "Select a department…".
    *
@@ -34,11 +35,12 @@ export interface SelectProps<T extends string = string>
   emptyOption?: string;
 }
 
-const SIZES = {
-  sm: 'h-control-sm pl-2.5 pr-7 text-xs',
-  md: 'h-control-md pl-3 pr-8 text-base',
-  lg: 'h-control-lg pl-3.5 pr-9 text-base',
-} as const;
+/**
+ * The chevron's clearance from the longest option is a constant 8px at every
+ * size. It was 2 / 6 / 10, because the glyph sat at a fixed inset while the
+ * text padding scaled — at `sm` a long option visibly kissed the arrow.
+ */
+const TRAILING_PAD = { sm: 'pr-8', md: 'pr-9', lg: 'pr-10' } as const;
 
 /**
  * A native `<select>`.
@@ -48,18 +50,30 @@ const SIZES = {
  * of them wrong on every release. Where the choice genuinely needs search,
  * multi-select, or rich rows, that is a `Combobox` — a different control with a
  * different job — not a heavier `Select`.
+ *
+ * The consequence of `appearance-none` is worth stating so nobody files it
+ * later: the closed control is ours, the **open list is platform chrome**. On
+ * Windows a `Select` inside a `Dialog` paints a system list that ignores every
+ * token in this file. That is the accepted price of the paragraph above.
  */
 function SelectInner<T extends string = string>(
   { options, size = 'md', placeholder, emptyOption, className, value, ...props }: SelectProps<T>,
   ref: React.Ref<HTMLSelectElement>,
 ) {
   const fieldProps = useFieldControlProps();
+  const geometry = CONTROL_SIZE[size];
   return (
     <div className="relative flex w-full items-center">
       <select
         ref={ref}
         value={value}
-        className={cn(CONTROL_BASE, SIZES[size], 'appearance-none cursor-pointer', className)}
+        className={cn(
+          CONTROL_BASE,
+          'peer cursor-pointer appearance-none',
+          controlClass(size),
+          TRAILING_PAD[size],
+          className,
+        )}
         {...fieldProps}
         {...props}
       >
@@ -76,9 +90,15 @@ function SelectInner<T extends string = string>(
           </option>
         ))}
       </select>
+      {/* `peer-disabled`: the box greyed out and the arrow stayed at full
+          strength, so a disabled select looked half-enabled. */}
       <ChevronDown
         aria-hidden
-        className="pointer-events-none absolute right-2.5 h-4 w-4 shrink-0 text-text-tertiary"
+        className={cn(
+          'pointer-events-none absolute shrink-0 text-text-tertiary peer-disabled:text-text-disabled',
+          geometry.affixInset.trailing,
+          geometry.icon,
+        )}
       />
     </div>
   );

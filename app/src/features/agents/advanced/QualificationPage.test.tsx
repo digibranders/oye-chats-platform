@@ -294,7 +294,7 @@ describe('what fires at each tier', () => {
     await renderSettled();
 
     const heading = await screen.findByRole('heading', { name: 'What happens at each tier' });
-    const card = heading.closest('section') as HTMLElement;
+    const card = heading.closest('[data-card]') as HTMLElement;
     expect(within(card).getAllByText(/Only sales-qualified notifies anyone/i)).toHaveLength(2);
   });
 

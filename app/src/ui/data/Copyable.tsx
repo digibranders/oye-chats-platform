@@ -19,16 +19,32 @@ export interface CopyFieldProps {
    * moment that matters had to be inferred from a neighbouring button.
    */
   onCopy?: (succeeded: boolean) => void;
+  /** `h-control-sm` (28), so the field fits a table cell or a dense row. */
+  compact?: boolean;
   className?: string;
 }
 
-/** A read-only value with a copy control. Keys, bot ids, webhook URLs. */
+/**
+ * A read-only value with a copy control. Keys, bot ids, webhook URLs.
+ *
+ * One box, with the controls inside it. They used to sit *outside* — a code chip
+ * and then two loose ghost buttons on the same flex row — which had three
+ * consequences worth writing down: the field's right edge landed ~60px short of
+ * every other child of the same card, so a card holding a key field above a code
+ * block had two different right edges; the chip was 30px tall beside 28px
+ * buttons, a mismatch `items-center` hid as a 1px offset at each end; and the
+ * boundary was `--color-border` (1.28:1), a decorative hairline standing in for
+ * what is functionally a control group. It is `--color-border-strong` now, which
+ * is what DESIGN.md §2.1 asks of any boundary that is the only thing telling you
+ * a control is there.
+ */
 export function CopyField({
   value,
   label,
   secret = false,
   maskedValue,
   onCopy,
+  compact = false,
   className,
 }: CopyFieldProps) {
   const { state, copy } = useClipboard();
@@ -36,15 +52,14 @@ export function CopyField({
   const shown = revealed ? value : (maskedValue ?? '•'.repeat(Math.min(value.length, 32)));
 
   return (
-    <div className={cn('flex items-center gap-1.5', className)}>
-      <code
-        className={cn(
-          'min-w-0 flex-1 truncate rounded-md border border-border bg-surface-sunken px-2.5 py-1.5',
-          'font-mono text-xs text-text-primary',
-        )}
-      >
-        {shown}
-      </code>
+    <div
+      className={cn(
+        'flex items-center gap-0.5 rounded-md border border-border-strong bg-surface-sunken pr-0.5',
+        compact ? 'h-control-sm pl-2' : 'h-control-md pl-2.5',
+        className,
+      )}
+    >
+      <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">{shown}</code>
       {secret ? (
         <Button
           size="icon-sm"
@@ -52,14 +67,23 @@ export function CopyField({
           aria-label={revealed ? `Hide ${label}` : `Reveal ${label}`}
           onClick={() => setRevealed((current) => !current)}
         >
-          {revealed ? <EyeOff aria-hidden className="h-3.5 w-3.5" /> : <Eye aria-hidden className="h-3.5 w-3.5" />}
+          {revealed ? (
+            <EyeOff aria-hidden className="h-icon-sm w-icon-sm" />
+          ) : (
+            <Eye aria-hidden className="h-icon-sm w-icon-sm" />
+          )}
         </Button>
       ) : null}
-      <Button size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void copy(value).then((ok) => onCopy?.(ok))}>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label={`Copy ${label}`}
+        onClick={() => void copy(value).then((ok) => onCopy?.(ok))}
+      >
         {state === 'copied' ? (
-          <Check aria-hidden className="h-3.5 w-3.5 text-success" />
+          <Check aria-hidden className="h-icon-sm w-icon-sm text-success" />
         ) : (
-          <Copy aria-hidden className="h-3.5 w-3.5" />
+          <Copy aria-hidden className="h-icon-sm w-icon-sm" />
         )}
       </Button>
       {/* The outcome, announced. A colour change on an icon is not feedback for
@@ -87,30 +111,24 @@ export interface CodeBlockProps {
  * The previous app had three separate implementations of this — on the install
  * page, in onboarding, and in the widget-copy card — with different affordances
  * in each.
+ *
+ * The copy button lives in the bar above the code, not floating over it. It used
+ * to be absolutely positioned at the code's top-right, so the first line of
+ * every snippet ran underneath it — and the embed snippet, the single most
+ * important string in this product, is one long line whose first ~90px was
+ * therefore hidden behind the word "Copy". The bar already existed for the
+ * caption and rendered a `justify-between` flex with one child in it.
  */
 export function CodeBlock({ code, caption, label = 'code', onCopy, className }: CodeBlockProps) {
   const { state, copy } = useClipboard();
 
   return (
     <div className={cn('overflow-hidden rounded-md border border-border', className)}>
-      {caption ? (
-        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken px-3 py-1.5">
-          <span className="min-w-0 truncate text-xs text-text-secondary">{caption}</span>
-        </div>
-      ) : null}
-      <div className="relative">
-        {/* `tabIndex={0}` because a scrollable region must be reachable by
-            keyboard, or its overflowing content is unreadable without a mouse. */}
-        <pre
-          tabIndex={0}
-          className="overflow-x-auto bg-surface-sunken px-3 py-2.5 font-mono text-xs leading-relaxed text-text-primary"
-        >
-          <code>{code}</code>
-        </pre>
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken py-1 pl-3 pr-1">
+        <span className="min-w-0 truncate text-xs text-text-secondary">{caption}</span>
         <Button
           size="sm"
-          variant="secondary"
-          className="absolute right-2 top-2"
+          variant="ghost"
           // The visible word is "Copy" on every block; the accessible name says
           // *what* is being copied, because a page with three snippets on it
           // otherwise offers a screen-reader user three identical buttons. The
@@ -119,15 +137,23 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
           onClick={() => void copy(code).then((ok) => onCopy?.(ok))}
           iconLeft={
             state === 'copied' ? (
-              <Check aria-hidden className="h-3.5 w-3.5 text-success" />
+              <Check aria-hidden className="h-icon-sm w-icon-sm text-success" />
             ) : (
-              <Copy aria-hidden className="h-3.5 w-3.5" />
+              <Copy aria-hidden className="h-icon-sm w-icon-sm" />
             )
           }
         >
           {state === 'copied' ? 'Copied' : 'Copy'}
         </Button>
       </div>
+      {/* `tabIndex={0}` because a scrollable region must be reachable by
+          keyboard, or its overflowing content is unreadable without a mouse. */}
+      <pre
+        tabIndex={0}
+        className="overflow-x-auto bg-surface-sunken px-3 py-2.5 font-mono text-xs leading-relaxed text-text-primary"
+      >
+        <code>{code}</code>
+      </pre>
       <span role="status" aria-live="polite" className="sr-only">
         {state === 'copied' ? `${label} copied` : state === 'failed' ? `Could not copy the ${label}. Select the text to copy it manually.` : ''}
       </span>

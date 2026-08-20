@@ -29,10 +29,21 @@ export {
 /* ------------------------------------------------------------ primitives */
 export { Button } from './primitives/Button';
 export type { ButtonProps } from './primitives/Button';
-export { buttonClass } from './primitives/buttonStyles';
+export { buttonClass, BUTTON_ICON, BUTTON_ICON_SLOT } from './primitives/buttonStyles';
 export type { ButtonVariant, ButtonSize } from './primitives/buttonStyles';
+export {
+  controlClass,
+  CONTROL_SIZE,
+  DISABLED_CONTROL,
+  DISABLED_FILLED,
+  HIT_AREA,
+  FOCUS_RING,
+} from './primitives/controlStyles';
+export type { ControlSize, ControlGeometry } from './primitives/controlStyles';
+export { ColorInput } from './primitives/ColorInput';
+export type { ColorInputProps } from './primitives/ColorInput';
 export { Badge, StatusDot, WorkingDots } from './primitives/Badge';
-export type { BadgeProps, StatusDotProps, Tone } from './primitives/Badge';
+export type { BadgeProps, BadgeTone, StatusDotProps, Tone } from './primitives/Badge';
 export { Avatar } from './primitives/Avatar';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';
 export { Field, FieldSet } from './primitives/Field';
@@ -61,15 +72,37 @@ export { Progress, Meter } from './primitives/Progress';
 export type { ProgressProps, MeterProps } from './primitives/Progress';
 export { Skeleton, SkeletonText } from './primitives/Skeleton';
 export { Spinner } from './primitives/Spinner';
-export { Separator, Kbd, Eyebrow } from './primitives/Misc';
+export { Separator, Kbd, Eyebrow, EYEBROW_CLASS } from './primitives/Misc';
 export { isMacPlatform, modifierKey } from './lib/platform';
-export { validateEmail, validateUrl, normalizeUrl } from './lib/validators';
+export { validateEmail, validateUrl, normalizeUrl, isHexColor } from './lib/validators';
 
-/* ---------------------------------------------------------------- layout */
+/* ---------------------------------------------------------------- layout
+   The layout layer. It did not exist until this pass, which is why 88
+   hand-written `grid-cols-*` strings grew in `features/` and every page whose
+   author did not write one rendered as a single column of full-width cards.
+   `Stack` sets the rhythm BETWEEN sections; it is not how peers are arranged. */
 export { Card, CardHeader, CardBody, CardSection, CardFooter } from './layout/Card';
 export type { CardProps, CardHeaderProps } from './layout/Card';
 export { Page, PageHeader, Section, Stack, Toolbar } from './layout/Page';
 export type { PageProps, PageHeaderProps, SectionProps, PageWidth } from './layout/Page';
+export { Grid } from './layout/Grid';
+export type { GridProps } from './layout/Grid';
+export { Measure } from './layout/Measure';
+export type { MeasureProps, MeasureWidth } from './layout/Measure';
+export { Columns } from './layout/Columns';
+export type { ColumnsProps } from './layout/Columns';
+export { SidebarLayout } from './layout/SidebarLayout';
+export type { SidebarLayoutProps } from './layout/SidebarLayout';
+export { SplitPane } from './layout/SplitPane';
+export type { SplitPaneProps } from './layout/SplitPane';
+export { PaneHeader } from './layout/PaneHeader';
+export type { PaneHeaderProps } from './layout/PaneHeader';
+export { PropertyGrid } from './layout/PropertyGrid';
+export type { PropertyGridProps, PropertyItem } from './layout/PropertyGrid';
+export { SettingRow, SettingGroup } from './layout/SettingRow';
+export type { SettingRowProps, SettingGroupProps } from './layout/SettingRow';
+export { RailFrame, RailItem, RailGroupLabel, RailBackLink } from './layout/RailFrame';
+export type { RailFrameProps, RailItemProps } from './layout/RailFrame';
 export { Tabs, TabPanel } from './layout/Tabs';
 export type { TabsProps, TabItem } from './layout/Tabs';
 export { Disclosure } from './layout/Disclosure';
@@ -92,13 +125,22 @@ export {
   MenuContent,
   MenuItem,
   MenuCheckboxItem,
+  MenuGroup,
   MenuLabel,
   MenuSeparator,
   MenuSub,
   MenuSubTrigger,
   MenuSubContent,
 } from './overlays/Menu';
-export { PopoverRoot, PopoverTrigger, PopoverContent, PopoverClose } from './overlays/Popover';
+export {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverContent,
+  PopoverHeader,
+  PopoverBody,
+  PopoverFooter,
+  PopoverClose,
+} from './overlays/Popover';
 export { Tooltip, TooltipProvider } from './overlays/Tooltip';
 export type { TooltipProps } from './overlays/Tooltip';
 export { Toaster } from './overlays/Toaster';
@@ -110,20 +152,60 @@ export type { AlertProps } from './feedback/Alert';
 
 /* ------------------------------------------------------------------ data */
 export { DataTable } from './data/DataTable';
-export type { DataTableProps, Column, SortState, SortDirection } from './data/DataTable';
-export { EmptyState, ErrorState, LockedState, LoadingRows } from './data/States';
-export type { EmptyStateProps, ErrorStateProps, LockedStateProps } from './data/States';
-export { StatTile, FigureRow, DefinitionList } from './data/Figures';
-export type { StatTileProps, TrendDirection } from './data/Figures';
+export type {
+  DataTableProps,
+  Column,
+  ColumnType,
+  SortState,
+  SortDirection,
+} from './data/DataTable';
+export {
+  EmptyState,
+  ErrorState,
+  LockedState,
+  FullPageState,
+  LoadingRows,
+  LoadingBars,
+  LoadingConversations,
+} from './data/States';
+export type {
+  EmptyStateProps,
+  ErrorStateProps,
+  LockedStateProps,
+  FullPageStateProps,
+  StateSize,
+  StateAlign,
+} from './data/States';
+export { StatTile, StatRow, FigureRow, FigureList, DefinitionList } from './data/Figures';
+export type {
+  StatTileProps,
+  StatRowProps,
+  DefinitionListProps,
+  TrendDirection,
+} from './data/Figures';
 export { CopyField, CodeBlock } from './data/Copyable';
+export type { CopyFieldProps, CodeBlockProps } from './data/Copyable';
 export { useClipboard } from './hooks/useClipboard';
 export { useMediaQuery } from './hooks/useMediaQuery';
 export type { ClipboardState } from './hooks/useClipboard';
-export type { CopyFieldProps, CodeBlockProps } from './data/Copyable';
 
 /* ---------------------------------------------------------------- charts */
-export { CHART_SERIES, CHART_DASH, CHART_AXIS, CHART_GRID, CHART_MARGIN, seriesColor, seriesDash } from './charts/theme';
+export {
+  CHART_SERIES,
+  CHART_DASH,
+  CHART_AXIS,
+  CHART_GRID,
+  CHART_MARGIN,
+  CHART_CURSOR,
+  CHART_TICK_PX,
+  seriesColor,
+  seriesDash,
+} from './charts/theme';
 export { ChartFrame, ChartLegend } from './charts/ChartFrame';
 export type { ChartFrameProps, ChartLegendItem } from './charts/ChartFrame';
+export { ChartTooltip } from './charts/ChartTooltip';
+export type { ChartTooltipProps, ChartTooltipRow } from './charts/ChartTooltip';
+export { ChartDataTable } from './charts/ChartDataTable';
+export type { ChartDataTableProps, ChartDataColumn } from './charts/ChartDataTable';
 export { RankedBars } from './charts/RankedBars';
 export type { RankedBar, RankedBarsProps } from './charts/RankedBars';

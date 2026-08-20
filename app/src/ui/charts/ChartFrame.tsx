@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { EmptyState, ErrorState } from '../data/States';
+import { Disclosure } from '../layout/Disclosure';
 import { Skeleton } from '../primitives/Skeleton';
 import { seriesColor } from './theme';
 
@@ -28,6 +29,16 @@ export interface ChartFrameProps {
    * only thing the chart was for — could not be read at all.
    */
   summary: string;
+  /**
+   * The key to the series, rendered directly under the plot.
+   *
+   * It has to live inside the frame. Passed as a sibling *after* `ChartFrame` —
+   * which is what one analytics chart did — the painted order becomes chart,
+   * horizontal rule, "View as table", legend: the key to the two lines ends up
+   * below a divider and below an unrelated control, which is the one place a
+   * legend must never be.
+   */
+  legend?: ReactNode;
   /** A `<table>` of the same data, revealed by the "View as table" control. */
   dataTable?: ReactNode;
   className?: string;
@@ -41,6 +52,10 @@ export interface ChartFrameProps {
  * is why the old app had panels that vanished entirely on error, panels that
  * showed "no activity in this period" for an outage, and a grid that collapsed
  * to one column whenever a neighbour returned nothing.
+ *
+ * The height box centres whatever is in it. It used to be a plain block, so a
+ * failed panel rendered its ~120px notice at the top of a 240px box with 120px
+ * of nothing under it — and six panels failing at once made six lopsided boxes.
  */
 export function ChartFrame({
   children,
@@ -52,24 +67,30 @@ export function ChartFrame({
   emptyDescription,
   height = 240,
   summary,
+  legend,
   dataTable,
   className,
 }: ChartFrameProps) {
+  const plotted = !loading && !error && !empty;
+
   return (
     <div className={className}>
-      <div style={{ height }} className="relative w-full">
+      <div
+        style={{ height }}
+        className="relative flex w-full items-center justify-center"
+      >
         {loading ? (
           // A bar-shaped skeleton rather than one grey slab, so the space
           // reads as "a chart is arriving" and does not jump when it does.
-          <div aria-busy className="flex h-full items-end gap-2 px-2 pb-6">
-            {CHART_SKELETON_HEIGHTS.map((height, index) => (
-              <Skeleton key={index} className={cn('flex-1 rounded-sm', height)} />
+          <div aria-busy className="flex h-full w-full items-end gap-2 px-2 pb-6">
+            {CHART_SKELETON_HEIGHTS.map((barHeight, index) => (
+              <Skeleton key={index} className={cn('flex-1 rounded-xs', barHeight)} />
             ))}
           </div>
         ) : error ? (
-          <ErrorState compact description={error} onRetry={onRetry} />
+          <ErrorState size="inline" align="center" description={error} onRetry={onRetry} />
         ) : empty ? (
-          <EmptyState compact title={emptyTitle} description={emptyDescription} />
+          <EmptyState size="inline" align="center" title={emptyTitle} description={emptyDescription} />
         ) : (
           <>
             {/* The picture, hidden from assistive tech, and the words that
@@ -82,13 +103,23 @@ export function ChartFrame({
         )}
       </div>
 
-      {dataTable && !loading && !error && !empty ? (
-        <details className="mt-2 border-t border-border pt-2">
-          <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary">
-            View as table
-          </summary>
-          <div className="mt-2 overflow-x-auto">{dataTable}</div>
-        </details>
+      {legend && plotted ? <div className="mt-2">{legend}</div> : null}
+
+      {dataTable && plotted ? (
+        // `Disclosure`, not a native `<details>`. The native element is reserved
+        // in this system for content that must stay findable by the browser's
+        // own in-page search while collapsed — a stack trace — and using it here
+        // gave the console two disclosure affordances, a chevron and the
+        // browser's own triangle, on adjacent surfaces.
+        <div className="mt-2 border-t border-border pt-2">
+          <Disclosure
+            summary={<span className="text-xs text-text-secondary">View as table</span>}
+            regionLabel={`${summary} as a table`}
+            panelClassName="overflow-x-auto"
+          >
+            {dataTable}
+          </Disclosure>
+        </div>
       ) : null}
     </div>
   );

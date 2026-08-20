@@ -14,13 +14,20 @@ export interface ProgressProps {
   className?: string;
 }
 
-const TONE = {
+/**
+ * `plan` is a Meter tone only. It was in one shared map typed wider than
+ * `ProgressProps['tone']`, which meant a brass progress bar was one prop-type
+ * edit away with no design review — and brass is reserved for plan,
+ * entitlement and upgrade surfaces.
+ */
+const PROGRESS_TONE = {
   accent: 'bg-accent-500',
   success: 'bg-success-fill',
   warning: 'bg-warning-fill',
   danger: 'bg-danger-fill',
-  plan: 'bg-plan',
 } as const;
+
+const METER_TONE = { ...PROGRESS_TONE, plan: 'bg-plan' } as const;
 
 /**
  * A task in flight: a crawl, a training run, an upload.
@@ -48,6 +55,13 @@ export function Progress({
       aria-label={hideLabel ? label : undefined}
       className={cn('w-full', className)}
     >
+      {/* A hidden label removes the row rather than reserving it, because
+          `hideLabel` defaults to true and this bar is most often 6px of chrome
+          inside a table row — reserving 24px there would be worse than the
+          problem it solves. The consequence: a *set* of bars must agree on
+          `hideLabel`, or the labelled one is 30px and the bare one is 6 and
+          they do not share a baseline. `Meter`, which is the one that appears
+          in grids of peers, reserves instead. */}
       {!hideLabel ? (
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <BaseProgress.Label className="text-xs text-text-secondary">{label}</BaseProgress.Label>
@@ -65,7 +79,7 @@ export function Progress({
         <BaseProgress.Indicator
           className={cn(
             'block h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-console)]',
-            TONE[tone],
+            PROGRESS_TONE[tone],
             clamped == null && 'w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite]',
           )}
         />
@@ -98,6 +112,9 @@ export interface MeterProps {
    * customer their account is broken when it is working exactly as sold.
    */
   tone?: 'plan';
+  /** Hides the label row, keeping its height so a grid of meters stays level. */
+  hideLabel?: boolean;
+  size?: 'sm' | 'md';
   className?: string;
 }
 
@@ -119,6 +136,8 @@ export function Meter({
   unit,
   unlimitedNote = 'No limit',
   tone: forcedTone,
+  hideLabel = false,
+  size = 'md',
   className,
 }: MeterProps) {
   const unlimited = limit < 0;
@@ -126,16 +145,35 @@ export function Meter({
   const tone =
     forcedTone ?? (fraction >= 1 ? 'danger' : fraction >= 0.8 ? 'warning' : 'accent');
 
+  const track = cn(
+    'mt-1.5 block w-full overflow-hidden rounded-full bg-surface-active',
+    size === 'sm' ? 'h-1' : 'h-1.5',
+  );
+
   if (unlimited) {
+    // The unlimited branch used to render no track at all and a note underneath,
+    // which made it 8px taller than a bounded meter — so one tile in the billing
+    // page's usage grid sat proud of the rest and the card bottoms did not line
+    // up. It keeps the track (empty, because nothing is being consumed against a
+    // ceiling) and folds the note into the figure line.
     return (
       <div className={className}>
-        <div className="flex items-baseline justify-between gap-2">
+        <div
+          aria-hidden={hideLabel || undefined}
+          className={cn('flex items-baseline justify-between gap-2', hideLabel && 'invisible')}
+        >
           <span className="text-xs text-text-secondary">{label}</span>
-          <span className="figure text-xs font-medium text-text-primary">
-            {formatNumber(used)} <span className="text-text-tertiary">used</span>
+          {/* The note keeps its own element, and stays out of the `.figure`
+              run: it is a sentence, and mono tabular figures are for numbers. */}
+          <span className="flex items-baseline gap-1">
+            <span className="figure text-xs font-medium text-text-primary">
+              {formatNumber(used)}
+            </span>
+            <span className="text-xs text-text-tertiary">used ·</span>
+            <span className="text-xs text-text-tertiary">{unlimitedNote}</span>
           </span>
         </div>
-        <p className="mt-1 text-2xs text-text-tertiary">{unlimitedNote}</p>
+        <div className={track} />
       </div>
     );
   }
@@ -152,7 +190,10 @@ export function Meter({
       }
       className={className}
     >
-      <div className="flex items-baseline justify-between gap-2">
+      <div
+        aria-hidden={hideLabel || undefined}
+        className={cn('flex items-baseline justify-between gap-2', hideLabel && 'invisible')}
+      >
         <BaseMeter.Label className="text-xs text-text-secondary">{label}</BaseMeter.Label>
         <span className="figure text-xs font-medium text-text-primary">
           {formatNumber(used)}
@@ -160,11 +201,11 @@ export function Meter({
           {unit ? <span className="text-text-tertiary"> {unit}</span> : null}
         </span>
       </div>
-      <BaseMeter.Track className="mt-1.5 block h-1.5 w-full overflow-hidden rounded-full bg-surface-active">
+      <BaseMeter.Track className={track}>
         <BaseMeter.Indicator
           className={cn(
             'block h-full rounded-full transition-[width] duration-[var(--dur-slow)]',
-            TONE[tone],
+            METER_TONE[tone],
           )}
         />
       </BaseMeter.Track>

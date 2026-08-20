@@ -191,14 +191,17 @@ describe('AllowedDomainsSection', () => {
 
   it('adds a domain from the keyboard and normalises it the way the server will', async () => {
     render(<AllowedDomainsSection {...base} onSave={vi.fn()} />);
-    const input = screen.getByRole('textbox', { name: 'Allowed domains' });
+    // Named by the `Field`'s visible label. `TagInput`'s own `label` is the
+    // fallback for when it is used outside a `Field`; inside one, letting it
+    // win the name computation is the SC 2.5.3 failure the primitive now avoids.
+    const input = screen.getByRole('textbox', { name: 'Domains' });
     await userEvent.type(input, 'https://WWW.Acme.com/pricing{Enter}');
     expect(screen.getByRole('button', { name: 'Remove acme.com' })).toBeInTheDocument();
   });
 
   it('explains a rejected entry instead of silently dropping it', async () => {
     render(<AllowedDomainsSection {...base} onSave={vi.fn()} />);
-    await userEvent.type(screen.getByRole('textbox', { name: 'Allowed domains' }), 'nonsense{Enter}');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Domains' }), 'nonsense{Enter}');
     expect(screen.getByText(/is not a domain/i)).toBeInTheDocument();
   });
 
@@ -404,6 +407,10 @@ describe('PlatformGuide', () => {
 
   it('is a searchable control with a real accessible name', () => {
     render(<PlatformGuide {...base} platformId={null} onPlatformChange={vi.fn()} />);
-    expect(screen.getByRole('combobox', { name: 'Website platform' })).toBeInTheDocument();
+    // The visible label, not the `Combobox`'s own fallback: inside a `Field`,
+    // an `aria-label` would replace the words the user can actually read.
+    expect(
+      screen.getByRole('combobox', { name: 'What is your website built on?' }),
+    ).toBeInTheDocument();
   });
 });

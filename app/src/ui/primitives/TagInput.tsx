@@ -1,8 +1,9 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
-import { useFieldControlProps } from './fieldContext';
+import { CONTROL_SIZE, FOCUS_RING, HIT_AREA } from './controlStyles';
+import { useField, useFieldControlProps } from './fieldContext';
 
 export interface TagInputProps {
   values: readonly string[];
@@ -22,11 +23,21 @@ export interface TagInputProps {
   /** Normalise before storing, e.g. lowercase an email. */
   normalize?: (value: string) => string;
   maxValues?: number;
+  size?: 'sm' | 'md';
   disabled?: boolean;
   className?: string;
 }
 
 const SEPARATORS = /[,;\s]+/;
+
+/**
+ * The wrapper and the input each take half of the control's text inset, so the
+ * placeholder lands on the same column as a chip's first letter and as the text
+ * of an `Input` stacked above it. The wrapper was `px-2` against every other
+ * `md` control's 12, which put the placeholder 4px to the left of the field
+ * above it in the same form.
+ */
+const SHELL_PAD = { sm: 'px-1 py-1', md: 'px-1.5 py-1.5' } as const;
 
 /**
  * A list of short values built by typing.
@@ -37,6 +48,13 @@ const SEPARATORS = /[,;\s]+/;
  *
  * Errors accumulate per rejected value and clear only when that value is retried
  * or dismissed, so a paste of ten addresses reports every bad one.
+ *
+ * The focus ring is drawn on the box, not on the input. The inner input carries
+ * `outline-none` — which it must, or the ring would be painted around a bare
+ * text run inside the chips — and `outline-style: none` at normal specificity
+ * beats the zero-specificity global rule in `tokens.css`. So tabbing into this
+ * control showed **nothing at all**: an SC 2.4.7 failure on a shipped control,
+ * and exactly the class of defect DESIGN.md §5 exists to prevent.
  */
 export function TagInput({
   values,
@@ -46,12 +64,18 @@ export function TagInput({
   validate,
   normalize,
   maxValues,
+  size = 'md',
   disabled = false,
   className,
 }: TagInputProps) {
   const [draft, setDraft] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
+  const field = useField();
   const fieldProps = useFieldControlProps();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorsId = useId();
+  const geometry = CONTROL_SIZE[size];
+  const isDisabled = disabled || Boolean(fieldProps.disabled);
 
   function commit(raw: string) {
     const candidates = raw.split(SEPARATORS).map((part) => part.trim()).filter(Boolean);
@@ -100,37 +124,74 @@ export function TagInput({
     }
   }
 
+  const describedBy =
+    [errors.length > 0 ? errorsId : undefined, fieldProps['aria-describedby'] as string | undefined]
+      .filter(Boolean)
+      .join(' ') || undefined;
+
   return (
     <div className={className}>
       <div
+        // With wrapped chips the second row's trailing whitespace is dead space;
+        // every mail client focuses the field on a click anywhere in the box.
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            event.preventDefault();
+            inputRef.current?.focus();
+          }
+        }}
         className={cn(
           CONTROL_BASE,
-          'flex min-h-control-md flex-wrap items-center gap-1.5 px-2 py-1.5',
-          disabled && 'cursor-not-allowed bg-surface-sunken',
+          FOCUS_RING,
+          'flex flex-wrap items-center gap-1.5',
+          size === 'sm' ? 'min-h-control-sm' : 'min-h-control-md',
+          geometry.radius,
+          SHELL_PAD[size],
+          // `enabled:` cannot match a div, so the hover is decided here.
+          isDisabled ? 'cursor-not-allowed bg-surface-sunken' : 'hover:border-text-tertiary',
         )}
       >
         {values.map((item) => (
           <span
             key={item}
-            className="inline-flex items-center gap-1 rounded-xs bg-surface-sunken py-0.5 pl-2 pr-1 text-xs text-text-primary"
+            className={cn(
+              'inline-flex h-6 items-center gap-1 rounded-xs border pl-2 pr-1 text-xs',
+              // A chip was `bg-surface-sunken` with no border on a white field —
+              // 4.5 L* for its whole boundary — and when the field was disabled
+              // the two were literally the same colour, so the values vanished.
+              // Disabled inverts the pair instead of dimming either.
+              isDisabled
+                ? 'border-border bg-surface text-text-disabled'
+                : 'border-border bg-surface-sunken text-text-primary',
+            )}
           >
             {item}
             <button
               type="button"
-              disabled={disabled}
+              disabled={isDisabled}
               aria-label={`Remove ${item}`}
               onClick={() => onValuesChange(values.filter((candidate) => candidate !== item))}
-              className="rounded-xs p-0.5 text-text-tertiary transition-colors hover:text-danger"
+              className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-text-tertiary',
+                'transition-colors duration-[var(--dur-fast)] hover:bg-danger-tint hover:text-danger',
+                'disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:bg-transparent',
+                // 20px of glyph in a 24px target: this is the destructive
+                // control in the component and it shipped at 16 × 16.
+                HIT_AREA,
+              )}
             >
               <X aria-hidden className="h-3 w-3" />
             </button>
           </span>
         ))}
         <input
+          ref={inputRef}
           type="text"
-          aria-label={label}
+          // Only outside a `Field`: inside one the visible label already names
+          // the control, and `aria-label` would replace it.
+          aria-label={field ? undefined : label}
           value={draft}
-          disabled={disabled}
+          disabled={isDisabled}
           placeholder={values.length === 0 ? placeholder : undefined}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
@@ -142,13 +203,20 @@ export function TagInput({
               commit(text);
             }
           }}
-          className="min-w-[8rem] flex-1 bg-transparent text-base text-text-primary outline-none placeholder:text-text-disabled"
+          className={cn(
+            'min-w-[8rem] flex-1 bg-transparent px-1.5 text-text-primary outline-none placeholder:text-text-disabled',
+            geometry.text,
+          )}
           {...fieldProps}
+          aria-describedby={describedBy}
         />
       </div>
 
       {errors.length > 0 ? (
-        <ul role="status" aria-live="polite" className="mt-1.5 space-y-0.5 text-xs text-danger">
+        // `aria-live` on the list itself. `role="status"` replaced the list
+        // semantics the markup had just built, so a screen reader announced a
+        // run-on sentence instead of "list, three items".
+        <ul id={errorsId} aria-live="polite" className="mt-1.5 space-y-0.5 text-xs text-danger">
           {errors.map((problem) => (
             <li key={problem}>{problem}</li>
           ))}

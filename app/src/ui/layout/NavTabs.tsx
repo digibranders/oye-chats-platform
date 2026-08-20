@@ -1,6 +1,8 @@
 import { type ReactNode } from 'react';
+import { Lock } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../lib/cn';
+import { TAB_ACTIVE, TAB_IDLE, TAB_ITEM, TAB_LIST } from './tabStyles';
 
 export interface NavTabItem {
   to: string;
@@ -9,6 +11,14 @@ export interface NavTabItem {
   badge?: ReactNode;
   /** Match only the exact path, for a section's index route. */
   end?: boolean;
+  /**
+   * The destination exists but this workspace's plan does not include it.
+   *
+   * Still navigable — the destination is the locked state, which is where the
+   * explanation and the upgrade path live. A tab that cannot be clicked cannot
+   * tell the reader why.
+   */
+  locked?: boolean;
 }
 
 export interface NavTabsProps {
@@ -33,31 +43,26 @@ export interface NavTabsProps {
  * they are: navigation. The current one carries `aria-current="page"`, which is
  * what a screen reader announces instead of "selected".
  *
- * The row scrolls rather than wraps: a wrapped row changes the page height when
- * the active tab changes, shifting content under the reader's cursor.
+ * The hairline is on the `nav`, not on the scroller. On the scroller it was
+ * clipped by that element's own `overflow-x-auto` at both ends — the rule
+ * stopped short of the row and read as an underline on a paragraph rather than
+ * as the structural division the tabs sit on. `PageHeader toolbarBleed` runs it
+ * the full width of the content area.
  */
 export function NavTabs({ items, label, className }: NavTabsProps) {
   return (
     <nav aria-label={label} className={cn('border-b border-border', className)}>
-      <ul className="flex gap-1 overflow-x-auto">
+      <ul className={TAB_LIST}>
         {items.map((item) => (
-          <li key={item.to}>
+          <li key={item.to} className="flex">
             <NavLink
               to={item.to}
               end={item.end}
-              className={({ isActive }) =>
-                cn(
-                  'relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5',
-                  'text-base font-medium transition-colors duration-[var(--dur-fast)]',
-                  isActive
-                    ? // The active marker is an inset shadow rather than a
-                      // border, so it sits exactly on the row's own hairline
-                      // instead of a pixel above it, nudging the label.
-                      'text-text-primary shadow-[inset_0_-2px_0_var(--color-ink)]'
-                    : 'text-text-secondary hover:text-text-primary',
-                )
-              }
+              className={({ isActive }) => cn(TAB_ITEM, isActive ? TAB_ACTIVE : TAB_IDLE)}
             >
+              {item.locked ? (
+                <Lock aria-hidden className="h-icon-sm w-icon-sm text-text-tertiary" />
+              ) : null}
               {item.label}
               {item.badge}
             </NavLink>

@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent } from 'react';
 import { cn } from '../lib/cn';
+import { useFieldGroupProps } from './fieldContext';
 
 export interface SegmentedItem<T extends string> {
   value: T;
@@ -16,6 +17,11 @@ export interface SegmentedControlProps<T extends string> {
   /** Required: the control's own name, e.g. "Conversation status". */
   label: string;
   size?: 'sm' | 'md';
+  /**
+   * Stretch the segments to fill the container instead of sizing to their
+   * labels — for a control that owns a full-width row above a list.
+   */
+  fill?: boolean;
   className?: string;
 }
 
@@ -33,6 +39,17 @@ export interface SegmentedControlProps<T extends string> {
  *
  * Past about five items this stops working — the segments get too narrow to read
  * and the row starts wrapping — and the right control becomes a `Select`.
+ *
+ * **The container owns the height; the segments fill it.** It was the other way
+ * round, so a `sm` control computed to 24 + 4 of padding + 2 of border = 30px —
+ * a height no other control in the system has, which meant the filter chips
+ * stuck out a pixel top and bottom of every `sm` toolbar they sat in. Now `sm`
+ * is 28 and `md` is 34 by construction, and the inner radius is the container's
+ * 8 less its own 2px of padding = 6, which is what the segment is set to.
+ *
+ * The outer edge is `--color-border-strong`. This is a control the user
+ * operates, and a 1.28:1 hairline is a divider — the whole control read as a
+ * floating grey smudge on a card.
  */
 export function SegmentedControl<T extends string>({
   items,
@@ -40,9 +57,11 @@ export function SegmentedControl<T extends string>({
   onChange,
   label,
   size = 'md',
+  fill = false,
   className,
 }: SegmentedControlProps<T>) {
   const groupRef = useRef<HTMLDivElement>(null);
+  const group = useFieldGroupProps();
   const enabled = items.filter((item) => !item.disabled);
 
   function move(delta: number) {
@@ -86,10 +105,16 @@ export function SegmentedControl<T extends string>({
     <div
       ref={groupRef}
       role="radiogroup"
-      aria-label={label}
+      // Inside a `Field` the visible label names the group; outside one it names
+      // itself. Both, and the visible text and the announced name disagree.
+      aria-label={group['aria-labelledby'] ? undefined : label}
+      aria-labelledby={group['aria-labelledby']}
+      aria-describedby={group['aria-describedby']}
       onKeyDown={onKeyDown}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-md border border-border bg-surface-sunken p-0.5',
+        'items-center gap-0.5 rounded-md border border-border-strong bg-surface-sunken p-0.5',
+        size === 'sm' ? 'h-control-sm' : 'h-control-md',
+        fill ? 'flex w-full' : 'inline-flex',
         className,
       )}
     >
@@ -104,24 +129,31 @@ export function SegmentedControl<T extends string>({
             aria-checked={active}
             // Roving tabindex: only the selected segment is in the tab order.
             tabIndex={active ? 0 : -1}
-            disabled={item.disabled}
+            disabled={item.disabled || group.disabled}
             onClick={() => onChange(item.value)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-sm font-medium',
+              'inline-flex h-full min-w-0 items-center justify-center gap-1 rounded-sm font-medium',
               'transition-colors duration-[var(--dur-fast)]',
-              'disabled:cursor-not-allowed disabled:opacity-50',
-              size === 'sm' ? 'h-6 px-2 text-xs' : 'h-7 px-2.5 text-sm',
+              // The global ring is offset 2px and each segment is inset 2px by
+              // the container's own padding, so a focused segment's ring landed
+              // exactly on the container's border and overhung its corner at
+              // the ends. Offset 0 makes it hug the segment's own 6px radius.
+              'focus-visible:outline-offset-0',
+              'disabled:cursor-not-allowed disabled:text-text-disabled',
+              size === 'sm' ? 'px-2 text-xs' : 'px-2.5 text-sm',
+              fill && 'flex-1',
               active
                 ? 'bg-surface text-text-primary shadow-xs'
-                : 'text-text-secondary hover:text-text-primary',
+                : 'text-text-secondary enabled:hover:text-text-primary',
             )}
           >
-            {item.label}
+            <span className="min-w-0 truncate">{item.label}</span>
             {item.count !== undefined ? (
-              // No `/70` here. An opacity modifier on a token whose ratio was
-              // measured at full strength quietly drops it below AA — which is
-              // the exact failure the token file exists to prevent.
-              <span className="figure text-text-tertiary">{item.count}</span>
+              // A rung below the label, so "Compact 36" does not read as one
+              // string. No `/70` here either: an opacity modifier on a token
+              // whose ratio was measured at full strength quietly drops it
+              // below AA, which is the exact failure the token file prevents.
+              <span className="figure shrink-0 text-2xs text-text-tertiary">{item.count}</span>
             ) : null}
           </button>
         );

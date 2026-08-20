@@ -20,10 +20,25 @@ export function Skeleton({ className }: SkeletonProps) {
   return <span aria-hidden className={cn('console-skeleton block rounded-xs', className)} />;
 }
 
-/** A block of text lines, with the last one short so it reads as a paragraph. */
-export function SkeletonText({ lines = 3, className }: { lines?: number; className?: string }) {
+/**
+ * A block of text lines, with the last one short so it reads as a paragraph.
+ *
+ * The rhythm matches the text it stands in for: a 12px line plus a 10px gap is
+ * 22, which is `text-base`; `prose` is 24. It was 12 + 8 = 20, so the skeleton
+ * was visibly denser than the paragraph and the block shrank when the content
+ * arrived.
+ */
+export function SkeletonText({
+  lines = 3,
+  variant = 'base',
+  className,
+}: {
+  lines?: number;
+  variant?: 'base' | 'prose';
+  className?: string;
+}) {
   return (
-    <span className={cn('flex flex-col gap-2', className)}>
+    <span className={cn('flex flex-col', variant === 'prose' ? 'gap-3' : 'gap-2.5', className)}>
       {Array.from({ length: lines }, (_, index) => (
         <Skeleton
           key={index}

@@ -37,11 +37,22 @@ export function seriesDash(index: number): string | undefined {
 }
 
 /** Shared Recharts geometry, so every chart in the app has the same rhythm. */
+/**
+ * Axis tick size, in px.
+ *
+ * The one type size in `src/ui/` that is a number rather than a class, because
+ * Recharts writes it into an SVG presentation attribute, where a `var()` does
+ * not resolve. It is `--text-2xs` (0.6875rem = 11px) restated, and
+ * `charts.test.ts` fails if the token moves without this following it —
+ * otherwise the axis quietly stops matching every column head in the app.
+ */
+export const CHART_TICK_PX = 11;
+
 export const CHART_AXIS = {
   stroke: 'var(--color-border)',
   tick: {
     fill: 'var(--color-text-tertiary)',
-    fontSize: 11,
+    fontSize: CHART_TICK_PX,
   },
   tickLine: false,
   axisLine: false,
@@ -55,4 +66,22 @@ export const CHART_GRID = {
   vertical: false,
 } as const;
 
-export const CHART_MARGIN = { top: 8, right: 8, bottom: 0, left: 0 } as const;
+/**
+ * Plot margins.
+ *
+ * `right: 0` on purpose: the frame sits inside a `CardBody`, so any right margin
+ * here is *added* to the card's own 20px padding and the plot stops short of the
+ * edge every other child of that card reaches. It was 8, which is why a chart
+ * never quite lined up with the table beneath it.
+ */
+export const CHART_MARGIN = { top: 8, right: 0, bottom: 0, left: 0 } as const;
+
+/**
+ * The hover cursor Recharts draws behind a tooltip.
+ *
+ * Its default is a wide translucent grey band that reads as a selection. A
+ * single hairline at control weight says "this is the point you are reading"
+ * without repainting a quarter of the plot. Two charts shipped without theming
+ * it at all, so the console had two different hover behaviours.
+ */
+export const CHART_CURSOR = { stroke: 'var(--color-border-strong)', strokeWidth: 1 } as const;

@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import { cn } from '../lib/cn';
+import { EmptyState, LoadingBars } from '../data/States';
 
 export interface RankedBar {
   /** Stable identity, so a re-sort does not re-key every row. */
@@ -27,14 +28,31 @@ export interface RankedBarsProps {
   max?: number;
   /** Names the chart for assistive tech. Required. */
   label: string;
-  /** Tone of the fill. Neutral ink unless the ranking itself means something. */
-  tone?: 'ink' | 'accent' | 'success' | 'warning' | 'danger';
+  /**
+   * The fill.
+   *
+   * `data` is the categorical ramp's first series, which is what DESIGN.md §2.5
+   * reserves for data. It is the default because the alternative on offer at the
+   * three panels that hand-drew this was `--color-accent-500` — the interactive
+   * blue, which §1.1 spends on links, focus and selection and nothing else — or
+   * `--color-accent-50`, a *background* token, which measured 1.05:1 against the
+   * track it was painted on and could not be seen at all.
+   *
+   * `ink` stays for the surfaces that already ask for it; a status tone is for
+   * when the ranking itself carries one.
+   */
+  tone?: 'data' | 'ink' | 'success' | 'warning' | 'danger';
+  loading?: boolean;
+  /** Rows to draw while loading. Match what the surface usually returns. */
+  loadingRows?: number;
+  emptyTitle?: string;
+  emptyDescription?: string;
   className?: string;
 }
 
 const TONE_FILL: Record<NonNullable<RankedBarsProps['tone']>, string> = {
+  data: 'bg-chart-1',
   ink: 'bg-ink',
-  accent: 'bg-accent-500',
   success: 'bg-success-fill',
   warning: 'bg-warning-fill',
   danger: 'bg-danger-fill',
@@ -45,8 +63,10 @@ const TONE_FILL: Record<NonNullable<RankedBarsProps['tone']>, string> = {
  *
  * Top questions, a funnel's stages, a ratings distribution, the pages that send
  * the most visitors — the same shape every time: a label, a proportional bar,
- * and a figure. Three surfaces were drawing it by hand at three different
- * heights, which is exactly the duplication this directory exists to prevent.
+ * and a figure. Five surfaces were drawing it by hand at three bar heights,
+ * three fills, three row paddings and three divider conventions, two of them on
+ * the same page, which is exactly the duplication this directory exists to
+ * prevent.
  *
  * It is not `Progress` and not `Meter`. Those two answer "how far through is
  * this?" and "how much of my allowance is gone?"; both are about one quantity
@@ -55,10 +75,40 @@ const TONE_FILL: Record<NonNullable<RankedBarsProps['tone']>, string> = {
  * with the numbers in it — which is also what makes it readable with the bars
  * turned off, on a screen reader, and in print.
  *
+ * ## Why the plot is capped
+ *
+ * The first version put a full-width 6px bar under a `justify-between` row, so
+ * on a 1,900px card four solid ink rules ran the whole width of the panel and
+ * the label sat about 1,500px from its own figure: it read as newspaper rules
+ * rather than as data, and no reader binds a label to a number a screen apart.
+ * The row's contents are now capped at `--container-pair` and sit label · bar ·
+ * figure, adjacent, while the hover and selection band still runs the full width
+ * of the card — the control is the row, the chart is not.
+ *
  * The bar itself is `aria-hidden`: the row already states its label and its
  * value in text, and announcing the geometry a second time adds nothing.
  */
-export function RankedBars({ items, max, label, tone = 'ink', className }: RankedBarsProps) {
+export function RankedBars({
+  items,
+  max,
+  label,
+  tone = 'data',
+  loading = false,
+  loadingRows = 5,
+  emptyTitle = 'Nothing to rank yet',
+  emptyDescription,
+  className,
+}: RankedBarsProps) {
+  if (loading) return <LoadingBars rows={loadingRows} className={className} />;
+
+  // An empty `<ol>` is a blank area with no message, on a surface whose system
+  // requires four states everywhere.
+  if (items.length === 0) {
+    return (
+      <EmptyState size="inline" title={emptyTitle} description={emptyDescription} className={className} />
+    );
+  }
+
   const ceiling = max ?? items.reduce((highest, item) => Math.max(highest, item.value), 0);
 
   return (
@@ -69,22 +119,24 @@ export function RankedBars({ items, max, label, tone = 'ink', className }: Ranke
         const share = ceiling > 0 ? Math.min(100, (Math.max(0, item.value) / ceiling) * 100) : 0;
         const body = (
           <>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 flex-1 truncate text-base text-text-primary">{item.label}</span>
-              <span className="figure shrink-0 text-sm font-medium text-text-primary">
+            <div className="flex max-w-pair items-center gap-3">
+              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{item.label}</span>
+              <div
+                aria-hidden
+                className="hidden h-2 min-w-16 flex-[1.4] overflow-hidden rounded-xs bg-surface-sunken sm:block"
+              >
+                <div
+                  className={cn('h-full rounded-xs transition-[width] duration-[var(--dur-slow)]', TONE_FILL[tone])}
+                  style={{ width: `${share}%` }}
+                />
+              </div>
+              <span className="figure w-16 shrink-0 text-right text-sm font-medium text-text-primary">
                 {item.display ?? item.value}
               </span>
             </div>
-            <div
-              aria-hidden
-              className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
-            >
-              <div
-                className={cn('h-full rounded-full transition-[width] duration-[var(--dur-slow)]', TONE_FILL[tone])}
-                style={{ width: `${share}%` }}
-              />
-            </div>
-            {item.meta ? <p className="mt-1 text-2xs text-text-tertiary">{item.meta}</p> : null}
+            {item.meta ? (
+              <p className="mt-0.5 max-w-pair text-2xs text-text-tertiary">{item.meta}</p>
+            ) : null}
           </>
         );
 
@@ -96,14 +148,14 @@ export function RankedBars({ items, max, label, tone = 'ink', className }: Ranke
                 aria-pressed={item.selected}
                 onClick={item.onSelect}
                 className={cn(
-                  'block w-full px-4 py-3 text-left transition-colors duration-[var(--dur-fast)]',
+                  'block w-full px-cell py-2.5 text-left transition-colors duration-[var(--dur-fast)]',
                   item.selected ? 'bg-accent-50' : 'hover:bg-surface-hover',
                 )}
               >
                 {body}
               </button>
             ) : (
-              <div className="px-4 py-3">{body}</div>
+              <div className="px-cell py-2.5">{body}</div>
             )}
           </li>
         );

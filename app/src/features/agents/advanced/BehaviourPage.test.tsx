@@ -324,7 +324,7 @@ describe('capability nothing reads', () => {
     // Each of these is now writable and owned by a real surface. Leaving them
     // on the "not configurable" list would be the page telling the customer
     // their own product cannot do something it does.
-    const blocked = screen.getByRole('heading', { name: 'Not configurable yet' }).closest('section');
+    const blocked = screen.getByRole('heading', { name: 'Not configurable yet' }).closest('[data-card]');
     expect(blocked).not.toBeNull();
     expect(blocked?.textContent).not.toMatch(/visitor_disconnect_timeout/i);
     expect(blocked?.textContent).not.toMatch(/followup_sending_paused/i);

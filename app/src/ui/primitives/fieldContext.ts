@@ -2,6 +2,15 @@ import { createContext, useContext } from 'react';
 
 export interface FieldContextValue {
   id: string;
+  /**
+   * The id of the field's own `<label>`.
+   *
+   * A group control — `RadioCards`, `SegmentedControl` — is a `role="radiogroup"`
+   * div with no id-addressable input, so `<label for>` names nothing at all. It
+   * reads this and sets `aria-labelledby`, which is what lets a `Field` label a
+   * group rather than forcing every group into a `FieldSet`.
+   */
+  labelId: string;
   descriptionId?: string;
   errorId?: string;
   invalid: boolean;
@@ -47,4 +56,26 @@ export function useFieldControlProps(): Record<string, unknown> {
   if (field.required) props['aria-required'] = true;
   if (field.disabled) props.disabled = true;
   return props;
+}
+
+/**
+ * The ARIA a *group* control needs when it is sitting in a `Field`.
+ *
+ * A radiogroup cannot take the field's `id` — it is not what the label points at
+ * and it owns no input — so it is named by the label's id instead, and described
+ * by the same hint and error as everything else.
+ */
+export function useFieldGroupProps(): {
+  'aria-labelledby'?: string;
+  'aria-describedby'?: string;
+  disabled: boolean;
+} {
+  const field = useContext(FieldContext);
+  if (!field) return { disabled: false };
+  const describedBy = [field.descriptionId, field.errorId].filter(Boolean).join(' ');
+  return {
+    'aria-labelledby': field.labelId,
+    'aria-describedby': describedBy || undefined,
+    disabled: field.disabled,
+  };
 }

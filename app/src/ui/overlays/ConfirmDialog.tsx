@@ -1,10 +1,17 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { cn } from '../lib/cn';
-import { buttonClass } from '../primitives/buttonStyles';
+import { Button } from '../primitives/Button';
 import { Input } from '../primitives/Input';
 import { Field } from '../primitives/Field';
 import { Alert } from '../feedback/Alert';
+import {
+  OVERLAY_BODY,
+  OVERLAY_DESCRIPTION,
+  OVERLAY_FOOTER,
+  OVERLAY_SCRIM,
+  OVERLAY_TITLE,
+} from './overlayParts';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -41,6 +48,28 @@ export interface ConfirmDialogProps {
  * never mounted — which is how seven equally destructive actions ended up with
  * no confirmation at all, including promoting a member to Owner and deleting a
  * saved payment method.
+ *
+ * Three things it got wrong and no longer does.
+ *
+ * The confirm button is a `Button`, so it keeps its label while it works.
+ * A raw `<button>` here swapped "Delete chatbot" for "Working…" — reflowing the
+ * footer, losing the spinner entirely, and doing it in the one dialog where the
+ * user most needs to know what they just pressed. `Button` documents that
+ * contract; this was the only place in the system breaking it.
+ *
+ * It scrolls. A fully-stated consequence plus a confirm-phrase field plus a
+ * failed-action `Alert` overflowed a 700px laptop viewport with the confirm
+ * button off screen — and because the popup is centred by a transform, there was
+ * no way to scroll to it.
+ *
+ * A blocked confirm says why. `SaveBar`'s contract already requires "a specific
+ * reason when saving is blocked"; here the user mistyped the name by one
+ * character and the button was simply dead.
+ *
+ * Cancel is `secondary`, not `ghost`. Two equal-weight outlined buttons where
+ * colour is the only difference is precisely the "this is a decision" reading
+ * DESIGN.md §6.6 asks for — where before, the destructive button was the only
+ * thing on the footer with any chrome at all, so the eye went straight to it.
  */
 export function ConfirmDialog({
   open,
@@ -61,6 +90,7 @@ export function ConfirmDialog({
   const [busy, setBusy] = useState(false);
   const [typed, setTyped] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const reasonId = useId();
 
   const phraseSatisfied = !confirmPhrase || typed.trim() === confirmPhrase;
 
@@ -94,20 +124,18 @@ export function ConfirmDialog({
   return (
     <AlertDialog.Root open={open} onOpenChange={handleOpenChange}>
       <AlertDialog.Portal>
-        <AlertDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-overlay)] bg-overlay" />
+        <AlertDialog.Backdrop className={OVERLAY_SCRIM} />
         <AlertDialog.Popup
           initialFocus={cancelRef}
           className={cn(
-            'motion-panel fixed left-1/2 top-1/2 z-[var(--z-overlay)] w-[calc(100vw-2rem)] max-w-md',
-            '-translate-x-1/2 -translate-y-1/2',
-            'rounded-xl border border-border bg-surface shadow-lg focus:outline-none',
+            'motion-panel fixed left-1/2 top-1/2 z-[var(--z-overlay)] flex max-h-[calc(100dvh-2rem)]',
+            'w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col',
+            'overflow-hidden rounded-xl border border-border bg-surface shadow-lg focus:outline-none',
           )}
         >
-          <div className="px-5 py-4">
-            <AlertDialog.Title className="text-lg font-semibold text-text-primary">
-              {title}
-            </AlertDialog.Title>
-            <AlertDialog.Description className="mt-1.5 text-prose text-text-secondary">
+          <div className={OVERLAY_BODY}>
+            <AlertDialog.Title className={OVERLAY_TITLE}>{title}</AlertDialog.Title>
+            <AlertDialog.Description className={OVERLAY_DESCRIPTION}>
               {description}
             </AlertDialog.Description>
 
@@ -132,28 +160,38 @@ export function ConfirmDialog({
                 confirm-phrase input said the phrase was wrong when the server
                 had refused for an entirely different reason. */}
             {error ? (
-              <Alert tone="danger" live className="mt-3">
+              <Alert tone="danger" live className="mt-4">
                 {error}
               </Alert>
             ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3">
-            <AlertDialog.Close ref={cancelRef} className={buttonClass('ghost', 'md')} disabled={busy}>
-              {cancelLabel}
-            </AlertDialog.Close>
-            {/* A plain button, not `AlertDialog.Close`: closing on click would
+          <div className={OVERLAY_FOOTER}>
+            {!phraseSatisfied && confirmPhrase ? (
+              <span id={reasonId} className="mr-auto text-xs text-text-secondary">
+                Type the name exactly to continue.
+              </span>
+            ) : null}
+            <AlertDialog.Close
+              ref={cancelRef}
+              render={
+                <Button variant="secondary" disabled={busy}>
+                  {cancelLabel}
+                </Button>
+              }
+            />
+            {/* A plain `Button`, not `AlertDialog.Close`: closing on click would
                 tear down the busy state and the error surface before the request
                 settles. */}
-            <button
-              type="button"
+            <Button
+              variant={destructive ? 'danger' : 'primary'}
+              loading={busy}
+              disabled={!phraseSatisfied}
+              aria-describedby={!phraseSatisfied && confirmPhrase ? reasonId : undefined}
               onClick={handleConfirm}
-              disabled={busy || !phraseSatisfied}
-              aria-busy={busy || undefined}
-              className={buttonClass(destructive ? 'danger' : 'primary', 'md')}
             >
-              {busy ? 'Working…' : confirmLabel}
-            </button>
+              {confirmLabel}
+            </Button>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Portal>

@@ -2,6 +2,8 @@ import { useCallback, useId, useRef, useState, type DragEvent } from 'react';
 import { Upload, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from './Button';
+import { Eyebrow } from './Misc';
+import { Progress } from './Progress';
 import { formatBytes } from '../lib/formatters';
 import { Alert } from '../feedback/Alert';
 
@@ -14,6 +16,22 @@ export interface FileDropProps {
   multiple?: boolean;
   label: string;
   hint?: string;
+  /**
+   * What has been chosen, so the zone can say so.
+   *
+   * The docblock below named "no list of what had been chosen" as the defect the
+   * previous seven file inputs shared, and then did not render one — so every
+   * consumer built its own, which is how seven of them happened.
+   */
+  files?: readonly File[];
+  onRemove?: (file: File) => void;
+  /**
+   * Upload progress per file name: 0–100, or `null` for indeterminate.
+   *
+   * `Progress` already has an indeterminate mode built for exactly this, and the
+   * one component in the system that uploads could not show it.
+   */
+  progress?: Record<string, number | null>;
   disabled?: boolean;
   className?: string;
 }
@@ -35,6 +53,12 @@ function extensionOf(name: string): string {
  * The zone is a `<label>` wrapping a visually-hidden input rather than a div
  * with a click handler, so keyboard and screen-reader users reach the platform's
  * own file picker with no extra work.
+ *
+ * The focus ring is drawn on the label via `peer-focus-visible`. `sr-only` clips
+ * the real input to a 1 × 1 rect, so the global outline was being painted on a
+ * one-pixel box and was invisible — tabbing through the knowledge-base page hit
+ * the drop zone and showed nothing at all, while this docblock claimed the
+ * opposite.
  */
 export function FileDrop({
   onFiles,
@@ -44,6 +68,9 @@ export function FileDrop({
   multiple = true,
   label,
   hint,
+  files,
+  onRemove,
+  progress,
   disabled = false,
   className,
 }: FileDropProps) {
@@ -112,42 +139,97 @@ export function FileDrop({
         }}
         onDrop={onDrop}
         className={cn(
-          'flex flex-col items-center justify-center rounded-md border border-dashed px-6 py-8 text-center',
+          'flex flex-col items-center justify-center rounded-md border border-dashed px-6 py-7 text-center',
           'transition-colors duration-[var(--dur-fast)]',
+          'peer-focus-visible:outline-2 peer-focus-visible:outline-accent-500',
+          'peer-focus-visible:outline-offset-2',
           disabled
-            ? 'cursor-not-allowed border-border bg-surface-sunken opacity-60'
+            ? 'cursor-not-allowed border-border bg-surface-sunken text-text-disabled'
             : 'cursor-pointer border-border-strong hover:border-accent-500 hover:bg-accent-50',
           dragging && 'border-accent-500 bg-accent-50',
         )}
       >
-        <Upload aria-hidden className="mb-2 h-5 w-5 text-text-tertiary" />
-        <span className="text-base font-medium text-text-primary">{label}</span>
-        {hint ? <span className="mt-1 text-xs text-text-secondary">{hint}</span> : null}
-        {accept && accept.length > 0 ? (
-          <span className="mt-1.5 font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-            {accept.join(' · ')}
-            {maxSizeBytes ? ` · up to ${formatBytes(maxSizeBytes)}` : ''}
-          </span>
-        ) : null}
+        {/* The input comes first so `peer-*` can reach the content after it —
+            a sibling combinator only looks forward. */}
         <input
           ref={inputRef}
           id={inputId}
           type="file"
-          className="sr-only"
+          className="peer sr-only"
           multiple={multiple}
           disabled={disabled}
           accept={accept?.join(',')}
           onChange={(event) => handleFiles(event.target.files)}
         />
+        <Upload
+          aria-hidden
+          className={cn('mb-2 h-icon-lg w-icon-lg', disabled ? 'text-text-disabled' : 'text-text-tertiary')}
+        />
+        <span className={cn('text-base font-medium', disabled ? 'text-text-disabled' : 'text-text-primary')}>
+          {label}
+        </span>
+        {hint ? (
+          <span className={cn('mt-1 text-xs', disabled ? 'text-text-disabled' : 'text-text-secondary')}>
+            {hint}
+          </span>
+        ) : null}
+        {accept && accept.length > 0 ? (
+          // `as="span"`: a `<p>` is not valid inside a `<label>`'s phrasing
+          // content, which is why this line used to re-type `Eyebrow`'s classes.
+          <Eyebrow as="span" className="mt-1.5">
+            {accept.join(' · ')}
+            {maxSizeBytes ? ` · up to ${formatBytes(maxSizeBytes)}` : ''}
+          </Eyebrow>
+        ) : null}
       </label>
+
+      {files && files.length > 0 ? (
+        <ul className="mt-1.5 border-t border-border">
+          {files.map((file) => {
+            const value = progress?.[file.name];
+            const uploading = progress ? file.name in progress : false;
+            return (
+              <li
+                key={`${file.name}-${file.size}`}
+                className="flex min-h-row-compact items-center gap-3 border-b border-border py-1.5"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-text-primary">{file.name}</span>
+                  {uploading ? (
+                    <Progress
+                      className="mt-1"
+                      size="sm"
+                      value={value ?? null}
+                      label={`Uploading ${file.name}`}
+                    />
+                  ) : null}
+                </span>
+                <span className="figure shrink-0 text-xs text-text-tertiary">
+                  {formatBytes(file.size)}
+                </span>
+                {onRemove ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => onRemove(file)}
+                  >
+                    <X aria-hidden />
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
 
       {rejected.length > 0 ? (
         <Alert
           tone="warning"
-          className="mt-2"
+          className="mt-1.5"
           action={
             <Button size="icon-sm" variant="ghost" aria-label="Dismiss" onClick={() => setRejected([])}>
-              <X aria-hidden className="h-3.5 w-3.5" />
+              <X aria-hidden />
             </Button>
           }
         >

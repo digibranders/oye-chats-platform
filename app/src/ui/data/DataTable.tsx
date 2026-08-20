@@ -1,10 +1,10 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type MouseEvent, type ReactNode, type UIEvent } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { Checkbox } from '../primitives/Toggle';
 import { Skeleton } from '../primitives/Skeleton';
-import { EmptyState, ErrorState } from './States';
+import { EmptyState, ErrorState, LockedState } from './States';
 
 export type SortDirection = 'asc' | 'desc';
 export interface SortState {
@@ -12,12 +12,38 @@ export interface SortState {
   direction: SortDirection;
 }
 
+/**
+ * What kind of value the column holds — which decides its typeface, not its
+ * position.
+ *
+ * The two were coupled before: `figure` was emitted only for `align: 'right'`,
+ * so a left-aligned column of dates, ids or counts lost its mono (DESIGN.md
+ * §1.3 — "every figure is mono") and 96 call sites worked around it by writing
+ * `className="figure"` inside `render`, while a right-pushed status badge got
+ * mono applied to it wrongly.
+ */
+export type ColumnType = 'text' | 'number' | 'id';
+
 export interface Column<T> {
   key: string;
   header: ReactNode;
   render: (row: T) => ReactNode;
-  align?: 'left' | 'right';
-  /** A CSS width, e.g. `'12rem'`. Omit to let the column take what it needs. */
+  align?: 'left' | 'center' | 'right';
+  /**
+   * Drives the typeface, and the default alignment for `number` (right).
+   *
+   * Omit it and the legacy rule still applies — a right-aligned column is set
+   * as a figure — so nothing that shipped before this existed changed.
+   */
+  type?: ColumnType;
+  /**
+   * A CSS width, e.g. `'12rem'`.
+   *
+   * Honoured as a hard width only when **every** column declares one: the table
+   * then switches to `table-fixed`. Otherwise auto layout treats it as a
+   * suggestion it may override from the cell contents, which is what the app's
+   * 49 `width` declarations have always actually got.
+   */
   width?: string;
   /**
    * Supply a comparator to make the column sortable client-side, or `true` for
@@ -34,6 +60,32 @@ export interface Column<T> {
   pinned?: boolean;
   /** Hide below `md`. For columns that are context rather than the point. */
   secondary?: boolean;
+  /**
+   * Render this cell as `<th scope="row">` rather than `<td>`.
+   *
+   * The cell that *names* the row. A screen reader then announces it before
+   * each of that row's values — "Crawl · Credits · 4" instead of a bare "4" —
+   * which is the only reason two surfaces under `/billing` hand-built their own
+   * tables rather than use this one. At most one per table.
+   */
+  rowHeader?: boolean;
+  /**
+   * Let the cell wrap onto several lines. Off by default.
+   *
+   * Cells are one line so the table can be *wider than its container* and
+   * scroll. With wrapping on — which is what auto layout does by default — a
+   * 12-column table satisfies `width: 100%` by wrapping every cell to two to
+   * four lines instead: ragged row heights, `align-middle` centring short cells
+   * against tall ones, no horizontal scrollbar, and every `pinned` column inert
+   * because nothing ever scrolls sideways for it to pin against.
+   */
+  wrap?: boolean;
+  /**
+   * Ellipsise at the column's width instead of pushing the table wider.
+   *
+   * Defaults on when the column declares a `width`; meaningless without one.
+   */
+  truncate?: boolean;
 }
 
 export interface DataTableProps<T> {
@@ -46,6 +98,27 @@ export interface DataTableProps<T> {
   error?: string | null;
   onRetry?: () => void;
   empty?: ReactNode;
+  /**
+   * The fourth state: this table's data is not this seat's to see.
+   *
+   * Without it a table shipped three of the four states DESIGN.md §5 requires,
+   * and a feature-level wrapper had to be written specifically to add the
+   * fourth — a feature reintroducing a system responsibility.
+   */
+  forbidden?: { title: string; description: string; action?: ReactNode } | null;
+
+  /**
+   * Drop the table's own card, for a table seated inside one.
+   *
+   * `<Card><CardHeader/><DataTable/></Card>` is the console's most common table
+   * idiom and, until this prop existed, it painted a `rounded-lg` bordered
+   * surface flush inside another one: a doubled hairline down both sides and
+   * two 10px radii a pixel apart at all four corners — the "broken corner" this
+   * rebuild is largely about. It defaults to `false` only so that the ~20
+   * standalone tables keep their surface; every table inside a `Card` should
+   * pass it, alongside `CardBody flush`.
+   */
+  seated?: boolean;
 
   /** Opens the row's detail. Adds a real control, never a role on the `tr`. */
   onRowClick?: (row: T) => void;
@@ -91,44 +164,107 @@ export interface DataTableProps<T> {
   onPageChange?: (page: number) => void;
   /** The server's total across all pages. Required for server paging. */
   rowCount?: number;
-  /** Sticks the header while the body scrolls. Needs a bounded `maxHeight`. */
+  /**
+   * What one row *is*, for the count in the footer: "24 invoices", never
+   * "24 rows". The plural adds an `s` unless `rowNounPlural` says otherwise.
+   */
+  rowNoun?: string;
+  rowNounPlural?: string;
+  /**
+   * A real `<tfoot>` — a totals row, aligned with the columns it totals.
+   *
+   * The caller supplies the `<tr>`s. Two surfaces under `/billing` hand-built
+   * entire tables for want of this, at two more cell geometries.
+   */
+  footer?: ReactNode;
+  /**
+   * Bounds the scrolling body. Without one the table grows to its content and
+   * the header can only stick once the body is long enough to be capped
+   * automatically — see the note on `stickyHeader`.
+   */
   maxHeight?: string;
+  /**
+   * Sticks the column heads to the top of the scrolling body. On by default.
+   *
+   * It used to be tied to `maxHeight`, which is passed at **zero** of the app's
+   * 40 call sites, so no table in the console has ever had a sticky head and
+   * every one of them lost its column names after eight rows. Sticky is now the
+   * default and the table caps its own body once it is longer than it can be
+   * read at once (`AUTO_BOUND_ROWS`), which is the only way `position: sticky`
+   * can do anything: the wrapper has to scroll X for wide tables, and an element
+   * sticks to its nearest scrolling ancestor — that wrapper — not to the page.
+   */
+  stickyHeader?: boolean;
+  /** Offset for a sticky toolbar above the table, e.g. `'2.75rem'`. */
+  stickyOffset?: string;
   className?: string;
 }
 
+/**
+ * How many rows the table will render before it caps its own height.
+ *
+ * Under it, nothing scrolls inside the card and the page scrolls as one piece,
+ * which is what a short table should do. Over it, the body scrolls and the head
+ * stays — the point at which losing the column names actually costs the reader
+ * something.
+ */
+const AUTO_BOUND_ROWS = 12;
+const AUTO_BOUND_HEIGHT = 'min(68dvh, 44rem)';
+
+/** Everything that is genuinely a control, for the row-activation guard below. */
+const INTERACTIVE = 'a[href],button,input,select,textarea,label,[role="button"],[role="link"],[role="menuitem"],[role="checkbox"],[contenteditable="true"]';
+
 function SortIcon({ state }: { state: SortDirection | null }) {
-  if (state === 'asc') return <ArrowUp aria-hidden className="h-3 w-3 shrink-0" />;
-  if (state === 'desc') return <ArrowDown aria-hidden className="h-3 w-3 shrink-0" />;
+  if (state === 'asc') return <ArrowUp aria-hidden className="h-3 w-3 shrink-0 text-text-primary" />;
+  if (state === 'desc') return <ArrowDown aria-hidden className="h-3 w-3 shrink-0 text-text-primary" />;
+  // Persistently visible, faintly. It used to be `opacity-0` until hover, so an
+  // unsorted sortable column looked exactly like an unsortable one — a reader
+  // had to hover all twelve to find out which sort, and a keyboard user tabbing
+  // to the header saw nothing at all, because `group-hover` never fires on focus.
   return (
     <ChevronsUpDown
       aria-hidden
-      className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-50"
+      className="h-3 w-3 shrink-0 text-text-tertiary opacity-50 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
     />
   );
 }
 
+const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-right' } as const;
+
 /**
  * The console's table.
  *
- * Four structural decisions, each replacing something the previous table got
- * wrong:
+ * Structural decisions, each replacing something a previous table got wrong:
  *
  * 1. **A row is never given `role="button"`.** Doing so replaces the row's
  *    implicit `role="row"`, which drops it out of the table's accessibility
  *    tree entirely — no row/column position, no header association, no "row 3
- *    of 40". Activation is a real control inside the first cell, stretched over
- *    the row by a pseudo-element, so the table stays a table and the whole row
- *    stays clickable.
+ *    of 40". Activation is a real control inside the first cell; the pointer
+ *    path is a click handler on the row that ignores anything originating in
+ *    another control. It used to be a pseudo-element stretched over the row,
+ *    which is worse than it sounds: CSS paints positioned descendants *after*
+ *    the inline content of non-positioned ones, so that overlay covered every
+ *    later cell's contents — the "PDF" download in the invoice table was
+ *    genuinely unclickable, and clicking it opened the drawer instead.
  * 2. **`border-separate`, with hairlines painted as inset shadows.** In
  *    `border-collapse` mode the table paints cell borders rather than the
  *    cells, so a stuck header or a pinned column arrives with none of its own
  *    and the rest of the row shows through underneath it.
- * 3. **Sorting lives here.** The old table had no sort API at all, so every
+ * 3. **One line per cell, and the table may be wider than its box.** Auto
+ *    layout plus `w-full` means a wide table wraps rather than scrolls, which
+ *    also makes every pinned column inert. `Column.wrap` opts a genuinely
+ *    prose column back in.
+ * 4. **Sorting lives here.** The old table had no sort API at all, so every
  *    consumer shipped an unsortable list while a fully sorted implementation
- *    sat unused in a dead directory.
- * 4. **All four states are the table's job.** Loading, empty, error and the
- *    retry path. Leaving them to callers is what produced twelve copies of one
- *    loading block and error states with no way back.
+ *    sat unused in a dead directory. A server-paged table does not *offer* a
+ *    client sort it would then refuse to perform.
+ * 5. **All four states are the table's job**, plus the row count DESIGN.md
+ *    rule 7 requires — which lives in a footer that is always there, not inside
+ *    a pager that appears only past one page.
+ * 6. **Geometry comes from the density triplet** (`--row-h`, `--cell-x`,
+ *    `--cell-y`), so `Page density="dense"` re-spaces every table in the app
+ *    without a component re-deciding a value, and a table's left edge matches
+ *    the card padding above it.
  *
  * Not virtualized. It renders every row it is given, which is correct up to a
  * few hundred; a surface that can exceed that (conversations, a large lead
@@ -143,6 +279,8 @@ export function DataTable<T>({
   error = null,
   onRetry,
   empty,
+  forbidden = null,
+  seated = false,
   onRowClick,
   sort: controlledSort,
   onSortChange,
@@ -155,7 +293,12 @@ export function DataTable<T>({
   page: controlledPage,
   onPageChange,
   rowCount,
+  rowNoun = 'row',
+  rowNounPlural,
+  footer,
   maxHeight,
+  stickyHeader = true,
+  stickyOffset,
   className,
 }: DataTableProps<T>) {
   const [uncontrolledPage, setUncontrolledPage] = useState(0);
@@ -170,6 +313,9 @@ export function DataTable<T>({
 
   const selectable = Boolean(selectedKeys && onSelectionChange);
   const serverPaged = controlledPage !== undefined && onPageChange !== undefined;
+  // A server-paged table that does not control its sort cannot sort at all, so
+  // it must not offer the affordance: the arrow used to flip and nothing moved.
+  const sortingOffered = !(serverPaged && !isControlled);
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
@@ -254,34 +400,81 @@ export function DataTable<T>({
     onSelectionChange(next);
   }
 
+  // A click anywhere on the row opens it — except when it started inside
+  // something that is itself a control. Without the guard the row's handler
+  // fires on top of the action the user actually pressed, which is how a
+  // download button opens a drawer instead of downloading.
+  const activateRow = useCallback(
+    (row: T) => (event: MouseEvent<HTMLTableRowElement>) => {
+      if (!onRowClick) return;
+      // A click that started inside a control belongs to that control — the
+      // download in the last cell, a menu trigger, a checkbox, and the row's own
+      // activator in cell 0, which calls this itself and must not do it twice.
+      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE)) return;
+      onRowClick(row);
+    },
+    [onRowClick],
+  );
+
   const colSpan = columns.length + (selectable ? 1 : 0);
+  const state = loading
+    ? 'loading'
+    : error
+      ? 'error'
+      : forbidden
+        ? 'forbidden'
+        : visibleRows.length === 0
+          ? 'empty'
+          : 'rows';
+
+  // `table-fixed` only when every column has declared a width — otherwise auto
+  // layout is the honest model and `width` stays a suggestion.
+  const fixedLayout = columns.length > 0 && columns.every((column) => column.width);
+  const scrollMax =
+    maxHeight ?? (stickyHeader && visibleRows.length > AUTO_BOUND_ROWS ? AUTO_BOUND_HEIGHT : undefined);
+
+  // Whether the body has been scrolled sideways, written straight onto the DOM
+  // rather than held in state: a pinned column needs an edge only once content
+  // is actually travelling underneath it, and re-rendering forty rows on every
+  // scroll frame to learn that is not worth it.
+  function handleScroll(event: UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    element.dataset.scrolled = element.scrollLeft > 0 ? 'true' : 'false';
+  }
+
+  const noun = totalRows === 1 ? rowNoun : (rowNounPlural ?? `${rowNoun}s`);
+  const headCellClass =
+    'h-[var(--row-h)] whitespace-nowrap bg-surface-sunken align-middle text-xs font-medium text-text-secondary';
+  // The selection column is narrow and fixed, so the bulk-action bar can be laid
+  // over the header *beside* it and the select-all checkbox stays reachable
+  // while a selection is live.
+  const selectCellClass = 'w-12 px-3';
 
   return (
-    <div className={cn('overflow-hidden rounded-lg border border-border bg-surface', className)}>
-      {selectable && selectedCount > 0 ? (
-        <div className="flex flex-wrap items-center gap-3 border-b border-border bg-accent-50 px-4 py-2">
-          <p className="text-sm font-medium text-accent-700">
-            <span className="figure">{selectedCount}</span> selected
-          </p>
-          <div className="flex flex-wrap items-center gap-2">{bulkActions}</div>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto"
-            onClick={() => onSelectionChange?.(new Set())}
-          >
-            Clear
-          </Button>
-        </div>
-      ) : null}
-
-      <div className="overflow-auto" style={maxHeight ? { maxHeight } : undefined}>
-        <table className="console-table w-full text-left" aria-busy={loading || undefined}>
+    <div
+      className={cn(
+        'relative',
+        !seated && 'overflow-hidden rounded-lg border border-border bg-surface',
+        className,
+      )}
+    >
+      <div
+        onScroll={handleScroll}
+        className="overflow-auto"
+        style={scrollMax ? { maxHeight: scrollMax } : undefined}
+      >
+        <table
+          className={cn('console-table text-left', fixedLayout ? 'w-full table-fixed' : 'w-full min-w-max')}
+          aria-busy={loading || undefined}
+        >
           <caption className="sr-only">{caption}</caption>
-          <thead className={cn('bg-surface-sunken', maxHeight && 'sticky top-0 z-[var(--z-sticky)]')}>
+          <thead
+            className={cn(stickyHeader && 'sticky z-[var(--z-sticky)]')}
+            style={stickyHeader ? { top: stickyOffset ?? 0 } : undefined}
+          >
             <tr>
               {selectable ? (
-                <th scope="col" className="w-10 px-4 py-2.5">
+                <th scope="col" className={cn(headCellClass, selectCellClass)}>
                   <Checkbox
                     checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
                     onCheckedChange={toggleAllOnPage}
@@ -296,6 +489,8 @@ export function DataTable<T>({
               {columns.map((column) => {
                 const isSorted = sort?.key === column.key;
                 const direction = isSorted ? sort.direction : null;
+                const align = column.align ?? (column.type === 'number' ? 'right' : 'left');
+                const sortable = Boolean(column.sortable) && sortingOffered;
                 return (
                   <th
                     key={column.key}
@@ -307,21 +502,21 @@ export function DataTable<T>({
                       isSorted ? (direction === 'asc' ? 'ascending' : 'descending') : undefined
                     }
                     className={cn(
-                      'whitespace-nowrap bg-surface-sunken px-4 py-2.5',
-                      'font-mono text-2xs font-medium uppercase tracking-eyebrow text-text-tertiary',
-                      column.align === 'right' && 'text-right',
+                      headCellClass,
+                      'px-[var(--cell-x)]',
+                      ALIGN_CLASS[align],
                       column.pinned && 'is-pinned sticky left-0 z-[var(--z-sticky)]',
                       column.secondary && 'hidden md:table-cell',
                     )}
                   >
-                    {column.sortable ? (
+                    {sortable ? (
                       <button
                         type="button"
                         onClick={() => toggleSort(column.key)}
                         className={cn(
-                          'group inline-flex items-center gap-1 rounded-xs uppercase tracking-eyebrow',
+                          'group inline-flex items-center gap-1 rounded-xs',
                           'transition-colors hover:text-text-primary',
-                          column.align === 'right' && 'flex-row-reverse',
+                          align === 'right' && 'flex-row-reverse',
                         )}
                       >
                         {column.header}
@@ -337,37 +532,61 @@ export function DataTable<T>({
           </thead>
 
           <tbody>
-            {loading ? (
+            {state === 'loading' ? (
               // `aria-hidden` on the placeholder rows: the table already reports
               // `aria-busy`, and a screen reader walking six nameless rows
-              // learns nothing.
-              Array.from({ length: 6 }, (_, index) => (
+              // learns nothing. The count follows the page size and the row
+              // height follows the real one, so the body neither jumps nor
+              // resizes when the data lands.
+              Array.from({ length: Math.min(pageSize ?? 8, AUTO_BOUND_ROWS) }, (_, index) => (
                 <tr key={`skeleton-${index}`} aria-hidden>
                   {selectable ? (
-                    <td className="px-4 py-3">
+                    <td className={cn('h-[var(--row-h)] py-[var(--cell-y)]', selectCellClass)}>
                       <Skeleton className="h-4 w-4" />
                     </td>
                   ) : null}
                   {columns.map((column) => (
                     <td
                       key={column.key}
-                      className={cn('px-4 py-3', column.secondary && 'hidden md:table-cell')}
+                      className={cn(
+                        'h-[var(--row-h)] px-[var(--cell-x)] py-[var(--cell-y)]',
+                        column.secondary && 'hidden md:table-cell',
+                      )}
                     >
                       <Skeleton className="h-3 w-full max-w-40" />
                     </td>
                   ))}
                 </tr>
               ))
-            ) : error ? (
+            ) : state === 'error' ? (
               <tr>
-                <td colSpan={colSpan}>
-                  <ErrorState description={error} onRetry={onRetry} />
+                {/* The cell carries no row hairline: it is a state, not a row,
+                    and the inset shadow would double the container's own edge. */}
+                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                  <ErrorState size="inline" description={error ?? undefined} onRetry={onRetry} />
                 </td>
               </tr>
-            ) : visibleRows.length === 0 ? (
+            ) : state === 'forbidden' && forbidden ? (
               <tr>
-                <td colSpan={colSpan}>
-                  {empty ?? <EmptyState title="Nothing to show" description="No rows matched." />}
+                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                  <LockedState
+                    size="inline"
+                    title={forbidden.title}
+                    description={forbidden.description}
+                    action={forbidden.action}
+                  />
+                </td>
+              </tr>
+            ) : state === 'empty' ? (
+              <tr>
+                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                  {empty ?? (
+                    <EmptyState
+                      size="inline"
+                      title="Nothing to show"
+                      description="No rows matched."
+                    />
+                  )}
                 </td>
               </tr>
             ) : (
@@ -377,19 +596,23 @@ export function DataTable<T>({
                 return (
                   <tr
                     key={key}
-                    // `relative` so the first cell's stretched link resolves
-                    // against the ROW: anchored to the cell instead, only that
-                    // one cell was ever clickable while the whole row lit up.
+                    // One source for the row's ground: the sticky cells below
+                    // read it back off the row rather than restating the same
+                    // pair of colours a third and fourth time.
+                    data-selected={selected || undefined}
+                    onClick={onRowClick ? activateRow(row) : undefined}
                     className={cn(
-                      'group relative transition-colors duration-[var(--dur-fast)]',
+                      'group transition-colors duration-[var(--dur-fast)]',
                       selected ? 'bg-accent-50' : 'hover:bg-surface-hover',
+                      onRowClick && 'cursor-pointer',
                     )}
                   >
                     {selectable ? (
                       <td
                         className={cn(
-                          'relative z-10 px-4 py-2.5 align-middle',
-                          selected ? 'bg-accent-50' : 'bg-surface group-hover:bg-surface-hover',
+                          'h-[var(--row-h)] py-[var(--cell-y)] align-middle',
+                          selectCellClass,
+                          'bg-surface group-hover:bg-surface-hover group-data-[selected]:bg-accent-50',
                         )}
                       >
                         <Checkbox
@@ -402,19 +625,30 @@ export function DataTable<T>({
                     {columns.map((column, columnIndex) => {
                       const content = column.render(row);
                       const activates = onRowClick && columnIndex === 0;
+                      const align = column.align ?? (column.type === 'number' ? 'right' : 'left');
+                      const figure =
+                        column.type === 'number' ||
+                        column.type === 'id' ||
+                        (column.type === undefined && column.align === 'right');
+                      const Cell = column.rowHeader ? 'th' : 'td';
                       return (
-                        <td
+                        <Cell
                           key={column.key}
+                          scope={column.rowHeader ? 'row' : undefined}
                           className={cn(
-                            'px-4 py-2.5 align-middle text-sm text-text-primary',
-                            column.align === 'right' && 'figure text-right',
+                            'h-[var(--row-h)] px-[var(--cell-x)] py-[var(--cell-y)]',
+                            'align-middle text-sm font-normal text-text-primary',
+                            ALIGN_CLASS[align],
+                            figure && 'figure',
+                            column.wrap ? 'whitespace-normal' : 'whitespace-nowrap',
+                            (column.truncate ?? Boolean(column.width)) && !column.wrap && 'truncate',
                             // A pinned cell paints its own ground, so it needs
                             // the row's hover repeated on it — otherwise the
                             // pinned column stays white while the row lights up.
                             column.pinned &&
                               cn(
-                                'is-pinned sticky left-0 z-10',
-                                selected ? 'bg-accent-50' : 'bg-surface group-hover:bg-surface-hover',
+                                'is-pinned sticky left-0 z-[1]',
+                                'bg-surface group-hover:bg-surface-hover group-data-[selected]:bg-accent-50',
                               ),
                             column.secondary && 'hidden md:table-cell',
                           )}
@@ -422,15 +656,16 @@ export function DataTable<T>({
                           {activates ? (
                             <button
                               type="button"
+                              data-row-activator
                               onClick={() => onRowClick(row)}
-                              className="rounded-xs text-left after:absolute after:inset-0 after:content-['']"
+                              className="max-w-full truncate rounded-xs text-left"
                             >
                               {content}
                             </button>
                           ) : (
                             content
                           )}
-                        </td>
+                        </Cell>
                       );
                     })}
                   </tr>
@@ -438,44 +673,105 @@ export function DataTable<T>({
               })
             )}
           </tbody>
+
+          {footer && state === 'rows' ? (
+            <tfoot
+              className={cn(
+                'bg-surface-sunken text-sm font-medium text-text-primary',
+                '[&_td]:h-[var(--row-h)] [&_td]:px-[var(--cell-x)] [&_td]:py-[var(--cell-y)] [&_td]:align-middle',
+                '[&_th]:h-[var(--row-h)] [&_th]:px-[var(--cell-x)] [&_th]:py-[var(--cell-y)] [&_th]:text-left [&_th]:align-middle',
+              )}
+            >
+              {footer}
+            </tfoot>
+          ) : null}
         </table>
       </div>
 
-      {pageSize && !loading && !error && totalRows > pageSize ? (
-        <nav
-          aria-label={`${caption} pages`}
-          className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5"
-        >
-          <p className="text-xs text-text-secondary">
-            <span className="figure">{safePage * pageSize + 1}</span>–
-            <span className="figure">{Math.min((safePage + 1) * pageSize, totalRows)}</span> of{' '}
-            <span className="figure">{totalRows}</span>
+      {/* Painted over the header rather than pushed above it. Mounting a bar
+          above the `thead` moved the entire body down by its height at the exact
+          moment the pointer was on a checkbox, so the next click landed on the
+          wrong row. Same height as the header row, so nothing moves at all. */}
+      {selectable && selectedCount > 0 ? (
+        <div className="absolute left-12 right-0 top-0 z-[var(--z-sticky)] flex h-[var(--row-h)] items-center gap-3 border-b border-border bg-accent-50 pl-1 pr-[var(--cell-x)]">
+          <p className="shrink-0 text-sm font-medium text-accent-700">
+            <span className="figure">{selectedCount}</span> selected
           </p>
-          <div className="flex items-center gap-1">
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Previous page"
-              disabled={safePage === 0}
-              onClick={() => goToPage(safePage - 1)}
-            >
-              <ChevronLeft aria-hidden className="h-4 w-4" />
-            </Button>
-            <span className="px-1 text-xs text-text-secondary">
-              <span className="figure">{safePage + 1}</span> /{' '}
-              <span className="figure">{pageCount}</span>
-            </span>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Next page"
-              disabled={safePage >= pageCount - 1}
-              onClick={() => goToPage(safePage + 1)}
-            >
-              <ChevronRight aria-hidden className="h-4 w-4" />
-            </Button>
-          </div>
-        </nav>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">{bulkActions}</div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto shrink-0"
+            onClick={() => onSelectionChange?.(new Set())}
+          >
+            Clear
+          </Button>
+        </div>
+      ) : null}
+
+      {/* The count is not part of the pager. It used to be, so a table with one
+          page — six of the app's forty have no `pageSize` at all — printed no
+          count anywhere, and the reader could not tell "12 sources" from "12 of
+          400". DESIGN.md rule 7 asks for it on every table.
+
+          No `border-t`: the last row's own inset hairline is already the rule
+          above this bar, and drawing a second one is what made every table look
+          bottom-heavy. */}
+      {/* The row count DESIGN.md rule 7 asks of every table — which used to live
+          inside the pager, so a table with one page (six of the app's forty pass
+          no `pageSize` at all) reported its size nowhere and the reader could not
+          tell "12 sources" from "12 of 400".
+
+          No `border-t` on either form: the last row's own inset hairline is
+          already the rule above this bar, and drawing a second one is what made
+          every table in the console look bottom-heavy. */}
+      {state === 'rows' ? (
+        pageSize && totalRows > pageSize ? (
+          <nav
+            aria-label={`${caption} pages`}
+            className="flex items-center justify-between gap-3 px-[var(--cell-x)] py-2"
+          >
+            <p className="text-xs text-text-secondary">
+              <span className="figure">{safePage * pageSize + 1}</span>–
+              <span className="figure">{Math.min((safePage + 1) * pageSize, totalRows)}</span> of{' '}
+              <span className="figure">{totalRows}</span> {noun}
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Previous page"
+                disabled={safePage === 0}
+                onClick={() => goToPage(safePage - 1)}
+              >
+                <ChevronLeft aria-hidden className="h-icon-md w-icon-md" />
+              </Button>
+              {/* One string for assistive tech: the three nodes below read as
+                  "1 slash 12" on their own. */}
+              <span
+                className="px-1 text-xs text-text-secondary"
+                aria-label={`Page ${safePage + 1} of ${pageCount}`}
+              >
+                <span aria-hidden className="figure">{safePage + 1}</span>
+                <span aria-hidden> / </span>
+                <span aria-hidden className="figure">{pageCount}</span>
+              </span>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Next page"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => goToPage(safePage + 1)}
+              >
+                <ChevronRight aria-hidden className="h-icon-md w-icon-md" />
+              </Button>
+            </div>
+          </nav>
+        ) : (
+          <p className="px-[var(--cell-x)] py-2 text-xs text-text-secondary" aria-live="polite">
+            <span className="figure">{totalRows}</span> {noun}
+          </p>
+        )
       ) : null}
     </div>
   );

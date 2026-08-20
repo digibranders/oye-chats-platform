@@ -80,6 +80,20 @@
   --color-rail-text-muted: #a5a099; /*  6.89 on rail                            */
   --color-rail-accent: #8faaf5;     /*  7.87 on rail — the active marker        */
 
+  /* The rail's own status scale. DESIGN.md §2.2 already argues that paper
+     tokens on a near-black ground are unreadable — and then stopped at
+     neutrals plus one accent, which guaranteed the habit it warned about. Six
+     shell components reached for a paper token anyway: the health dots painted
+     `--color-danger-fill`, which measures 2.94 on the rail and so fails SC
+     1.4.11 outright, and the setup ring's track measured 1.14 and could not be
+     seen at all.
+
+     Measured against --color-rail (#17171A). */
+  --color-rail-success: #4fc08a;    /*  7.87 on rail                           */
+  --color-rail-warning: #e0a649;    /*  8.28 on rail                           */
+  --color-rail-danger: #f08279;     /*  6.96 on rail                           */
+  --color-rail-track: #3a3a40;      /*  1.58 on rail — a track, not a stripe   */
+
   /* ------------------------------------------------------------------ signal
      Interactive and selected. Never a status, and never "in progress". */
   --color-accent-50: #e9effd;       /* selected row, focus tint                */
@@ -192,10 +206,35 @@
   --spacing-rail-collapsed: 3.75rem;/* 60 */
   --spacing-topbar: 3.5rem;         /* 56 */
 
+  /* An icon's size is derived from the control that holds it, never chosen at
+     the call site. Eight components each picked their own before this existed,
+     which is how a 14px glyph and a 16px glyph ended up on one toolbar row. */
+  --spacing-icon-sm: 0.875rem;      /* 14 — sm controls, menu items, chips     */
+  --spacing-icon-md: 1rem;          /* 16 — md controls, alerts, buttons       */
+  --spacing-icon-lg: 1.25rem;       /* 20 — empty-state discs, file drops      */
+
+  /* The composition scale. One pair of gutter values, consumed by `Page`,
+     `TopBar` and `ShellBanners`, so the breadcrumb, the banner and the page
+     title stand on one left edge instead of three. */
+  --spacing-gutter: 1.5rem;         /* 24 — below lg                           */
+  --spacing-gutter-lg: 2rem;        /* 32 — lg and above                       */
+
+  /* Card padding and table-cell padding are ONE value. They were 20 and 16,
+     which left every table inside a card 4px out of line with its own header. */
+  --spacing-cell: 1.25rem;          /* 20                                      */
+  --spacing-cell-dense: 0.75rem;    /* 12 — under [data-density='dense']       */
+
   /* Content widths. `--container-*` is Tailwind's namespace for `max-w-*`, so a
      page writes `max-w-page` rather than an arbitrary value. */
   --container-page: 90rem;          /* 1440 — the widest content column        */
   --container-reading: 56rem;       /* 896 — settings and forms                */
+  --container-form: 42rem;          /* 672 — a single-column form              */
+  --container-pair: 40rem;          /* 640 — the widest a label→control pair   */
+
+  /* `--container-pair` answers the console's most visible composition defect: a
+     `justify-between` row inside a 1440px card put a switch 1,540px from the
+     label naming it. A pair is a pair at any viewport width — past ~640px the
+     eye stops binding the two ends of the row, and the middle reads as a hole. */
 
   /* ------------------------------------------------------------------ shape
      Small radii read as controls; large radii read as marketing. Nothing here
@@ -205,6 +244,14 @@
   --radius-md: 8px;         /* buttons, selects, inner panels                 */
   --radius-lg: 10px;        /* cards                                          */
   --radius-xl: 14px;        /* modals, drawers, popovers                      */
+
+  /* Concentric radii. A child sitting flush against a rounded parent needs the
+     parent's radius minus the border it sits behind; a child inset by the
+     parent's padding needs the parent's radius minus that padding. Restating
+     the parent's radius on the child — which is what the call sites did — is
+     what draws the crescent of dead space the eye reads as a broken corner. */
+  --radius-inner-flush: 9px;/* a child at a card's border   (10 − 1px border)  */
+  --radius-inner: 4px;      /* a child inset by the card's 20px padding        */
 
   /* -------------------------------------------------------------- elevation
      Cards get no shadow: elevation means "floating above the page, and
@@ -227,6 +274,13 @@
   --dur: 180ms;             /* menus, popovers, tooltips                      */
   --dur-slow: 240ms;        /* drawers, modals, sheets                        */
 
+  /* Density is one attribute on the page root, not a prop threaded through
+     forty components. `DataTable`, `PropertyGrid`, `SettingRow` and the rail
+     read these; nothing else needs to know the mode exists. */
+  --row-h: 2.75rem;         /* 44 — comfortable                               */
+  --cell-x: 1.25rem;        /* 20                                             */
+  --cell-y: 0.625rem;       /* 10                                             */
+
   /* One ladder for everything that stacks. The system this replaces put the
      mobile scrim and the top bar both on z-20, with the bar later in the DOM,
      so the bar painted above its own scrim and stayed clickable. */
@@ -238,6 +292,16 @@
   --z-overlay: 50;          /* dialogs, drawers, menus, popovers, tooltips     */
   --z-toast: 60;
   --z-banner: 70;           /* impersonation and other must-see bars           */
+}
+
+/* Dense mode. Set by `Page density="dense"` as `data-density` on the page root,
+   so it cascades to everything inside without a single component re-deciding a
+   spacing value. The ops console and the leads book opt in; everything else
+   stays comfortable. */
+[data-density='dense'] {
+  --row-h: 2.25rem;         /* 36 */
+  --cell-x: 0.75rem;        /* 12 */
+  --cell-y: 0.375rem;       /*  6 */
 }
 
 /* =============================================================================

@@ -3,6 +3,7 @@ import { Checkbox as BaseCheckbox } from '@base-ui/react/checkbox';
 import { Switch as BaseSwitch } from '@base-ui/react/switch';
 import { Check, Minus } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { HIT_AREA } from './controlStyles';
 import { useFieldControlProps } from './fieldContext';
 
 /**
@@ -16,6 +17,17 @@ import { useFieldControlProps } from './fieldContext';
  * wrong.
  *
  * The visual layer is entirely ours — Base UI ships no styles.
+ *
+ * Both controls are drawn at their designed size and *targeted* at 24px through
+ * `HIT_AREA`. A 16px checkbox is the right mark beside a 14px label and the
+ * wrong thing to ask someone to hit in a table row, which is exactly where the
+ * select-row checkbox lives.
+ *
+ * Disabled is stated in tokens, never in opacity. A disabled checkbox with a
+ * label was dimmed twice — 0.6 on the box and 0.6 on the wrapper — which
+ * multiplies to 0.36 and left the control very nearly invisible; and because
+ * only one of the two paths read the `Field`'s disabled state, the two ways of
+ * disabling the same control did not look the same.
  */
 
 export type CheckedState = boolean | 'indeterminate';
@@ -48,6 +60,7 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
   // perfectly visible label announced as an unnamed checkbox. Fall back to our
   // own id so the visible label always associates.
   const controlId = (fieldProps.id as string | undefined) ?? `${generatedId}-control`;
+  const isDisabled = disabled ?? Boolean(fieldProps.disabled);
 
   // The public API takes one `CheckedState`, because a caller reasoning about a
   // select-all header thinks in three states, not in two booleans that can
@@ -67,7 +80,10 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
         'border-border-strong bg-surface transition-colors duration-[var(--dur-fast)]',
         'data-[checked]:border-ink data-[checked]:bg-ink',
         'data-[indeterminate]:border-ink data-[indeterminate]:bg-ink',
-        'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:opacity-60',
+        'disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-sunken',
+        'disabled:data-[checked]:border-text-disabled disabled:data-[checked]:bg-text-disabled',
+        'disabled:data-[indeterminate]:border-text-disabled disabled:data-[indeterminate]:bg-text-disabled',
+        HIT_AREA,
         className,
       )}
       // The field's wiring first, so an explicit `disabled` on the control
@@ -75,7 +91,7 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
       // `undefined`, which would otherwise clobber the prop set beside it.
       {...fieldProps}
       id={label ? controlId : (fieldProps.id as string | undefined)}
-      disabled={disabled ?? (fieldProps.disabled as boolean | undefined)}
+      disabled={isDisabled}
       aria-describedby={
         [describedById, fieldProps['aria-describedby'] as string | undefined]
           .filter(Boolean)
@@ -105,8 +121,10 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
   if (!label) return control;
 
   return (
-    <div className={cn('flex items-start gap-2.5', disabled && 'opacity-60')}>
-      <span className="mt-0.5">{control}</span>
+    // Optical centring: a 16px box against a 22px line box only needs pushing
+    // down when there is a second line under the label to pin it to.
+    <div className={cn('flex gap-2', description ? 'items-start' : 'items-center')}>
+      <span className={cn(description && 'mt-1')}>{control}</span>
       <span className="min-w-0">
         {/* The label is a sibling wired by `htmlFor`, not a wrapper. Nesting the
             description inside the label folds it into the control's accessible
@@ -114,12 +132,21 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
             conversations to a human when your team is online". */}
         <label
           htmlFor={controlId}
-          className={cn('block text-base text-text-primary', !disabled && 'cursor-pointer')}
+          className={cn(
+            'block text-base font-medium',
+            isDisabled ? 'text-text-disabled' : 'cursor-pointer text-text-primary',
+          )}
         >
           {label}
         </label>
         {description ? (
-          <span id={describedById} className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+          <span
+            id={describedById}
+            className={cn(
+              'mt-1 block text-xs',
+              isDisabled ? 'text-text-disabled' : 'text-text-secondary',
+            )}
+          >
             {description}
           </span>
         ) : null}
@@ -148,6 +175,19 @@ export interface SwitchProps {
  * Distinct from a checkbox, which is a value that takes effect when the form is
  * submitted. Choosing the wrong one is how a user presses Save and wonders why
  * nothing happened — or flips something they meant to review first.
+ *
+ * The track's geometry is deliberate and verified, so nobody "fixes" it: at
+ * `md` the 36px track less 2 × 2px of padding leaves 32px of inner room, the
+ * thumb is 16, and the travel is therefore exactly `translate-x-4`; at `sm`,
+ * 28 − 4 = 24, thumb 12, travel `translate-x-3`. `--shadow-xs` on the thumb is
+ * the 1px seam the token file documents, not elevation.
+ *
+ * The off track is `--color-neutral-fill`, not `--color-border-strong`.
+ * `border-strong` is byte-identical to `--color-text-disabled`, so an *off*
+ * switch was exactly the colour of disabled — and beside a genuinely disabled
+ * switch the two states were nearly indistinguishable. Disabled now separates
+ * the two states as well: a disabled-on switch stays darker than a disabled-off
+ * one, which an opacity wash could never express.
  */
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
   { checked, onCheckedChange, label, hideLabel = false, description, disabled, size = 'md', name, className },
@@ -159,6 +199,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   // A switch needs no id fallback: it is a button, and a button is named by
   // `aria-label` or `aria-labelledby`, never by a sibling `<label htmlFor>`.
   const labelId = `${generatedId}-label`;
+  const isDisabled = disabled ?? Boolean(fieldProps.disabled);
 
   const control = (
     <BaseSwitch.Root
@@ -173,15 +214,18 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
       aria-label={hideLabel ? label : undefined}
       aria-labelledby={hideLabel ? undefined : labelId}
       className={cn(
-        'relative inline-flex shrink-0 items-center rounded-full p-0.5',
+        'inline-flex shrink-0 items-center rounded-full p-0.5',
         'transition-colors duration-[var(--dur-fast)]',
-        'data-[checked]:bg-ink data-[unchecked]:bg-border-strong',
-        'disabled:cursor-not-allowed disabled:opacity-50',
+        'data-[checked]:bg-ink data-[unchecked]:bg-neutral-fill',
+        'enabled:hover:data-[checked]:bg-ink-hover enabled:hover:data-[unchecked]:bg-text-tertiary',
+        'disabled:cursor-not-allowed',
+        'disabled:data-[checked]:bg-text-disabled disabled:data-[unchecked]:bg-surface-active',
         size === 'sm' ? 'h-4 w-7' : 'h-5 w-9',
+        HIT_AREA,
         className,
       )}
       {...fieldProps}
-      disabled={disabled ?? (fieldProps.disabled as boolean | undefined)}
+      disabled={isDisabled}
       aria-describedby={
         [describedById, fieldProps['aria-describedby'] as string | undefined]
           .filter(Boolean)
@@ -203,13 +247,28 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
   if (hideLabel) return control;
 
   return (
-    <div className="flex items-start justify-between gap-4">
+    // Capped at `--container-pair`. A `justify-between` row inside a 1440px card
+    // put a switch 1,540px from the label naming it; past about 640px the eye
+    // stops binding the two ends of a row and the middle reads as a hole.
+    <div className="flex max-w-pair items-start justify-between gap-4">
       <span className="min-w-0">
-        <span id={labelId} className="block text-base font-medium text-text-primary">
+        <span
+          id={labelId}
+          className={cn(
+            'block text-base font-medium',
+            isDisabled ? 'text-text-disabled' : 'text-text-primary',
+          )}
+        >
           {label}
         </span>
         {description ? (
-          <span id={describedById} className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+          <span
+            id={describedById}
+            className={cn(
+              'mt-1 block text-xs',
+              isDisabled ? 'text-text-disabled' : 'text-text-secondary',
+            )}
+          >
             {description}
           </span>
         ) : null}
