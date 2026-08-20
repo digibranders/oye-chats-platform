@@ -41,6 +41,7 @@ import {
   PageHeader,
   Progress,
   NavTabs,
+  RadioCards,
   RankedBars,
   Section,
   SearchField,
@@ -388,6 +389,23 @@ export function UiGallery() {
                           <Button size="sm" variant="danger">Delete</Button>
                         </>
                       }
+                    />
+                  </Section>
+
+                  <Section
+                    title="Choices that need a sentence"
+                    description="SegmentedControl has room for a label and nothing else. The moment an option needs explaining, it becomes this."
+                  >
+                    <RadioCards
+                      label="How strictly should it answer?"
+                      columns={3}
+                      value="balanced"
+                      onChange={() => {}}
+                      items={[
+                        { value: 'strict', label: 'Strict', description: 'Only from your documents. Anything else gets a handoff.' },
+                        { value: 'balanced', label: 'Balanced', description: 'Fills small gaps from general knowledge, and says when it did.' },
+                        { value: 'open', label: 'Open', description: 'Answers freely.', badge: <Badge tone="plan">Professional</Badge> },
+                      ]}
                     />
                   </Section>
 

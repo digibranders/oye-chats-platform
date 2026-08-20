@@ -1,50 +1,102 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { Spinner } from '../ui';
 import { AppShell } from '../shell/AppShell';
 import { ProtectedLayout } from './ProtectedLayout';
 import { OperatorRouteGuard } from './OperatorRouteGuard';
 import { AgentScope } from './AgentScope';
-import Login from '../pages/Login';
-import Register from '../pages/Register';
-import VerifyEmail from '../pages/VerifyEmail';
-import ForgotPassword from '../pages/ForgotPassword';
-import OAuthCallback from '../pages/OAuthCallback';
-
-import { HomePage } from '../features/home/HomePage';
-import { AgentsPage } from '../features/agents/AgentsPage';
-import { OverviewPage } from '../features/agents/overview/OverviewPage';
-import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
-import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
-import { ChannelsPage } from '../features/agents/channels/ChannelsPage';
-import { QualificationPage } from '../features/agents/advanced/QualificationPage';
-import { BehaviourPage } from '../features/agents/advanced/BehaviourPage';
-import { InboxPage } from '../features/inbox/InboxPage';
-import { LeadsPage } from '../features/leads/LeadsPage';
-import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
-import { JourneyPage } from '../features/analytics/JourneyPage';
-import { WorkspaceLayout } from '../features/workspace/WorkspaceLayout';
-import { GeneralPage } from '../features/workspace/GeneralPage';
-import { MembersPage } from '../features/workspace/MembersPage';
-import { BillingPage } from '../features/workspace/BillingPage';
-import { UsagePage } from '../features/workspace/UsagePage';
-import { ReportsPage } from '../features/workspace/ReportsPage';
-import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
-import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
-import { AffiliatePage } from '../features/affiliate/AffiliatePage';
-import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
-import { InviteAirlock } from '../features/workspace/InviteAirlock';
-import { SettingsPage } from '../features/settings';
-import { SetupPage } from '../onboarding/SetupPage';
-import { FirstRunPage } from '../onboarding/FirstRunPage';
-import { FirstChatPage } from '../onboarding/FirstChatPage';
 import { Moved, MovedAgent } from './Moved';
+
+// Eager on purpose: the sign-in form is the most common cold entry into the
+// app, and making a signed-out visitor wait on a second round trip to see a
+// password field is the one place a split chunk is a straight loss.
+import Login from '../pages/Login';
 
 import { platformRoutes } from '../superadmin/routes';
 import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
 
-const UiGallery = lazy(() => import('../dev/UiGallery').then((m) => ({ default: m.UiGallery })));
+/* The Suspense wrapper and the lazy helper below are route plumbing, not
+   exported components — this file's export is the router. */
+/* eslint-disable react-refresh/only-export-components */
+
+/**
+ * Every routed surface is split.
+ *
+ * The bundle was one 2.2MB chunk, so opening the sign-in page downloaded the
+ * billing tables, the journey diagram, Recharts, and the whole platform
+ * console. Splitting per route means a visitor pays for the screen they asked
+ * for; the shell, the guards and the error surfaces stay eager because they are
+ * on every path anyway.
+ *
+ * `named` exists because these modules export named components rather than
+ * defaults — the shape `React.lazy` wants — and writing the `.then` by hand
+ * thirty times is thirty chances to point one of them at the wrong export.
+ */
+function named<T, K extends keyof T>(loader: () => Promise<T>, key: K) {
+  return lazy(
+    () =>
+      loader().then((module) => ({
+        default: module[key] as unknown as React.ComponentType<Record<string, never>>,
+      })),
+  );
+}
+
+const Register = lazy(() => import('../pages/Register'));
+const VerifyEmail = lazy(() => import('../pages/VerifyEmail'));
+const ForgotPassword = lazy(() => import('../pages/ForgotPassword'));
+const OAuthCallback = lazy(() => import('../pages/OAuthCallback'));
+
+const HomePage = named(() => import('../features/home/HomePage'), 'HomePage');
+const AgentsPage = named(() => import('../features/agents/AgentsPage'), 'AgentsPage');
+const OverviewPage = named(() => import('../features/agents/overview/OverviewPage'), 'OverviewPage');
+const KnowledgePage = named(() => import('../features/agents/knowledge/KnowledgePage'), 'KnowledgePage');
+const ExperiencePage = named(() => import('../features/agents/experience/ExperiencePage'), 'ExperiencePage');
+const ChannelsPage = named(() => import('../features/agents/channels/ChannelsPage'), 'ChannelsPage');
+const QualificationPage = named(() => import('../features/agents/advanced/QualificationPage'), 'QualificationPage');
+const BehaviourPage = named(() => import('../features/agents/advanced/BehaviourPage'), 'BehaviourPage');
+const InboxPage = named(() => import('../features/inbox/InboxPage'), 'InboxPage');
+const LeadsPage = named(() => import('../features/leads/LeadsPage'), 'LeadsPage');
+const AnalyticsPage = named(() => import('../features/analytics/AnalyticsPage'), 'AnalyticsPage');
+const JourneyPage = named(() => import('../features/analytics/JourneyPage'), 'JourneyPage');
+const WorkspaceLayout = named(() => import('../features/workspace/WorkspaceLayout'), 'WorkspaceLayout');
+const GeneralPage = named(() => import('../features/workspace/GeneralPage'), 'GeneralPage');
+const MembersPage = named(() => import('../features/workspace/MembersPage'), 'MembersPage');
+const BillingPage = named(() => import('../features/workspace/BillingPage'), 'BillingPage');
+const UsagePage = named(() => import('../features/workspace/UsagePage'), 'UsagePage');
+const ReportsPage = named(() => import('../features/workspace/ReportsPage'), 'ReportsPage');
+const ApiKeysPage = named(() => import('../features/workspace/ApiKeysPage'), 'ApiKeysPage');
+const IntegrationsPage = named(() => import('../features/workspace/IntegrationsPage'), 'IntegrationsPage');
+const AffiliatePage = named(() => import('../features/affiliate/AffiliatePage'), 'AffiliatePage');
+const AffiliateInvite = named(() => import('../features/affiliate/AffiliateInvite'), 'AffiliateInvite');
+const InviteAirlock = named(() => import('../features/workspace/InviteAirlock'), 'InviteAirlock');
+const SettingsPage = named(() => import('../features/settings'), 'SettingsPage');
+const SetupPage = named(() => import('../onboarding/SetupPage'), 'SetupPage');
+const FirstRunPage = named(() => import('../onboarding/FirstRunPage'), 'FirstRunPage');
+const FirstChatPage = named(() => import('../onboarding/FirstChatPage'), 'FirstChatPage');
+const UiGallery = named(() => import('../dev/UiGallery'), 'UiGallery');
+
+/**
+ * What a split route shows while its chunk arrives.
+ *
+ * A spinner and nothing else, deliberately: a skeleton here would be a guess at
+ * a layout the chunk has not described yet, and guessing wrong costs a layout
+ * jump on every navigation.
+ */
+function Route({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full min-h-64 items-center justify-center">
+          <Spinner className="h-5 w-5" />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 /**
  * The console's routes.
@@ -68,9 +120,9 @@ export const router = createBrowserRouter([
       {
         path: '/dev/ui',
         element: (
-          <Suspense fallback={null}>
+          <Route>
             <UiGallery />
-          </Suspense>
+          </Route>
         ),
       },
 
@@ -81,15 +133,15 @@ export const router = createBrowserRouter([
 
       // ── Public ────────────────────────────────────────────────────────────
       { path: '/login', element: <Login /> },
-      { path: '/register', element: <Register /> },
-      { path: '/verify-email', element: <VerifyEmail /> },
-      { path: '/forgot-password', element: <ForgotPassword /> },
-      { path: '/auth/callback', element: <OAuthCallback /> },
-      { path: '/affiliate-invite', element: <AffiliateInvite /> },
+      { path: '/register', element: <Route><Register /></Route> },
+      { path: '/verify-email', element: <Route><VerifyEmail /></Route> },
+      { path: '/forgot-password', element: <Route><ForgotPassword /></Route> },
+      { path: '/auth/callback', element: <Route><OAuthCallback /></Route> },
+      { path: '/affiliate-invite', element: <Route><AffiliateInvite /></Route> },
       // The team-invite airlock resolves a magic link and routes on auth state,
       // so it must stay outside the guard: the invited visitor is usually
       // signed out when they land.
-      { path: '/invite/:token', element: <InviteAirlock /> },
+      { path: '/invite/:token', element: <Route><InviteAirlock /></Route> },
 
       // ── Authenticated ─────────────────────────────────────────────────────
       {
@@ -104,67 +156,67 @@ export const router = createBrowserRouter([
                 errorElement: <PageErrorBoundary />,
                 element: <OperatorRouteGuard />,
                 children: [
-                  { index: true, element: <HomePage /> },
-                  { path: 'setup', element: <SetupPage /> },
+                  { index: true, element: <Route><HomePage /></Route> },
+                  { path: 'setup', element: <Route><SetupPage /></Route> },
 
                   // First run. Inside the shell, deliberately: the wizard this
                   // replaces lived outside it, so a customer could hand over a
                   // card on a screen structurally incapable of telling them
                   // their last payment had failed.
-                  { path: 'welcome', element: <FirstRunPage /> },
-                  { path: 'welcome/:agentId', element: <FirstChatPage /> },
+                  { path: 'welcome', element: <Route><FirstRunPage /></Route> },
+                  { path: 'welcome/:agentId', element: <Route><FirstChatPage /></Route> },
 
                   // ── Chatbots ────────────────────────────────────────────
                   {
                     path: 'chatbots',
                     children: [
-                      { index: true, element: <AgentsPage /> },
+                      { index: true, element: <Route><AgentsPage /></Route> },
                       {
                         path: ':agentId',
                         element: <AgentScope />,
                         children: [
                           { index: true, element: <Navigate to="overview" replace /> },
-                          { path: 'overview', element: <OverviewPage /> },
-                          { path: 'knowledge', element: <KnowledgePage /> },
-                          { path: 'experience', element: <ExperiencePage /> },
-                          { path: 'deploy', element: <ChannelsPage /> },
+                          { path: 'overview', element: <Route><OverviewPage /></Route> },
+                          { path: 'knowledge', element: <Route><KnowledgePage /></Route> },
+                          { path: 'experience', element: <Route><ExperiencePage /></Route> },
+                          { path: 'deploy', element: <Route><ChannelsPage /></Route> },
                           // Qualification is promoted out of the technical tab:
                           // it is a revenue surface, not a configuration corner.
-                          { path: 'qualification', element: <QualificationPage /> },
-                          { path: 'behaviour', element: <BehaviourPage /> },
+                          { path: 'qualification', element: <Route><QualificationPage /></Route> },
+                          { path: 'behaviour', element: <Route><BehaviourPage /></Route> },
                         ],
                       },
                     ],
                   },
 
                   // ── Operations ──────────────────────────────────────────
-                  { path: 'inbox', element: <InboxPage /> },
-                  { path: 'leads', element: <LeadsPage /> },
-                  { path: 'analytics', element: <AnalyticsPage /> },
-                  { path: 'analytics/journey', element: <JourneyPage /> },
+                  { path: 'inbox', element: <Route><InboxPage /></Route> },
+                  { path: 'leads', element: <Route><LeadsPage /></Route> },
+                  { path: 'analytics', element: <Route><AnalyticsPage /></Route> },
+                  { path: 'analytics/journey', element: <Route><JourneyPage /></Route> },
 
                   // ── Billing ─────────────────────────────────────────────
-                  { path: 'billing', element: <BillingPage /> },
-                  { path: 'billing/usage', element: <UsagePage /> },
-                  { path: 'billing/reports', element: <ReportsPage /> },
+                  { path: 'billing', element: <Route><BillingPage /></Route> },
+                  { path: 'billing/usage', element: <Route><UsagePage /></Route> },
+                  { path: 'billing/reports', element: <Route><ReportsPage /></Route> },
 
                   // ── Settings ────────────────────────────────────────────
                   {
                     path: 'settings',
-                    element: <WorkspaceLayout />,
+                    element: <Route><WorkspaceLayout /></Route>,
                     children: [
                       { index: true, element: <Navigate to="workspace" replace /> },
-                      { path: 'workspace', element: <GeneralPage /> },
-                      { path: 'team', element: <MembersPage /> },
-                      { path: 'integrations', element: <IntegrationsPage /> },
-                      { path: 'developers', element: <ApiKeysPage /> },
-                      { path: 'affiliate', element: <AffiliatePage /> },
+                      { path: 'workspace', element: <Route><GeneralPage /></Route> },
+                      { path: 'team', element: <Route><MembersPage /></Route> },
+                      { path: 'integrations', element: <Route><IntegrationsPage /></Route> },
+                      { path: 'developers', element: <Route><ApiKeysPage /></Route> },
+                      { path: 'affiliate', element: <Route><AffiliatePage /></Route> },
                     ],
                   },
 
                   // Your own account, distinct from the workspace's settings.
-                  { path: 'account', element: <SettingsPage /> },
-                  { path: 'account/preferences', element: <SettingsPage /> },
+                  { path: 'account', element: <Route><SettingsPage /></Route> },
+                  { path: 'account/preferences', element: <Route><SettingsPage /></Route> },
 
                   // ── Moved ───────────────────────────────────────────────
                   { path: 'agents', element: <Moved to="/chatbots" /> },

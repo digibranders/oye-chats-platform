@@ -1,18 +1,9 @@
 import { useCallback } from 'react';
-import {
-  Card,
-  ErrorState,
-  Page,
-  PageHeader,
-  Skeleton,
-  CardBody,
-  Stack,
-} from '../../../ui';
+import { Card, CardBody, ErrorState, Page, PageHeader, SaveBar, Skeleton, Stack } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getClientSettings, updateBot } from '../../../services/api';
 import { useSettingsDraft } from './useSettingsDraft';
-import { SaveBar } from './SaveBar';
 import { ScopeSection } from './ScopeSection';
 import { WidgetBehaviourSection } from './WidgetBehaviourSection';
 import { OperatorResponseSection } from './OperatorResponseSection';
@@ -153,7 +144,7 @@ function BehaviourContent({ agentId, liveChatAllowed }: { agentId: number; liveC
           }
           onSave={() => void state.commit()}
           onDiscard={state.discard}
-          surface="behaviour settings"
+          guard="this chatbot’s behaviour settings"
         />
       </Stack>
     </Page>

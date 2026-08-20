@@ -1,23 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import {
-  Alert,
-  Card,
-  CardBody,
-  CardHeader,
-  CardSection,
-  Field,
-  Stack,
-  Switch,
-  TagInput,
-  buttonClass,
-  toast,
-  validateEmail,
-} from '../../../ui';
+import { Alert, buttonClass, Card, CardBody, CardHeader, CardSection, Field, SaveBar, Stack, Switch, TagInput, toast, validateEmail } from '../../../ui';
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
-import { SaveBar } from '../SaveBar';
 import {
   readEmailRouting,
   routingChanged,
@@ -254,6 +240,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
           />
         </CardSection>
         <SaveBar
+          variant="footer"
           dirty={dirty}
           saving={save.isPending}
           onSave={() => save.mutate()}

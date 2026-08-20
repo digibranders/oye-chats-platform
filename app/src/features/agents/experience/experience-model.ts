@@ -784,3 +784,17 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
 export function isSavable(errors: DraftErrors): boolean {
   return Object.keys(errors).length === 0;
 }
+
+/**
+ * Name the tabs holding unsaved work — "Branding and Messages".
+ *
+ * The save bar says *what* is pending, not only *that* something is: this page
+ * has five tabs and only one is on screen, so "you have unsaved changes" would
+ * leave the reader opening tabs to find it.
+ */
+export function summarizeSections(sections: readonly SectionKey[]): string {
+  const names = sections.map((section) => SECTION_LABELS[section]);
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}

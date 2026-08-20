@@ -266,7 +266,7 @@ describe('the dirty / save contract', () => {
     await renderSettled();
 
     await user.click(screen.getByRole('radio', { name: 'Strict' }));
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
 
     expect(screen.getByRole('radio', { name: 'Balanced' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();

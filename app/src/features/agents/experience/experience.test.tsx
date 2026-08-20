@@ -224,7 +224,7 @@ describe('unsaved changes are visible and recoverable', () => {
 
     await openTab('Messages');
     await userEvent.type(screen.getByLabelText(/Display name/), '!');
-    expect(await screen.findByText(/Unsaved changes in Messages/)).toBeInTheDocument();
+    expect(await screen.findByText(/Unsaved changes to Messages/)).toBeInTheDocument();
   });
 
   it('marks the tab that holds the unsaved work, not just the bar', async () => {
@@ -264,7 +264,7 @@ describe('unsaved changes are visible and recoverable', () => {
     await waitFor(() => expect(api.updateBot).toHaveBeenCalledWith(7, {
       widget_messages: { welcome_greeting: 'Hi!' },
     }));
-    expect(await screen.findByText(/Saved\. Visitors see it now\./)).toBeInTheDocument();
+    expect(await screen.findByText(/All changes saved/)).toBeInTheDocument();
   });
 
   it('blocks the save on a field-level error instead of taking a 422', async () => {
@@ -287,7 +287,7 @@ describe('unsaved changes are visible and recoverable', () => {
     const hex = screen.getByLabelText('Brand colour');
     await userEvent.clear(hex);
     await userEvent.type(hex, '#111111');
-    await screen.findByText(/Unsaved changes in Branding/);
+    await screen.findByText(/Unsaved changes to Branding/);
 
     await userEvent.click(screen.getByRole('link', { name: /Compare plans/i }));
     expect(await screen.findByRole('alertdialog', { name: /Leave without saving\?/ })).toBeInTheDocument();

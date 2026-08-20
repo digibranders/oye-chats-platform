@@ -10,6 +10,9 @@ import { Progress } from './primitives/Progress';
 import { CodeBlock } from './data/Copyable';
 import { Tooltip, TooltipProvider } from './overlays/Tooltip';
 import { NavTabs } from './layout/NavTabs';
+import { SaveBar } from './layout/SaveBar';
+import { RadioCards } from './primitives/RadioCards';
+import { Select } from './primitives/Select';
 import { Meter } from './primitives/Progress';
 import { MemoryRouter } from 'react-router-dom';
 import { SegmentedControl } from './primitives/SegmentedControl';
@@ -675,5 +678,110 @@ describe('Meter and money, without customer-facing copy baked in', () => {
     expect(() => formatMoney(149900, 'not-a-code')).not.toThrow();
     expect(formatMoney(149900, 'not-a-code')).toContain('1,499');
     expect(formatMoney(149900, 'INR')).toContain('1,499');
+  });
+});
+
+describe('SaveBar', () => {
+  function bar(props: Partial<React.ComponentProps<typeof SaveBar>> = {}) {
+    return render(
+      <MemoryRouter>
+        <SaveBar dirty={false} onSave={() => {}} onDiscard={() => {}} {...props} />
+      </MemoryRouter>,
+    );
+  }
+
+  it('names what changed rather than only that something did', () => {
+    bar({ dirty: true, summary: 'Branding and Messages' });
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes to Branding and Messages.');
+  });
+
+  it('keeps a card footer on screen while clean, and floats only when dirty', () => {
+    // A footer that appears on the first keystroke pushes the card down at the
+    // moment the user is typing in it; a floating bar reflows nothing, so it
+    // has no reason to be there when there is nothing to save.
+    const { unmount } = bar({ variant: 'footer' });
+    expect(screen.getByText('Everything here is saved.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    unmount();
+
+    bar({ variant: 'sticky' });
+    expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
+  });
+
+  it('puts a failed save beside the button that produced it', () => {
+    bar({ dirty: true, saveError: 'That did not save: the name is already taken.' });
+    expect(screen.getByRole('status')).toHaveTextContent(/already taken/);
+  });
+
+  it('blocks the save and says why, rather than failing on submit', () => {
+    bar({ dirty: true, blockedReason: 'Weights must add up to more than zero.' });
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent(/add up to more than zero/);
+  });
+
+  it('needs no data router when the caller did not ask to be guarded', () => {
+    // `useBlocker` throws outside a data router. Calling it unconditionally
+    // would impose `createMemoryRouter` on every form that opted out.
+    expect(() => bar({ dirty: true })).not.toThrow();
+  });
+});
+
+describe('RadioCards', () => {
+  const ITEMS = [
+    { value: 'strict', label: 'Strict', description: 'Only answers from your documents.' },
+    { value: 'balanced', label: 'Balanced', description: 'Fills small gaps from general knowledge.' },
+    { value: 'open', label: 'Open', description: 'Answers freely.', disabled: true },
+  ] as const;
+
+  it('is one tab stop with arrow keys inside it, and skips disabled options', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RadioCards items={ITEMS} value="strict" onChange={onChange} label="How strictly should it answer?" />,
+    );
+
+    const group = screen.getByRole('radiogroup', { name: /how strictly/i });
+    const options = within(group).getAllByRole('radio');
+    expect(options.filter((option) => option.getAttribute('tabindex') === '0')).toHaveLength(1);
+
+    options[0].focus();
+    await user.keyboard('{ArrowDown}');
+    expect(onChange).toHaveBeenLastCalledWith('balanced');
+    expect(options[2]).toBeDisabled();
+  });
+
+  it('describes each option without folding the description into its name', () => {
+    render(<RadioCards items={ITEMS} value="strict" onChange={() => {}} label="Scope" />);
+    const strict = screen.getByRole('radio', { name: 'Strict' });
+    expect(strict).toHaveAccessibleDescription('Only answers from your documents.');
+  });
+
+  it('stays reachable when the stored value matches no option', () => {
+    // A plan downgrade can leave a value the picker no longer offers. Without
+    // a fallback every card would be tabindex -1 and the group unreachable.
+    render(<RadioCards items={ITEMS} value={'gone' as 'strict'} onChange={() => {}} label="Scope" />);
+    const focusable = screen.getAllByRole('radio').filter((o) => o.getAttribute('tabindex') === '0');
+    expect(focusable).toHaveLength(1);
+  });
+});
+
+describe('Select', () => {
+  it('can express a selectable "none", not only an unselectable placeholder', async () => {
+    // A disabled placeholder cannot be chosen, so a field with only one can be
+    // set but never cleared — which is how the department picker shipped.
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Select
+        aria-label="Department"
+        emptyOption="No department"
+        value="1"
+        onChange={onChange}
+        options={[{ value: '1', label: 'Support' }]}
+      />,
+    );
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Department' }), '');
+    expect(onChange).toHaveBeenCalled();
+    expect(screen.getByRole('option', { name: 'No department' })).not.toBeDisabled();
   });
 });

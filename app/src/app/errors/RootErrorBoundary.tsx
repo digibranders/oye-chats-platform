@@ -1,18 +1,32 @@
-import { AlertTriangle, Home, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Link, useRouteError } from 'react-router-dom';
-import { buttonVariants } from '../../design-system';
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Page,
+  PageHeader,
+  buttonClass,
+} from '../../ui';
 import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
 
 /**
- * RootErrorBoundary - the app-wide, full-screen error surface.
+ * The console did not start.
  *
- * Wired as the `errorElement` on the router root (and the shell route), so it
- * catches anything the in-shell {@link PageErrorBoundary} does not: crashes in
- * the shell itself, in the provider tree, or in a route that renders outside the
- * shell (e.g. Launch Studio). It is intentionally self-contained - it must
- * render correctly even when the tree below it has failed - leaning only on
- * design-system tokens, which stay valid via the `.dark` class on `<html>`.
+ * This is the outermost `errorElement`: it catches a crash in the provider
+ * tree, in the shell itself, or on a route that renders outside the shell. By
+ * the time it paints there is no rail, no top bar and no data — so it is
+ * deliberately self-contained. Nothing here reaches for a context: only `Link`,
+ * which is the router's own and is the whole reason this is an `errorElement`
+ * rather than a `window.onerror` handler.
+ *
+ * The screen it replaces opened with a red warning triangle and "Something went
+ * wrong", which tells a customer what they can already see. What they cannot
+ * see is whether it is their fault, whether their data is gone, and what to do
+ * next — so the page answers those three, in that order, and puts both ways out
+ * where the eye lands first.
  */
 export function RootErrorBoundary() {
   const error = useRouteError();
@@ -20,34 +34,52 @@ export function RootErrorBoundary() {
   const { status, title, description, detail } = parseRouteError(error);
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[var(--ds-bg-sunken)] px-6">
-      <div className="w-full max-w-md rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-8 text-center shadow-[var(--ds-shadow-sm)]">
-        <div className="mx-auto mb-5 grid h-12 w-12 place-items-center rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400">
-          <AlertTriangle size={22} />
-        </div>
-        {status != null && (
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-            Error {status}
-          </p>
-        )}
-        <h1 className="text-lg font-semibold text-[var(--ds-text)]">{title}</h1>
-        <p className="mt-2 text-sm text-[var(--ds-text-muted)]">{description}</p>
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className={buttonVariants({ variant: 'primary' })}
-          >
-            <RefreshCw size={15} />
-            Reload page
-          </button>
-          <Link to="/" className={buttonVariants({ variant: 'outline' })}>
-            <Home size={15} />
-            Back to Home
-          </Link>
-        </div>
-        <ErrorDetails detail={detail} />
-      </div>
+    <div className="flex min-h-screen items-center bg-canvas">
+      <Page width="default">
+        <PageHeader
+          eyebrow={status != null ? `Error ${status}` : 'OyeChats console'}
+          title={title}
+          description={description}
+          actions={
+            <>
+              <Button
+                onClick={() => window.location.reload()}
+                iconLeft={<RefreshCw aria-hidden className="h-4 w-4" />}
+              >
+                Reload the page
+              </Button>
+              {/* A route change unmounts this boundary, so this is a real way
+                  out and not just a second reload button — unless the crash is
+                  in a provider, in which case reloading is the one that works.
+                  Both are offered rather than guessing which failed. */}
+              <Link to="/" className={buttonClass('secondary', 'md')}>
+                Go to Home
+              </Link>
+            </>
+          }
+        />
+
+        <Card>
+          <CardHeader
+            title="Your data is safe"
+            titleAs="h2"
+            description="This is the console failing to draw, not your workspace. Chatbots on your site keep answering visitors while this screen is up, and nothing you had open has been lost."
+          />
+          <CardBody>
+            <p className="text-base text-text-secondary">
+              If reloading does not clear it, email{' '}
+              <a
+                href="mailto:developer@oyechats.com"
+                className="text-accent-600 underline underline-offset-2"
+              >
+                developer@oyechats.com
+              </a>{' '}
+              and paste what is under Technical details. It is the fastest route to a fix.
+            </p>
+            <ErrorDetails detail={detail} className="mt-4" />
+          </CardBody>
+        </Card>
+      </Page>
     </div>
   );
 }

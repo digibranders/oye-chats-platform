@@ -288,3 +288,23 @@ used: a checkbox whose label was wired to an id that exists only inside a
 `Tooltip` whose trigger was a fragment, so Base UI's handlers were dropped and
 no tooltip in the app had ever opened. Each now has a test that renders the
 primitive the way a feature does, not the way its author imagined.
+
+**A choice that needs a sentence is not a segmented control.** `SegmentedControl`
+has room for a label and nothing else, which is right for a status filter and
+wrong the moment an option needs explaining — three surfaces hit that wall and
+each worked around it differently. `RadioCards` is the APG radiogroup with room
+to read: one tab stop, arrow keys inside it, and each card named by its label
+alone with the description wired as a description. Naming it by its contents
+folds the explanation into the accessible name, which is the defect the control
+exists to avoid.
+
+**One save bar.** It had been written three times, once per editable surface,
+with three different contracts — the exact duplication this directory exists to
+prevent. `SaveBar` carries all of it: what changed (named, not merely
+acknowledged), a failed save beside the button that produced it, a specific
+reason when saving is blocked, and the navigation guard. Two forms: `footer`
+anchors to a card and is **always** rendered, because a footer that appears on
+the first keystroke pushes the card down while the user is typing in it;
+`sticky` floats and so appears only when there is something to save. The
+router-dependent half is a separate component, so a form that opted out of the
+guard does not inherit a data-router requirement.

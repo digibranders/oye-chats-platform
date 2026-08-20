@@ -10,11 +10,12 @@
  *
  * Prices are stored in minor units (paise for INR, cents for USD).
  *
- * RETAINED FOR ONE CONSUMER. The Billing, Usage and Reports surfaces now price
+ * RETAINED FOR TWO CONSUMERS. The Billing, Usage and Reports surfaces now price
  * through `billingModel.resolvePlanPrice`, which returns the charge amount
  * alongside the displayed one so a converted USD figure can never stand in for
- * the INR debit. This module still backs the legacy upgrade modal
- * (`design-system/components/UpgradeModal.tsx`) and should be deleted with it.
+ * the INR debit. What is left here is `renderPriceLabel`, which the upgrade
+ * modal (`context/UpgradeModal.tsx`) uses for its target-plan chip, and the
+ * `PlanRow` / `BillingCycle` types that `usePlanCheckout` reads.
  */
 import { FALLBACK_USD_TO_INR } from '../../../lib/currency';
 

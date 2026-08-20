@@ -1,19 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import {
-  Alert,
-  Card,
-  CardBody,
-  CardHeader,
-  Field,
-  Input,
-  Select,
-  Switch,
-  toast,
-} from '../../../ui';
+import { Alert, Card, CardBody, CardHeader, Field, Input, SaveBar, Select, Switch, toast } from '../../../ui';
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
-import { SaveBar } from '../SaveBar';
 import { MEETING_PROVIDERS, readIntegrations, validateMeetingUrl } from './emailModel';
 
 export interface MeetingsPanelProps {
@@ -169,6 +158,7 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
         )}
       </CardBody>
       <SaveBar
+          variant="footer"
         dirty={dirty}
         saving={save.isPending}
         onSave={submit}

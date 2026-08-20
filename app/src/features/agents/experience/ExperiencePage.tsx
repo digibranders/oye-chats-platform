@@ -1,31 +1,14 @@
 import { type ReactElement, useEffect } from 'react';
 import { Link, useBlocker, useSearchParams } from 'react-router-dom';
 import { Bot } from 'lucide-react';
-import {
-  Badge,
-  Card,
-  CardBody,
-  ConfirmDialog,
-  EmptyState,
-  ErrorState,
-  LockedState,
-  Page,
-  PageHeader,
-  Skeleton,
-  StatusDot,
-  TabPanel,
-  Tabs,
-  buttonClass,
-  type TabItem,
-} from '../../../ui';
+import { Badge, buttonClass, Card, CardBody, ConfirmDialog, EmptyState, ErrorState, LockedState, Page, PageHeader, SaveBar, Skeleton, StatusDot, TabPanel, Tabs, type TabItem } from '../../../ui';
 import { useExperience } from './useExperience';
 import { BrandingSection } from './BrandingSection';
 import { MessagesSection } from './MessagesSection';
 import { VoiceSection } from './VoiceSection';
 import { HandoffSection } from './HandoffSection';
 import { PreviewPanel } from './PreviewPanel';
-import { SaveBar } from './SaveBar';
-import { SECTION_KEYS, SECTION_LABELS, isSectionKey, type SectionKey } from './experience-model';
+import { isSectionKey, SECTION_KEYS, SECTION_LABELS, summarizeSections, type SectionKey } from './experience-model';
 
 /**
  * A chatbot's Experience: what a visitor sees and hears.
@@ -247,14 +230,15 @@ export function ExperiencePage(): ReactElement {
           </Tabs>
 
           <SaveBar
-            visible={dirty || experience.saving || experience.saveError !== null || experience.savedAt !== null}
-            dirtySections={experience.dirtySections}
+            dirty={dirty}
             saving={experience.saving}
+            saved={experience.savedAt !== null}
             saveError={experience.saveError}
-            savedAt={experience.savedAt}
-            blocked={blocked}
+            blockedReason={blocked ? 'Fix the highlighted fields to save.' : null}
+            summary={summarizeSections(experience.dirtySections)}
             onSave={() => void experience.save()}
             onDiscard={discard}
+            guard="this chatbot’s experience"
           />
         </div>
 

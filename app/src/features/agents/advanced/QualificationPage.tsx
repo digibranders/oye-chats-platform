@@ -1,21 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Badge,
-  Card,
-  CardBody,
-  CardHeader,
-  ErrorState,
-  Field,
-  LockedState,
-  Page,
-  PageHeader,
-  Select,
-  Skeleton,
-  Stack,
-  Switch,
-  buttonClass,
-} from '../../../ui';
+import { Badge, buttonClass, Card, CardBody, CardHeader, ErrorState, Field, LockedState, Page, PageHeader, SaveBar, Select, Skeleton, Stack, Switch } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import {
@@ -24,7 +9,6 @@ import {
 } from '../../../lib/planGates';
 import { getClientSettings, getFrameworkPresets, updateBot } from '../../../services/api';
 import { useSettingsDraft } from './useSettingsDraft';
-import { SaveBar } from './SaveBar';
 import { DimensionsSection } from './DimensionsSection';
 import { ThresholdsSection } from './ThresholdsSection';
 import { TierOutcomesSection } from './TierOutcomesSection';
@@ -321,7 +305,7 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
           blockedReason={draft.enabled ? validation.blockedReason : null}
           onSave={() => void state.commit()}
           onDiscard={state.discard}
-          surface="lead qualification"
+          guard="this chatbot’s lead qualification"
         />
       </Stack>
     </Page>

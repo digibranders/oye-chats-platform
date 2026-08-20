@@ -1,21 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  Alert,
-  Avatar,
-  Card,
-  CardBody,
-  CardHeader,
-  Field,
-  Input,
-  toast,
-  validateEmail,
-} from '../../ui';
+import { Alert, Avatar, Card, CardBody, CardHeader, Field, Input, SaveBar, toast, validateEmail } from '../../ui';
 import { updateClientProfile, updateOperator } from '../../services/api';
 import { keys } from '../../query/keys';
 import type { CurrentUser } from '../../types/domain';
 import { describeDirty, useDraft } from '../workspace/draft';
-import { SaveBar } from '../workspace/SaveBar';
 
 export interface ProfileSectionProps {
   user: CurrentUser;
@@ -154,6 +143,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
         ) : null}
       </CardBody>
       <SaveBar
+          variant="footer"
         dirty={draft.isDirty}
         summary={describeDirty(draft.dirty, isOperator ? OPERATOR_LABELS : CLIENT_LABELS)}
         saving={save.isPending}

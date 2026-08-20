@@ -207,7 +207,7 @@ describe('the dirty / save contract', () => {
     const sql = screen.getByLabelText('Sales qualified at');
     await user.clear(sql);
     await user.type(sql, '85');
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
 
     await waitFor(() => expect(sql).toHaveValue(75));
     expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();

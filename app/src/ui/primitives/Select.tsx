@@ -14,8 +14,24 @@ export interface SelectProps<T extends string = string>
   extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'children'> {
   options: readonly SelectOption<T>[];
   size?: 'sm' | 'md' | 'lg';
-  /** Renders a disabled first option. Omit when the field always has a value. */
+  /**
+   * A first option the user cannot choose — "Select a department…".
+   *
+   * Use it when the field *must* end up with a value and simply has none yet.
+   * When empty is a legitimate answer, use `emptyOption` instead: a disabled
+   * placeholder cannot be selected, so a field with only a placeholder can be
+   * set but never cleared. That is exactly how the previous department picker
+   * shipped — assign a department and there was no way back.
+   */
   placeholder?: string;
+  /**
+   * A first option the user *can* choose, meaning "none". Its value is `''`.
+   *
+   * Mutually exclusive with `placeholder`; passing both renders only this one,
+   * because two leading options that look the same and behave differently is
+   * worse than either.
+   */
+  emptyOption?: string;
 }
 
 const SIZES = {
@@ -34,7 +50,7 @@ const SIZES = {
  * different job — not a heavier `Select`.
  */
 function SelectInner<T extends string = string>(
-  { options, size = 'md', placeholder, className, value, ...props }: SelectProps<T>,
+  { options, size = 'md', placeholder, emptyOption, className, value, ...props }: SelectProps<T>,
   ref: React.Ref<HTMLSelectElement>,
 ) {
   const fieldProps = useFieldControlProps();
@@ -47,7 +63,9 @@ function SelectInner<T extends string = string>(
         {...fieldProps}
         {...props}
       >
-        {placeholder ? (
+        {emptyOption ? (
+          <option value="">{emptyOption}</option>
+        ) : placeholder ? (
           <option value="" disabled>
             {placeholder}
           </option>

@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Card, CardBody, CardHeader, Field, Input, toast } from '../../ui';
+import { Alert, Card, CardBody, CardHeader, Field, Input, SaveBar, toast } from '../../ui';
 import { updateBot } from '../../services/api';
 import type { Bot } from '../../types/domain';
-import { SaveBar } from './SaveBar';
 import {
   queueSettingsChanged,
   readQueueSettings,
@@ -124,6 +123,7 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
         </Field>
       </CardBody>
       <SaveBar
+          variant="footer"
         dirty={queueSettingsChanged(baseline, draft)}
         saving={save.isPending}
         onSave={submit}

@@ -1,29 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Bell, BellOff } from 'lucide-react';
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  CardSection,
-  Combobox,
-  ErrorState,
-  Field,
-  Input,
-  LoadingRows,
-  Switch,
-  toast,
-} from '../../ui';
+import { Alert, Badge, Button, Card, CardBody, CardHeader, CardSection, Combobox, ErrorState, Field, Input, LoadingRows, SaveBar, Switch, toast } from '../../ui';
 import {
   getNotificationPreferences,
   updateNotificationPreferences,
 } from '../../services/api';
 import { keys } from '../../query/keys';
 import { usePushSubscription } from '../../hooks/usePushSubscription';
-import { SaveBar } from '../workspace/SaveBar';
 import {
   PUSH_EVENTS,
   defaultPreferences,
@@ -372,6 +356,7 @@ export function NotificationsSection() {
 
       {!stored.isPending && !stored.isError ? (
         <SaveBar
+          variant="footer"
           dirty={dirty}
           saving={save.isPending}
           onSave={submit}

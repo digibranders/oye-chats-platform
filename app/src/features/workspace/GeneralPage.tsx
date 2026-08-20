@@ -1,27 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Alert,
-  Badge,
-  Card,
-  CardBody,
-  CardHeader,
-  DefinitionList,
-  ErrorState,
-  Field,
-  Input,
-  LoadingRows,
-  LockedState,
-  PageHeader,
-  Section,
-  Stack,
-  buttonClass,
-  formatNumber,
-  normalizeUrl,
-  toast,
-  validateUrl,
-} from '../../ui';
+import { Alert, Badge, buttonClass, Card, CardBody, CardHeader, DefinitionList, ErrorState, Field, formatNumber, Input, LoadingRows, LockedState, normalizeUrl, PageHeader, SaveBar, Section, Stack, toast, validateUrl } from '../../ui';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { keys } from '../../query/keys';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -29,7 +9,6 @@ import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { roleLabel, roleTone } from './roles';
 import { describeDirty, useDraft } from './draft';
-import { SaveBar } from './SaveBar';
 
 /**
  * Settings ▸ Workspace — who this account is.
@@ -243,6 +222,7 @@ export function GeneralPage() {
             </Field>
           </CardBody>
           <SaveBar
+          variant="footer"
             dirty={draft.isDirty}
             summary={describeDirty(draft.dirty, FIELD_LABELS)}
             saving={save.isPending}
