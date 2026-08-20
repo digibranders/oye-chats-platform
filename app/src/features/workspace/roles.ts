@@ -1,4 +1,4 @@
-import type { Tone } from '../../ui';
+import type { BadgeTone } from '../../ui';
 
 /**
  * What a workspace role actually means, in one place.
@@ -25,7 +25,7 @@ export interface RoleDefinition {
   summary: string;
   /** What this role can do that the one below it cannot. Shown while choosing. */
   can: readonly string[];
-  tone: Tone;
+  tone: BadgeTone;
 }
 
 export const ROLES: readonly RoleDefinition[] = [
@@ -48,7 +48,11 @@ export const ROLES: readonly RoleDefinition[] = [
       'Invite, edit and remove teammates — but cannot make anyone an owner',
       'Change chatbot settings, knowledge and deployment',
     ],
-    tone: 'neutral',
+    // Ink, not neutral. Admin and Operator both rendered `neutral`, so the Role
+    // column could not distinguish the two roles that differ most — an admin can
+    // remove teammates and an operator cannot — and colour was carrying no
+    // signal for two of the three values.
+    tone: 'ink',
   },
   {
     value: 'owner',
@@ -75,7 +79,7 @@ export function roleLabel(role: string | null | undefined): string {
   return roleDefinition(role)?.label ?? 'Member';
 }
 
-export function roleTone(role: string | null | undefined): Tone {
+export function roleTone(role: string | null | undefined): BadgeTone {
   return roleDefinition(role)?.tone ?? 'neutral';
 }
 

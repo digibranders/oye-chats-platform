@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, buttonClass, Card, CardBody, CardHeader, DefinitionList, ErrorState, Field, formatNumber, Input, LoadingRows, LockedState, normalizeUrl, PageHeader, SaveBar, Section, Stack, toast, validateUrl } from '../../ui';
+import { Alert, Badge, buttonClass, Card, CardBody, ErrorState, formatNumber, Input, LoadingRows, LockedState, normalizeUrl, PropertyGrid, SaveBar, SettingGroup, SettingRow, Stack, toast, validateUrl, Columns } from '../../ui';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { keys } from '../../query/keys';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -16,7 +16,11 @@ import { describeDirty, useDraft } from './draft';
  * Three fields and a fact sheet. The page it replaces put an "Edit details"
  * button beside a read-only card, so the fields were invisible until you asked
  * for them and the page could not tell you whether anything was unsaved. Here
- * the fields *are* the card, and the footer always says which state you are in.
+ * the fields *are* the group, and the footer always says which state you are in.
+ *
+ * The fields and the facts are **beside** each other, not stacked: the fact
+ * sheet is read-only context for the form, and as a second full-width card 500px
+ * below the fields it was context nobody ever had in view while editing.
  *
  * What is deliberately **not** here any more: the chatbot business-hours editor.
  * It wrote `bots[0]` unconditionally, so in a workspace with two chatbots the
@@ -27,7 +31,7 @@ import { describeDirty, useDraft } from './draft';
  */
 
 const FIELD_LABELS = {
-  name: 'Workspace name',
+  name: 'Name',
   company_name: 'Company',
   website: 'Website',
 } as const;
@@ -39,6 +43,7 @@ export function GeneralPage() {
   const { currentWorkspaceId, currentRole, workspaces, refresh: refreshWorkspace } = useWorkspace();
   const { bots } = useBotContext();
   const { planName, planSlug, limitFor } = useEntitlements();
+  const fieldId = useId();
 
   const me = useQuery({
     queryKey: keys.session.me(),
@@ -105,38 +110,25 @@ export function GeneralPage() {
 
   const isOperator = currentRole === 'operator' || me.data?.kind === 'operator';
 
-  const header = (
-    <PageHeader
-      title="Workspace"
-      description="The account your chatbots, conversations and billing belong to."
-    />
-  );
-
   if (me.isPending) {
     return (
-      <>
-        {header}
-        <Card>
-          <CardBody>
-            <LoadingRows rows={4} />
-          </CardBody>
-        </Card>
-      </>
+      <Card>
+        <CardBody>
+          <LoadingRows rows={4} />
+        </CardBody>
+      </Card>
     );
   }
 
   if (me.isError) {
     return (
-      <>
-        {header}
-        <Card>
-          <ErrorState
-            title="We could not load this workspace"
-            description={me.error instanceof Error ? me.error.message : undefined}
-            onRetry={() => void me.refetch()}
-          />
-        </Card>
-      </>
+      <Card>
+        <ErrorState
+          title="We could not load this workspace"
+          description={me.error instanceof Error ? me.error.message : undefined}
+          onRetry={() => void me.refetch()}
+        />
+      </Card>
     );
   }
 
@@ -146,99 +138,98 @@ export function GeneralPage() {
   // would be showing them a save button that always 403s.
   if (isOperator) {
     return (
-      <>
-        {header}
-        <LockedState
-          title="Only the workspace owner can change this"
-          description="You are signed in with a team seat. The workspace name, company and website belong to the account that owns it — ask an owner to change them. Your own name, email and alerts are on your account page."
-          action={
-            <Link to="/account" className={buttonClass('primary', 'md')}>
-              Go to your account
-            </Link>
-          }
-        />
-      </>
+      <LockedState
+        title="Only the workspace owner can change this"
+        description="Your name, email and alerts are on your account page."
+        action={
+          <Link to="/account" className={buttonClass('primary', 'md')}>
+            Go to your account
+          </Link>
+        }
+      />
     );
   }
 
   const botLimit = limitFor('bots');
 
   return (
-    <>
-      {header}
-      <Stack>
-        <Card>
-          <CardHeader
-            title="Identity"
-            titleAs="h2"
-            description="Shown to your team in the workspace switcher, and on the invoices we issue you."
-          />
-          <CardBody className="space-y-5">
-            {save.isError ? (
+    <Columns
+      asideWidth="md"
+      stickyAside
+      asideLabel="This workspace"
+      main={
+        <SettingGroup title="Identity">
+          {save.isError ? (
+            <div className="px-cell pt-4">
               <Alert tone="danger" live title="We could not save that">
                 {save.error instanceof Error
                   ? save.error.message
                   : 'Something went wrong. Please try again.'}
               </Alert>
-            ) : null}
+            </div>
+          ) : null}
 
-            <Field
-              label={FIELD_LABELS.name}
+          <SettingRow
+            label={FIELD_LABELS.name}
+            htmlFor={`${fieldId}-name`}
+            description="Shown in the workspace switcher."
+            error={draft.errors.name}
+          >
+            <Input
+              id={`${fieldId}-name`}
               required
-              hint="What your team sees in the workspace switcher."
-              error={draft.errors.name}
-            >
-              <Input
-                value={draft.values.name}
-                onChange={(event) => draft.set('name', event.target.value)}
-                placeholder="Acme Support"
-                autoComplete="organization"
-              />
-            </Field>
+              aria-invalid={draft.errors.name ? true : undefined}
+              value={draft.values.name}
+              onChange={(event) => draft.set('name', event.target.value)}
+              placeholder="Acme Support"
+              autoComplete="organization"
+            />
+          </SettingRow>
 
-            <Field
-              label={FIELD_LABELS.company_name}
-              hint="Your registered business name. Used on invoices."
-              error={draft.errors.company_name}
-            >
-              <Input
-                value={draft.values.company_name}
-                onChange={(event) => draft.set('company_name', event.target.value)}
-                placeholder="Acme Corporation"
-              />
-            </Field>
+          <SettingRow
+            label={FIELD_LABELS.company_name}
+            htmlFor={`${fieldId}-company`}
+            description="Printed on invoices."
+            error={draft.errors.company_name}
+          >
+            <Input
+              id={`${fieldId}-company`}
+              value={draft.values.company_name}
+              onChange={(event) => draft.set('company_name', event.target.value)}
+              placeholder="Acme Corporation"
+            />
+          </SettingRow>
 
-            <Field
-              label={FIELD_LABELS.website}
-              hint="Your main site. New chatbots start from this address when you train them."
-              error={draft.errors.website}
-            >
-              <Input
-                value={draft.values.website}
-                onChange={(event) => draft.set('website', event.target.value)}
-                placeholder="acme.com"
-                inputMode="url"
-              />
-            </Field>
-          </CardBody>
+          <SettingRow
+            label={FIELD_LABELS.website}
+            htmlFor={`${fieldId}-website`}
+            error={draft.errors.website}
+          >
+            <Input
+              id={`${fieldId}-website`}
+              aria-invalid={draft.errors.website ? true : undefined}
+              value={draft.values.website}
+              onChange={(event) => draft.set('website', event.target.value)}
+              placeholder="acme.com"
+              inputMode="url"
+            />
+          </SettingRow>
+
           <SaveBar
-          variant="footer"
+            variant="footer"
             dirty={draft.isDirty}
             summary={describeDirty(draft.dirty, FIELD_LABELS)}
             saving={save.isPending}
             onSave={handleSave}
             onDiscard={draft.reset}
           />
-        </Card>
-
-        <Section
-          title="This workspace"
-          description="Facts about the account, not settings. Change the plan from Billing."
-        >
-          <Card>
-            <CardBody>
-              <DefinitionList
-                columns={2}
+        </SettingGroup>
+      }
+      aside={
+        <Stack>
+          <SettingGroup title="This workspace" titleAs="h2">
+            <div className="px-cell py-1">
+              <PropertyGrid
                 items={[
                   {
                     label: 'Your role',
@@ -272,46 +263,27 @@ export function GeneralPage() {
                   },
                   {
                     label: 'Workspace ID',
-                    value: (
-                      <span className="figure">{currentWorkspaceId ?? me.data?.id ?? '—'}</span>
-                    ),
+                    value: <span className="figure">{currentWorkspaceId ?? me.data?.id}</span>,
                   },
                   {
-                    label: 'Workspaces you belong to',
+                    label: 'Workspaces',
                     value: <span className="figure">{formatNumber(workspaces.length || 1)}</span>,
                   },
-                  {
-                    label: 'Sign-in email',
-                    value: me.data?.email ?? '—',
-                  },
+                  { label: 'Sign-in email', value: me.data?.email },
                 ]}
               />
-            </CardBody>
-          </Card>
-        </Section>
-
-        <Section
-          title="Chatbot settings"
-          description="Anything that changes how one chatbot behaves lives on that chatbot."
-        >
-          <Card>
-            <CardBody>
-              <Alert
-                tone="neutral"
-                action={
-                  <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
-                    Open chatbots
-                  </Link>
-                }
-              >
-                Business hours, greeting, tone, knowledge and the install snippet are set per
-                chatbot, so a workspace with two of them can give each its own. Open a chatbot and
-                use its Experience and Deploy tabs.
-              </Alert>
-            </CardBody>
-          </Card>
-        </Section>
-      </Stack>
-    </>
+            </div>
+            <SettingRow
+              label="Chatbot settings"
+              description="Hours, greeting, tone and the install snippet live on each chatbot."
+            >
+              <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
+                Open chatbots
+              </Link>
+            </SettingRow>
+          </SettingGroup>
+        </Stack>
+      }
+    />
   );
 }

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { ExternalLink, Link2, MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import { ExternalLink, KeyRound, Link2, MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -70,6 +70,8 @@ function messageFrom(cause: unknown): string {
 export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
   const name = bot.name || `Chatbot ${bot.id}`;
   const { state: clipboard, copy } = useClipboard();
+  /** What the last copy was of, so the toast can name it. */
+  const copied = useRef<'demo link' | 'chatbot key'>('demo link');
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [draftName, setDraftName] = useState(name);
@@ -168,18 +170,38 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
    */
   const copyDemoLink = () => {
     if (!demoUrl) return;
+    copied.current = 'demo link';
     void copy(demoUrl);
     void trackDemoShareClick(bot.id).catch(() => undefined);
+  };
+
+  /**
+   * The chatbot key, one menu item instead of a `CopyField` on every row.
+   *
+   * It used to be an 84px band on every card of the index — twelve mono strings
+   * the eye had to skip past to reach the one chatbot that needed attention. It
+   * is needed on Deploy, where the embed snippet already contains it, and here,
+   * once, for the support ticket that asks for it.
+   */
+  const copyBotKey = () => {
+    if (!bot.bot_key) return;
+    copied.current = 'chatbot key';
+    void copy(bot.bot_key);
   };
 
   // `navigator.clipboard` rejects on an insecure origin, without permission,
   // and when the document is not focused, so the outcome is reported rather
   // than assumed. The menu has closed by the time it settles, which is why this
-  // is a toast and not an inline message.
+  // is a toast and not an inline message. The ref names *what* was copied: one
+  // clipboard hook now serves two items, and "Demo link copied" after copying a
+  // chatbot key is worse than no confirmation at all.
   useEffect(() => {
-    if (clipboard === 'copied') toast.success('Demo link copied');
-    else if (clipboard === 'failed') {
-      toast.error('Could not copy the link. Open the demo page and copy it from the address bar.');
+    if (clipboard === 'idle') return;
+    const what = copied.current;
+    if (clipboard === 'copied') {
+      toast.success(what === 'chatbot key' ? 'Chatbot key copied' : 'Demo link copied');
+    } else if (clipboard === 'failed') {
+      toast.error(`Could not copy the ${what}. Open it and copy it by hand.`);
     }
   }, [clipboard]);
 
@@ -209,7 +231,15 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               Copy demo link
             </MenuItem>
           ) : null}
-          {demoUrl ? <MenuSeparator /> : null}
+          {bot.bot_key ? (
+            <MenuItem
+              icon={<KeyRound aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={copyBotKey}
+            >
+              Copy chatbot key
+            </MenuItem>
+          ) : null}
+          {demoUrl || bot.bot_key ? <MenuSeparator /> : null}
           <MenuItem icon={<Pencil aria-hidden className="h-3.5 w-3.5" />} onSelect={openRename}>
             Rename…
           </MenuItem>
@@ -245,7 +275,6 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
           if (!open) setRenameError(null);
         }}
         title={`Rename ${name}`}
-        description="Only you and your team see this name. Visitors see the display name set in Experience."
         size="sm"
         dismissible={!rename.isPending}
         footer={
@@ -265,7 +294,15 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         }
       >
         <form id={`rename-agent-${bot.id}`} onSubmit={(event) => void submitRename(event)}>
-          <Field label="Chatbot name" error={nameError} required>
+          {/* The ambiguity is between two names, so it belongs on the field that
+              sets one of them — not as a dialog description a reader meets
+              before they know there is a second name at all. */}
+          <Field
+            label="Chatbot name"
+            error={nameError}
+            hint="Internal only — visitors see the display name in Experience."
+            required
+          >
             <Input
               value={draftName}
               maxLength={MAX_NAME_LENGTH}
@@ -289,18 +326,11 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         open={pauseOpen}
         onOpenChange={setPauseOpen}
         title={`Pause ${name}?`}
-        description={
-          <>
-            It stops answering visitors straight away. The launcher may still appear on your site,
-            but anyone who opens it gets an error instead of a reply. Nothing is deleted — its
-            knowledge, leads and conversations are untouched, and live chat is unaffected.
-            <br />
-            <br />
-            A paused chatbot also stops counting against your plan&rsquo;s allowance, so resuming it
-            later has to pass the same check as creating a new one and can be refused if the plan is
-            full by then.
-          </>
-        }
+        // Two facts, one clause each. It was 83 words across two paragraphs, and
+        // a confirm dialog is read at the moment of highest impatience — nobody
+        // reached the second paragraph, which is where the consequence that
+        // actually costs money lived.
+        description="It stops answering visitors immediately, and nothing is deleted. Pausing also frees its plan slot, so resuming has to pass the same check as a new chatbot."
         confirmLabel="Pause chatbot"
         onConfirm={confirmPause}
       />
@@ -309,13 +339,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         open={resumeOpen}
         onOpenChange={setResumeOpen}
         title={`Resume ${name}?`}
-        description={
-          <>
-            It starts answering visitors again on every site running its script, and it counts
-            against your plan&rsquo;s chatbot allowance from that moment. If the plan has no room
-            left, we will say so here and nothing changes.
-          </>
-        }
+        description="It answers visitors again on every site running its script, and counts against your plan from that moment. If the plan is full, nothing changes and we say so here."
         confirmLabel="Resume chatbot"
         onConfirm={confirmResume}
       />
@@ -324,13 +348,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title={`Delete ${name}?`}
-        description={
-          <>
-            This removes the chatbot, everything it has learned, every conversation it has held and
-            every lead it captured. It cannot be undone, and any site still running its script will
-            stop showing a chatbot.
-          </>
-        }
+        description="Deletes the chatbot, everything it learned, every conversation and every lead. Sites running its script stop showing a chatbot."
         confirmLabel="Delete chatbot"
         confirmPhrase={name}
         destructive

@@ -9,6 +9,7 @@ import {
 } from '../../../services/api';
 import { keys } from '../../../query/keys';
 import { parseRatingsSummary, parseResolutionSummary } from '../../analytics/analytics-types';
+import type { TrendDirection } from '../../../ui';
 import type { ActivityPoint, TopQuestion } from '../../../types/domain';
 
 /**
@@ -58,7 +59,7 @@ export function rangeLabel(days: RangeDays): string {
  */
 export function windowActivity(
   points: readonly ActivityPoint[],
-  days: RangeDays,
+  days: number,
   now: Date = new Date(),
 ): ActivityPoint[] {
   const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
@@ -66,6 +67,59 @@ export function windowActivity(
     cutoff.getDate(),
   ).padStart(2, '0')}`;
   return points.filter((point) => typeof point.date === 'string' && point.date >= iso);
+}
+
+/**
+ * A figure's comparison against the window before it.
+ *
+ * Without one a number is a receipt rather than an instrument: nothing on this
+ * page told the reader whether 412 conversations was good, while `StatTile` had
+ * shipped `delta` from the start and no surface in the app passed it.
+ */
+export interface FigureDelta {
+  value: string;
+  direction: TrendDirection;
+  /** What it is compared against. The arrow means nothing without it. */
+  label: string;
+}
+
+/**
+ * The change from one window to the next, as a percentage.
+ *
+ * `null` when the previous window is zero. A rise from nothing is not a
+ * percentage, and "+100%" over a baseline of one conversation is a number that
+ * misleads more than it informs — so the tile simply shows no delta rather than
+ * inventing one.
+ */
+export function pctChange(previous: number, current: number, label: string): FigureDelta | null {
+  if (!Number.isFinite(previous) || !Number.isFinite(current) || previous <= 0) return null;
+  const change = ((current - previous) / previous) * 100;
+  const rounded = Math.round(change);
+  const direction: TrendDirection = rounded === 0 ? 'flat' : rounded > 0 ? 'up' : 'down';
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '\u2212' : '';
+  return { value: `${sign}${Math.abs(rounded)}%`, direction, label };
+}
+
+/** Total the message counts on a daily series. */
+export function sumMessages(points: readonly ActivityPoint[]): number {
+  return points.reduce((total, point) => total + (point.messages ?? 0), 0);
+}
+
+/**
+ * The window before the selected one, trimmed from the same all-time series.
+ *
+ * `/analytics/activity` returns every day it has, so the comparison costs no
+ * extra request: take twice the window and drop the days the current one
+ * already covers.
+ */
+export function previousWindow(
+  points: readonly ActivityPoint[],
+  days: RangeDays,
+  now: Date = new Date(),
+): ActivityPoint[] {
+  const current = windowActivity(points, days, now);
+  const doubled = windowActivity(points, days * 2, now);
+  return current.length === 0 ? doubled : doubled.slice(0, doubled.length - current.length);
 }
 
 /** The windowed figures from `/analytics/dashboard`. */
@@ -129,6 +183,13 @@ function toSection<TRaw, TData>(
 
 export interface OverviewData {
   figures: Section<AgentFigures>;
+  /**
+   * The comparison for the two figures that genuinely have a previous window.
+   *
+   * Ratings and resolution have no period parameter at all, so they carry no
+   * delta rather than a fabricated one.
+   */
+  deltas: { conversations: FigureDelta | null; messages: FigureDelta | null };
   activity: Section<ActivityPoint[]>;
   questions: Section<TopQuestion[]>;
   ratings: Section<{ average: number | null; total: number }>;
@@ -181,16 +242,50 @@ export function useOverviewData(botId: number, days: RangeDays): OverviewData {
     staleTime: 60_000,
   });
 
+  /**
+   * The same endpoint over twice the window, so the previous period is
+   * `total(2N) - total(N)`. It is a second request, on its own cache key with
+   * the same one-minute staleness, and it is what makes every headline figure
+   * on this page mean something.
+   */
+  const doubled = useQuery({
+    queryKey: keys.analytics.dashboard(botId, days * 2),
+    queryFn: () => getDashboardStats(botId, days * 2),
+    staleTime: 60_000,
+  });
+
   const refreshAll = useCallback(() => {
     void dashboard.refetch();
+    void doubled.refetch();
     void activity.refetch();
     void questions.refetch();
     void ratings.refetch();
     void resolution.refetch();
-  }, [dashboard, activity, questions, ratings, resolution]);
+  }, [dashboard, doubled, activity, questions, ratings, resolution]);
+
+  const comparedTo = `vs previous ${days} days`;
+  const current = dashboard.data === undefined ? null : parseAgentFigures(dashboard.data);
+  const wider = doubled.data === undefined ? null : parseAgentFigures(doubled.data);
+  const activityPoints = Array.isArray(activity.data) ? activity.data : [];
 
   return {
     figures: toSection(dashboard, parseAgentFigures, EMPTY_FIGURES),
+    deltas: {
+      conversations:
+        current && wider
+          ? pctChange(wider.conversations - current.conversations, current.conversations, comparedTo)
+          : null,
+      // From the series already in hand rather than from the second dashboard
+      // call, because the series is daily and exact where the pair is a
+      // subtraction of two server-rounded totals.
+      messages: activity.isPending
+        ? null
+        : pctChange(
+            sumMessages(previousWindow(activityPoints, days)),
+            sumMessages(windowActivity(activityPoints, days)),
+            comparedTo,
+          ),
+    },
     activity: toSection(activity, (raw) => (Array.isArray(raw) ? raw : []), []),
     questions: toSection(questions, (raw) => (Array.isArray(raw) ? raw : []), []),
     ratings: toSection(
@@ -205,6 +300,7 @@ export function useOverviewData(botId: number, days: RangeDays): OverviewData {
     resolution: toSection(resolution, parseResolutionSummary, { rate: null, total: 0 }),
     refreshing:
       dashboard.isFetching ||
+      doubled.isFetching ||
       activity.isFetching ||
       questions.isFetching ||
       ratings.isFetching ||

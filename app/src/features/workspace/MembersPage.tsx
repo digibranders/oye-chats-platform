@@ -13,9 +13,9 @@ import {
   Trash2,
   UserPlus,
   Users,
-  X,
 } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Avatar,
   Badge,
@@ -33,14 +33,15 @@ import {
   MenuRoot,
   MenuTrigger,
   Meter,
-  PageHeader,
   Section,
   Stack,
   StatusDot,
   Tabs,
   TabPanel,
+  Toolbar,
   buttonClass,
   formatNumber,
+  formatDate,
   toast,
   type Column,
 } from '../../ui';
@@ -64,7 +65,6 @@ import {
   byPresenceThenName,
   departmentName,
   inviteExpired,
-  inviteExpiry,
   pendingInvitesFor,
   rosterFor,
   seatsUsed,
@@ -141,6 +141,9 @@ export function MembersPage() {
   const seatLimit = limitFor('operators');
   const atSeatLimit = seatLimit >= 0 && used >= seatLimit;
   const self = selfSeat(team.operators, team.clientId, botId);
+
+  const membersIn = (department: Department): number =>
+    team.operators.filter((operator) => operator.department_id === department.id).length;
 
   const invalidate = team.refetch;
 
@@ -237,87 +240,58 @@ export function MembersPage() {
     .filter((error): error is Error => error instanceof Error)
     .map((error) => error.message)[0];
 
-  const header = (
-    <PageHeader
-      title="Team"
-      description={
-        botName
-          ? `Who can answer conversations on ${botName}, and what they are allowed to change.`
-          : 'Who can answer conversations, and what they are allowed to change.'
-      }
-      actions={
-        canManage && !isFree ? (
-          <Button onClick={() => setInviting(true)} iconLeft={<UserPlus aria-hidden className="h-4 w-4" />}>
-            Invite teammate
-          </Button>
-        ) : undefined
-      }
-    />
-  );
-
   // ── Plan gate ─────────────────────────────────────────────────────────────
   if (isFree || !hasFeature('live_chat')) {
     return (
-      <>
-        {header}
-        <LockedState
-          title="Your plan does not include a team"
-          description="On a paid plan you can invite people to answer live conversations, give each of them a role, group them into departments, and set the hours each group is available."
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
-              See plans
-            </Link>
-          }
-        />
-      </>
+      <LockedState
+        title="Your plan does not include a team"
+        description="A paid plan adds teammates, roles, departments and opening hours."
+        action={
+          <Link to="/billing" className={buttonClass('primary', 'md')}>
+            See plans
+          </Link>
+        }
+        preview={<RosterPreview />}
+      />
     );
   }
 
   // ── Forbidden ─────────────────────────────────────────────────────────────
   if (team.forbidden || !canManage) {
     return (
-      <>
-        {header}
-        <LockedState
-          title="Only owners and admins can manage the team"
-          description="You are signed in with an operator seat, which can answer conversations but cannot change who else is in the workspace. Your own profile and alerts are on your account page."
-          action={
-            <Link to="/account" className={buttonClass('primary', 'md')}>
-              Go to your account
-            </Link>
-          }
-        />
-      </>
+      <LockedState
+        title="Only owners and admins can manage the team"
+        description="Your own profile and alerts are on your account page."
+        action={
+          <Link to="/account" className={buttonClass('primary', 'md')}>
+            Go to your account
+          </Link>
+        }
+      />
     );
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (team.loading) {
     return (
-      <>
-        {header}
-        <Card>
-          <CardBody>
-            <LoadingRows rows={5} />
-          </CardBody>
-        </Card>
-      </>
+      <Card>
+        <CardBody>
+          <LoadingRows rows={5} />
+        </CardBody>
+      </Card>
     );
   }
 
   // ── Error ─────────────────────────────────────────────────────────────────
   if (team.error) {
     return (
-      <>
-        {header}
-        <Card>
-          <ErrorState
-            title="We could not load your team"
-            description={team.error.message}
-            onRetry={invalidate}
-          />
-        </Card>
-      </>
+      <Card>
+        <ErrorState
+          title="We could not load your team"
+          description={team.error.message}
+          onRetry={invalidate}
+        />
+      </Card>
     );
   }
 
@@ -327,14 +301,21 @@ export function MembersPage() {
       header: 'Member',
       width: '17rem',
       pinned: true,
+      sortable: (a, b) =>
+        (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' }),
       render: (operator) => (
         <div className="flex min-w-0 items-center gap-2.5">
           <Avatar name={operator.name || operator.email} size="sm" src={operator.avatar_url} />
           <div className="min-w-0">
-            <p className="truncate font-medium text-text-primary">
-              {operator.name || operator.email}
+            {/* The "You" marker sits outside the truncating span. Inside it, the
+                one row the reader most needs to identify was the row whose
+                marker a long name truncated away. */}
+            <p className="flex min-w-0 items-baseline gap-1.5">
+              <span className="truncate font-medium text-text-primary">
+                {operator.name || operator.email}
+              </span>
               {operator.linked_client_id === team.clientId ? (
-                <span className="ml-1.5 text-xs font-normal text-text-tertiary">You</span>
+                <Badge tone="neutral">You</Badge>
               ) : null}
             </p>
             <p className="truncate text-xs text-text-secondary">{operator.email}</p>
@@ -352,15 +333,21 @@ export function MembersPage() {
       key: 'department',
       header: 'Department',
       secondary: true,
+      sortable: (a, b) =>
+        (departmentName(team.departments, a.department_id) ?? '\uffff').localeCompare(
+          departmentName(team.departments, b.department_id) ?? '\uffff',
+        ),
       render: (operator) => (
         <span className="text-text-secondary">
-          {departmentName(team.departments, operator.department_id) ?? '—'}
+          {departmentName(team.departments, operator.department_id) ?? ABSENT}
         </span>
       ),
     },
     {
       key: 'availability',
       header: 'Availability',
+      sortable: (a, b) =>
+        Number(availability(b) === 'online') - Number(availability(a) === 'online'),
       render: (operator) => {
         const state = availability(operator);
         return (
@@ -378,12 +365,21 @@ export function MembersPage() {
       align: 'right',
       secondary: true,
       sortable: (a, b) => (a.active_chats ?? 0) - (b.active_chats ?? 0),
-      render: (operator) => (
-        <span className="figure text-text-secondary">
-          {formatNumber(operator.active_chats ?? 0)}
-          <span className="text-text-tertiary"> / {formatNumber(operator.max_concurrent_chats ?? 0)}</span>
-        </span>
-      ),
+      // `0 / 3` on every offline row states a capacity fact that is not
+      // currently meaningful and fills the column with noise on a roster where
+      // most people are offline. An absent value is `—`.
+      render: (operator) =>
+        availability(operator) === 'online' ? (
+          <span className="text-text-secondary">
+            {formatNumber(operator.active_chats ?? 0)}
+            <span className="text-text-tertiary">
+              {' / '}
+              {formatNumber(operator.max_concurrent_chats ?? 0)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-text-tertiary">{ABSENT}</span>
+        ),
     },
     {
       key: 'actions',
@@ -396,22 +392,22 @@ export function MembersPage() {
             aria-label={`Actions for ${operator.name || operator.email}`}
             className={buttonClass('ghost', 'icon-sm')}
           >
-            <MoreHorizontal aria-hidden className="h-4 w-4" />
+            <MoreHorizontal aria-hidden />
           </MenuTrigger>
           <MenuContent>
-            <MenuItem icon={<Pencil aria-hidden className="h-3.5 w-3.5" />} onSelect={() => setEditing(operator)}>
+            <MenuItem icon={<Pencil aria-hidden />} onSelect={() => setEditing(operator)}>
               Edit member
             </MenuItem>
             {operator.linked_client_id === team.clientId ? (
               <MenuItem
-                icon={<LogOut aria-hidden className="h-3.5 w-3.5" />}
+                icon={<LogOut aria-hidden />}
                 onSelect={() => setLeaving(true)}
               >
                 Leave live chat
               </MenuItem>
             ) : operator.is_active === false ? (
               <MenuItem
-                icon={<Power aria-hidden className="h-3.5 w-3.5" />}
+                icon={<Power aria-hidden />}
                 onSelect={() => setReactivating(operator)}
               >
                 Reactivate…
@@ -419,14 +415,14 @@ export function MembersPage() {
             ) : (
               <>
                 <MenuItem
-                  icon={<Power aria-hidden className="h-3.5 w-3.5" />}
+                  icon={<Power aria-hidden />}
                   onSelect={() => setDeactivating(operator)}
                 >
                   Deactivate…
                 </MenuItem>
                 <MenuItem
                   destructive
-                  icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
+                  icon={<Trash2 aria-hidden />}
                   onSelect={() => setRemoving(operator)}
                 >
                   Remove from team
@@ -460,99 +456,188 @@ export function MembersPage() {
       render: (invite) => <Badge tone={roleTone(invite.role)}>{roleLabel(invite.role)}</Badge>,
     },
     {
-      key: 'expiry',
+      // Two facts in one cell before this: a column headed Status rendered a
+      // date phrase, and an expired invitation was signalled by hue alone.
+      key: 'status',
       header: 'Status',
-      render: (invite) => {
-        const expired = inviteExpired(invite.expires_at, Date.now());
-        return (
-          <span className={expired ? 'text-danger' : 'text-text-secondary'}>
-            {inviteExpiry(invite.expires_at, Date.now())}
-          </span>
-        );
-      },
+      render: (invite) =>
+        inviteExpired(invite.expires_at, Date.now()) ? (
+          <Badge tone="danger">Expired</Badge>
+        ) : (
+          <Badge tone="warning">Pending</Badge>
+        ),
+    },
+    {
+      key: 'expiry',
+      header: 'Expires',
+      type: 'text',
+      sortable: (a, b) =>
+        (Date.parse(a.expires_at ?? '') || 0) - (Date.parse(b.expires_at ?? '') || 0),
+      render: (invite) => (
+        <span className="figure text-text-secondary">
+          {invite.expires_at ? formatDate(invite.expires_at) : ABSENT}
+        </span>
+      ),
     },
     {
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
       align: 'right',
-      width: '11rem',
+      width: '10rem',
       render: (invite) => (
         <div className="flex items-center justify-end gap-1.5">
+          {/* Resend stays promoted — it is the common act — and Revoke moves
+              into the same row menu People and Departments use, so the reader
+              does not relearn where actions live on each tab. */}
           <Button
             size="sm"
             variant="secondary"
             onClick={() => resend.mutate(invite)}
             loading={resend.isPending && resend.variables?.id === invite.id}
-            iconLeft={<RotateCcw aria-hidden className="h-3.5 w-3.5" />}
+            iconLeft={<RotateCcw aria-hidden />}
           >
             Resend
           </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`Revoke the invitation to ${invite.email}`}
-            onClick={() => setRevoking(invite)}
-          >
-            <X aria-hidden className="h-4 w-4" />
-          </Button>
+          <MenuRoot>
+            <MenuTrigger
+              aria-label={`Actions for the invitation to ${invite.email}`}
+              className={buttonClass('ghost', 'icon-sm')}
+            >
+              <MoreHorizontal aria-hidden />
+            </MenuTrigger>
+            <MenuContent>
+              <MenuItem
+                destructive
+                icon={<Trash2 aria-hidden />}
+                onSelect={() => setRevoking(invite)}
+              >
+                Revoke the invitation
+              </MenuItem>
+            </MenuContent>
+          </MenuRoot>
         </div>
+      ),
+    },
+  ];
+
+  const departmentColumns: Column<Department>[] = [
+    {
+      key: 'name',
+      header: 'Department',
+      pinned: true,
+      width: '20rem',
+      rowHeader: true,
+      sortable: (a, b) => a.name.localeCompare(b.name),
+      render: (department) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{department.name}</p>
+          <p className="truncate text-xs text-text-secondary">
+            {department.description || ABSENT}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'members',
+      header: 'Members',
+      type: 'number',
+      sortable: (a, b) => membersIn(a) - membersIn(b),
+      render: (department) => formatNumber(membersIn(department)),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '3rem',
+      render: (department) => (
+        <MenuRoot>
+          <MenuTrigger
+            aria-label={`Actions for the ${department.name} department`}
+            className={buttonClass('ghost', 'icon-sm')}
+          >
+            <MoreHorizontal aria-hidden />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem
+              icon={<Pencil aria-hidden />}
+              onSelect={() => setDepartmentDraft(department)}
+            >
+              Edit department
+            </MenuItem>
+            <MenuItem
+              destructive
+              icon={<Trash2 aria-hidden />}
+              onSelect={() => setDeletingDepartment(department)}
+            >
+              Delete department
+            </MenuItem>
+          </MenuContent>
+        </MenuRoot>
       ),
     },
   ];
 
   return (
     <>
-      {header}
       <Stack>
-        {/* Seats first: it is the constraint every other action on this page
-            runs into, and finding out at the moment an invite is refused is the
-            worst possible time to learn it. */}
-        <Card>
-          <CardBody>
-            <Meter label="Seats used on this chatbot" used={used} limit={seatLimit} unit="seats" />
-            <p className="mt-2 text-xs text-text-secondary">
-              Seats are counted per chatbot, and the owner takes one too while they are on the
-              roster. Add more from{' '}
-              <Link to="/billing" className="text-accent-600 underline-offset-2 hover:underline">
-                Billing
-              </Link>
-              .
-            </p>
-          </CardBody>
-        </Card>
+        {/* A confirmation dialog surfaces its own failure inline and stays open,
+            so this only ever catches a failure that arrived after the dialog
+            closed. It sits above the tabs, not below the table: after a failed
+            remove on row 30 of a roster, an explanation under the table is off
+            screen. */}
+        {mutationError ? (
+          <Alert tone="danger" live title="That did not go through">
+            {mutationError}
+          </Alert>
+        ) : null}
 
-        {/* The owner's own seat. The console this replaces could put an owner on
-            the roster but never take them off — `removeSelfAsOperator` existed
-            in the API client and nothing called it, so an owner who joined live
-            chat was on it permanently. */}
-        <Card>
-          <CardBody className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-base font-medium text-text-primary">
-                {self ? 'You are taking live chats' : 'You are not taking live chats'}
-              </p>
-              <p className="mt-0.5 text-xs text-text-secondary">
-                {self
-                  ? 'Conversations that ask for a person can be routed to you, and you appear on the roster above.'
-                  : 'Join the roster to be handed conversations yourself. It uses one of the seats above.'}
-              </p>
-            </div>
+        {/* Seats and your own seat are the table's header facts, not two peers
+            of it. As two cards they were 220px of chrome — one `Meter` and one
+            sentence each — before the reader reached the tab row. */}
+        <Toolbar className="justify-between gap-4 border-y border-border py-3">
+          <Meter
+            className="w-64"
+            label="Seats on this chatbot"
+            used={used}
+            limit={seatLimit}
+            unit="seats"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusDot
+              tone={self ? 'success' : 'neutral'}
+              pulse={Boolean(self)}
+              label={self ? 'You are taking live chats' : 'You are not taking live chats'}
+            />
+            {/* The owner's own seat. The console this replaces could put an
+                owner on the roster but never take them off —
+                `removeSelfAsOperator` existed in the API client and nothing
+                called it, so an owner who joined live chat was on it
+                permanently. */}
             {self ? (
-              <Button variant="secondary" onClick={() => setLeaving(true)} iconLeft={<LogOut aria-hidden className="h-4 w-4" />}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setLeaving(true)}
+                iconLeft={<LogOut aria-hidden />}
+              >
                 Leave live chat
               </Button>
             ) : (
               <Button
+                size="sm"
                 variant="secondary"
                 onClick={() => setJoining(true)}
                 disabled={atSeatLimit || botId == null}
-                iconLeft={<Headphones aria-hidden className="h-4 w-4" />}
+                iconLeft={<Headphones aria-hidden />}
               >
                 Join live chat
               </Button>
             )}
-          </CardBody>
-        </Card>
+            <Button size="sm" onClick={() => setInviting(true)} iconLeft={<UserPlus aria-hidden />}>
+              Invite teammate
+            </Button>
+          </div>
+        </Toolbar>
 
         <Tabs
           label="Team sections"
@@ -571,8 +656,7 @@ export function MembersPage() {
           }}
         >
           <TabPanel value="people">
-            <Card>
-              <DataTable
+            <DataTable
                 caption="Everyone who can answer conversations on this chatbot"
                 columns={memberColumns}
                 rows={roster}
@@ -590,8 +674,8 @@ export function MembersPage() {
                     }
                   />
                 }
-              />
-            </Card>
+              rowNoun="teammate"
+            />
           </TabPanel>
 
           <TabPanel value="invitations">
@@ -605,8 +689,7 @@ export function MembersPage() {
                 />
               </Card>
             ) : (
-              <Card>
-                <DataTable
+              <DataTable
                   caption="Invitations that have been sent but not yet accepted"
                   columns={inviteColumns}
                   rows={invites}
@@ -624,8 +707,9 @@ export function MembersPage() {
                       }
                     />
                   }
+                  rowNoun="invitation"
+                  defaultSort={{ key: 'expiry', direction: 'asc' }}
                 />
-              </Card>
             )}
           </TabPanel>
 
@@ -638,70 +722,36 @@ export function MembersPage() {
                   size="sm"
                   variant="secondary"
                   onClick={() => setDepartmentDraft('new')}
-                  iconLeft={<Plus aria-hidden className="h-3.5 w-3.5" />}
+                  iconLeft={<Plus aria-hidden />}
                 >
                   New department
                 </Button>
               }
             >
-              <Card>
-                {team.departments.length === 0 ? (
+              {/* A table, like the two sibling tabs. The hand-built `ul` here
+                  reimplemented `DataTable`'s row geometry at 20/14 against its
+                  16/10, so the three tabs' left text edges did not line up when
+                  you switched between them — and it had no sort. */}
+              <DataTable
+                caption="Departments a conversation can be routed to"
+                columns={departmentColumns}
+                rows={team.departments}
+                rowKey={(department) => String(department.id)}
+                rowLabel={(department) => department.name}
+                rowNoun="department"
+                empty={
                   <EmptyState
                     icon={Building2}
                     title="No departments"
-                    description="Without departments every conversation goes to whoever is online. Create one when you want billing questions and support questions to reach different people."
+                    description="Without departments every conversation goes to whoever is online."
                     action={
                       <Button size="sm" onClick={() => setDepartmentDraft('new')}>
                         Create a department
                       </Button>
                     }
                   />
-                ) : (
-                  <ul>
-                    {team.departments.map((department) => {
-                      const members = team.operators.filter(
-                        (operator) => operator.department_id === department.id,
-                      ).length;
-                      return (
-                        <li
-                          key={department.id}
-                          className="flex flex-wrap items-center gap-3 border-t border-border px-5 py-3.5 first:border-t-0"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-base font-medium text-text-primary">
-                              {department.name}
-                            </p>
-                            <p className="mt-0.5 truncate text-xs text-text-secondary">
-                              {department.description || 'No description'}
-                            </p>
-                          </div>
-                          <span className="figure text-sm text-text-secondary">
-                            {formatNumber(members)}
-                            <span className="text-text-tertiary">
-                              {members === 1 ? ' member' : ' members'}
-                            </span>
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => setDepartmentDraft(department)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`Delete the ${department.name} department`}
-                            onClick={() => setDeletingDepartment(department)}
-                          >
-                            <Trash2 aria-hidden className="h-4 w-4" />
-                          </Button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </Card>
+                }
+              />
             </Section>
           </TabPanel>
 
@@ -719,15 +769,6 @@ export function MembersPage() {
             )}
           </TabPanel>
         </Tabs>
-
-        {/* A confirmation dialog surfaces its own failure inline and stays open,
-            so this only ever catches a failure that arrived after the dialog
-            closed — which would otherwise be a silent no-op. */}
-        {mutationError ? (
-          <Alert tone="danger" live title="That did not go through">
-            {mutationError}
-          </Alert>
-        ) : null}
       </Stack>
 
       <InviteDialog
@@ -768,14 +809,7 @@ export function MembersPage() {
           if (!open) setRemoving(null);
         }}
         title={`Remove ${removing ? removing.name || removing.email : 'this person'}?`}
-        description={
-          <>
-            They lose access to this workspace immediately. Any conversation they are handling right
-            now goes back to the chatbot, and the visitor is not told why. Their past replies stay in
-            the transcripts under their name, and the seat is freed for someone else. To stop them
-            being routed new chats without removing them, ask them to go offline instead.
-          </>
-        }
+        description="They lose access immediately and their seat is freed. Live conversations go back to the chatbot; past replies stay in the transcripts."
         confirmLabel="Remove from team"
         destructive
         onConfirm={async () => {
@@ -789,14 +823,7 @@ export function MembersPage() {
           if (!open) setDeactivating(null);
         }}
         title={`Deactivate ${deactivating ? deactivating.name || deactivating.email : 'this person'}?`}
-        description={
-          <>
-            They stop being able to sign in, and any conversation they are handling right now goes
-            back to the queue for somebody else — the visitor is not told why. Their seat is freed
-            immediately. Nothing is deleted: their replies stay in every transcript under their
-            name, and you can reactivate them whenever a seat is free.
-          </>
-        }
+        description="They cannot sign in, their seat is freed, and live conversations go back to the queue. Nothing is deleted — you can reactivate them when a seat is free."
         confirmLabel="Deactivate"
         destructive
         onConfirm={async () => {
@@ -812,9 +839,8 @@ export function MembersPage() {
         title={`Reactivate ${reactivating ? reactivating.name || reactivating.email : 'this person'}?`}
         description={
           <>
-            They can sign in and be handed conversations again, with the role and department they
-            had before. This takes one of this chatbot&rsquo;s seats — if none is free, we will say
-            so here and nothing changes.
+            They can sign in and be handed conversations again. This takes one of this
+            chatbot&rsquo;s seats; if none is free nothing changes.
           </>
         }
         confirmLabel="Reactivate"
@@ -829,7 +855,7 @@ export function MembersPage() {
           if (!open) setRevoking(null);
         }}
         title={`Revoke the invitation to ${revoking?.email ?? ''}?`}
-        description="The link we emailed them stops working. If they click it they are told the invitation is no longer valid. You can invite the same address again afterwards."
+        description="The link we emailed them stops working. You can invite the same address again."
         confirmLabel="Revoke invitation"
         destructive
         onConfirm={async () => {
@@ -841,7 +867,7 @@ export function MembersPage() {
         open={joining}
         onOpenChange={setJoining}
         title="Join the live-chat roster?"
-        description="You will be handed conversations that ask for a person, and you will appear to visitors by name. This takes one of your plan's seats for this chatbot — the same as inviting a teammate. You can leave again at any time."
+        description="You will be handed conversations and appear to visitors by name. This takes one of your plan's seats."
         confirmLabel="Join live chat"
         onConfirm={async () => {
           await join.mutateAsync();
@@ -852,7 +878,7 @@ export function MembersPage() {
         open={leaving}
         onOpenChange={setLeaving}
         title="Leave the live-chat roster?"
-        description="You stop being routed new conversations and the seat is freed. Conversations you are already in finish normally, and your past replies stay in the transcripts. You still own the workspace, and you can rejoin whenever you like."
+        description="You stop being routed new conversations and the seat is freed. Conversations you are already in finish normally, and you still own the workspace."
         confirmLabel="Leave live chat"
         onConfirm={async () => {
           await leave.mutateAsync();
@@ -865,7 +891,7 @@ export function MembersPage() {
           if (!open) setDeletingDepartment(null);
         }}
         title={`Delete the ${deletingDepartment?.name ?? ''} department?`}
-        description="Everyone in it stays on the team but loses their grouping, and conversations that were routed to this department go to whoever is online instead. Its opening hours are deleted with it."
+        description="Its members stay on the team but lose their grouping, its hours are deleted, and its conversations go to whoever is online."
         confirmLabel="Delete department"
         destructive
         onConfirm={async () => {

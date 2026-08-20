@@ -66,8 +66,15 @@ export function resolveAgentCreationGate(agentCount: number, agentLimit: number)
   return { kind: 'requires_plan', agentCount, agentLimit };
 }
 
-/** The half of the notice that never varies - what the user is being told to expect. */
-const PER_AGENT_BILLING = 'Each additional chatbot runs on its own plan, with its own credits and knowledge base.';
+/**
+ * The half of the notice that never varies - what the user is being told to
+ * expect.
+ *
+ * One clause, because the plan step of `CreateAgentDialog` says the rest one
+ * click later. It used to be a full sentence here AND the identical sentence as
+ * that dialog's description, so the customer read it twice in two seconds.
+ */
+const PER_AGENT_BILLING = 'The next one needs its own plan.';
 
 /**
  * One sentence explaining why the next agent is a paid one, for the notice
@@ -83,5 +90,5 @@ export function describeAgentLimit(gate: AgentCreationGate, planName: string): s
   if (gate.agentLimit < 1) return PER_AGENT_BILLING;
   const plan = planName.trim() || 'Your plan';
   const quota = gate.agentLimit === 1 ? '1 chatbot' : `${gate.agentLimit} chatbots`;
-  return `${plan} includes ${quota} and you already have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
+  return `${plan} includes ${quota}; you have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
 }

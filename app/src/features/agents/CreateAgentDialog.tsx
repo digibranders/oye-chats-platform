@@ -1,6 +1,5 @@
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Check } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -8,8 +7,8 @@ import {
   Field,
   Input,
   LoadingRows,
+  RadioCards,
   SegmentedControl,
-  cn,
   normalizeUrl,
   validateUrl,
 } from '../../ui';
@@ -282,11 +281,9 @@ export function CreateAgentDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={step === 'name' ? 'New chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
-      description={
-        step === 'plan'
-          ? 'Each chatbot runs on its own plan, with its own credits and knowledge base.'
-          : 'Name it and point it at your website. You can train and style it next.'
-      }
+      // Step one's two `Field` labels already say what step one is for, and the
+      // step-two title already names the chatbot being funded.
+      description={step === 'plan' ? 'Its own credits, its own knowledge base.' : undefined}
       size="sm"
       // Never dismissable mid-request: a customer who closes this during a
       // charge cannot tell whether the charge went through.
@@ -398,49 +395,25 @@ export function CreateAgentDialog({
               happening.
             </p>
           ) : (
-            <ul className="space-y-2" aria-label="Available plans">
-              {plans.map((plan) => {
-                const active = plan.slug === selectedSlug;
-                const priceMinor = cycle === 'annual' ? plan.annualPriceMinor : plan.monthlyPriceMinor;
-                return (
-                  <li key={plan.slug}>
-                    <button
-                      type="button"
-                      aria-pressed={active}
-                      disabled={submitting}
-                      onClick={() => setSelectedSlug(plan.slug)}
-                      className={cn(
-                        'flex w-full items-center justify-between gap-3 rounded-md border p-3 text-left',
-                        'transition-colors duration-[var(--dur-fast)]',
-                        active
-                          ? 'border-accent-500 bg-accent-50'
-                          : 'border-border-strong hover:bg-surface-hover',
-                      )}
-                    >
-                      <span className="min-w-0">
-                        <span className="block text-base font-medium text-text-primary">
-                          {plan.name}
-                        </span>
-                        <span className="figure block text-xs text-text-secondary">
-                          {formatCredits(plan.creditsPerMonth)} credits a month
-                        </span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        <span className="figure text-sm font-medium text-text-primary">
-                          {formatMoneyMinor(priceMinor)}
-                          <span className="text-text-tertiary">
-                            /{cycle === 'annual' ? 'yr' : 'mo'}
-                          </span>
-                        </span>
-                        {active ? (
-                          <Check aria-hidden className="h-4 w-4 text-accent-600" />
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <RadioCards
+              label="Plan"
+              value={selectedSlug}
+              onChange={setSelectedSlug}
+              items={plans.map((plan) => ({
+                value: plan.slug,
+                label: plan.name,
+                description: `${formatCredits(plan.creditsPerMonth)} credits a month`,
+                badge: (
+                  <span className="figure text-sm font-medium text-text-primary">
+                    {formatMoneyMinor(
+                      cycle === 'annual' ? plan.annualPriceMinor : plan.monthlyPriceMinor,
+                    )}
+                    <span className="text-text-tertiary">/{cycle === 'annual' ? 'yr' : 'mo'}</span>
+                  </span>
+                ),
+                disabled: submitting,
+              }))}
+            />
           )}
         </div>
       )}

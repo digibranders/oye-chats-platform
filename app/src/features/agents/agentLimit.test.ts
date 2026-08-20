@@ -77,7 +77,7 @@ describe('describeAgentLimit', () => {
     const copy = describeAgentLimit(resolveAgentCreationGate(1, 1), 'Starter');
     expect(copy).toContain('Starter');
     expect(copy).toContain('1 chatbot');
-    expect(copy).toContain('you already have 1');
+    expect(copy).toContain('you have 1');
   });
 
   it('pluralises a multi-agent quota', () => {
@@ -90,7 +90,7 @@ describe('describeAgentLimit', () => {
 
   it('drops the quota claim entirely when the plan data is unreadable', () => {
     const copy = describeAgentLimit(resolveAgentCreationGate(1, 0), 'Free');
-    expect(copy).toBe('Each additional chatbot runs on its own plan, with its own credits and knowledge base.');
+    expect(copy).toBe('The next one needs its own plan.');
     expect(copy).not.toContain('0');
   });
 });

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Card, CardBody, CardHeader, Field, Input, SaveBar, toast } from '../../ui';
+import { Alert, Input, SaveBar, SettingGroup, SettingRow, toast } from '../../ui';
 import { updateBot } from '../../services/api';
 import type { Bot } from '../../types/domain';
 import {
@@ -16,15 +16,26 @@ export interface QueueSettingsCardProps {
   onSaved: () => void;
 }
 
+/** The unit, inside the control rather than in the label. */
+function Seconds() {
+  return <span className="pr-1 text-xs text-text-tertiary">sec</span>;
+}
+
 /**
  * What happens to a visitor while they wait for one of your team.
  *
- * On the Team page rather than on the chatbot, because these three numbers are
+ * On the Team page rather than on the chatbot, because these four numbers are
  * a statement about the people: how long they get to notice a chat, how long a
  * visitor is asked to trust that somebody will, and how many may be waiting at
- * once. They are stored on the chatbot row, and the card says so.
+ * once. They are stored on the chatbot row.
+ *
+ * Four integers, four rows. As four `Field`s in a card they were four sentences
+ * used as labels over 620px of page — "Seconds an operator has to accept" is a
+ * label doing a description's job, and the hint under it repeated the bound the
+ * validator already enforces.
  */
 export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
+  const id = useId();
   const [baseline, setBaseline] = useState<QueueSettings>(() => readQueueSettings(bot));
   const [draft, setDraft] = useState<QueueSettings>(() => readQueueSettings(bot));
   const [errors, setErrors] = useState<Partial<Record<keyof QueueSettings, string>>>({});
@@ -64,80 +75,73 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
     save.mutate();
   }
 
-  return (
-    <Card>
-      <CardHeader
-        title="Waiting and routing"
-        titleAs="h2"
-        description={`How long a visitor waits for one of your team on ${bot.name ?? 'this chatbot'}, what happens when nobody picks up, and how long a dropped conversation is held open.`}
+  function numeric(field: keyof QueueSettings) {
+    return (
+      <Input
+        id={`${id}-${field}`}
+        className="figure"
+        inputMode="numeric"
+        required
+        aria-invalid={errors[field] ? true : undefined}
+        trailing={field === 'maxQueue' ? undefined : <Seconds />}
+        value={draft[field]}
+        onChange={(event) => set(field, event.target.value)}
       />
-      <CardBody className="space-y-5">
-        {save.isError ? (
+    );
+  }
+
+  return (
+    <SettingGroup title="Waiting and routing">
+      {save.isError ? (
+        <div className="px-cell pt-4">
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        ) : null}
+        </div>
+      ) : null}
 
-        <Field
-          label="Seconds an operator has to accept"
-          required
-          hint="After this, the conversation goes back to the queue for somebody else. Between 5 seconds and an hour."
-          error={errors.acceptSeconds}
-        >
-          <Input
-            className="figure"
-            inputMode="numeric"
-            value={draft.acceptSeconds}
-            onChange={(event) => set('acceptSeconds', event.target.value)}
-          />
-        </Field>
+      <SettingRow
+        label="Accept timeout"
+        htmlFor={`${id}-acceptSeconds`}
+        description="Then it returns to the queue."
+        controlWidth="sm"
+        error={errors.acceptSeconds}
+      >
+        {numeric('acceptSeconds')}
+      </SettingRow>
 
-        <Field
-          label="Seconds a visitor waits before we offer the offline form"
-          required
-          hint="Short enough that they do not give up, long enough that somebody can reach their keyboard. Between 5 seconds and 10 minutes."
-          error={errors.waitSeconds}
-        >
-          <Input
-            className="figure"
-            inputMode="numeric"
-            value={draft.waitSeconds}
-            onChange={(event) => set('waitSeconds', event.target.value)}
-          />
-        </Field>
+      <SettingRow
+        label="Offer offline form after"
+        htmlFor={`${id}-waitSeconds`}
+        controlWidth="sm"
+        error={errors.waitSeconds}
+      >
+        {numeric('waitSeconds')}
+      </SettingRow>
 
-        <Field
-          label="Seconds a dropped visitor is held before the chat closes"
-          required
-          hint="If a visitor loses their connection mid-conversation, this is how long their operator keeps the chat open waiting for them to come back. Between 5 seconds and an hour."
-          error={errors.visitorDropSeconds}
-        >
-          <Input
-            className="figure"
-            inputMode="numeric"
-            value={draft.visitorDropSeconds}
-            onChange={(event) => set('visitorDropSeconds', event.target.value)}
-          />
-        </Field>
+      <SettingRow
+        label="Hold a dropped visitor"
+        htmlFor={`${id}-visitorDropSeconds`}
+        controlWidth="sm"
+        error={errors.visitorDropSeconds}
+      >
+        {numeric('visitorDropSeconds')}
+      </SettingRow>
 
-        <Field
-          label="Visitors who may wait at once"
-          required
-          hint="Past this, new visitors are sent straight to the offline form instead of joining a queue they will not get through."
-          error={errors.maxQueue}
-        >
-          <Input
-            className="figure"
-            inputMode="numeric"
-            value={draft.maxQueue}
-            onChange={(event) => set('maxQueue', event.target.value)}
-          />
-        </Field>
-      </CardBody>
+      <SettingRow
+        label="Queue length"
+        htmlFor={`${id}-maxQueue`}
+        description="Past this, visitors go straight to the offline form."
+        controlWidth="sm"
+        error={errors.maxQueue}
+      >
+        {numeric('maxQueue')}
+      </SettingRow>
+
       <SaveBar
-          variant="footer"
+        variant="footer"
         dirty={queueSettingsChanged(baseline, draft)}
         saving={save.isPending}
         onSave={submit}
@@ -146,6 +150,6 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
           setErrors({});
         }}
       />
-    </Card>
+    </SettingGroup>
   );
 }

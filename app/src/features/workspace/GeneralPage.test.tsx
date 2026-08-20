@@ -111,9 +111,9 @@ describe('GeneralPage — unsaved changes are visible and recoverable', () => {
 
     expect(screen.getByText('Everything here is saved.')).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText(/workspace name/i), ' Ltd');
+    await user.type(screen.getByLabelText(/^name$/i), ' Ltd');
     // Names the field, rather than announcing an anonymous change.
-    expect(await screen.findByText(/Unsaved changes to Workspace name\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Unsaved changes to Name\./)).toBeInTheDocument();
   });
 
   it('discards back to the server’s copy without a request', async () => {
@@ -121,10 +121,10 @@ describe('GeneralPage — unsaved changes are visible and recoverable', () => {
     renderPage();
     await screen.findByDisplayValue('Acme');
 
-    await user.type(screen.getByLabelText(/workspace name/i), ' Ltd');
+    await user.type(screen.getByLabelText(/^name$/i), ' Ltd');
     await user.click(screen.getByRole('button', { name: /discard/i }));
 
-    expect(screen.getByLabelText(/workspace name/i)).toHaveValue('Acme');
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue('Acme');
     expect(screen.getByText('Everything here is saved.')).toBeInTheDocument();
     expect(api.updateClientProfile).not.toHaveBeenCalled();
   });
@@ -134,7 +134,7 @@ describe('GeneralPage — unsaved changes are visible and recoverable', () => {
     renderPage();
     await screen.findByDisplayValue('Acme');
 
-    await user.type(screen.getByLabelText(/workspace name/i), ' Ltd');
+    await user.type(screen.getByLabelText(/^name$/i), ' Ltd');
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(api.updateClientProfile).toHaveBeenCalledWith({ name: 'Acme Ltd' }));
@@ -154,10 +154,10 @@ describe('GeneralPage — unsaved changes are visible and recoverable', () => {
     renderPage();
     await screen.findByDisplayValue('Acme');
 
-    await user.clear(screen.getByLabelText(/workspace name/i));
+    await user.clear(screen.getByLabelText(/^name$/i));
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
-    const name = screen.getByLabelText(/workspace name/i);
+    const name = screen.getByLabelText(/^name$/i);
     expect(await screen.findByText(/Give the workspace a name/i)).toBeInTheDocument();
     expect(name).toHaveAttribute('aria-invalid', 'true');
     expect(api.updateClientProfile).not.toHaveBeenCalled();

@@ -3,28 +3,28 @@
 // duplicated in a test. That is the only reason fast refresh's one-export rule
 // is off here.
 /* eslint-disable react-refresh/only-export-components */
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
 import { Bot as BotIcon, Plus, SearchX } from 'lucide-react';
 import {
+  Avatar,
+  Badge,
   Button,
   Card,
-  CardBody,
-  CardSection,
+  DataTable,
   EmptyState,
   ErrorState,
   Page,
   PageHeader,
   SearchField,
   SegmentedControl,
-  Select,
-  Skeleton,
-  Stack,
-  StatTile,
   Toolbar,
   buttonClass,
+  formatDate,
   formatNumber,
+  type Column,
+  type SortState,
 } from '../../ui';
 import { getDashboardStats } from '../../services/api';
 import { keys } from '../../query/keys';
@@ -33,7 +33,7 @@ import { useEntitlements } from '../../hooks/useEntitlements';
 import { agentPath } from '../../shell/nav';
 import { agentHealth, type AgentHealth } from '../home/agentHealth';
 import type { Bot } from '../../types/domain';
-import { AgentCard } from './AgentCard';
+import { AgentActionsMenu } from './AgentActionsMenu';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { resolveAgentCreationGate } from './agentLimit';
 
@@ -47,11 +47,21 @@ import { resolveAgentCreationGate } from './agentLimit';
  * conversation that ends "open the list, filter to needs-attention" should be a
  * link, and Back should undo a filter rather than leaving the page.
  *
+ * **It is a table, not a card grid.** The grid it replaces spent ~310px a
+ * chatbot on four stacked bands, so twenty chatbots were 2,200px of scroll to
+ * answer a question a single fold should answer. A card grid earns its height
+ * when the object's identity is *visual* — a deploy preview, a Figma file. A
+ * chatbot's identity is a name plus six scalars, none of which is a picture, and
+ * the card could not offer a column set: there was no way to sort by "last
+ * trained" or to run an eye down a column of install states. The card's one real
+ * advantage, room for the `CopyField`, went to the place the key is actually
+ * used — Overview, Deploy, and a menu item here.
+ *
  * Three things the page it replaces got wrong, closed here:
  *
  * Its loading skeleton drew a four-tile summary row that the loaded page never
- * rendered, so every visit flashed four tiles that then evaporated. There is a
- * real summary now, and the skeleton is shaped like it.
+ * rendered, so every visit flashed four tiles that then evaporated. The table
+ * owns its own skeleton, in its own shape.
  *
  * It carried a permanently sticky "Resume setup" button, because the flag only
  * cleared on the final wizard step — anyone who installed the widget by hand
@@ -64,7 +74,28 @@ import { resolveAgentCreationGate } from './agentLimit';
  */
 
 export type StatusFilter = 'all' | 'live' | 'attention' | 'training';
-export type SortKey = 'status' | 'name' | 'newest' | 'busiest';
+
+/**
+ * What the list can be ordered by.
+ *
+ * One per sortable column, because the column heads are the sort control now.
+ * `status` is the health ranking below, not an alphabetical sort of the word.
+ */
+export type SortColumn =
+  | 'status'
+  | 'name'
+  | 'created'
+  | 'conversations'
+  | 'messages'
+  | 'passages'
+  | 'trained';
+
+export interface AgentSort {
+  key: SortColumn;
+  direction: 'asc' | 'desc';
+}
+
+export const DEFAULT_SORT: AgentSort = { key: 'status', direction: 'asc' };
 
 export interface AgentListItem {
   bot: Bot;
@@ -75,7 +106,9 @@ export interface AgentListItem {
    * a quiet one is the exact bug the workspace totals used to ship.
    */
   conversations: number | null;
-  /** True while that call is still in flight, so a card can wait rather than
+  /** All-time messages, on the same terms as `conversations`. */
+  messages: number | null;
+  /** True while that call is still in flight, so a row can wait rather than
    *  render an em dash it is about to replace. */
   conversationsLoading: boolean;
 }
@@ -105,13 +138,6 @@ const HEALTH_RANK: Record<AgentHealth['state'], number> = {
   paused: 6,
 };
 
-export const SORT_OPTIONS = [
-  { value: 'status', label: 'Needs attention first' },
-  { value: 'name', label: 'Name (A–Z)' },
-  { value: 'newest', label: 'Newest first' },
-  { value: 'busiest', label: 'Busiest first' },
-] as const satisfies readonly { value: SortKey; label: string }[];
-
 /** Free-text match over the two identifiers a person actually remembers. */
 export function matchesQuery(item: AgentListItem, query: string): boolean {
   const needle = query.trim().toLowerCase();
@@ -133,7 +159,7 @@ export function matchesStatus(item: AgentListItem, status: StatusFilter): boolea
   }
 }
 
-/** Roll a set of chatbots up into the figures shown above the grid. */
+/** Roll a set of chatbots up into the figures shown on the toolbar. */
 export function summarizeAgents(items: readonly AgentListItem[]): AgentListSummary {
   const reported = items.filter((item) => item.conversations !== null);
   return {
@@ -147,69 +173,112 @@ export function summarizeAgents(items: readonly AgentListItem[]): AgentListSumma
   };
 }
 
+/** A figure that never reported sorts below one that reported zero. */
+function byFigure(left: number | null, right: number | null): number {
+  return (left ?? -1) - (right ?? -1);
+}
+
+/** An unreadable or absent date sorts below every readable one. */
+function byDate(left: string | null | undefined, right: string | null | undefined): number {
+  const a = Date.parse(left ?? '');
+  const b = Date.parse(right ?? '');
+  if (!Number.isFinite(a) && !Number.isFinite(b)) return 0;
+  if (!Number.isFinite(a)) return -1;
+  if (!Number.isFinite(b)) return 1;
+  return a - b;
+}
+
 /**
  * Order the list. Every comparator falls back to the name so the result is
  * stable — an unstable sort makes a list appear to reshuffle itself on refetch.
+ *
+ * Ascending is the *natural* reading of each column: A→Z for a name, worst-first
+ * for health, smallest-first for a figure, oldest-first for a date. `DataTable`
+ * flips it for the descending press rather than each comparator owning two
+ * behaviours.
  */
-export function sortAgents(items: readonly AgentListItem[], sort: SortKey): AgentListItem[] {
+export function sortAgents(
+  items: readonly AgentListItem[],
+  sort: AgentSort = DEFAULT_SORT,
+): AgentListItem[] {
   const byName = (a: AgentListItem, b: AgentListItem): number =>
     (a.bot.name ?? '').localeCompare(b.bot.name ?? '', 'en', { sensitivity: 'base' });
 
-  return [...items].sort((a, b) => {
-    switch (sort) {
+  const compare = (a: AgentListItem, b: AgentListItem): number => {
+    switch (sort.key) {
       case 'name':
         return byName(a, b);
-      case 'newest': {
-        const left = Date.parse(a.bot.created_at ?? '');
-        const right = Date.parse(b.bot.created_at ?? '');
-        // A chatbot with no readable creation date sorts last rather than
-        // first: `NaN` compares false against everything and would otherwise
-        // scatter those rows through the list.
-        if (!Number.isFinite(left) && !Number.isFinite(right)) return byName(a, b);
-        if (!Number.isFinite(left)) return 1;
-        if (!Number.isFinite(right)) return -1;
-        return right - left || byName(a, b);
-      }
-      case 'busiest':
-        return (b.conversations ?? -1) - (a.conversations ?? -1) || byName(a, b);
+      case 'created':
+        return byDate(a.bot.created_at, b.bot.created_at) || byName(a, b);
+      case 'conversations':
+        return byFigure(a.conversations, b.conversations) || byName(a, b);
+      case 'messages':
+        return byFigure(a.messages, b.messages) || byName(a, b);
+      case 'passages':
+        return (
+          Number(a.bot.indexed_chunk_count ?? 0) - Number(b.bot.indexed_chunk_count ?? 0) ||
+          byName(a, b)
+        );
+      case 'trained':
+        return byDate(a.bot.crawl_completed_at, b.bot.crawl_completed_at) || byName(a, b);
       default:
         return HEALTH_RANK[a.health.state] - HEALTH_RANK[b.health.state] || byName(a, b);
     }
-  });
+  };
+
+  const ordered = [...items].sort(compare);
+  return sort.direction === 'desc' ? ordered.reverse() : ordered;
 }
 
-function isSortKey(value: string | null): value is SortKey {
-  return SORT_OPTIONS.some((option) => option.value === value);
+const SORT_COLUMNS: readonly SortColumn[] = [
+  'status',
+  'name',
+  'created',
+  'conversations',
+  'messages',
+  'passages',
+  'trained',
+];
+
+/**
+ * The sort, out of one URL parameter.
+ *
+ * `?sort=name` ascends, `?sort=-conversations` descends. The four words the
+ * previous `Select` wrote — `status`, `name`, `newest`, `busiest` — are still
+ * read, so a link somebody pasted into a support thread last week still opens
+ * the order it promised.
+ */
+export function parseAgentSort(raw: string | null): AgentSort {
+  if (!raw) return DEFAULT_SORT;
+  if (raw === 'newest') return { key: 'created', direction: 'desc' };
+  if (raw === 'busiest') return { key: 'conversations', direction: 'desc' };
+  const descending = raw.startsWith('-');
+  const key = descending ? raw.slice(1) : raw;
+  return SORT_COLUMNS.includes(key as SortColumn)
+    ? { key: key as SortColumn, direction: descending ? 'desc' : 'asc' }
+    : DEFAULT_SORT;
+}
+
+export function agentSortParam(sort: AgentSort): string | null {
+  if (sort.key === DEFAULT_SORT.key && sort.direction === DEFAULT_SORT.direction) return null;
+  return sort.direction === 'desc' ? `-${sort.key}` : sort.key;
+}
+
+/**
+ * `DataTable`'s sort state as this page's own.
+ *
+ * The table hands back `null` on the third press — its way of asking for the
+ * caller's natural order, which here is the health ranking.
+ */
+function toAgentSort(state: SortState | null): AgentSort {
+  if (!state) return DEFAULT_SORT;
+  return SORT_COLUMNS.includes(state.key as SortColumn)
+    ? { key: state.key as SortColumn, direction: state.direction }
+    : DEFAULT_SORT;
 }
 
 function isStatusFilter(value: string | null): value is StatusFilter {
   return value === 'all' || value === 'live' || value === 'attention' || value === 'training';
-}
-
-/** A grid placeholder shaped like the cards that replace it. */
-function AgentsLoading() {
-  return (
-    <ul aria-busy className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: 6 }, (_, index) => (
-        <Card as="li" key={index}>
-          <div className="flex items-start gap-3 px-5 py-4">
-            <Skeleton className="h-10 w-10 rounded-md" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-          </div>
-          <CardSection className="grid grid-cols-2 gap-4">
-            <Skeleton className="h-10" />
-            <Skeleton className="h-10" />
-          </CardSection>
-          <CardSection>
-            <Skeleton className="h-8" />
-          </CardSection>
-        </Card>
-      ))}
-    </ul>
-  );
 }
 
 export function AgentsPage() {
@@ -221,15 +290,14 @@ export function AgentsPage() {
   const query = params.get('q') ?? '';
   const statusParam = params.get('status');
   const status: StatusFilter = isStatusFilter(statusParam) ? statusParam : 'all';
-  const sortParam = params.get('sort');
-  const sort: SortKey = isSortKey(sortParam) ? sortParam : 'status';
+  const sort = parseAgentSort(params.get('sort'));
   const createOpen = params.get('new') === '1';
 
   /**
    * One statistics call per chatbot, on the same key Home uses, so arriving
    * from Home costs nothing and the two surfaces can never disagree about how
-   * busy a chatbot has been. It is what makes "busiest first" and the
-   * conversations figure possible without a second endpoint.
+   * busy a chatbot has been. It is what makes the conversation and message
+   * columns sortable without a second endpoint.
    */
   const statQueries = useQueries({
     queries: bots.map((bot) => ({
@@ -244,11 +312,14 @@ export function AgentsPage() {
   // is a handful of comparisons over a list bounded by what the plan sells.
   const items: AgentListItem[] = bots.map((bot, index) => {
     const stats = statQueries[index];
-    const total = stats?.data?.total_conversations;
+    const conversations = stats?.data?.total_conversations;
+    const messages = stats?.data?.total_messages;
     return {
       bot,
       health: agentHealth(bot),
-      conversations: typeof total === 'number' && Number.isFinite(total) ? total : null,
+      conversations:
+        typeof conversations === 'number' && Number.isFinite(conversations) ? conversations : null,
+      messages: typeof messages === 'number' && Number.isFinite(messages) ? messages : null,
       conversationsLoading: stats?.isPending ?? false,
     };
   });
@@ -314,6 +385,106 @@ export function AgentsPage() {
     void refreshBots();
   }, [refreshBots]);
 
+  const columns = useMemo<Column<AgentListItem>[]>(
+    () => [
+      {
+        key: 'name',
+        header: 'Chatbot',
+        pinned: true,
+        rowHeader: true,
+        sortable: true,
+        render: ({ bot }) => {
+          const name = bot.name || `Chatbot ${bot.id}`;
+          return (
+            <span className="flex min-w-0 items-center gap-2.5">
+              <Avatar name={name} src={bot.bot_logo} size="sm" shape="rounded" />
+              <span className="min-w-0">
+                <Link
+                  to={agentPath(bot.id, 'overview')}
+                  className="block truncate font-medium text-text-primary underline-offset-2 outline-none hover:underline focus-visible:underline"
+                >
+                  {name}
+                </Link>
+                <span className="block truncate text-xs text-text-tertiary">
+                  {bot.website || 'No website set'}
+                </span>
+              </span>
+            </span>
+          );
+        },
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        width: '12rem',
+        sortable: true,
+        render: ({ health }) => (
+          <Badge tone={health.tone} dot>
+            {health.label}
+          </Badge>
+        ),
+      },
+      {
+        key: 'conversations',
+        header: 'Conversations',
+        type: 'number',
+        width: '9rem',
+        sortable: true,
+        render: (item) =>
+          item.conversations === null ? '—' : formatNumber(item.conversations),
+      },
+      {
+        key: 'messages',
+        header: 'Messages',
+        type: 'number',
+        width: '8rem',
+        secondary: true,
+        sortable: true,
+        render: (item) => (item.messages === null ? '—' : formatNumber(item.messages)),
+      },
+      {
+        key: 'passages',
+        header: 'Passages',
+        type: 'number',
+        width: '8rem',
+        secondary: true,
+        sortable: true,
+        render: ({ bot }) => {
+          const indexed = Number(bot.indexed_chunk_count ?? 0);
+          return indexed > 0 ? formatNumber(indexed) : '—';
+        },
+      },
+      {
+        key: 'trained',
+        header: 'Last trained',
+        type: 'number',
+        width: '9rem',
+        secondary: true,
+        sortable: true,
+        render: ({ bot }) =>
+          bot.crawl_completed_at ? formatDate(bot.crawl_completed_at) : '—',
+      },
+      {
+        key: 'installed',
+        header: 'Installed',
+        width: '8rem',
+        render: ({ bot }) => (
+          <Badge tone={bot.widget_installed_at ? 'success' : 'neutral'} dot>
+            {bot.widget_installed_at ? 'Installed' : 'Not installed'}
+          </Badge>
+        ),
+      },
+      {
+        key: 'actions',
+        header: 'Actions',
+        align: 'right',
+        width: '4.5rem',
+        render: ({ bot }) => <AgentActionsMenu bot={bot} onChanged={handleChanged} />,
+      },
+    ],
+    [handleChanged],
+  );
+
   const hasAgents = bots.length > 0;
   const showToolbar = hasAgents && !error;
 
@@ -321,50 +492,53 @@ export function AgentsPage() {
     <Page width="wide">
       <PageHeader
         title="Chatbots"
-        description="Every chatbot in this workspace, what it knows, and whether it is answering visitors."
         actions={
-          <Button variant="primary" iconLeft={<Plus aria-hidden className="h-4 w-4" />} onClick={() => setParam('new', '1')}>
+          <Button variant="primary" iconLeft={<Plus aria-hidden />} onClick={() => setParam('new', '1')}>
             New chatbot
           </Button>
         }
         toolbar={
           showToolbar ? (
             <Toolbar>
-              <div className="w-full sm:w-72">
-                <SearchField
-                  label="Search chatbots"
-                  placeholder="Search by name, website or key"
-                  value={query}
-                  onValueChange={(value) => setParam('q', value)}
-                />
-              </div>
-              <SegmentedControl
-                label="Chatbot status"
-                value={status}
-                onChange={(value) => setParam('status', value === 'all' ? null : value)}
-                items={[
-                  { value: 'all', label: 'All', count: summary.total },
-                  { value: 'live', label: 'Live', count: summary.live },
-                  { value: 'attention', label: 'Needs attention', count: summary.attention },
-                  { value: 'training', label: 'Training', count: summary.training },
-                ]}
-              />
-              <div className="w-52">
-                <Select
-                  aria-label="Sort chatbots"
+              {/* Search and filter are one group, so the count is the only thing
+                  that can drop to a second line when the bar runs out of room. */}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="w-full sm:w-72">
+                  <SearchField
+                    label="Search chatbots"
+                    size="sm"
+                    placeholder="Search by name, website or key"
+                    value={query}
+                    onValueChange={(value) => setParam('q', value)}
+                  />
+                </div>
+                <SegmentedControl
+                  label="Chatbot status"
                   size="sm"
-                  value={sort}
-                  onChange={(event) => setParam('sort', event.target.value)}
-                  options={SORT_OPTIONS}
+                  value={status}
+                  onChange={(value) => setParam('status', value === 'all' ? null : value)}
+                  items={[
+                    { value: 'all', label: 'All', count: summary.total },
+                    { value: 'live', label: 'Live', count: summary.live },
+                    { value: 'attention', label: 'Needs attention', count: summary.attention },
+                    { value: 'training', label: 'Training', count: summary.training },
+                  ]}
                 />
               </div>
               {/* The result of a filter, announced. A count that only changes
                   visually tells a screen-reader user nothing about whether
                   their search did anything. */}
-              <p role="status" aria-live="polite" className="ml-auto text-xs text-text-secondary">
+              <p
+                role="status"
+                aria-live="polite"
+                className="ml-auto whitespace-nowrap text-xs text-text-secondary"
+              >
                 {visible.length === summary.total
                   ? `${formatNumber(summary.total)} chatbots`
                   : `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
+                {summary.conversations === null
+                  ? ''
+                  : ` · ${formatNumber(summary.conversations)} conversations all time`}
               </p>
             </Toolbar>
           ) : undefined
@@ -379,85 +553,42 @@ export function AgentsPage() {
             onRetry={() => void refreshBots()}
           />
         </Card>
+      ) : !hasAgents && !loading ? (
+        <Card>
+          <EmptyState
+            icon={BotIcon}
+            title="No chatbots yet"
+            description="Name it, point it at your website, and it starts reading."
+            action={
+              <Button variant="primary" onClick={() => setParam('new', '1')}>
+                Create your first chatbot
+              </Button>
+            }
+          />
+        </Card>
       ) : (
-        <Stack>
-          {hasAgents || loading ? (
-            <Card>
-              <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
-                <StatTile
-                  label="Chatbots"
-                  value={formatNumber(summary.total)}
-                  period="In this workspace"
-                  loading={loading}
-                />
-                <StatTile
-                  label="Live"
-                  value={formatNumber(summary.live)}
-                  period="Trained and installed"
-                  loading={loading}
-                />
-                <StatTile
-                  label="Needs attention"
-                  value={formatNumber(summary.attention)}
-                  period="Not answering properly"
-                  tone={summary.attention > 0 ? 'warning' : 'neutral'}
-                  loading={loading}
-                />
-                <StatTile
-                  label="Conversations"
-                  value={summary.conversations === null ? undefined : formatNumber(summary.conversations)}
-                  period="All time"
-                  hint={
-                    summary.conversations === null && !loading
-                      ? 'No chatbot reported its numbers'
-                      : undefined
-                  }
-                  loading={loading || statQueries.some((stats) => stats.isPending)}
-                />
-              </CardBody>
-            </Card>
-          ) : null}
-
-          {loading && !hasAgents ? (
-            <AgentsLoading />
-          ) : !hasAgents ? (
-            <Card>
-              <EmptyState
-                icon={BotIcon}
-                title="No chatbots yet"
-                description="Name one and point it at your website. It starts reading straight away, and you can talk to it while it learns."
-                action={
-                  <Button variant="primary" onClick={() => setParam('new', '1')}>
-                    Create your first chatbot
-                  </Button>
-                }
-              />
-            </Card>
-          ) : visible.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={SearchX}
-                title="No chatbots match"
-                description="Nothing in this workspace matches that search and filter. Clear them to see all of your chatbots again."
-                action={
-                  <Link
-                    to="/chatbots"
-                    replace
-                    className={buttonClass('secondary', 'sm')}
-                  >
-                    Clear search and filters
-                  </Link>
-                }
-              />
-            </Card>
-          ) : (
-            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {visible.map((item) => (
-                <AgentCard key={item.bot.id} item={item} onChanged={handleChanged} />
-              ))}
-            </ul>
-          )}
-        </Stack>
+        <DataTable
+          columns={columns}
+          rows={visible}
+          rowKey={(item) => String(item.bot.id)}
+          caption="Every chatbot in this workspace"
+          loading={loading}
+          rowNoun="chatbot"
+          sort={sort}
+          onSortChange={(next) => setParam('sort', agentSortParam(toAgentSort(next)))}
+          empty={
+            <EmptyState
+              icon={SearchX}
+              title="No chatbots match"
+              description="No chatbot matches that search and filter."
+              action={
+                <Link to="/chatbots" replace className={buttonClass('secondary', 'sm')}>
+                  Clear search and filters
+                </Link>
+              }
+            />
+          }
+        />
       )}
 
       <CreateAgentDialog

@@ -1,7 +1,7 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Handshake, Lock, Plug, Terminal, Users, type LucideIcon } from 'lucide-react';
-import { Page, cn } from '../../ui';
+import { Page, PageHeader, SidebarLayout, cn } from '../../ui';
 import { getCurrentUser } from '../../services/api';
 import { keys } from '../../query/keys';
 import { useEntitlements } from '../../hooks/useEntitlements';
@@ -15,6 +15,13 @@ import { useEntitlements } from '../../hooks/useEntitlements';
  * two different pages called settings. This is the one home the mandate asks
  * for: workspace-level configuration in a single column, with the personal
  * account deliberately outside it at `/account`, reached from the account menu.
+ *
+ * **The page title is rendered here, not by the routed child.** The nav used to
+ * be the first flex child of the `Page`, so every child rendered its own
+ * `PageHeader` inside the right-hand column and the settings `h1` landed 288px
+ * from the page gutter while `/billing`'s sat at 32 — three left edges for one
+ * page title, which reads as a rendering fault rather than a decision. The
+ * layout owns the header and the children own their content.
  *
  * Billing is not here on purpose. Running out of credits stops the chatbot
  * answering customers, which is an outage rather than a preference, so it is a
@@ -37,6 +44,7 @@ interface SettingsSection {
 
 export function WorkspaceLayout() {
   const { isFree, hasFeature } = useEntitlements();
+  const location = useLocation();
 
   // Fail closed: the Affiliate section is invite-only, so it appears only once
   // `/auth/me` positively confirms enrolment. An errored or pending query keeps
@@ -81,62 +89,58 @@ export function WorkspaceLayout() {
     });
   }
 
+  const active = sections.find((section) => location.pathname.startsWith(section.to));
+
   return (
-    <Page width="wide" className="lg:flex lg:gap-8">
-      {/* `lg:w-56` rather than a flex basis: the column holds five fixed labels,
-          so letting it size to content makes it jump as sections appear. */}
-      <nav
-        aria-label="Settings sections"
-        className="mb-6 shrink-0 lg:mb-0 lg:w-56 lg:self-start"
+    <Page>
+      <PageHeader eyebrow="Settings" title={active?.label ?? 'Settings'} />
+      <SidebarLayout
+        navLabel="Settings sections"
+        navWidth="sm"
+        nav={sections.map((section) => (
+          <NavLink
+            key={section.to}
+            to={section.to}
+            className={({ isActive }) =>
+              cn(
+                'flex h-control-lg items-center gap-2.5 rounded-md px-3 text-base',
+                'transition-colors duration-[var(--dur-fast)]',
+                isActive
+                  ? // The same marker the rail uses, rotated nowhere: a 2px ink
+                    // leading rule. A filled blue pill would be a second
+                    // active-nav language one click away from `/billing`'s
+                    // underline, and `--color-accent-50` is a selected *row*.
+                    'bg-surface-active font-medium text-text-primary shadow-[inset_2px_0_0_var(--color-ink)]'
+                  : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <section.icon
+                  aria-hidden
+                  className={cn(
+                    'h-icon-sm w-icon-sm shrink-0',
+                    isActive ? 'text-text-primary' : 'text-text-tertiary',
+                  )}
+                />
+                <span className="whitespace-nowrap">{section.label}</span>
+                {section.locked ? (
+                  // `lg:ml-auto` only: in the horizontal scroller `ml-auto`
+                  // pinned the lock to the right edge of its own item, so
+                  // "Team 🔒" read as "Team … 🔒" with a variable gap.
+                  <span className="flex items-center @4xl/page:ml-auto">
+                    <Lock aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
+                    <span className="sr-only">— not included on your plan</span>
+                  </span>
+                ) : null}
+              </>
+            )}
+          </NavLink>
+        ))}
       >
-        <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-          {sections.map((section) => (
-            <li key={section.to} className="shrink-0 lg:shrink">
-              <NavLink
-                to={section.to}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-2.5 rounded-md px-3 py-2 text-base transition-colors',
-                    'duration-[var(--dur-fast)]',
-                    isActive
-                      ? 'bg-accent-50 font-medium text-accent-700'
-                      : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <section.icon
-                      aria-hidden
-                      className={cn(
-                        'h-4 w-4 shrink-0',
-                        isActive ? 'text-accent-600' : 'text-text-tertiary',
-                      )}
-                    />
-                    <span className="whitespace-nowrap lg:whitespace-normal">{section.label}</span>
-                    {section.locked ? (
-                      <span className="ml-auto flex items-center">
-                        <Lock aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
-                        <span className="sr-only">— not included on your plan</span>
-                      </span>
-                    ) : null}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
-      </nav>
-
-      {/* Reading width, not the full flex row: a settings form stretched to
-          1,200px puts a label and its control a screen apart. Tables that need
-          more scroll inside their own card instead.
-
-          `min-w-0` so that scroll actually happens — without it a wide table
-          stretches the flex row and pushes the nav column off-screen. */}
-      <div className="min-w-0 flex-1 lg:max-w-reading">
         <Outlet />
-      </div>
+      </SidebarLayout>
     </Page>
   );
 }
