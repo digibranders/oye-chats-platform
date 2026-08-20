@@ -25,19 +25,35 @@ export interface DunningItem {
   /** Which steps of the automated cadence have already been sent. */
   emails_sent: string[];
   /**
-   * The plan's **monthly** price in its own minor units — the handler reads
-   * `sub.plan.monthly_price_cents` whatever the billing cycle says, so an
-   * annual subscription's row understates the cycle actually at risk.
+   * One billing cycle's price in `currency`'s minor units.
+   *
+   * Cycle-aware and rail-aware: annual subscriptions carry the annual price,
+   * and a USD-rail customer carries the plan's USD column. It used to be the
+   * monthly INR price for everyone, which understated every annual row and
+   * mislabelled every USD one.
+   *
+   * `null` when the plan has no price recorded on the customer's rail — a data
+   * defect. Such a row is excluded from the totals rather than falling back to
+   * the other currency's number.
+   *
+   * It is one cycle *at risk*, not an amount owed: Razorpay does not re-attempt
+   * the missed cycle.
    */
-  at_risk_minor: number;
-  /** The plan's currency, defaulted to INR by the handler when unset. */
+  cycle_at_risk_minor: number | null;
+  /** The rail this customer is charged on, from their billing country. */
   currency: string;
 }
 
 export interface DunningResponse {
   count: number;
-  /** Sum of `at_risk_minor` — **added across currencies without converting**. */
-  at_risk_minor_total: number;
+  /**
+   * One total per currency, from the server.
+   *
+   * It replaced a single scalar that added paise to cents — a number that was
+   * not an amount of anything. There is deliberately no converted grand total:
+   * a dunning screen showing one invites somebody to book it as revenue.
+   */
+  at_risk_by_currency: { currency: string; minor: number }[];
   grace_days: number;
   items: DunningItem[];
 }

@@ -20,7 +20,7 @@ function item(overrides: Partial<DunningItem> = {}): DunningItem {
     days_elapsed: 5,
     days_left: 2,
     emails_sent: [],
-    at_risk_minor: 149_900,
+    cycle_at_risk_minor: 149_900,
     currency: 'INR',
     ...overrides,
   };
@@ -48,8 +48,8 @@ describe('dunning is ordered by urgency, not by id', () => {
 
   it('breaks a tie on the larger amount at risk', () => {
     const rows = sortByUrgency([
-      item({ subscription_id: 1, days_left: 2, at_risk_minor: 10_000 }),
-      item({ subscription_id: 2, days_left: 2, at_risk_minor: 99_000 }),
+      item({ subscription_id: 1, days_left: 2, cycle_at_risk_minor: 10_000 }),
+      item({ subscription_id: 2, days_left: 2, cycle_at_risk_minor: 99_000 }),
     ]);
     expect(rows.map((row) => row.subscription_id)).toEqual([2, 1]);
   });
@@ -92,16 +92,16 @@ describe('dunning cadence', () => {
 });
 
 /**
- * The server's own `at_risk_minor_total` sums minor units across currencies, so
+ * The server's own `at_risk_by_currency` sums minor units across currencies, so
  * on a platform with both INR and USD plans it adds paise to cents and reports
  * a number that is not an amount of anything. The console never prints it.
  */
 describe('amount at risk', () => {
   it('totals per currency rather than adding paise to cents', () => {
     const totals = atRiskByCurrency([
-      item({ currency: 'INR', at_risk_minor: 100_000 }),
-      item({ currency: 'INR', at_risk_minor: 49_900 }),
-      item({ currency: 'USD', at_risk_minor: 2_900 }),
+      item({ currency: 'INR', cycle_at_risk_minor: 100_000 }),
+      item({ currency: 'INR', cycle_at_risk_minor: 49_900 }),
+      item({ currency: 'USD', cycle_at_risk_minor: 2_900 }),
     ]);
     expect(totals).toEqual([
       { currency: 'INR', minor: 149_900 },

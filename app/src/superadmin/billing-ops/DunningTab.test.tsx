@@ -29,17 +29,27 @@ function item(overrides: Partial<DunningItem> = {}): DunningItem {
     days_elapsed: 5,
     days_left: 2,
     emails_sent: ['day_1'],
-    at_risk_minor: 149_900,
+    cycle_at_risk_minor: 149_900,
     currency: 'INR',
     ...overrides,
   };
 }
 
 function response(items: DunningItem[]): { data: DunningResponse } {
+  // Built the way the server builds it: one bucket per currency, rows with no
+  // recorded price excluded rather than counted as zero.
+  const buckets = new Map<string, number>();
+  for (const entry of items) {
+    if (entry.cycle_at_risk_minor === null) continue;
+    const code = (entry.currency || 'INR').toUpperCase();
+    buckets.set(code, (buckets.get(code) ?? 0) + entry.cycle_at_risk_minor);
+  }
   return {
     data: {
       count: items.length,
-      at_risk_minor_total: items.reduce((sum, entry) => sum + entry.at_risk_minor, 0),
+      at_risk_by_currency: [...buckets.entries()]
+        .map(([currency, minor]) => ({ currency, minor }))
+        .sort((a, b) => a.currency.localeCompare(b.currency)),
       grace_days: 7,
       items,
     },
@@ -103,14 +113,14 @@ describe('DunningTab', () => {
   });
 
   /**
-   * The endpoint's own `at_risk_minor_total` adds paise to cents. The console
-   * totals per currency and never prints the mixed figure.
+   * One tile per currency, never one tile adding paise to cents — which is what
+   * the endpoint's old single `at_risk_minor_total` scalar did.
    */
   it('totals the amount at risk per currency', async () => {
     get.mockResolvedValue(
       response([
-        item({ subscription_id: 1, currency: 'INR', at_risk_minor: 100_000 }),
-        item({ subscription_id: 2, currency: 'USD', at_risk_minor: 2_900 }),
+        item({ subscription_id: 1, currency: 'INR', cycle_at_risk_minor: 100_000 }),
+        item({ subscription_id: 2, currency: 'USD', cycle_at_risk_minor: 2_900 }),
       ]),
     );
     mount();
@@ -120,14 +130,34 @@ describe('DunningTab', () => {
     const usdTile = screen.getByText('At risk (USD)').closest('div');
     expect(inrTile).toHaveTextContent('₹1,000.00 INR');
     expect(usdTile).toHaveTextContent('$29.00 USD');
-    // The server's own mixed total (102,900) is never printed.
+    // A cross-currency sum (102,900) is never printed, in any tile.
     expect(screen.queryByText(/102,900/)).not.toBeInTheDocument();
   });
 
-  it('flags that an annual subscription’s figure is only one month', async () => {
-    get.mockResolvedValue(response([item({ billing_cycle: 'annual' })]));
+  it('leaves a row with no recorded price out of the totals rather than counting it as zero', async () => {
+    // A USD-rail customer on a plan with no USD price is a data defect. The
+    // server sends null; a console that read it as 0 would report a confident
+    // total that is quietly short.
+    get.mockResolvedValue(
+      response([
+        item({ subscription_id: 1, currency: 'USD', cycle_at_risk_minor: 2_900 }),
+        item({ subscription_id: 2, currency: 'USD', cycle_at_risk_minor: null }),
+      ]),
+    );
     mount();
-    expect(await screen.findByText('monthly price of an annual plan')).toBeInTheDocument();
+
+    const usdTile = (await screen.findByText('At risk (USD)')).closest('div');
+    expect(usdTile).toHaveTextContent('$29.00 USD');
+  });
+
+  it('says which cycle an annual subscription’s figure covers', async () => {
+    // The server used to send the monthly price whatever the cycle, so this
+    // column carried a caveat. It now sends the annual price for an annual
+    // subscription, and the caveat became a label.
+    get.mockResolvedValue(response([item({ billing_cycle: 'annual', cycle_at_risk_minor: 1_499_000 })]));
+    mount();
+    expect(await screen.findByText('one annual cycle')).toBeInTheDocument();
+    expect(screen.queryByText('monthly price of an annual plan')).not.toBeInTheDocument();
   });
 
   it('says whether the automated cadence has already reached the customer', async () => {

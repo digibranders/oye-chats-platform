@@ -1,20 +1,5 @@
 import { useMemo } from 'react';
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  DataTable,
-  EmptyState,
-  LockedState,
-  Section,
-  Stack,
-  StatTile,
-  formatDate,
-  formatNumber,
-  type Column,
-} from '../../ui';
+import { ABSENT, Alert, Badge, Button, Card, CardBody, DataTable, EmptyState, formatDate, formatNumber, LockedState, Section, Stack, StatTile, type Column } from '../../ui';
 import { usePlatformResource } from '../usePlatform';
 import { docMoneyWithCode } from '../revenue/money';
 import { atRiskByCurrency, cadenceSummary, sortByUrgency, urgencyLabel, urgencyTone } from './dunning';
@@ -29,15 +14,18 @@ import type { DunningItem, DunningResponse } from './types';
  * screen: an operator with twenty minutes should work down it from the top and
  * stop, and the ordering is what makes that the right thing to do.
  *
- * Two things the server gets subtly wrong are corrected here rather than
- * repeated:
+ * Both figures the server used to get wrong are now right at the source: the
+ * per-row amount is cycle-aware and rail-aware, and the totals arrive already
+ * split per currency. Two things this screen still does itself:
  *
- * * `at_risk_minor_total` sums every row's minor units regardless of currency,
- *   so on a platform with both INR and USD plans it adds paise to cents. This
- *   screen totals per currency instead and never prints the mixed figure.
- * * `at_risk_minor` is the plan's *monthly* price even for an annually billed
- *   subscription, so an annual row understates the cycle at risk. The column
- *   says so rather than presenting it as the amount outstanding.
+ * * It totals the rows **on screen** rather than printing the server's totals,
+ *   which cover every past-due subscription. Both numbers are useful and they
+ *   are not the same, so the tiles say which they are.
+ * * It never converts between currencies to produce one grand total. A dunning
+ *   screen showing a converted figure invites somebody to book it as revenue.
+ *
+ * And whatever the number is, it is one cycle **at risk** — not an amount owed.
+ * Razorpay does not re-attempt the missed cycle.
  */
 export function DunningTab() {
   const dunning = usePlatformResource<DunningResponse>('/billing/dunning');
@@ -101,16 +89,25 @@ export function DunningTab() {
     },
     {
       key: 'at_risk',
-      header: 'Monthly at risk',
+      header: 'Cycle at risk',
       align: 'right',
       width: '12rem',
       render: (row) => (
         <div>
           <p className="figure text-sm text-text-primary">
-            {docMoneyWithCode(row.at_risk_minor, row.currency)}
+            {row.cycle_at_risk_minor === null
+              ? ABSENT
+              : docMoneyWithCode(row.cycle_at_risk_minor, row.currency)}
           </p>
-          {row.billing_cycle === 'annual' ? (
-            <p className="text-2xs text-text-tertiary">monthly price of an annual plan</p>
+          {row.cycle_at_risk_minor === null ? (
+            // Not zero, and not the other rail's number: the plan has no price
+            // recorded on this customer's currency, which is a data defect
+            // somebody needs to fix rather than a smaller amount at risk.
+            <p className="text-2xs text-warning">
+              no {row.currency} price on this plan
+            </p>
+          ) : row.billing_cycle === 'annual' ? (
+            <p className="text-2xs text-text-tertiary">one annual cycle</p>
           ) : null}
         </div>
       ),

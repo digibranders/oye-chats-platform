@@ -77,6 +77,25 @@ function sessionColumns(): Column<SessionRow>[] {
         ),
     },
     {
+      key: 'visitor',
+      header: 'Visitor',
+      sortable: true,
+      render: (row) =>
+        row.visitor_name || row.visitor_email ? (
+          <div className="min-w-0">
+            <p className="truncate font-medium text-text-primary">{row.visitor_name ?? '—'}</p>
+            {row.visitor_email ? (
+              <p className="truncate text-xs text-text-secondary">{row.visitor_email}</p>
+            ) : null}
+          </div>
+        ) : (
+          // Most conversations are anonymous, and that is the normal case
+          // rather than missing data: a visitor only gets a name here once
+          // they hand one over in the chat.
+          <span className="text-text-tertiary">Anonymous</span>
+        ),
+    },
+    {
       key: 'rating',
       header: 'Rating',
       align: 'right',
@@ -90,6 +109,15 @@ function sessionColumns(): Column<SessionRow>[] {
       secondary: true,
       render: (row) => <span className="text-text-secondary">{formatDateTime(row.created_at)}</span>,
     },
+    {
+      key: 'last_activity_at',
+      header: 'Last active',
+      sortable: true,
+      secondary: true,
+      render: (row) => (
+        <span className="text-text-secondary">{formatDateTime(row.last_activity_at)}</span>
+      ),
+    },
   ];
 }
 
@@ -98,12 +126,11 @@ const SESSION_COMPARATORS = {
   status: byText((row: SessionRow) => row.status),
   bot_name: byText((row: SessionRow) => row.bot_name),
   client_name: byText((row: SessionRow) => row.client_name),
+  visitor: byText((row: SessionRow) => row.visitor_name ?? row.visitor_email),
   rating: byNumber((row: SessionRow) => row.rating),
   created_at: byDate((row: SessionRow) => row.created_at),
+  last_activity_at: byDate((row: SessionRow) => row.last_activity_at),
 };
-
-const MISSING_FIELDS_NOTE =
-  'Visitor name, visitor email and last activity are returned as null for every conversation: the handler reads three attributes that are not columns on the session (the real one is last_active_at). They are not shown here rather than shown as a column of dashes.';
 
 export function ConversationsTab() {
   const url = useUrlState();
@@ -136,7 +163,8 @@ function SessionsList() {
 
   const paged = usePagedRows(list.items, {
     url,
-    filter: (row) => includesText([row.id, row.bot_name, row.client_name], query),
+    filter: (row) =>
+      includesText([row.id, row.bot_name, row.client_name, row.visitor_name, row.visitor_email], query),
     comparators: SESSION_COMPARATORS,
   });
 
@@ -148,7 +176,7 @@ function SessionsList() {
             label="Search conversations"
             value={query}
             onValueChange={(next) => url.set({ q: next })}
-            placeholder="Conversation id, chatbot or account"
+            placeholder="Conversation id, chatbot, account or visitor"
           />
         </div>
         <div className="w-44">
@@ -186,7 +214,7 @@ function SessionsList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={500}
-        note={`Status and account are filtered by the server; the search box filters the returned rows here. ${MISSING_FIELDS_NOTE}`}
+        note="Status and account are filtered by the server; the search box filters the returned rows here, across conversation id, chatbot, account and visitor."
         empty={
           <EmptyState
             compact
@@ -210,7 +238,8 @@ function LiveQueueList() {
 
   const paged = usePagedRows(list.items, {
     url,
-    filter: (row) => includesText([row.id, row.bot_name, row.client_name], query),
+    filter: (row) =>
+      includesText([row.id, row.bot_name, row.client_name, row.visitor_name, row.visitor_email], query),
     comparators: SESSION_COMPARATORS,
   });
 
@@ -231,7 +260,7 @@ function LiveQueueList() {
             label="Search the live queue"
             value={query}
             onValueChange={(next) => url.set({ q: next })}
-            placeholder="Conversation id, chatbot or account"
+            placeholder="Conversation id, chatbot, account or visitor"
           />
         </div>
       </Toolbar>
@@ -246,7 +275,7 @@ function LiveQueueList() {
         onRetry={list.reload}
         loaded={list.items.length}
         cap={100}
-        note={`Waiting and live conversations only, newest first, capped at 100 with no filter of any kind. ${MISSING_FIELDS_NOTE}`}
+        note="Waiting and live conversations only, newest first, capped at 100 with no filter of any kind."
         empty={
           <EmptyState
             compact
@@ -277,7 +306,13 @@ export function SessionDetailPage() {
   const record = usePlatformResource<SessionDetail>(
     fetchable ? `/sessions/${encodeURIComponent(sessionId)}` : null,
   );
-  const detail = record.data;
+  // A payload without a `session` is not a conversation, however the request
+  // resolved. The handler 404s a missing id rather than serving a null session,
+  // so this only fires on a shape the API should never send — but rendering a
+  // page off `detail.session.status` without the check turns that into a blank
+  // screen from an uncaught TypeError, which is a worse way to learn about it.
+  const detail =
+    record.data?.session && Array.isArray(record.data.messages) ? record.data : null;
 
   return (
     <PlatformPage
@@ -295,11 +330,10 @@ export function SessionDetailPage() {
       }
     >
       {!fetchable ? (
-        <Alert tone="danger" title="The API cannot return this conversation">
-          Conversation ids are UUID strings, but the detail endpoint declares its path parameter as an
-          integer, so it rejects this id with a 422 before its handler runs. Nothing was requested.
-          The conversation itself is intact — only this endpoint cannot address it, and the fix is a
-          one-word change on the server.
+        <Alert tone="danger" title="That is not a conversation id">
+          Conversation ids are bounded identifiers — up to 128 letters, digits, dot, colon, hyphen or
+          underscore. The id in the address is not, so the server would reject it before its handler
+          ran and nothing was requested. Check the link you followed here.
         </Alert>
       ) : record.loading && !detail ? (
         <Stack>
@@ -335,6 +369,21 @@ export function SessionDetailPage() {
                     {
                       label: 'Started',
                       value: <span className="figure">{formatDateTime(detail.session.created_at)}</span>,
+                    },
+                    {
+                      label: 'Last active',
+                      value: (
+                        <span className="figure">{formatDateTime(detail.session.last_activity_at)}</span>
+                      ),
+                    },
+                    {
+                      label: 'Visitor',
+                      value:
+                        detail.session.visitor_name ?? detail.session.visitor_email ?? 'Anonymous',
+                    },
+                    {
+                      label: 'Visitor email',
+                      value: detail.session.visitor_email,
                     },
                     {
                       label: 'Visitor rating',

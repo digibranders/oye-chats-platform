@@ -1,10 +1,5 @@
-import { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
 import {
-  Alert,
   Badge,
-  Button,
-  ConfirmDialog,
   EmptyState,
   SearchField,
   SegmentedControl,
@@ -13,10 +8,8 @@ import {
   Toolbar,
   formatDateTime,
   formatNumber,
-  toast,
   type Column,
 } from '../../ui';
-import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
 import { byDate, byNumber, byText, includesText, usePagedRows } from '../recordList';
@@ -50,28 +43,35 @@ function DocumentsList() {
   const query = url.get('q');
   const source = url.get('source');
   const list = usePlatformList<DocumentRow>('/documents');
-  const [pending, setPending] = useState<DocumentRow | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const paged = usePagedRows(list.items, {
     url,
     filter: (row) =>
-      (!source || row.source === source) && includesText([row.bot_name, row.source, row.id], query),
+      (!source || row.source === source) &&
+      includesText([row.title, row.bot_name, row.source, row.id], query),
     comparators: {
-      id: byNumber((row) => row.id),
+      // Text, not number: the id is a file hash now that the list is grouped
+      // per source. Sorting it numerically compared NaN to NaN and left the
+      // rows in whatever order the server sent.
+      id: byText((row) => row.id),
+      title: byText((row) => row.title),
       bot_name: byText((row) => row.bot_name),
       source: byText((row) => row.source),
+      chunk_count: byNumber((row) => row.chunk_count),
+      content_chars: byNumber((row) => row.content_chars),
       created_at: byDate((row) => row.created_at),
     },
   });
 
   const columns: Column<DocumentRow>[] = [
     {
-      key: 'id',
-      header: 'Chunk',
+      key: 'title',
+      header: 'Document',
       pinned: true,
       sortable: true,
-      render: (row) => <span className="figure font-medium">#{row.id}</span>,
+      render: (row) => (
+        <span className="block max-w-xs truncate font-medium">{row.title ?? row.id}</span>
+      ),
     },
     {
       key: 'bot_name',
@@ -81,46 +81,52 @@ function DocumentsList() {
     },
     { key: 'source', header: 'Source', sortable: true, render: (row) => <Badge>{row.source}</Badge> },
     {
+      key: 'chunk_count',
+      header: 'Chunks',
+      align: 'right',
+      sortable: true,
+      render: (row) => <span className="figure">{formatNumber(row.chunk_count)}</span>,
+    },
+    {
+      key: 'content_chars',
+      header: 'Characters',
+      align: 'right',
+      sortable: true,
+      secondary: true,
+      render: (row) => <span className="figure">{formatNumber(row.content_chars)}</span>,
+    },
+    {
+      key: 'is_active',
+      header: 'State',
+      sortable: false,
+      // A plan lapse deactivates a workspace's knowledge without deleting it,
+      // and a super-admin looking at a customer who says "my chatbot forgot
+      // everything" needs to see that here rather than infer it from billing.
+      render: (row) =>
+        row.is_active ? (
+          <Badge tone="success">Answering</Badge>
+        ) : (
+          <Badge tone="warning">Deactivated</Badge>
+        ),
+    },
+    {
       key: 'created_at',
       header: 'Ingested',
       sortable: true,
       secondary: true,
       render: (row) => formatDateTime(row.created_at),
     },
-    {
-      key: 'actions',
-      header: 'Re-embed',
-      align: 'right',
-      render: (row) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setError(null);
-            setPending(row);
-          }}
-        >
-          <RefreshCw aria-hidden className="h-3.5 w-3.5" />
-          Reindex
-        </Button>
-      ),
-    },
   ];
 
   return (
     <div className="flex flex-col gap-4">
-      {error ? (
-        <Alert tone="danger" live title="The reindex was not queued">
-          {error}
-        </Alert>
-      ) : null}
       <Toolbar>
         <div className="w-full max-w-xs">
           <SearchField
             label="Search documents"
             value={query}
             onValueChange={(next) => url.set({ q: next })}
-            placeholder="Chatbot, source or chunk id"
+            placeholder="Document, chatbot or source"
           />
         </div>
         <div className="w-44">
@@ -137,10 +143,10 @@ function DocumentsList() {
         </div>
       </Toolbar>
       <RecordList
-        caption="Embedded knowledge-base chunks"
+        caption="Ingested documents"
         columns={columns}
         paged={paged}
-        rowKey={(row) => String(row.id)}
+        rowKey={(row) => row.id}
         loading={list.loading}
         error={list.error}
         forbidden={list.forbidden}
@@ -149,10 +155,15 @@ function DocumentsList() {
         cap={500}
         note={
           <>
-            One row is one embedded <strong>chunk</strong>, not one file. The endpoint returns no
-            document name, size or chunk count — its handler reads fields the model does not have, so
-            those three values are always empty, zero and one. Nothing is shown for them here rather
-            than showing a zero that looks like data.
+            One row is one <strong>document</strong>, grouped from its chunks — the endpoint used to
+            return one row per chunk with a literal chunk count of one, no name and a size of zero.
+            Characters are counted after chunking, so they run a little ahead of the original file by
+            the chunk overlap.
+            <br />
+            There is no re-embed control here any more. The reindex route acts on a single chunk
+            (<code>POST /superadmin/documents/{'{'}chunk_id{'}'}/reindex</code>), and re-embedding one
+            arbitrary chunk of a document that may have hundreds is not a thing worth offering. A
+            source-level reindex needs a route that does not exist yet.
           </>
         }
         empty={
@@ -161,39 +172,11 @@ function DocumentsList() {
             title={query || source ? 'Nothing matched' : 'Nothing ingested'}
             description={
               query || source
-                ? 'No chunk matches this filter.'
+                ? 'No document matches this filter.'
                 : 'No account has uploaded a document or crawled a site.'
             }
           />
         }
-      />
-
-      <ConfirmDialog
-        open={pending !== null}
-        onOpenChange={(next) => {
-          if (!next) setPending(null);
-        }}
-        title={pending ? `Re-embed chunk #${pending.id}?` : 'Reindex'}
-        description={
-          <>
-            The chunk&apos;s vector is recomputed with the current embedding provider and overwritten.
-            That spends embedding quota, and while it runs the chunk keeps answering with its old
-            vector. If the background worker is down it runs inline instead, which can take several
-            seconds before this returns.
-          </>
-        }
-        confirmLabel="Reindex chunk"
-        onConfirm={async () => {
-          if (!pending) return;
-          try {
-            await platform.post(`/documents/${pending.id}/reindex`);
-            setPending(null);
-            toast.success('Reindex queued.');
-          } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'The reindex was not queued.');
-            setPending(null);
-          }
-        }}
       />
     </div>
   );

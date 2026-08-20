@@ -6,18 +6,16 @@
  * offline messages, qualification signals, meetings, growth events) and
  * `superadmin_routes.py` (chat feedback, platform feedback).
  *
- * Several fields these endpoints emit do not exist on the model behind them and
- * are therefore constant. They are typed here with a comment saying so, and no
- * screen renders them as data:
+ * Several fields these endpoints emitted used to be permanently null or literal
+ * constants, because the handlers read attributes the models do not have through
+ * `getattr` defaults. That is fixed on the API: the documents list is now
+ * grouped per source with real counts, and `_session_summary` joins `LeadInfo`
+ * for the visitor's identity and reads the real `last_active_at`. The fields
+ * below therefore carry data now, and the screens render them.
  *
- * - `DocumentRow.title` is always `null` and `size_bytes` always `0`: the
- *   handler reads `d.title` / `d.text` through `getattr` defaults, but
- *   `Document` has `document_name` and `content` (`models.py:583,598`).
- *   `chunk_count` is the literal `1`.
- * - `SessionRow.visitor_name`, `visitor_email` and `last_activity_at` are always
- *   `null`: `_session_summary` reads them off `ChatSession` through `getattr`
- *   defaults and none of the three is a column (the real one is
- *   `last_active_at`).
+ * `SessionRow.last_activity_at` keeps its wire name deliberately — the column
+ * behind it is `last_active_at`, and renaming the key would have bought nothing
+ * but a coordinated deploy.
  */
 
 export interface BotRow {
@@ -37,18 +35,31 @@ export interface BotDetail extends BotRow {
 }
 
 export interface DocumentRow {
-  id: number;
+  /**
+   * The source's `file_hash` — this list is grouped per source, so the id is
+   * not a row id, exactly as on `CrawlRow`. It is deliberately not a chunk id:
+   * a row here stands for a whole document, which may be hundreds of chunks.
+   */
+  id: string;
   bot_id: number | null;
   bot_name: string | null;
   client_id: number | null;
   /** upload | crawl | … — the real `Document.source` column. */
   source: string;
-  /** Always `null`. See the module note. */
+  /** The real `Document.document_name`. */
   title: string | null;
-  /** Always `1`. See the module note. */
+  /** How many chunks this source was split into. */
   chunk_count: number;
-  /** Always `0`. See the module note. */
-  size_bytes: number;
+  /**
+   * Characters across every chunk's stored text.
+   *
+   * Post-chunk, so it runs slightly ahead of the original file by the chunking
+   * overlap. It is not `source_char_count`, which is replicated onto every
+   * chunk and would multiply by the chunk count if summed.
+   */
+  content_chars: number;
+  /** False once a plan lapse has deactivated the source's knowledge. */
+  is_active: boolean;
   created_at: string;
 }
 
@@ -72,14 +83,14 @@ export interface SessionRow {
   client_name: string | null;
   /** bot | waiting | live | closed */
   status: string;
-  /** Always `null`. See the module note. */
+  /** The visitor's name from `LeadInfo`, null while they stay anonymous. */
   visitor_name: string | null;
-  /** Always `null`. See the module note. */
+  /** The visitor's email from `LeadInfo`, null while they stay anonymous. */
   visitor_email: string | null;
   /** `chat_sessions.visitor_rating`, 1–5, null when the visitor did not rate. */
   rating: number | null;
   created_at: string | null;
-  /** Always `null`. See the module note. */
+  /** The real `chat_sessions.last_active_at`; see the module note on the name. */
   last_activity_at: string | null;
 }
 
@@ -256,12 +267,16 @@ export function humanise(value: string | null | undefined): string {
 }
 
 /**
- * `chat_sessions.id` is a UUID string (`app/db/models.py:769`), but
- * `GET /superadmin/sessions/{session_id}` declares its path parameter as `int`
- * (`app/api/superadmin_routes_v2.py:712`), so FastAPI rejects every real session
- * id with a 422 before the handler runs. The detail screen checks the shape
- * first rather than firing a request that cannot succeed.
+ * The shape `GET /superadmin/sessions/{session_id}` will accept.
+ *
+ * That route used to declare its path parameter as `int` against a `String`
+ * primary key, so FastAPI rejected every real session id with a 422 before the
+ * handler ran — the endpoint had never worked, and this guard existed to avoid
+ * firing a request that could not succeed. The API now types it as the same
+ * bounded `Identifier` every other session-scoped route uses, so the guard is
+ * no longer about the parameter's type; it mirrors that validator, and its only
+ * job now is to skip a request the server would reject on length or shape.
  */
 export function isFetchableSessionId(id: string): boolean {
-  return /^\d+$/.test(id);
+  return id.length > 0 && id.length <= 128 && /^[A-Za-z0-9_.:-]+$/.test(id);
 }

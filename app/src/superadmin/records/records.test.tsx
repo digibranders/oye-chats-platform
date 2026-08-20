@@ -258,53 +258,102 @@ describe('usePagedRows', () => {
   });
 });
 
-describe('Documents — reindex', () => {
-  it('confirms before spending embedding quota, and states what happens meanwhile', async () => {
-    const user = userEvent.setup();
+describe('Documents', () => {
+  it('offers no re-embed control, because the row is a document and the route takes a chunk', async () => {
+    // The list is grouped per source now, so `id` is a file hash. The reindex
+    // route addresses a single chunk by integer id, and re-embedding one
+    // arbitrary chunk of a document that may have hundreds is not a thing
+    // worth offering. The button is gone until a per-source route exists.
     mocked.get.mockResolvedValue([
-      { id: 7, bot_id: 1, bot_name: 'Support', client_id: 1, source: 'upload', title: null, chunk_count: 1, size_bytes: 0, created_at: '2026-08-01T10:00:00Z' },
+      {
+        id: 'a3f19c02',
+        bot_id: 1,
+        bot_name: 'Support',
+        client_id: 1,
+        source: 'upload',
+        title: 'Handbook.pdf',
+        chunk_count: 42,
+        content_chars: 91_204,
+        is_active: true,
+        created_at: '2026-08-01T10:00:00Z',
+      },
     ]);
-    mocked.post.mockResolvedValue({ ok: true });
-
     render(
-      <MemoryRouter initialEntries={['/platform/records']}>
+      <MemoryRouter initialEntries={['/platform/records?tab=knowledge']}>
         <KnowledgeTab />
       </MemoryRouter>,
     );
 
-    await screen.findByText('#7');
-    await user.click(screen.getByRole('button', { name: 'Reindex' }));
-
-    const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Re-embed chunk #7?');
-    expect(dialog).toHaveTextContent('spends embedding quota');
+    expect(await screen.findByText('Handbook.pdf')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reindex' })).not.toBeInTheDocument();
     expect(mocked.post).not.toHaveBeenCalled();
-
-    await user.click(within(dialog).getByRole('button', { name: 'Reindex chunk' }));
-    await waitFor(() => expect(mocked.post).toHaveBeenCalledWith('/documents/7/reindex'));
   });
 
-  it('does nothing at all when the confirmation is cancelled', async () => {
-    const user = userEvent.setup();
+  it('shows the real chunk count and size the endpoint used to hard-code', async () => {
     mocked.get.mockResolvedValue([
-      { id: 7, bot_id: 1, bot_name: 'Support', client_id: 1, source: 'upload', title: null, chunk_count: 1, size_bytes: 0, created_at: '2026-08-01T10:00:00Z' },
+      {
+        id: 'a3f19c02',
+        bot_id: 1,
+        bot_name: 'Support',
+        client_id: 1,
+        source: 'upload',
+        title: 'Handbook.pdf',
+        chunk_count: 42,
+        content_chars: 91_204,
+        is_active: false,
+        created_at: '2026-08-01T10:00:00Z',
+      },
     ]);
-
     render(
-      <MemoryRouter initialEntries={['/platform/records']}>
+      <MemoryRouter initialEntries={['/platform/records?tab=knowledge']}>
         <KnowledgeTab />
       </MemoryRouter>,
     );
-    await screen.findByText('#7');
-    await user.click(screen.getByRole('button', { name: 'Reindex' }));
-    const dialog = await screen.findByRole('alertdialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(mocked.post).not.toHaveBeenCalled();
+
+    expect(await screen.findByText('42')).toBeInTheDocument();
+    expect(screen.getByText('91,204')).toBeInTheDocument();
+    // A plan lapse deactivates knowledge without deleting it; a super-admin
+    // answering "my chatbot forgot everything" needs to see that here.
+    expect(screen.getByText('Deactivated')).toBeInTheDocument();
   });
 });
 
+/**
+ * One conversation as `GET /superadmin/sessions/{id}` returns it.
+ *
+ * Tests that need a different shape override a field rather than restating the
+ * payload, so a field added to the wire is added in exactly one place here.
+ */
+function detail(
+  overrides: Record<string, unknown> = {},
+): { session: Record<string, unknown>; messages: Record<string, unknown>[] } {
+  const { messages, ...session } = overrides;
+  return {
+    session: {
+      id: '9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e',
+      bot_id: 1,
+      bot_name: 'Support',
+      client_id: 3,
+      client_name: 'Acme',
+      status: 'closed',
+      visitor_name: null,
+      visitor_email: null,
+      rating: 4,
+      created_at: '2026-08-01T10:00:00Z',
+      last_activity_at: null,
+      ...session,
+    },
+    messages: (messages as Record<string, unknown>[] | undefined) ?? [],
+  };
+}
+
 describe('Conversation detail', () => {
-  it('refuses to request a UUID id the endpoint cannot address, and explains why', async () => {
+  it('fetches a UUID id, now that the endpoint accepts one', async () => {
+    // This route declared its path parameter as `int` against a String primary
+    // key, so it 422'd every real conversation and the console refused to call
+    // it at all. Both halves are fixed; the guard now only mirrors the server's
+    // length and shape bounds.
+    mocked.get.mockResolvedValue(detail());
     render(
       <MemoryRouter initialEntries={['/platform/records/sessions/9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e']}>
         <Routes>
@@ -312,30 +361,77 @@ describe('Conversation detail', () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText('The API cannot return this conversation')).toBeInTheDocument();
-    // The point of the check: no request is issued for an id that cannot succeed.
+    await waitFor(() => expect(mocked.get).toHaveBeenCalled());
+    expect(mocked.get.mock.calls[0][0]).toBe('/sessions/9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e');
+  });
+
+  it('says there is no such conversation rather than crashing on a payload without one', async () => {
+    // The handler 404s a missing id, so this shape should never arrive. If it
+    // ever does, the page reading `detail.session.status` straight through
+    // would throw during render and leave a blank screen behind — the four
+    // states exist so a surprise from the server is still legible.
+    mocked.get.mockResolvedValue({ session: null, messages: [] });
+    render(
+      <MemoryRouter initialEntries={['/platform/records/sessions/9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e']}>
+        <Routes>
+          <Route path="/platform/records/sessions/:sessionId" element={<SessionDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('No such conversation')).toBeInTheDocument();
+  });
+
+  it('shows the visitor and last activity the endpoint now returns', async () => {
+    // These three fields were permanently null because the handler read
+    // attributes the model does not have. They carry data now, so the console
+    // shows them instead of describing them as missing.
+    mocked.get.mockResolvedValue(
+      detail({
+        visitor_name: 'Priya Raman',
+        visitor_email: 'priya@northwind.test',
+        last_activity_at: '2026-08-19T09:41:00Z',
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/platform/records/sessions/9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e']}>
+        <Routes>
+          <Route path="/platform/records/sessions/:sessionId" element={<SessionDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Priya Raman')).toBeInTheDocument();
+    expect(screen.getByText('priya@northwind.test')).toBeInTheDocument();
+    expect(screen.getByText('Last active')).toBeInTheDocument();
+  });
+
+  it('still refuses an id the server would reject on shape, without firing a request', async () => {
+    render(
+      <MemoryRouter initialEntries={['/platform/records/sessions/not%20a%20valid%20id']}>
+        <Routes>
+          <Route path="/platform/records/sessions/:sessionId" element={<SessionDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('That is not a conversation id')).toBeInTheDocument();
     expect(mocked.get).not.toHaveBeenCalled();
   });
 
   it('fetches a conversation whose id the endpoint can address', async () => {
-    mocked.get.mockResolvedValue({
-      session: {
+    mocked.get.mockResolvedValue(
+      detail({
         id: '42',
-        bot_id: 1,
-        bot_name: 'Support',
-        client_id: 3,
-        client_name: 'Acme',
-        status: 'closed',
-        visitor_name: null,
-        visitor_email: null,
-        rating: 4,
-        created_at: '2026-08-01T10:00:00Z',
-        last_activity_at: null,
-      },
-      messages: [
-        { id: 1, session_id: '42', role: 'user', content: 'Hello', created_at: '2026-08-01T10:00:00Z', trace_id: null },
-      ],
-    });
+        messages: [
+          {
+            id: 1,
+            session_id: '42',
+            role: 'user',
+            content: 'Hello',
+            created_at: '2026-08-01T10:00:00Z',
+            trace_id: null,
+          },
+        ],
+      }),
+    );
 
     render(
       <MemoryRouter initialEntries={['/platform/records/sessions/42']}>

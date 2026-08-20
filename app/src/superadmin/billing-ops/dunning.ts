@@ -21,7 +21,9 @@ export function byUrgency(a: DunningItem, b: DunningItem): number {
   const left = a.days_left ?? Number.POSITIVE_INFINITY;
   const right = b.days_left ?? Number.POSITIVE_INFINITY;
   if (left !== right) return left - right;
-  return b.at_risk_minor - a.at_risk_minor;
+  // A row with no recorded price sorts last within its urgency band rather
+  // than producing NaN and scrambling the whole comparator.
+  return (b.cycle_at_risk_minor ?? -1) - (a.cycle_at_risk_minor ?? -1);
 }
 
 export function sortByUrgency(items: readonly DunningItem[]): DunningItem[] {
@@ -65,19 +67,23 @@ export function cadenceSummary(emailsSent: readonly string[]): string {
 }
 
 /**
- * Totals per currency.
+ * Totals per currency, over the rows on screen.
  *
- * The endpoint's own `at_risk_minor_total` sums every row's minor units without
- * looking at the currency, so on a platform with both INR and USD plans it adds
- * paise to cents and reports a number that is not an amount of anything. This
- * regroups the rows so each currency gets its own total, and the console never
- * prints the server's mixed one.
+ * The server now sends its own per-currency breakdown, which this deliberately
+ * does not replace: the server totals every past-due subscription, while this
+ * totals what the operator is actually looking at after filtering. Both are
+ * useful and they are not the same number, so the screen labels which is which.
+ *
+ * A row with no recorded price contributes nothing rather than zero — it is
+ * excluded, exactly as the server excludes it, so a currency whose every row is
+ * missing a price does not appear as a confident ₹0.00.
  */
 export function atRiskByCurrency(items: readonly DunningItem[]): { currency: string; minor: number }[] {
   const totals = new Map<string, number>();
   for (const item of items) {
+    if (item.cycle_at_risk_minor === null || item.cycle_at_risk_minor === undefined) continue;
     const code = (item.currency || 'INR').toUpperCase();
-    totals.set(code, (totals.get(code) ?? 0) + (item.at_risk_minor || 0));
+    totals.set(code, (totals.get(code) ?? 0) + item.cycle_at_risk_minor);
   }
   return [...totals.entries()]
     .map(([currency, minor]) => ({ currency, minor }))

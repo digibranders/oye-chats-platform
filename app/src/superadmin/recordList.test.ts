@@ -146,10 +146,21 @@ describe('isTruncated', () => {
 });
 
 describe('session ids', () => {
-  it('recognises that a UUID session id cannot reach the integer detail route', () => {
-    expect(isFetchableSessionId('9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e')).toBe(false);
+  it('accepts a real conversation id, now that the endpoint does', () => {
+    // The detail route declared its path parameter as `int` against a String
+    // primary key, so it 422'd every UUID and this guard refused to call it.
+    // Both halves are fixed; the guard now only mirrors the server's own
+    // `Identifier` bounds so we skip a request it would reject on shape.
+    expect(isFetchableSessionId('9f2c7a1e-4d5b-4c8a-9c11-2f3a4b5c6d7e')).toBe(true);
     expect(isFetchableSessionId('42')).toBe(true);
+    expect(isFetchableSessionId('sess_a.b:c-d')).toBe(true);
+  });
+
+  it('rejects what the server would reject, without spending a request on it', () => {
     expect(isFetchableSessionId('')).toBe(false);
+    expect(isFetchableSessionId('not a valid id')).toBe(false);
+    expect(isFetchableSessionId('a/../b')).toBe(false);
+    expect(isFetchableSessionId('x'.repeat(129))).toBe(false);
   });
 });
 
