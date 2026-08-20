@@ -5,8 +5,11 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentsPage,
+  DEFAULT_SORT,
+  agentSortParam,
   matchesQuery,
   matchesStatus,
+  parseAgentSort,
   sortAgents,
   summarizeAgents,
   type AgentListItem,
@@ -38,7 +41,13 @@ vi.mock('../../lib/razorpay', () => ({ openRazorpayCheckout: vi.fn() }));
 
 function item(bot: Partial<Bot>, conversations: number | null = 0): AgentListItem {
   const full: Bot = { id: 1, name: 'Chatbot', ...bot };
-  return { bot: full, health: agentHealth(full), conversations, conversationsLoading: false };
+  return {
+    bot: full,
+    health: agentHealth(full),
+    conversations,
+    messages: conversations === null ? null : conversations * 3,
+    conversationsLoading: false,
+  };
 }
 
 const live = item({
@@ -113,19 +122,24 @@ describe('summary', () => {
 
 describe('sorting', () => {
   it('puts the chatbot that is failing customers first by default', () => {
-    const order = sortAgents([live, training, broken], 'status').map((entry) => entry.bot.id);
+    const order = sortAgents([live, training, broken], DEFAULT_SORT).map((entry) => entry.bot.id);
     expect(order).toEqual([2, 3, 1]);
   });
 
   it('sorts by name case-insensitively', () => {
     const a = item({ id: 1, name: 'apple' });
     const b = item({ id: 2, name: 'Banana' });
-    expect(sortAgents([b, a], 'name').map((entry) => entry.bot.id)).toEqual([1, 2]);
+    expect(
+      sortAgents([b, a], { key: 'name', direction: 'asc' }).map((entry) => entry.bot.id),
+    ).toEqual([1, 2]);
   });
 
   it('sorts newest first and pushes an unreadable creation date to the end', () => {
     const undated = item({ id: 4, name: 'Zeta', created_at: 'not-a-date' });
-    const order = sortAgents([live, broken, undated], 'newest').map((entry) => entry.bot.id);
+    const order = sortAgents([live, broken, undated], {
+      key: 'created',
+      direction: 'desc',
+    }).map((entry) => entry.bot.id);
     expect(order).toEqual([2, 1, 4]);
   });
 
@@ -133,21 +147,66 @@ describe('sorting', () => {
     const busy = item({ id: 5, name: 'Busy' }, 90);
     const quiet = item({ id: 6, name: 'Quiet' }, 0);
     const silent = item({ id: 7, name: 'Silent' }, null);
-    const order = sortAgents([silent, quiet, busy], 'busiest').map((entry) => entry.bot.id);
+    const order = sortAgents([silent, quiet, busy], {
+      key: 'conversations',
+      direction: 'desc',
+    }).map((entry) => entry.bot.id);
     expect(order).toEqual([5, 6, 7]);
+  });
+
+  it('orders the columns the card grid could not offer at all', () => {
+    const rich = item({ id: 11, name: 'Rich', indexed_chunk_count: 900 });
+    const thin = item({ id: 12, name: 'Thin', indexed_chunk_count: 4 });
+    expect(
+      sortAgents([thin, rich], { key: 'passages', direction: 'desc' }).map((e) => e.bot.id),
+    ).toEqual([11, 12]);
+
+    const fresh = item({ id: 13, name: 'Fresh', crawl_completed_at: '2026-08-01T00:00:00Z' });
+    const stale = item({ id: 14, name: 'Stale', crawl_completed_at: '2026-01-01T00:00:00Z' });
+    const never = item({ id: 15, name: 'Never' });
+    expect(
+      sortAgents([never, stale, fresh], { key: 'trained', direction: 'desc' }).map((e) => e.bot.id),
+    ).toEqual([13, 14, 15]);
   });
 
   it('is stable: equal rows keep one order rather than reshuffling on refetch', () => {
     const first = item({ id: 8, name: 'Alpha' }, 5);
     const second = item({ id: 9, name: 'Bravo' }, 5);
-    expect(sortAgents([second, first], 'busiest').map((entry) => entry.bot.id)).toEqual([8, 9]);
-    expect(sortAgents([first, second], 'busiest').map((entry) => entry.bot.id)).toEqual([8, 9]);
+    const busiest = { key: 'conversations', direction: 'desc' } as const;
+    expect(sortAgents([second, first], busiest).map((entry) => entry.bot.id)).toEqual([8, 9]);
+    expect(sortAgents([first, second], busiest).map((entry) => entry.bot.id)).toEqual([8, 9]);
   });
 
   it('does not mutate the list it was given', () => {
     const input = [live, broken];
-    sortAgents(input, 'name');
+    sortAgents(input, { key: 'name', direction: 'asc' });
     expect(input.map((entry) => entry.bot.id)).toEqual([1, 2]);
+  });
+});
+
+/**
+ * The sort moved from a `Select` to the column heads, but the URL parameter is
+ * the same one — a link pasted into a support thread last week still has to open
+ * the order it promised.
+ */
+describe('the sort parameter', () => {
+  it('still reads the four words the Select used to write', () => {
+    expect(parseAgentSort('newest')).toEqual({ key: 'created', direction: 'desc' });
+    expect(parseAgentSort('busiest')).toEqual({ key: 'conversations', direction: 'desc' });
+    expect(parseAgentSort('name')).toEqual({ key: 'name', direction: 'asc' });
+    expect(parseAgentSort('status')).toEqual(DEFAULT_SORT);
+  });
+
+  it('reads a descending column and falls back rather than throwing', () => {
+    expect(parseAgentSort('-passages')).toEqual({ key: 'passages', direction: 'desc' });
+    expect(parseAgentSort('nonsense')).toEqual(DEFAULT_SORT);
+    expect(parseAgentSort(null)).toEqual(DEFAULT_SORT);
+  });
+
+  it('writes no parameter at all for the default order', () => {
+    expect(agentSortParam(DEFAULT_SORT)).toBeNull();
+    expect(agentSortParam({ key: 'trained', direction: 'desc' })).toBe('-trained');
+    expect(agentSortParam({ key: 'name', direction: 'asc' })).toBe('name');
   });
 });
 
@@ -212,5 +271,109 @@ describe('creating a chatbot', () => {
       expect(screen.queryByRole('heading', { name: 'New chatbot' })).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId('search')).toHaveTextContent('');
+  });
+});
+
+/**
+ * The rows themselves.
+ *
+ * These contracts used to live on `AgentCard`, which the table replaces. They
+ * are the same assertions against the DOM that now carries them: the name is a
+ * real link, the actions menu is its sibling rather than nested inside it, an
+ * unreported figure is an em dash and never a zero, and the health verdict is
+ * on the row.
+ */
+describe('the table', () => {
+  const rows: Bot[] = [
+    {
+      id: 17,
+      name: 'Support Concierge',
+      bot_key: 'bot-6a427d4529b9',
+      website: 'https://acme.test',
+      indexed_chunk_count: 480,
+      crawl_completed_at: '2026-07-01T00:00:00Z',
+      widget_installed_at: '2026-07-02T00:00:00Z',
+      created_at: '2026-01-01T00:00:00Z',
+    },
+    {
+      id: 18,
+      name: 'Beta Concierge',
+      indexed_chunk_count: 0,
+      last_crawl_status: 'failed',
+      created_at: '2026-03-01T00:00:00Z',
+    },
+  ];
+
+  function renderTable(url = '/chatbots') {
+    vi.mocked(useBotContext).mockReturnValue({
+      bots: rows,
+      selectedBot: null,
+      selectBot: vi.fn(),
+      isAllAgents: false,
+      loading: false,
+      error: null,
+      refreshBots: vi.fn().mockResolvedValue([]),
+    });
+    vi.mocked(useEntitlements).mockReturnValue({
+      limitFor: () => 5,
+      planName: 'Standard',
+    } as unknown as ReturnType<typeof useEntitlements>);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={[url]}>
+          <AgentsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('names each row with a real link, so a chatbot can be opened in a new tab', () => {
+    renderTable();
+
+    expect(screen.getByRole('link', { name: 'Support Concierge' })).toHaveAttribute(
+      'href',
+      '/chatbots/17/overview',
+    );
+  });
+
+  it('keeps the actions menu outside the navigational link', () => {
+    renderTable();
+
+    const link = screen.getByRole('link', { name: 'Support Concierge' });
+    const menu = screen.getByRole('button', { name: 'Actions for Support Concierge' });
+
+    expect(link).not.toContainElement(menu);
+    expect(menu).not.toContainElement(link);
+  });
+
+  it('carries the health verdict as a word on the row, never as colour alone', () => {
+    renderTable();
+
+    expect(screen.getByText('Training failed')).toBeInTheDocument();
+    expect(screen.getAllByText('Not installed').length).toBeGreaterThan(0);
+  });
+
+  it('never renders an unknown or absent figure as zero', () => {
+    renderTable();
+
+    // Beta has no passages, no training date and no reported conversations.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getByText('480')).toBeInTheDocument();
+  });
+
+  it('offers every column the card grid could not sort by', () => {
+    renderTable();
+
+    for (const header of ['Chatbot', 'Status', 'Conversations', 'Messages', 'Passages', 'Last trained']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${header}$`) })).toBeInTheDocument();
+    }
+  });
+
+  it('states the result of a filter once, in the toolbar, and not again as a card of tiles', () => {
+    renderTable();
+
+    expect(screen.getByRole('status')).toHaveTextContent('2 chatbots');
+    // The summary card restated three of the four filter segments as 28px tiles.
+    expect(screen.queryByText('Needs attention', { selector: 'p' })).not.toBeInTheDocument();
   });
 });

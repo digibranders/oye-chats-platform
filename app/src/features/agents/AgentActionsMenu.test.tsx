@@ -121,8 +121,11 @@ describe('AgentActionsMenu', () => {
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent(/stops answering visitors/i);
     expect(dialog).toHaveTextContent(/Nothing is deleted/i);
-    // The billing consequence, which is the half a customer cannot guess.
-    expect(dialog).toHaveTextContent(/can be refused if the plan is full/i);
+    // The billing consequence, which is the half a customer cannot guess. It
+    // used to be paragraph two of an 83-word description; it is a clause now,
+    // and it still has to be there.
+    expect(dialog).toHaveTextContent(/frees its plan slot/i);
+    expect(dialog).toHaveTextContent(/same check as a new chatbot/i);
     expect(vi.mocked(updateBot)).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Pause chatbot' }));

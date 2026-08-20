@@ -63,7 +63,12 @@ function renderDialog(): void {
   );
 }
 
-/** Drive the dialog from the name step to a rendered, preselected plan list. */
+/**
+ * Drive the dialog from the name step to a rendered, preselected plan list.
+ *
+ * The list is a `RadioCards` radiogroup now rather than a `<ul>` of
+ * `aria-pressed` buttons.
+ */
 async function openPricingStep(): Promise<void> {
   createBot.mockRejectedValue(mustSubscribeError());
   getSubscriptionPlans.mockResolvedValue([
@@ -81,7 +86,7 @@ async function openPricingStep(): Promise<void> {
   renderDialog();
   fireEvent.change(screen.getByLabelText(/chatbot name/i), { target: { value: 'Second Assistant' } });
   fireEvent.click(screen.getByRole('button', { name: /continue to plans/i }));
-  await waitFor(() => expect(screen.getByRole('list', { name: /available plans/i })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Plan' })).toBeInTheDocument());
 }
 
 /** The pay CTA on the pricing step. */

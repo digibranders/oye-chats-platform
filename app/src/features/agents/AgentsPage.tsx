@@ -193,9 +193,8 @@ function byDate(left: string | null | undefined, right: string | null | undefine
  * stable — an unstable sort makes a list appear to reshuffle itself on refetch.
  *
  * Ascending is the *natural* reading of each column: A→Z for a name, worst-first
- * for health, smallest-first for a figure, oldest-first for a date. `DataTable`
- * flips it for the descending press rather than each comparator owning two
- * behaviours.
+ * for health, smallest-first for a figure, oldest-first for a date. Descending
+ * negates that comparison and nothing else.
  */
 export function sortAgents(
   items: readonly AgentListItem[],
@@ -204,30 +203,34 @@ export function sortAgents(
   const byName = (a: AgentListItem, b: AgentListItem): number =>
     (a.bot.name ?? '').localeCompare(b.bot.name ?? '', 'en', { sensitivity: 'base' });
 
-  const compare = (a: AgentListItem, b: AgentListItem): number => {
+  const primary = (a: AgentListItem, b: AgentListItem): number => {
     switch (sort.key) {
       case 'name':
         return byName(a, b);
       case 'created':
-        return byDate(a.bot.created_at, b.bot.created_at) || byName(a, b);
+        return byDate(a.bot.created_at, b.bot.created_at);
       case 'conversations':
-        return byFigure(a.conversations, b.conversations) || byName(a, b);
+        return byFigure(a.conversations, b.conversations);
       case 'messages':
-        return byFigure(a.messages, b.messages) || byName(a, b);
+        return byFigure(a.messages, b.messages);
       case 'passages':
-        return (
-          Number(a.bot.indexed_chunk_count ?? 0) - Number(b.bot.indexed_chunk_count ?? 0) ||
-          byName(a, b)
-        );
+        return Number(a.bot.indexed_chunk_count ?? 0) - Number(b.bot.indexed_chunk_count ?? 0);
       case 'trained':
-        return byDate(a.bot.crawl_completed_at, b.bot.crawl_completed_at) || byName(a, b);
+        return byDate(a.bot.crawl_completed_at, b.bot.crawl_completed_at);
       default:
-        return HEALTH_RANK[a.health.state] - HEALTH_RANK[b.health.state] || byName(a, b);
+        return HEALTH_RANK[a.health.state] - HEALTH_RANK[b.health.state];
     }
   };
 
-  const ordered = [...items].sort(compare);
-  return sort.direction === 'desc' ? ordered.reverse() : ordered;
+  // Only the primary comparison is negated for a descending sort — the name
+  // tiebreak stays A→Z in both directions. Negating it too (or reversing the
+  // sorted array, which is the same thing) means descending is not the mirror
+  // of ascending, and a set of tied rows appears to shuffle every time the sort
+  // is flipped and flipped back.
+  return [...items].sort((a, b) => {
+    const result = primary(a, b);
+    return (sort.direction === 'desc' ? -result : result) || byName(a, b);
+  });
 }
 
 const SORT_COLUMNS: readonly SortColumn[] = [

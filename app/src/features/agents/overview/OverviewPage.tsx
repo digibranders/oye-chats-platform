@@ -181,8 +181,10 @@ function OverviewContent({ agent }: { agent: Bot }) {
         />
 
         <Card>
+          {/* The window is stated here, once, for the whole strip — `StatRow`
+              suppresses it on every tile that shares it. */}
           <CardHeader
-            size="sm"
+            eyebrow={rangeLabel(days)}
             title="Performance"
             titleAs="h2"
             actions={

@@ -39,6 +39,7 @@ function overviewData(overrides: Partial<OverviewData> = {}): OverviewData {
       demoOpens: 6,
       demoOpenRate: 75,
     }),
+    deltas: { conversations: null, messages: null },
     activity: section([]),
     questions: section([]),
     ratings: section({ average: 4.6, total: 11 }),
@@ -131,6 +132,40 @@ describe('OverviewPage', () => {
     expect(screen.getByText('Open rate')).toBeInTheDocument();
   });
 
+  /**
+   * `StatTile` shipped `delta` from the start and no surface in the app passed
+   * it, so every figure here was a number with nothing to compare it against.
+   */
+  it('carries a comparison on the figures that have a previous window', () => {
+    mountAgent(trained);
+    vi.mocked(useOverviewData).mockReturnValue(
+      overviewData({
+        deltas: {
+          conversations: { value: '+18%', direction: 'up', label: 'vs previous 30 days' },
+          messages: { value: '\u22125%', direction: 'down', label: 'vs previous 30 days' },
+        },
+      }),
+    );
+    renderPage();
+
+    expect(screen.getByText('+18%')).toBeInTheDocument();
+    expect(screen.getByText('\u22125%')).toBeInTheDocument();
+    // The direction as a word, because an arrow plus a colour is shape and hue
+    // doing the whole job.
+    expect(screen.getAllByText(/vs previous 30 days/).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A live fifteen-minute count used to sit inside a card stamped "LAST 30
+   * DAYS", correcting its own card's eyebrow in 12px grey.
+   */
+  it('puts the live visitor count beside the verdict, not inside the windowed strip', () => {
+    mountAgent(trained);
+    renderPage();
+
+    expect(screen.getByText(/chatting right now/)).toBeInTheDocument();
+  });
+
   /** The old CTA pointed at a per-agent route that redirected back to this page. */
   it('links the deep dive to the analytics destination that exists', () => {
     mountAgent(trained);
@@ -140,6 +175,15 @@ describe('OverviewPage', () => {
       'href',
       '/analytics',
     );
+  });
+
+  /** A 403 and a missing chatbot are different answers. */
+  it('answers a forbidden chatbot with a lock rather than "does not exist, or"', () => {
+    mountAgent(null, { error: { message: 'Forbidden', status: 403 } });
+    renderPage();
+
+    expect(screen.getByText('This chatbot is not yours to see')).toBeInTheDocument();
+    expect(screen.queryByText(/does not exist/)).not.toBeInTheDocument();
   });
 
   /** A failed section used to be a dead card with no way to reload it. */
