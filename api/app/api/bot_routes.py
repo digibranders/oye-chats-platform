@@ -23,7 +23,7 @@ from app.api.auth import (
     require_verified_email_for_workspace,
 )
 from app.config import APP_URL, FRONTEND_URL, MARKETING_URL
-from app.core.cache import bot_config_key, cache_delete
+from app.core.cache import PREFIX, bot_config_key, cache_delete, get_redis
 from app.core.origin_check import extract_hostname, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
@@ -193,23 +193,105 @@ _INTERNAL_WIDGET_HOSTS = {
 } | {"localhost", "127.0.0.1"}
 
 
-def _is_external_install_origin(request: Request) -> bool:
-    """True when a widget bootstrap comes from a real external site.
+# How long one bot suppresses further heartbeat writes.
+# ``GET /bots/settings/public`` runs on EVERY widget bootstrap, i.e. every page
+# view on every customer site, so an unthrottled touch would be one row write
+# per page view against a wide row with several JSONB columns. One hour keeps
+# "is this widget still live?" answerable to within an hour.
+_WIDGET_HEARTBEAT_TTL_SECONDS = 3600
 
-    The ``Origin`` header is the source of truth (``Referer`` is a fallback for
-    clients that omit it). A missing/opaque origin, or one of our own hosts,
-    returns False so we only stamp an install for a genuine customer embed. The
-    request's own host is excluded too, because the hosted demo/preview pages are
-    served by the API itself, a widget embedded there reports the API host as
-    its origin, which must not count as a customer install regardless of how the
+
+def _widget_heartbeat_key(bot_id: int) -> str:
+    """Throttle key for the hourly widget-liveness touch.
+
+    Keyed on the bot ALONE, deliberately. The obvious design keys it on
+    ``(bot_id, hostname)`` so a new origin is recorded within one page load,
+    but ``hostname`` comes from ``Origin``/``Referer``, this endpoint has no
+    rate limit of its own, and the bot key it authenticates with is public by
+    design. A loop sending a distinct forged ``Origin`` per request would then
+    take a fresh throttle slot every request: one row UPDATE per request on a
+    wide JSONB row, plus one Redis key per request pinned for an hour. The
+    throttle would hold only for honest clients, which is not a throttle.
+
+    The key's VALUE carries the hostname last recorded, so
+    :func:`_widget_heartbeat_due` can still spot a genuine origin change
+    without putting attacker-controlled bytes in a key name.
+    """
+    return f"{PREFIX}widget:seen:{bot_id}"
+
+
+def _widget_origin_change_key(bot_id: int) -> str:
+    """Budget key for the one extra write an origin CHANGE may earn per hour.
+
+    Also keyed on the bot alone, for the same reason. Without a budget the
+    change-detector would be the bypass all over again (every forged origin
+    differs from the stored one, so every request would "have changed"); with
+    it the worst case is 2 writes and 2 Redis keys per bot per hour no matter
+    how many origins are thrown at it, and an honest domain migration is still
+    visible within minutes instead of within the hour.
+    """
+    return f"{PREFIX}widget:seen:origin:{bot_id}"
+
+
+def _widget_heartbeat_due(redis, bot_id: int, hostname: str) -> bool:
+    """Has this bootstrap earned a ``widget_last_seen_at`` row write?
+
+    Two gates, both ``SET NX EX`` on per-bot keys, so the write rate is bounded
+    by the bot and never by the caller:
+
+    1. the hourly refresh slot (:func:`_widget_heartbeat_key`), whose value is
+       the hostname it was claimed with, and
+    2. a single per-hour allowance (:func:`_widget_origin_change_key`) for a
+       bootstrap whose hostname differs from that stored value.
+
+    Ceiling: 2 writes per bot per hour, 48/day, for any traffic pattern. The
+    stored hostname is read back from Redis rather than from
+    ``Bot.widget_last_origin`` on purpose: the ORM object here is frequently a
+    bot-config cache hit up to ``BOT_CONFIG_TTL`` old, and comparing against a
+    stale value would burn the change allowance every hour for a bot whose
+    origin never moved.
+    """
+    seen_key = _widget_heartbeat_key(bot_id)
+    if redis.set(seen_key, hostname, nx=True, ex=_WIDGET_HEARTBEAT_TTL_SECONDS):
+        return True
+    if redis.get(seen_key) == hostname:
+        return False
+    if not redis.set(_widget_origin_change_key(bot_id), "1", nx=True, ex=_WIDGET_HEARTBEAT_TTL_SECONDS):
+        return False
+    # Remember the new origin (and restart its hour) so the next bootstrap from
+    # it is a no-op rather than a second "changed" claim.
+    redis.set(seen_key, hostname, ex=_WIDGET_HEARTBEAT_TTL_SECONDS)
+    return True
+
+
+def _external_install_hostname(request: Request) -> str | None:
+    """The Origin/Referer hostname of a genuine customer widget bootstrap.
+
+    Returns ``None`` when this is not one. The ``Origin`` header is the source
+    of truth (``Referer`` is a fallback for clients that omit it). A
+    missing/opaque origin, or one of our own hosts, returns ``None`` so we only
+    record an install for a genuine customer embed. The request's own host is
+    excluded too, because the hosted demo/preview pages are served by the API
+    itself, a widget embedded there reports the API host as its origin, which
+    must not count as a customer install regardless of how the
     ``APP_URL``/``MARKETING_URL`` config resolves.
+
+    The hostname is returned rather than discarded because it is what
+    ``Bot.widget_last_origin`` stores. It is browser-forgeable and must stay
+    diagnostic: nothing may gate on it (embed enforcement is
+    ``allowed_domains`` + ``auth._enforce_bot_origin``).
     """
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
     if not hostname or hostname in _INTERNAL_WIDGET_HOSTS:
-        return False
+        return None
     self_host = extract_hostname(str(request.base_url))
-    return hostname != self_host
+    return None if hostname == self_host else hostname
+
+
+def _is_external_install_origin(request: Request) -> bool:
+    """True when a widget bootstrap comes from a real external site."""
+    return _external_install_hostname(request) is not None
 
 
 router = APIRouter(prefix="/bots", tags=["bots"])
@@ -497,8 +579,34 @@ class UpdateBotRequest(BaseModel):
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = Field(None, ge=5, le=3600)
+    # Visitor disconnect grace period, seconds. Bounds mirror
+    # ``operator_timeout_seconds`` deliberately: both are live-chat timers and
+    # a customer should not have to learn two different ranges. Below 5s a
+    # timer fires faster than a normal tab switch or a mobile network blip;
+    # above an hour it is indistinguishable from "never". The column default is
+    # 120s, matching ``live_chat_service.DEFAULT_VISITOR_DISCONNECT_TIMEOUT``,
+    # and ``handle_visitor_disconnect`` really does read the column.
+    #
+    # ``operator_disconnect_timeout`` is deliberately ABSENT. The column and
+    # its 60s default exist, but ``live_chat_service._operator_disconnect_timeout``
+    # sleeps the class constant and never reads them, so exposing the field
+    # here would ship a setting that validates, persists and echoes back while
+    # changing nothing -- rendered next to a working peer, which is how a
+    # customer learns not to trust either. Add it back in the same change that
+    # teaches ``_operator_disconnect_timeout`` to look the value up.
+    visitor_disconnect_timeout: int | None = Field(None, ge=5, le=3600)
     live_chat_queue_timeout_seconds: int | None = Field(None, ge=5, le=600)
     live_chat_max_queue_size: int | None = Field(None, ge=1, le=100)
+    # Kill switch for the manual lead follow-up email. ``lead_routes``' Gate 4
+    # refuses with 423 while this is true, with no override.
+    followup_sending_paused: bool | None = None
+    # Pause / resume this chatbot. It hides the widget (``get_current_bot``
+    # refuses an inactive bot) but it is first of all the BILLING key -- see
+    # ``Bot.is_active`` and the gate in :func:`update_bot` -- so the
+    # false->true direction re-runs the create gate rather than writing
+    # straight through. ``GET /bots`` deliberately does NOT filter on it, so a
+    # paused bot stays visible to its owner and remains resumable.
+    is_active: bool | None = None
     # Business hours
     business_hours: BusinessHours | None = None
     # Feature flags / widget copy / widget tuning. These three are genuinely
@@ -632,14 +740,29 @@ class BotResponse(BaseModel):
     # Set once the embedded widget has been seen live on a real external site;
     # None until then. Drives the "widget installed" setup-checklist step.
     widget_installed_at: datetime | None = None
+    # Liveness heartbeat for that install, refreshed at most hourly per origin.
+    # None means "not seen since the heartbeat shipped" -- there is no backfill,
+    # so an older install reads None until its widget next bootstraps.
+    widget_last_seen_at: datetime | None = None
+    # Hostname of the most recent bootstrap. Browser-forgeable, so this is a
+    # support diagnostic ("which domain is it actually running on?") and never
+    # an authorisation input.
+    widget_last_origin: str | None = None
     # Durable per-bot ingestion ("trained") state, a persistent fact the UI can
     # read instead of racing the ephemeral /crawl/progress toast.
     last_crawl_status: str | None = None
     crawl_completed_at: datetime | None = None
     indexed_chunk_count: int = 0
     operator_timeout_seconds: int = 120
+    # Visitor disconnect grace period, seconds. Default mirrors the column.
+    # No ``operator_disconnect_timeout`` here: see ``UpdateBotRequest``, the
+    # column is not read by ``live_chat_service`` yet, so publishing it would
+    # invite the console to render a control that does nothing.
+    visitor_disconnect_timeout: int = 120
     live_chat_queue_timeout_seconds: int = 20
     live_chat_max_queue_size: int = 10
+    # Manual lead follow-up kill switch. Default FALSE, matching the column.
+    followup_sending_paused: bool = False
     business_hours: dict | None = None
     feature_flags: dict = {}
     widget_messages: dict = {}
@@ -770,12 +893,16 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         email_visitor_confirmation=bot.email_visitor_confirmation,
         live_chat_enabled=bot.live_chat_enabled,
         widget_installed_at=bot.widget_installed_at,
+        widget_last_seen_at=bot.widget_last_seen_at,
+        widget_last_origin=bot.widget_last_origin,
         last_crawl_status=bot.last_crawl_status,
         crawl_completed_at=bot.crawl_completed_at,
         indexed_chunk_count=bot.indexed_chunk_count or 0,
         operator_timeout_seconds=bot.operator_timeout_seconds,
+        visitor_disconnect_timeout=bot.visitor_disconnect_timeout,
         live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
         live_chat_max_queue_size=bot.live_chat_max_queue_size,
+        followup_sending_paused=bool(bot.followup_sending_paused),
         business_hours=bot.business_hours,
         feature_flags=bot.feature_flags or {},
         widget_messages=bot.widget_messages or {},
@@ -854,26 +981,79 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     open the widget will only get the configured ``offline_message``,
     the chat endpoint will not run RAG.
     """
-    # One-time "widget is live" detection. The first time the widget bootstraps
-    # from a real external site (not our dashboard preview / demo / localhost),
-    # stamp the bot so the Dashboard setup checklist can confirm the install
-    # without a user self-report. Best-effort and idempotent, the guarded
-    # UPDATE only matches while the column is NULL, and we invalidate the cached
-    # bot config so subsequent loads skip this path entirely. Never blocks the
-    # widget response.
-    if bot.widget_installed_at is None and _is_external_install_origin(request):
+    # ── Widget install detection + liveness heartbeat ──────────────────────
+    #
+    # This endpoint runs on EVERY widget bootstrap, i.e. every page view on
+    # every customer site, so both branches below are written around one
+    # constraint: they must not turn a read into a per-page-view row write.
+    #
+    # First-seen (below, ``widget_installed_at IS NULL``) keeps its original
+    # design: a DB-guarded ``UPDATE ... WHERE widget_installed_at IS NULL``
+    # that can match at most once in the bot's lifetime, followed by a
+    # ``cache_delete`` so subsequent loads read the stamped value and skip the
+    # branch. It deliberately does NOT depend on Redis: first-install detection
+    # is a one-off fact the setup checklist needs, and it must survive a Redis
+    # outage.
+    #
+    # The heartbeat is the opposite case, an update that WANTS to repeat, so it
+    # is throttled by ``_widget_heartbeat_due``: two Redis ``SET NX EX`` gates
+    # on PER-BOT keys, capping the write rate at 2/hour/bot for ANY traffic
+    # pattern. The throttle is deliberately not keyed on the request's
+    # hostname: that value is an attacker-supplied header on an endpoint with
+    # no rate limit of its own, so keying on it would let a loop of forged
+    # ``Origin`` values buy one row write (and one hour-long Redis key) per
+    # request. Redis fails CLOSED here. If ``get_redis()`` returns None we skip
+    # the write entirely rather than fall through to an unthrottled one,
+    # because a Redis outage turning into a write storm on the hottest endpoint
+    # in the product is far worse than an hour of stale telemetry. And it never
+    # calls ``cache_delete``: doing so would invalidate the bot config up to
+    # 48x/day/bot and hand the DB the read load the cache exists to absorb.
+    #
+    # Whole block is best-effort. Telemetry must never fail a widget bootstrap.
+    _origin_hostname = _external_install_hostname(request)
+    if _origin_hostname:
         try:
-            with get_session() as _install_session:
-                stamped = _install_session.execute(
-                    update(Bot)
-                    .where(Bot.id == bot.id, Bot.widget_installed_at.is_(None))
-                    .values(widget_installed_at=func.now())
-                ).rowcount
-                _install_session.commit()
-            if stamped:
-                cache_delete(bot_config_key(bot.bot_key))
+            if bot.widget_installed_at is None:
+                with get_session() as _install_session:
+                    stamped = _install_session.execute(
+                        update(Bot)
+                        .where(Bot.id == bot.id, Bot.widget_installed_at.is_(None))
+                        .values(
+                            widget_installed_at=func.now(),
+                            widget_last_seen_at=func.now(),
+                            widget_last_origin=_origin_hostname,
+                        )
+                    ).rowcount
+                    _install_session.commit()
+                if stamped:
+                    cache_delete(bot_config_key(bot.bot_key))
+                    # Claim the throttle slot the stamp just satisfied, so the
+                    # very next page load doesn't immediately re-touch the row.
+                    # Best-effort: no Redis simply means the heartbeat branch
+                    # is off anyway.
+                    _throttle = get_redis()
+                    if _throttle is not None:
+                        _throttle.set(
+                            _widget_heartbeat_key(bot.id),
+                            _origin_hostname,
+                            nx=True,
+                            ex=_WIDGET_HEARTBEAT_TTL_SECONDS,
+                        )
+            else:
+                _throttle = get_redis()
+                if _throttle is not None and _widget_heartbeat_due(_throttle, bot.id, _origin_hostname):
+                    with get_session() as _seen_session:
+                        _seen_session.execute(
+                            update(Bot)
+                            .where(Bot.id == bot.id)
+                            .values(
+                                widget_last_seen_at=func.now(),
+                                widget_last_origin=_origin_hostname,
+                            )
+                        )
+                        _seen_session.commit()
         except Exception:
-            logger.debug("widget install stamp skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
+            logger.debug("widget install/heartbeat skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
 
     # Construct backend file URL for relative logos
     logo_url = bot.bot_logo
@@ -1671,12 +1851,16 @@ def list_bots(
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
                     widget_installed_at=b.widget_installed_at,
+                    widget_last_seen_at=b.widget_last_seen_at,
+                    widget_last_origin=b.widget_last_origin,
                     last_crawl_status=b.last_crawl_status,
                     crawl_completed_at=b.crawl_completed_at,
                     indexed_chunk_count=b.indexed_chunk_count or 0,
                     operator_timeout_seconds=b.operator_timeout_seconds,
+                    visitor_disconnect_timeout=b.visitor_disconnect_timeout,
                     live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
                     live_chat_max_queue_size=b.live_chat_max_queue_size,
+                    followup_sending_paused=bool(b.followup_sending_paused),
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
                     widget_messages=b.widget_messages or {},
@@ -1830,6 +2014,15 @@ def create_bot(
         # (a bespoke plan row missing the ``bots`` key resolves to a limit of 0
         # under ``limit_for``'s conservative default, which would otherwise
         # refuse that account its very first agent).
+        #
+        # Serialized against every other admission decision for this workspace
+        # (a concurrent create, or the resume gate in :func:`update_bot`) by the
+        # same workspace lock, because the count below is a plain
+        # ``SELECT count(*)`` and two racing callers would otherwise both see
+        # the same free slot. This is taken AFTER the same-site lookup above,
+        # so that read's own race is unchanged.
+        _lock_workspace_for_bot_admission(session, auth["client_id"])
+
         from app.services.plan_entitlements_service import can_client_add_new_bot
 
         decision = can_client_add_new_bot(auth["client_id"], session)
@@ -2380,6 +2573,172 @@ def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:
         bot.manual_field_overrides = sorted(overrides)
 
 
+def _bot_has_live_subscription(session, bot: Bot) -> bool:
+    """Is this chatbot funded by a live subscription *of its own*?
+
+    Both halves of that sentence are load-bearing, and the second one is the
+    trap. ``Bot.subscription_id`` is set by
+    ``razorpay_service._handle_subscription_activated`` when a per-bot mandate
+    authenticates, but it is ALSO a copy of the account-level subscription id
+    stamped onto legacy / pooled bots by the Phase 2 backfill. On those rows
+    the subscription itself has ``bot_id IS NULL``: it funds the workspace
+    under the plan's ``limits.bots`` quota, not this particular chatbot.
+
+    So a non-NULL FK does not mean "this bot is paid for". Two other readers of
+    the FK already know that and re-validate it exactly this way:
+    :func:`delete_bot` guards with ``sub.bot_id == bot.id`` (it must, or
+    cancelling one bot would cancel the customer's whole account subscription),
+    and ``credit_service.resolve_bot_ledger_bot_id`` returns ``None`` when
+    ``sub_bot_id != bot_pk`` so a pooled bot bills the client-level ledger.
+    This function is the third, and was the only one trusting the stamp
+    unchecked. Without that clause the reactivation short-circuit fires for
+    EVERY bot on a pooled account, which is exactly the bypass this gate exists
+    to close: pause bot A, create bot B (the gate sees a free slot), resume A
+    -> short-circuit -> two serving bots on one funding.
+
+    Pooled bots therefore deliberately return False and fall through to the
+    full gate rather than getting an ``is_legacy_pooled`` allowance. That is
+    the correct answer for them, not a penalty: their funding IS the
+    account-level plan, and the full gate is precisely the rule that asks
+    whether that plan still covers another active bot.
+    :func:`_plan_bots_limit_allows` reads ``limits.bots``, so a pooled bot on
+    an unlimited-agents plan resumes freely, while a pooled bot on a
+    ``bots: 1`` plan whose one slot is already serving is refused -- which is
+    what an explicit allowance would have wrongly let through.
+
+    Statuses match ``auth._ACTIVE_SUBSCRIPTION_STATUSES``: ``past_due`` still
+    counts, dunning is not the moment to also brick the customer's pause
+    button.
+    """
+    subscription_id = getattr(bot, "subscription_id", None)
+    if subscription_id is None:
+        return False
+    from app.db.models import Subscription
+
+    subscription = session.get(Subscription, subscription_id)
+    if subscription is None or subscription.bot_id != bot.id:
+        return False
+    return subscription.status in {"trialing", "active", "past_due"}
+
+
+def _lock_workspace_for_bot_admission(session, client_id: int) -> None:
+    """Serialize concurrent bot-admission decisions for one workspace.
+
+    Both admission gates -- :func:`create_bot`'s and
+    :func:`_require_reactivation_allowed`'s -- are read-then-write against a
+    plain ``SELECT count(*)`` of active bots. Two ``PATCH /bots/{id}
+    {"is_active": true}`` calls on two different paused bots (or a create
+    racing a resume) otherwise both read ``active_bot_count = 0`` and both
+    commit, which is the same over-allocation the gate is there to prevent.
+
+    Takes the same lock the sibling seat gate takes: operator reactivation goes
+    through ``invite_service._require_seat_available``, whose
+    ``_lock_active_subscription_for_workspace`` acquires ``SELECT ... FOR
+    UPDATE`` on the workspace's newest live subscription. Reusing it means the
+    two gates agree on what "the workspace lock" is.
+
+    That helper returns ``None`` for a workspace with no live subscription --
+    i.e. the Free account, which is precisely where the one-bot limit bites --
+    so this falls back to locking the ``Client`` row, the one row every
+    workspace is guaranteed to have. Exactly one of the two locks is taken, so
+    no caller ever holds both and this cannot participate in a lock cycle.
+    ``Client`` is the same row ``knowledge_quota_service`` locks for the same
+    TOCTOU reason.
+
+    Best-effort by design: locking is a Postgres concept and most of this
+    module's tests drive mocked sessions, so a non-Postgres bind (or any
+    failure to acquire) degrades to today's unlocked behaviour rather than
+    failing the request.
+    """
+    try:
+        bind = session.get_bind()
+        if bind is None or bind.dialect.name != "postgresql":
+            return
+        from app.db.models import Client
+        from app.services import invite_service
+
+        if invite_service._lock_active_subscription_for_workspace(session, client_id) is not None:  # noqa: SLF001
+            return
+        session.execute(select(Client).where(Client.id == client_id).with_for_update(of=Client)).scalar_one_or_none()
+    except Exception:
+        logger.warning(
+            "bot admission lock unavailable for client=%s. Proceeding unlocked",
+            client_id,
+            exc_info=True,
+        )
+
+
+def _require_reactivation_allowed(session, bot: Bot, client_id: int) -> None:
+    """Gate a ``false -> true`` write to ``Bot.is_active``.
+
+    ``is_active`` is the billing key first and a visibility flag second: the
+    WIDGET read path filters it (``auth.get_current_bot`` refuses an inactive
+    bot, which is what makes a pause actually pause; the ``X-API-Key``
+    default-bot fallback below it 404s "No active bot found"), but the
+    OWNER-facing list does not -- :func:`list_bots` returns paused bots so
+    their owner can see and resume them. What makes this a gate rather than a
+    toggle is that ``plan_entitlements_service`` counts ONLY active bots in
+    both :func:`can_client_add_new_bot` and ``usage["bots"]``. So without it
+    the pause switch is a quota bypass: deactivate the funded chatbot, the gate
+    now sees zero active bots and lets a second one be created for free, then
+    reactivate the first. Two chatbots for one subscription, with nothing in
+    the data to show what happened.
+
+    The fix is to charge reactivation the same admission price as creation,
+    composed exactly as :func:`create_bot` composes it:
+
+    * :func:`can_client_add_new_bot` is the default rule (one free bot per
+      account, everything else needs its own subscription), and
+    * :func:`_plan_bots_limit_allows` is the widening for a plan whose
+      ``limits.bots`` quota already covers the account. That second clause is
+      not optional: the service alone answers ``must_subscribe`` even on an
+      unlimited-agents plan, so an Enterprise customer un-pausing their own
+      sixth agent would be refused by the service's answer alone.
+
+    The bot being reactivated is still inactive while both run, so it is not
+    counted against itself, exactly as a not-yet-created bot isn't.
+
+    A bot with its own live subscription short-circuits both: it is already
+    funded, so its owner may pause and resume it freely.
+
+    Raises the same 402 body ``create_bot`` raises, so the console's existing
+    upgrade prompt fires unchanged.
+    """
+    if _bot_has_live_subscription(session, bot):
+        return
+
+    # Serialize before counting. ``can_client_add_new_bot`` is a plain
+    # ``SELECT count(*)``, so without this two concurrent resumes on two
+    # different paused bots both read the same free slot and both commit.
+    _lock_workspace_for_bot_admission(session, client_id)
+
+    from app.services.plan_entitlements_service import can_client_add_new_bot
+
+    decision = can_client_add_new_bot(client_id, session)
+    if decision.allowed or _plan_bots_limit_allows(client_id, session, decision.active_bot_count):
+        return
+
+    logger.info(
+        "Reactivation of bot %s denied for client %s: %s active bots, no funding for another",
+        bot.id,
+        client_id,
+        decision.active_bot_count,
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={
+            "error": decision.reason,
+            "metric": "bots",
+            "active_bot_count": decision.active_bot_count,
+            "must_subscribe": decision.must_subscribe,
+            "message": (
+                "Reactivating this chatbot needs its own paid subscription. "
+                "Upgrade or subscribe to bring it back online."
+            ),
+        },
+    )
+
+
 @router.patch("/{bot_id}")
 @impersonation_writable
 def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_operator)):
@@ -2427,6 +2786,13 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         # my money" belongs in the same category.
                         "email_verification_enabled",
                         "company_lookup_enabled",
+                        # Pausing/resuming the whole chatbot. Switching a
+                        # customer's widget OFF takes their site's support down
+                        # and is not "config that looks wrong"; switching it
+                        # back ON is a billing admission decision. Neither is
+                        # something a 30-minute support session should be able
+                        # to do on the customer's behalf.
+                        "is_active",
                     }
                     & update_data.keys()
                 )
@@ -2447,6 +2813,19 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                             ),
                         },
                     )
+
+            # ── Pause / resume admission control ──────────────────────
+            # Runs before anything is written so a refused reactivation
+            # leaves the row exactly as it was. ``None`` = the patch does not
+            # move the flag (absent, or set to the value already stored), in
+            # which case there is nothing to gate and nothing to invalidate.
+            is_active_transition: bool | None = None
+            if "is_active" in update_data:
+                requested_active = bool(update_data["is_active"])
+                if requested_active != bool(bot.is_active):
+                    is_active_transition = requested_active
+                    if requested_active:
+                        _require_reactivation_allowed(session, bot, auth["client_id"])
 
             # Sync logos
             if "bot_logo" in update_data:
@@ -2525,6 +2904,21 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             session.commit()
             # Invalidate cached bot config so widget picks up changes immediately
             cache_delete(bot_config_key(bot.bot_key))
+            if is_active_transition is not None:
+                # ``usage["bots"]`` and ``can_client_add_new_bot`` both count
+                # active bots, and the account entitlements are cached for 60s.
+                # Without this the usage meter keeps showing the paused bot (or
+                # keeps hiding a resumed one) for up to a minute, and the create
+                # gate reads the same stale number.
+                from app.services import plan_entitlements_service
+
+                plan_entitlements_service.invalidate(auth["client_id"])
+                logger.info(
+                    "Bot %s %s by workspace %s",
+                    bot_id,
+                    "reactivated" if is_active_transition else "deactivated",
+                    auth["client_id"],
+                )
             logger.info(f"Bot {bot_id} settings saved successfully by workspace {auth['client_id']}")
             return {"message": "Bot settings updated successfully"}
     except HTTPException:

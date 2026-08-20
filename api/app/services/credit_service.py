@@ -307,13 +307,64 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
+def get_document_upload_floor(session: Session) -> int:
+    """The per-file MINIMUM an upload is charged, clamped to at least 1 credit.
+
+    ``credit_cost.document_upload`` is an untyped JSONB value a super admin can
+    save as ``0``; a zeroed floor must not make uploads free, so the clamp is
+    part of the value rather than something each caller remembers to apply.
+
+    Public because two consumers need the same number: the deduction path
+    (:func:`get_document_upload_cost_for_size`) and the read path that shows a
+    customer what an upload costs (``subscription_routes._credit_costs_payload``).
+    Serving the raw config value there while charging the clamped one is the
+    exact price/charge divergence this pair of helpers exists to prevent.
+    """
+    return max(get_credit_cost(session, "document_upload"), _MIN_DOCUMENT_UPLOAD_COST)
+
+
+def get_document_upload_words_per_credit(session: Session, *, warn: bool = True) -> int:
+    """The upload rate in words per credit, clamped to a positive integer.
+
+    Fails CLOSED: a missing, non-numeric or non-positive
+    ``credit_cost.document_upload_words_per_credit`` falls back to the shipped
+    ``_DEFAULT_WORDS_PER_CREDIT`` rather than to a divisor that would make an
+    upload free (or raise ``ZeroDivisionError`` mid-ingest).
+
+    ``warn=False`` suppresses the log line for read-only callers. The deduction
+    path logs a bad value on every upload, which is where an operator should
+    see it; the balance endpoint polls, and repeating the same warning on every
+    poll would bury it.
+    """
+    raw_rate = get_pricing(session).get(
+        "credit_cost.document_upload_words_per_credit",
+        _DEFAULT_WORDS_PER_CREDIT,
+    )
+    try:
+        words_per_credit = int(raw_rate)
+    except (TypeError, ValueError):
+        words_per_credit = 0
+    if words_per_credit <= 0:
+        if warn:
+            logger.warning(
+                "credit_cost.document_upload_words_per_credit is missing or not a positive "
+                "integer (%r). Falling back to %d words per credit",
+                raw_rate,
+                _DEFAULT_WORDS_PER_CREDIT,
+            )
+        words_per_credit = _DEFAULT_WORDS_PER_CREDIT
+    return words_per_credit
+
+
 def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     """Return the credit cost for uploading a document of ``word_count`` words.
 
     One flat rate: ``ceil(words / rate)`` credits, where ``rate`` is
     ``credit_cost.document_upload_words_per_credit`` (250. I.e. 1 credit per
     250 words), never below the ``credit_cost.document_upload`` minimum. Both
-    keys are super-admin tunable from the pricing panel.
+    keys are super-admin tunable from the pricing panel, and both are read here
+    through the clamping accessors above, which is the same pair the balance
+    endpoint serves to the console: one source, both consumers.
 
     This replaced a five-bucket word-tier table. The buckets priced the same
     idea in a shape that had to be restated (with EXCLUSIVE edges) in the
@@ -325,28 +376,8 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     rather than to a divisor that would make an upload free.
     """
     word_count = max(int(word_count or 0), 0)
-    pricing = get_pricing(session)
-
-    # The floor is the per-file minimum, and it is a minimum of at least 1:
-    # a zeroed-out ``credit_cost.document_upload`` must not make uploads free.
-    minimum = max(get_credit_cost(session, "document_upload"), _MIN_DOCUMENT_UPLOAD_COST)
-
-    raw_rate = pricing.get(
-        "credit_cost.document_upload_words_per_credit",
-        _DEFAULT_WORDS_PER_CREDIT,
-    )
-    try:
-        words_per_credit = int(raw_rate)
-    except (TypeError, ValueError):
-        words_per_credit = 0
-    if words_per_credit <= 0:
-        logger.warning(
-            "credit_cost.document_upload_words_per_credit is missing or not a positive "
-            "integer (%r). Falling back to %d words per credit",
-            raw_rate,
-            _DEFAULT_WORDS_PER_CREDIT,
-        )
-        words_per_credit = _DEFAULT_WORDS_PER_CREDIT
+    minimum = get_document_upload_floor(session)
+    words_per_credit = get_document_upload_words_per_credit(session)
 
     # Integer ceiling division, a partial block of words is a whole credit.
     charged = (word_count + words_per_credit - 1) // words_per_credit

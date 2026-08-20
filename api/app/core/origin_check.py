@@ -8,7 +8,8 @@ on an unrelated site, each Bot can declare an ``allowed_domains`` list and flip
 hostname does not match an entry.
 
 Entries support:
-    * Exact hostnames           -- ``acme.com``
+    * Exact hostnames           -- ``acme.com``, which also admits
+                                   ``www.acme.com`` (see :func:`is_origin_allowed`)
     * Wildcard subdomains       -- ``*.acme.com`` matches ``app.acme.com`` but
                                    NOT ``acme.com`` itself
     * Literal ``localhost`` /   -- accepted only when ``APP_ENV != "production"``
@@ -119,6 +120,11 @@ def is_origin_allowed(
     ``localhost``/``127.0.0.1`` are auto-allowed in non-production environments
     so customers don't have to add them while testing locally; production never
     auto-allows -- they must opt in explicitly.
+
+    An exact entry additionally matches its ``www.`` host (``acme.com`` admits
+    ``www.acme.com``), because entries are stored ``www.``-stripped and the
+    customer's homepage is usually served from ``www.``. See the inline argument
+    in the matching loop for why that cannot reach a third party.
     """
     if not hostname:
         return False
@@ -144,4 +150,62 @@ def is_origin_allowed(
             continue
         if host == normalized:
             return True
+        # ``acme.com`` also admits ``www.acme.com``.
+        #
+        # ``normalize_domain_input`` strips a leading ``www.`` before an entry is
+        # persisted, and every write path into ``Bot.allowed_domains`` goes
+        # through it: ``_normalize_allowed_domains`` (both request schemas),
+        # ``_derive_allowed_domains_from_website`` (the create-flow default), and
+        # the Razorpay note replay in ``razorpay_service``, which only echoes back
+        # values those two already normalized. A customer therefore *cannot*
+        # store ``www.acme.com`` as an entry -- listing the apex is the only way
+        # to express the site at all -- while the browser sends the real
+        # ``https://www.acme.com`` Origin, which ``extract_hostname``
+        # deliberately keeps intact. Without this arm the customer's own
+        # homepage was 403ing.
+        #
+        # Why this cannot admit a third party:
+        #   * It is an equality test against one constructed host, not a prefix
+        #     test, so ``wwwacme.com`` and ``www-acme.com`` still fail.
+        #   * The single host added, ``www.<entry>``, lies inside ``<entry>``'s
+        #     own DNS zone. Serving content there requires control of (or a
+        #     delegation from) the exact name the customer already vouched for,
+        #     so no new registrable domain becomes allowed.
+        #   * It is one-directional: because ``www.`` is unstripped on the
+        #     request side but always stripped on the entry side, this can only
+        #     widen apex -> www, never www -> some other apex.
+        # The one bounded exception is an entry that is itself a multi-tenant
+        # public suffix (``github.io``), where ``www.github.io`` is a different
+        # principal from ``foo.github.io``. Such an entry already grants the
+        # suffix apex on its own terms, is never produced by the derive path, and
+        # would be an over-broad allowlist with or without this arm.
+        #
+        # ``_LOCAL_HOSTS`` is excluded: ``www.localhost`` / ``www.127.0.0.1`` are
+        # not names anything can be served from, so admitting them would be
+        # widening with no legitimate case behind it.
+        if normalized not in _LOCAL_HOSTS and host == f"www.{normalized}":
+            return True
     return False
+
+
+def origin_check_applies(*, domain_check_enabled: bool | None, allowed: list[str] | None) -> bool:
+    """Whether a bot's origin allowlist should actually be enforced.
+
+    The single source of truth for the fail-open contract, shared by the HTTP
+    dependency (``auth._enforce_bot_origin``) and the visitor WebSocket
+    (``ws_routes.visitor_websocket``) so the two transports cannot drift apart
+    again -- they did: the WebSocket used to enforce an empty allowlist, which in
+    production rejects *every* host, so a bot created without a website (the
+    create flow turns the flag on unconditionally but derives no domains) served
+    HTTP chat normally while every live-chat socket closed with 4403.
+
+    Enforcement needs BOTH the customer's opt-in flag and at least one configured
+    domain. ``domain_check_enabled`` defaults ON for new bots, so gating on a
+    non-empty allowlist is what keeps that default from bricking a bot whose
+    owner has not listed any domains yet.
+
+    Both arguments accept ``None``: a Bot rebuilt from an older Redis cache entry
+    can be missing the flag, and the JSONB column reads as ``None`` on a row that
+    predates its server default. Either way the answer is "do not enforce".
+    """
+    return bool(domain_check_enabled) and bool(allowed)

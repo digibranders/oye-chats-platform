@@ -3097,18 +3097,28 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         breakdown = credit_service.get_balance_breakdown(session, client.id)
         sub = get_client_subscription(session, client.id)
         plan = get_client_plan(session, client.id)
-        pricing = credit_service.get_pricing(session)
 
         period_start, usage_dict = _scope_period_and_usage(session, client.id, None)
 
         # Per-bot ledgers, one entry per bot that has its own paid
         # subscription. Frontend renders one card per entry so the
         # customer sees an isolated balance + usage panel for each bot.
-        bot_rows = (
-            session.execute(select(Bot).where(Bot.client_id == client.id, Bot.is_active.is_(True)).order_by(Bot.id))
-            .scalars()
-            .all()
-        )
+        #
+        # PAUSED agents are included deliberately. ``Bot.is_active`` is the
+        # pause switch (``bot_routes.update_bot``), not a delete: a paused
+        # per-bot-funded agent keeps its own subscription, keeps being charged
+        # for it, and keeps a balance that expires on schedule. Filtering the
+        # column here dropped that agent's card entirely, so the customer saw
+        # no balance, no usage and no expiry warning for a ledger their money
+        # is still funding. The pause is disclosed on the entry instead
+        # (``is_active``), which is the honest shape: show the balance, say why
+        # the agent is not answering.
+        #
+        # Bots with no ledger of their own are still skipped below via
+        # ``resolve_bot_ledger_bot_id``, so this widens the query, not the
+        # output: only bots whose subscription is scoped to themselves get a
+        # card, active or paused.
+        bot_rows = session.execute(select(Bot).where(Bot.client_id == client.id).order_by(Bot.id)).scalars().all()
         bot_ledgers: list[dict] = []
         for bot in bot_rows:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(bot)
@@ -3164,6 +3174,9 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
                     "bot_id": bot.id,
                     "bot_name": bot.name,
                     "bot_key": bot.bot_key,
+                    # Paused agents still bill and still hold credits; the card
+                    # says so rather than vanishing.
+                    "is_active": bool(bot.is_active),
                     "plan_slug": bot_plan.slug if bot_plan else None,
                     "plan_name": bot_plan.name if bot_plan else None,
                     "monthly_grant": int(bot_plan.credits_per_month or 0) if bot_plan else 0,
@@ -3193,17 +3206,13 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         # Count of bots that still drain from the account pool. Drives
         # whether the UI shows the "Account credits" card. When zero (a
         # paid-only account whose only bot has its own subscription) the
-        # account pool is hidden entirely.
+        # account pool is hidden entirely. Counted over the same unfiltered
+        # ``bot_rows``: a paused pooled bot still has its usage rolled into the
+        # account pool, so hiding the pool card because the only pooled bot is
+        # paused would hide a live balance for the same reason.
         account_pool_bot_count = sum(1 for bot in bot_rows if credit_service.resolve_bot_ledger_bot_id(bot) is None)
 
-        costs = {
-            "ai_chat": int(pricing.get("credit_cost.ai_chat", 1) or 0),
-            "url_scan": int(pricing.get("credit_cost.url_scan", 3) or 0),
-            "email_send": int(pricing.get("credit_cost.email_send", 1) or 0),
-            "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
-            "email_verification": int(pricing.get("credit_cost.email_verification", 10) or 0),
-            "company_name": int(pricing.get("credit_cost.company_name", 10) or 0),
-        }
+        costs = _credit_costs_payload(session)
 
         # Stored country first, IP geo as display fallback (Wave 1.2), the
         # old IP-only rule rendered $ on a rupee account whenever the geo
@@ -3238,6 +3247,46 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         }
 
 
+def _credit_costs_payload(session: Session) -> dict[str, int]:
+    """The per-action credit prices ``GET /credits/balance`` serves, all from ``pricing_config``.
+
+    Module-level so the price the customer is SHOWN can be asserted against the
+    price they are CHARGED (``tests/test_document_upload_rate.py``). It used to
+    be an inline dict, which meant the only way to pin the two together was to
+    grep the console's TSX for a hard-coded sentence, across two repositories,
+    and that guard broke the moment the console was rebuilt.
+
+    ``document_upload`` is the per-file FLOOR, not the price: a document is
+    charged ``ceil(words / document_upload_words_per_credit)`` credits, never
+    below that floor (``credit_service.get_document_upload_cost_for_size``).
+    Serving only the floor left the console unable to state what an upload
+    actually costs, so the rate is served beside it. Both are read through
+    ``credit_service.get_document_upload_floor`` /
+    ``get_document_upload_words_per_credit``, the same clamping accessors the
+    deduction path uses, so the price shown and the price charged are one value.
+    """
+    pricing = credit_service.get_pricing(session)
+
+    # BOTH document-upload numbers come from the deduction path's own clamping
+    # accessors, not from a re-read of the raw config. ``value`` is untyped
+    # JSONB and a super admin can save 0, a negative, null or a string into
+    # either key: a 0 rate would reach the console as "1 credit per 0 words",
+    # and a 0 floor would advertise a free upload that
+    # ``get_document_upload_cost_for_size`` still charges 1 credit for. Reading
+    # what the charge path reads is the only way the two cannot disagree.
+    # ``warn=False`` because the deduction path already logs a bad rate on every
+    # upload; repeating it on every balance poll would bury it.
+    return {
+        "ai_chat": int(pricing.get("credit_cost.ai_chat", 1) or 0),
+        "url_scan": int(pricing.get("credit_cost.url_scan", 3) or 0),
+        "email_send": int(pricing.get("credit_cost.email_send", 1) or 0),
+        "document_upload": credit_service.get_document_upload_floor(session),
+        "email_verification": int(pricing.get("credit_cost.email_verification", 10) or 0),
+        "company_name": int(pricing.get("credit_cost.company_name", 10) or 0),
+        "document_upload_words_per_credit": credit_service.get_document_upload_words_per_credit(session, warn=False),
+    }
+
+
 @credits_router.get("/history")
 def get_credit_history(
     client: Client = Depends(get_current_client),
@@ -3247,6 +3296,10 @@ def get_credit_history(
 ):
     """Return paginated ledger entries for the client (most recent first).
 
+    Answers ``{entries, total, page, limit}``. ``total`` is a count over the
+    same filtered query, so a client can page the ledger honestly instead of
+    guessing from whether the last page came back full.
+
     When ``bot_id`` is given, the history is scoped to that agent's own ledger
     (entries carry ``CreditLedger.bot_id``); the ``client_id`` filter still
     applies, so a foreign ``bot_id`` simply matches nothing rather than leaking
@@ -3255,32 +3308,46 @@ def get_credit_history(
     page = max(int(page or 1), 1)
     limit = max(min(int(limit or 50), 200), 1)
     with get_session() as session:
+        base = select(CreditLedger).where(
+            CreditLedger.client_id == client.id,
+            *([CreditLedger.bot_id == bot_id] if bot_id is not None else []),
+        )
+        total = session.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
         rows = (
             session.execute(
-                select(CreditLedger)
-                .where(
-                    CreditLedger.client_id == client.id,
-                    *([CreditLedger.bot_id == bot_id] if bot_id is not None else []),
-                )
-                .order_by(CreditLedger.created_at.desc())
+                # ``created_at`` is a ``server_default=func.now()`` transaction
+                # timestamp, so every row written in one transaction shares it
+                # EXACTLY. A FIFO-boundary deduction writes two such rows. With
+                # no tiebreak the sort is not a total order and Postgres may
+                # resolve the tie differently for the OFFSET 0 query and the
+                # OFFSET N one, so the same movement appears on two pages, or on
+                # neither. That is a customer-visible billing discrepancy that
+                # raises no error anywhere. The id tiebreak makes the order
+                # total, and matches insertion order within a transaction.
+                base.order_by(CreditLedger.created_at.desc(), CreditLedger.id.desc())
                 .limit(limit)
                 .offset((page - 1) * limit)
             )
             .scalars()
             .all()
         )
-        return [
-            {
-                "id": r.id,
-                "delta": r.delta,
-                "reason": r.reason,
-                "reference_id": r.reference_id,
-                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
-                "note": r.note,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
+        return {
+            "entries": [
+                {
+                    "id": r.id,
+                    "delta": r.delta,
+                    "reason": r.reason,
+                    "reference_id": r.reference_id,
+                    "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                    "note": r.note,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ],
+            "total": int(total),
+            "page": page,
+            "limit": limit,
+        }
 
 
 # Reasons that represent actual metered consumption (always debit rows). Kept

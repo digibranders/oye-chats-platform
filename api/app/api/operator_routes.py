@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.api.bot_routes import BusinessHours
+from app.api.invite_routes import _map_invite_error
 from app.core.security import get_password_hash
 from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
 from app.db.models import (
@@ -36,6 +37,8 @@ from app.schemas.validators import (
     SessionId,
     ShortText,
 )
+from app.services import invite_service, plan_entitlements_service
+from app.services.invite_service import InviteError
 from app.services.live_chat_service import manager
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -137,6 +140,16 @@ class UpdateOperatorRequest(BaseModel):
     # Structurally validated by ``PushPreferencesModel`` on its own endpoint;
     # this legacy path only ever stores the blob, so bound it.
     notification_preferences: BoundedJsonObject | None = None
+    # Soft deactivate / reactivate a teammate.
+    #
+    # Deliberately NOT the same act as ``DELETE /operators/{id}``:
+    # ``ChatSession.assigned_operator_id`` is ``ON DELETE SET NULL``, so
+    # deleting the row erases "who handled this chat" from every historical
+    # conversation in the workspace. Flipping this flag frees the seat while
+    # leaving the audit trail intact, the same soft pattern
+    # ``transition_service.enforce_operator_ceiling`` (downgrade) and
+    # ``invite_service.accept_invite`` (re-invite) already use.
+    is_active: bool | None = None
 
 
 class CreateDepartmentRequest(BaseModel):
@@ -466,6 +479,10 @@ async def update_operator(
         _prevent_role_escalation(auth, request.role)
     department_changed = False
     new_department_id = None
+    # Set when ``is_active`` actually flips, so the post-commit side effects
+    # (entitlements cache, WS eviction) only run on a real transition.
+    active_changed = False
+    deactivated = False
 
     with get_session() as session:
         operator = session.execute(
@@ -555,6 +572,64 @@ async def update_operator(
         if request.notification_preferences is not None:
             operator.notification_preferences = request.notification_preferences
 
+        # ── Soft deactivate / reactivate ──────────────────────────────────
+        # Its own block: neither direction is a plain column write. A
+        # no-op (sending the value the row already holds) falls through
+        # untouched so a full-object PATCH from the console never burns a
+        # seat check or evicts a live socket for nothing.
+        if request.is_active is not None and request.is_active != operator.is_active:
+            if request.is_active:
+                # Reactivation flips an inactive seat to active, so it
+                # consumes one of the plan's operator seats. Gate on the same
+                # ``SELECT ... FOR UPDATE`` helper ``POST /me/self-operator``
+                # and the invite-accept path use, so a reactivation racing an
+                # invite acceptance serialises on the workspace's
+                # subscription row instead of both slipping past the ceiling.
+                # Scoped to the operator's bot: seats are per-bot.
+                try:
+                    invite_service._require_seat_available(  # noqa: SLF001
+                        session, auth["client_id"], operator.bot_id
+                    )
+                except InviteError as err:
+                    raise _map_invite_error(err) from err
+                operator.is_active = True
+            else:
+                # Same self-guard as ``delete_operator``: an operator must
+                # not be able to lock themselves out of the workspace. The
+                # workspace owner's own self-operator row has its own exit,
+                # ``DELETE /me/self-operator``.
+                if is_self_edit:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You cannot deactivate your own account.",
+                    )
+                # Hand in-flight conversations back to the queue instead of
+                # dropping the visitor onto the bot. ``delete_operator``
+                # uses ``status='bot'`` because the row is about to vanish;
+                # here another operator can still pick the visitor up, so
+                # mirror the bot-reassignment branch above and re-queue.
+                session.execute(
+                    update(ChatSession)
+                    .where(
+                        ChatSession.assigned_operator_id == operator.id,
+                        ChatSession.status == "live",
+                    )
+                    .values(assigned_operator_id=None, status="waiting")
+                )
+                operator.is_active = False
+                # Availability goes with it, in the same transaction. The
+                # WebSocket's concurrent-operator cap counts
+                # ``Operator.is_online`` with no ``is_active`` filter
+                # (``ws_routes`` seat check), so a deactivated operator left
+                # marked online keeps occupying a paid seat and can refuse a
+                # legitimate teammate's connect with ``seat_limit``. Nothing
+                # clears it later either: ``disconnect_operator_and_broadcast``
+                # only drops the in-process socket reference, and a deactivated
+                # operator cannot reconnect to set it again.
+                operator.is_online = False
+                deactivated = True
+            active_changed = True
+
         session.commit()
         # Capture name BEFORE the session context closes. Accessing
         # ``operator.name`` after the ``with`` block raises
@@ -563,9 +638,21 @@ async def update_operator(
         # pattern used in ``delete_operator`` below.
         operator_name = operator.name
 
+    # Seat usage changed. Without this the freed seat stays invisible for the
+    # entitlements cache TTL and the customer is told to upgrade for a seat
+    # they just freed (and a reactivation would not show as consumed).
+    if active_changed:
+        plan_entitlements_service.invalidate(auth["client_id"])
+
     # Update operator's department in WS manager without triggering reconnect
     if department_changed:
         await manager.update_operator_department(operator_id, new_department_id)
+
+    # A deactivated operator must not keep an open console socket. Drop the
+    # connection through the manager so presence, the roster broadcast and any
+    # residual assignment state are cleaned up by the existing path.
+    if deactivated:
+        await manager.disconnect_operator_and_broadcast(operator_id)
 
     return {"success": True, "message": f"Operator '{operator_name}' updated."}
 

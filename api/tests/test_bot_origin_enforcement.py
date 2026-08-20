@@ -61,6 +61,28 @@ def test_matching_wildcard_subdomain_passes():
     _enforce_bot_origin(bot, _request({"origin": "https://app.acme.com"}))
 
 
+def test_www_origin_passes_against_apex_entry(monkeypatch):
+    """The customer's own homepage must not 403 against their own allowlist.
+
+    ``normalize_domain_input`` stores ``www.acme.com`` as ``acme.com``, so the
+    apex entry is the only thing the customer can have configured, while the
+    browser sends ``https://www.acme.com`` as the Origin.
+    """
+    monkeypatch.setenv("APP_ENV", "production")
+    bot = _bot(enabled=True, domains=["acme.com"])
+    _enforce_bot_origin(bot, _request({"origin": "https://www.acme.com"}))  # no exception
+
+
+def test_www_of_an_unrelated_domain_still_rejects(monkeypatch):
+    """The widening is one label on a vouched-for name, not a prefix match."""
+    monkeypatch.setenv("APP_ENV", "production")
+    bot = _bot(enabled=True, domains=["acme.com"])
+    for origin in ("https://www.evil.com", "https://wwwacme.com", "https://app.acme.com"):
+        with pytest.raises(HTTPException) as exc:
+            _enforce_bot_origin(bot, _request({"origin": origin}))
+        assert exc.value.status_code == 403
+
+
 def test_mismatching_origin_rejects(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     bot = _bot(enabled=True, domains=["acme.com"])

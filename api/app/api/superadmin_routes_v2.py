@@ -23,6 +23,7 @@ from sqlalchemy import case, desc, func, select
 from app.api.auth import get_superadmin
 from app.config import APP_URL, IMPERSONATION_ENABLED
 from app.core.csv_safety import csv_safe
+from app.core.pricing import charge_currency
 from app.db.models import (
     AuditLog,
     Bot,
@@ -42,7 +43,7 @@ from app.db.models import (
     Subscription,
 )
 from app.db.session import get_session
-from app.schemas.validators import EmailAddress, RequiredName, RowId, bounded_list
+from app.schemas.validators import EmailAddress, RequiredName, RowId, SessionId, bounded_list
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
@@ -666,21 +667,73 @@ def bot_detail(bot_id: int, _admin: Client = Depends(get_superadmin)):
 
 @router.get("/documents")
 def list_documents(_admin: Client = Depends(get_superadmin)):
+    """Ingested knowledge, one row per SOURCE document rather than per chunk.
+
+    ``Document`` stores one row per chunk, so a listing of raw rows tells a
+    super-admin nothing actionable: fifty rows for one PDF and no way to see
+    the file they came from. Rows are grouped by
+    ``(file_hash, bot_id, document_name)`` exactly as
+    ``superadmin_ops_routes.list_crawls`` groups crawl jobs, collapsing a
+    source back into one row.
+
+    Field notes, because three of these are not what a caller would guess:
+
+    * ``id`` is the source's ``file_hash``, **not** a ``documents.id``. This
+      list is grouped, so no single row id identifies it. Anything that needs
+      a chunk id (the per-chunk ``POST /superadmin/documents/{id}/reindex``)
+      must resolve one itself.
+    * ``content_chars`` is ``SUM(length(content))`` across the source's
+      chunks, i.e. post-chunk characters. It runs a little ahead of the
+      original file because the chunker overlaps chunks. The pre-chunk figure,
+      ``source_char_count``, is replicated onto EVERY chunk of a source, so
+      summing it multiplies by the chunk count; it is deliberately not summed.
+    * ``is_active`` is ``bool_and`` over the chunks. A source is live only when
+      every chunk of it is. ``knowledge_state_service`` deactivates per bot, so
+      a half-deactivated source is a defect worth surfacing, not rounding away.
+    """
     with get_session() as session:
-        rows = session.execute(select(Document, Bot).outerjoin(Bot, Document.bot_id == Bot.id).limit(500)).all()
+        rows = session.execute(
+            select(
+                Document.file_hash,
+                Document.bot_id,
+                Document.document_name,
+                Bot.name.label("bot_name"),
+                # Aggregated, not grouped. Every chunk of one source carries the
+                # same ``client_id`` / ``source``, but grouping on them would
+                # split a source into two rows if one chunk ever disagreed
+                # (a half-migrated legacy ``client_id``, say) instead of showing
+                # the one source that is really there.
+                func.min(Document.client_id).label("client_id"),
+                func.min(Document.source).label("source"),
+                func.count(Document.id).label("chunk_count"),
+                func.coalesce(func.sum(func.length(Document.content)), 0).label("content_chars"),
+                func.bool_and(Document.is_active).label("is_active"),
+                func.min(Document.created_at).label("created_at"),
+            )
+            .outerjoin(Bot, Document.bot_id == Bot.id)
+            .group_by(
+                Document.file_hash,
+                Document.bot_id,
+                Document.document_name,
+                Bot.name,
+            )
+            .order_by(desc(func.min(Document.created_at)))
+            .limit(500)
+        ).all()
         return [
             {
-                "id": d.id,
-                "bot_id": d.bot_id,
-                "bot_name": b.name if b else None,
-                "client_id": getattr(d, "client_id", None),
-                "source": getattr(d, "source", "unknown"),
-                "title": getattr(d, "title", None),
-                "chunk_count": 1,
-                "size_bytes": len(getattr(d, "text", "") or "") if hasattr(d, "text") else 0,
-                "created_at": d.created_at.isoformat() if getattr(d, "created_at", None) else "",
+                "id": r.file_hash,
+                "bot_id": r.bot_id,
+                "bot_name": r.bot_name,
+                "client_id": r.client_id,
+                "source": r.source,
+                "title": r.document_name,
+                "chunk_count": int(r.chunk_count or 0),
+                "content_chars": int(r.content_chars or 0),
+                "is_active": bool(r.is_active),
+                "created_at": r.created_at.isoformat() if r.created_at else "",
             }
-            for d, b in rows
+            for r in rows
         ]
 
 
@@ -695,9 +748,12 @@ def list_sessions(
 ):
     with get_session() as session:
         stmt = (
-            select(ChatSession, Bot, Client)
+            select(ChatSession, Bot, Client, LeadInfo)
             .outerjoin(Bot, ChatSession.bot_id == Bot.id)
             .outerjoin(Client, ChatSession.client_id == Client.id)
+            # ``lead_info.session_id`` is UNIQUE, so this is a 1:1 outer join:
+            # no fan-out, no extra rows, and no per-session follow-up query.
+            .outerjoin(LeadInfo, LeadInfo.session_id == ChatSession.id)
         )
         if status_filter:
             stmt = stmt.where(ChatSession.status == status_filter)
@@ -705,17 +761,28 @@ def list_sessions(
             stmt = stmt.where(ChatSession.client_id == client_id)
         stmt = stmt.order_by(desc(ChatSession.created_at)).limit(500)
         rows = session.execute(stmt).all()
-        return [_session_summary(s, b, c) for s, b, c in rows]
+        return [_session_summary(s, b, c, lead) for s, b, c, lead in rows]
 
 
 @router.get("/sessions/{session_id}")
-def session_detail(session_id: int, _admin: Client = Depends(get_superadmin)):
+def session_detail(session_id: SessionId, _admin: Client = Depends(get_superadmin)):
+    """One conversation with its full message history.
+
+    ``session_id`` is a :data:`~app.schemas.validators.SessionId`, not an int.
+    ``chat_sessions.id`` is a String primary key holding a UUID-shaped token,
+    so an ``int`` annotation rejected every real conversation id with a 422
+    before the handler ran. ``SessionId`` is the bounded ``Identifier`` shape
+    every other session-scoped route uses. A path segment that reaches a
+    primary-key lookup stays length- and charset-bounded rather than becoming
+    a bare ``str``.
+    """
     with get_session() as session:
         s = session.get(ChatSession, session_id)
         if not s:
             raise HTTPException(status_code=404, detail="Session not found")
         bot = session.get(Bot, s.bot_id) if s.bot_id else None
         client = session.get(Client, s.client_id) if s.client_id else None
+        lead = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalars().first()
         messages = (
             session.execute(
                 select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at)
@@ -724,7 +791,7 @@ def session_detail(session_id: int, _admin: Client = Depends(get_superadmin)):
             .all()
         )
         return {
-            "session": _session_summary(s, bot, client),
+            "session": _session_summary(s, bot, client, lead),
             "messages": [
                 {
                     "id": m.id,
@@ -743,14 +810,15 @@ def session_detail(session_id: int, _admin: Client = Depends(get_superadmin)):
 def live_queue(_admin: Client = Depends(get_superadmin)):
     with get_session() as session:
         rows = session.execute(
-            select(ChatSession, Bot, Client)
+            select(ChatSession, Bot, Client, LeadInfo)
             .outerjoin(Bot, ChatSession.bot_id == Bot.id)
             .outerjoin(Client, ChatSession.client_id == Client.id)
+            .outerjoin(LeadInfo, LeadInfo.session_id == ChatSession.id)
             .where(ChatSession.status.in_(["waiting", "live"]))
             .order_by(desc(ChatSession.created_at))
             .limit(100)
         ).all()
-        return [_session_summary(s, b, c) for s, b, c in rows]
+        return [_session_summary(s, b, c, lead) for s, b, c, lead in rows]
 
 
 # ── Leads / operators ───────────────────────────────────────────────────────
@@ -758,25 +826,37 @@ def live_queue(_admin: Client = Depends(get_superadmin)):
 
 @router.get("/leads")
 def list_leads(_admin: Client = Depends(get_superadmin)):
+    """Captured leads across every tenant, newest first, capped at 500.
+
+    ``LeadInfo`` has **no** ``client_id`` column. The owning account is reached
+    through the bot (``LeadInfo -> Bot -> Client``), the same path
+    ``superadmin_ops_routes.list_crawls`` takes. Joining on a column that does
+    not exist is what made this endpoint 500 on every call.
+
+    The response key stays ``client_id`` (the console types it) but its value
+    now comes from ``bots.client_id``. ``session_id`` is included so support
+    can jump straight to the conversation the lead was captured in.
+    """
     with get_session() as session:
         rows = session.execute(
             select(LeadInfo, Bot, Client)
             .outerjoin(Bot, LeadInfo.bot_id == Bot.id)
-            .outerjoin(Client, LeadInfo.client_id == Client.id)
+            .outerjoin(Client, Bot.client_id == Client.id)
             .order_by(desc(LeadInfo.created_at))
             .limit(500)
         ).all()
         return [
             {
                 "id": lead.id,
+                "session_id": lead.session_id,
                 "bot_id": lead.bot_id,
                 "bot_name": b.name if b else None,
-                "client_id": lead.client_id,
+                "client_id": b.client_id if b else None,
                 "client_name": c.name if c else None,
-                "name": getattr(lead, "name", None),
-                "email": getattr(lead, "email", None),
-                "phone": getattr(lead, "phone", None),
-                "company": getattr(lead, "company", None),
+                "name": lead.name,
+                "email": lead.email,
+                "phone": lead.phone,
+                "company": lead.company,
                 "created_at": lead.created_at.isoformat() if lead.created_at else "",
             }
             for lead, b, c in rows
@@ -812,33 +892,135 @@ def credits_ledger(
     client_id: int | None = None,
     _admin: Client = Depends(get_superadmin),
 ):
-    with get_session() as session:
-        stmt = select(CreditLedger).order_by(desc(CreditLedger.created_at)).limit(500)
-        if client_id:
-            stmt = stmt.where(CreditLedger.client_id == client_id)
-        entries = session.execute(stmt).scalars().all()
+    """Credit ledger entries, newest first, capped at 500.
 
-        # Compute balance after each row by walking forward. Keeps API simple
-        # without a window function. For 500 rows this is fine.
-        running: dict[int, int] = {}
-        out = []
-        # We need ascending order to compute running balance correctly.
-        for e in reversed(entries):
-            running[e.client_id] = running.get(e.client_id, 0) + e.delta
-            out.append(
-                {
-                    "id": e.id,
-                    "client_id": e.client_id,
-                    "delta": e.delta,
-                    "balance_after": running[e.client_id],
-                    "reason": e.note or e.reason,
-                    "grant_id": e.grant_id,
-                    "expires_at": e.expires_at.isoformat() if e.expires_at else None,
-                    "created_at": e.created_at.isoformat() if e.created_at else "",
-                }
+    ``balance_after`` is a SQL window function over the account's **whole**
+    history, partitioned by ``(client_id, bot_id)`` and ordered by
+    ``(created_at, id)``; the 500-row page is applied *outside* the window.
+    Both halves of that matter, and the previous implementation got both wrong
+    by walking the returned page forward from zero:
+
+    * Walking a page starts the running total at zero, so on any account with
+      more than one page of history every number was fiction.
+    * ``CreditLedger`` is scoped per ``(client_id, bot_id)`` under per-bot
+      billing (see ``credit_service._scope_clause``): ``bot_id IS NULL`` is the
+      client pool, a non-null ``bot_id`` is that bot's isolated ledger. A walk
+      keyed on ``client_id`` alone blends a workspace's pooled ledger with each
+      of its per-bot ledgers and reports a balance no scope actually holds.
+      Postgres partitions NULLs together, so ``PARTITION BY client_id, bot_id``
+      reproduces ``_scope_clause`` exactly.
+
+    ``bot_id`` is on every row so a reader can tell which ledger a line belongs
+    to; without it two interleaved running totals look like a corrupted one.
+
+    Caveat worth stating: this is the running sum of ``delta``, which is the
+    ledger's own arithmetic. ``credit_service.get_balance`` is the platform's
+    single source of truth for the *spendable* balance and additionally
+    subtracts the unconsumed remainder of top-up grants that have expired but
+    which the daily sweep has not yet zeroed. The two agree except inside that
+    window. Anything making a decision about spend must call ``get_balance``,
+    not read this column.
+
+    ``client_id`` stays optional, and the unfiltered listing is served in two
+    steps rather than one. Computing the window first and paging it afterwards
+    is correct but reads the WHOLE table on every unfiltered call: with no
+    predicate and no inner limit, Postgres materialises the running sum for
+    every row in ``credit_ledger`` and sorts the lot before taking 500. There
+    is no index on bare ``created_at`` (only ``(client_id, created_at DESC)``),
+    and the console calls this endpoint unfiltered by default.
+
+    So: pick the 500 rows of the page first (a top-N sort, no window), then run
+    the window only over the accounts those rows belong to, then keep the page.
+    The running balance is still computed over each partition's FULL history,
+    not over the page, so ``balance_after`` is unchanged and the response
+    contract is identical — only the number of rows the window chews through
+    moves. The narrowed pass filters on ``client_id``, the leading column of
+    the index that does exist.
+
+    The bound is honest about what it is: "the accounts on this page", not a
+    constant. A ledger whose newest 500 rows come from 500 different accounts
+    still windows all 500 accounts' history. It is bounded by the page, which
+    the old shape was not, and on a realistic ledger (a few busy accounts
+    producing most of the newest rows) the window's input drops by orders of
+    magnitude. The remaining cost is the top-N sort over an unindexed
+    ``created_at``; removing that needs an index, which is a migration and not
+    this endpoint's to make.
+    """
+    with get_session() as session:
+        # Step 1: the page itself, ids only. Ordering is total (``id`` breaks
+        # the ``created_at`` ties that rows written in one transaction share),
+        # so the same 500 rows come back every time.
+        page_stmt = select(CreditLedger.id, CreditLedger.client_id)
+        if client_id:
+            page_stmt = page_stmt.where(CreditLedger.client_id == client_id)
+        page = session.execute(
+            page_stmt.order_by(desc(CreditLedger.created_at), desc(CreditLedger.id)).limit(500)
+        ).all()
+        if not page:
+            return []
+        page_ids = [row.id for row in page]
+        page_client_ids = sorted({row.client_id for row in page})
+
+        # Step 2: the window, over the full history of only the accounts that
+        # page actually touches. The ids come back to Python and go out as an
+        # explicit ``IN`` list (at most 500 of them) rather than staying a
+        # sub-select on purpose: given real values the planner knows how few
+        # accounts are involved and drives ``ix_credit_ledger_client_created``,
+        # where a nested sub-select falls back to its default selectivity guess
+        # and seq-scans the whole ledger to feed the window anyway. One extra
+        # round trip buys an index scan over a full-table scan.
+        #
+        # ``PARTITION BY client_id, bot_id`` still reproduces
+        # ``credit_service._scope_clause`` exactly (Postgres partitions NULLs
+        # together), and every partition a page row belongs to is present in
+        # FULL, because the input is narrowed by account, never by row. So
+        # ``balance_after`` is unchanged from windowing the whole table.
+        running_balance = (
+            func.sum(CreditLedger.delta)
+            .over(
+                partition_by=(CreditLedger.client_id, CreditLedger.bot_id),
+                order_by=(CreditLedger.created_at, CreditLedger.id),
             )
-        out.reverse()  # newest first for the UI
-        return out
+            .label("balance_after")
+        )
+        windowed = (
+            select(
+                CreditLedger.id,
+                CreditLedger.client_id,
+                CreditLedger.bot_id,
+                CreditLedger.delta,
+                CreditLedger.reason,
+                CreditLedger.note,
+                CreditLedger.grant_id,
+                CreditLedger.expires_at,
+                CreditLedger.created_at,
+                running_balance,
+            )
+            .where(CreditLedger.client_id.in_(page_client_ids))
+            .subquery()
+        )
+
+        # Step 3: keep the page. Filtering on the ids chosen in step 1 means
+        # this can only return rows that query already chose.
+        rows = session.execute(
+            select(windowed)
+            .where(windowed.c.id.in_(page_ids))
+            .order_by(desc(windowed.c.created_at), desc(windowed.c.id))
+        ).all()
+        return [
+            {
+                "id": r.id,
+                "client_id": r.client_id,
+                "bot_id": r.bot_id,
+                "delta": r.delta,
+                "balance_after": int(r.balance_after or 0),
+                "reason": r.note or r.reason,
+                "grant_id": r.grant_id,
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ]
 
 
 @router.get("/pricing-config")
@@ -1663,7 +1845,26 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
 # ── Internal helpers ────────────────────────────────────────────────────────
 
 
-def _session_summary(s: ChatSession, b: Bot | None, c: Client | None) -> dict[str, Any]:
+def _session_summary(s: ChatSession, b: Bot | None, c: Client | None, lead: LeadInfo | None) -> dict[str, Any]:
+    """One session row for the sessions list, the live queue and session detail.
+
+    ``lead`` is the session's ``LeadInfo`` row, or ``None`` when the visitor
+    never identified themselves. It is a required argument, not an optional
+    one: every call site outer-joins it (``lead_info.session_id`` is UNIQUE,
+    so the join is 1:1 with no fan-out), and a default of ``None`` would let a
+    future call site quietly serve nulls again.
+
+    Two deliberate non-obvious choices:
+
+    * Attributes are read directly, never through ``getattr(s, ..., None)``.
+      This payload shipped three permanently-null fields (``visitor_name``,
+      ``visitor_email``, ``last_activity_at``) precisely because a defaulted
+      read turns a wrong column name into a silent null instead of an
+      ``AttributeError`` on the first request.
+    * The wire key stays ``last_activity_at`` while the column read is the real
+      ``ChatSession.last_active_at``. The console types the key; renaming it
+      costs a coordinated deploy and buys nothing.
+    """
     return {
         "id": s.id,
         "bot_id": s.bot_id,
@@ -1671,11 +1872,11 @@ def _session_summary(s: ChatSession, b: Bot | None, c: Client | None) -> dict[st
         "client_id": s.client_id,
         "client_name": c.name if c else None,
         "status": s.status,
-        "visitor_name": getattr(s, "visitor_name", None),
-        "visitor_email": getattr(s, "visitor_email", None),
-        "rating": getattr(s, "visitor_rating", None),
+        "visitor_name": lead.name if lead else None,
+        "visitor_email": lead.email if lead else None,
+        "rating": s.visitor_rating,
         "created_at": s.created_at.isoformat() if s.created_at else None,
-        "last_activity_at": s.last_activity_at.isoformat() if getattr(s, "last_activity_at", None) else None,
+        "last_activity_at": s.last_active_at.isoformat() if s.last_active_at else None,
     }
 
 
@@ -2102,6 +2303,51 @@ def gstr_export_csv(
     )
 
 
+def _cycle_at_risk_minor(plan: Plan | None, billing_cycle: str | None, currency: str) -> int | None:
+    """The ONE billing cycle a past-due subscription is about to lose, in minor units.
+
+    ``currency`` is the rail the customer is actually charged on, so the price
+    column has to match it: the INR columns for an INR-rail customer, the
+    ``*_usd_cents`` columns for a USD-rail one. ``billing_cycle`` picks annual
+    or monthly; reading ``monthly_price_cents`` regardless of cycle understates
+    an annual subscription by a factor of roughly twelve.
+
+    Returns ``None`` when the amount cannot be stated honestly:
+
+    * no plan row at all, or
+    * a plan whose price column for this rail and cycle carries no usable
+      amount. On the USD rail ``Plan.monthly_price_usd_cents`` /
+      ``annual_price_usd_cents`` are nullable and a NULL on a paid plan is a
+      config defect (``app.core.pricing`` says so in as many words). On the INR
+      rail ``monthly_price_cents`` / ``annual_price_cents`` are ``NOT NULL
+      DEFAULT 0``, so the very same defect — an annual subscription against a
+      plan that only ever had its monthly price filled in — surfaces as ``0``
+      rather than as NULL.
+
+    Both rails are therefore read through ONE expression and one test: a
+    missing or non-positive price is ``None``. Answering ``0`` for the INR half
+    of the identical defect was the dishonest reading — it printed "₹0.00 at
+    risk" for a customer who is about to lose a real billing cycle, and counted
+    that row in the currency total as if nothing were at stake, which is
+    exactly what the paragraph below argues against. Falling back to the INR
+    figure on a USD row would be the other way to lie: a rupee amount under a
+    ``USD`` label.
+
+    A ``None`` row is excluded from the totals rather than counted as zero, so
+    a broken plan row shows up as a gap instead of quietly shrinking the queue.
+    """
+    if plan is None:
+        return None
+    annual = (billing_cycle or "monthly").strip().lower() == "annual"
+    if currency == "USD":
+        price = plan.annual_price_usd_cents if annual else plan.monthly_price_usd_cents
+    else:
+        price = plan.annual_price_cents if annual else plan.monthly_price_cents
+    if price is None or int(price) <= 0:
+        return None
+    return int(price)
+
+
 @router.get("/billing/dunning")
 def dunning_overview(_admin: Client = Depends(get_superadmin)):
     """Who is currently failing payment, how far into grace, and what it is worth.
@@ -2110,15 +2356,33 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
     cadence has got, so support can see whether a customer has already been
     warned before phoning them.
 
-    Also surfaces the recovered-cycle gap: Razorpay does NOT re-attempt the
-    missed charge when a halted subscription returns to active, so every
-    recovery leaves one cycle uncollected unless it is charged manually.
+    **What the money field is.** ``cycle_at_risk_minor`` is the value of the
+    ONE billing cycle this subscription is about to lose, in the minor units of
+    ``currency``. It is not arrears and not "amount owed": Razorpay does NOT
+    re-attempt the missed charge when a halted subscription returns to active,
+    so a recovery leaves that one cycle uncollected unless somebody charges it
+    manually. A customer three cycles into failure still shows one cycle here.
+
+    **Where the currency comes from.** ``Plan.currency`` is not the answer, and
+    reading it was wrong in both the number and the label: the plan routes
+    reject any plan currency but INR (``superadmin_plan_routes`` raises on a
+    non-INR create *and* update), so every plan row says "INR" while a USD-rail
+    customer is charged from the ``*_usd_cents`` columns. The rail is
+    ``core.pricing.charge_currency(client.billing_country)``, which is the same
+    function the charge path uses.
+
+    **No cross-currency total.** ``at_risk_by_currency`` is a per-currency
+    breakdown; the old scalar ``at_risk_minor_total`` added paise to cents and
+    reported a number that was not an amount of anything. There is deliberately
+    no FX conversion into a single figure either: a dunning screen showing a
+    converted total invites someone to book it as revenue, and there is no live
+    FX anywhere in the charge path to convert it with.
     """
     from app.config import PAYMENT_FAILED_GRACE_DAYS
 
     with get_session() as session:
         rows = session.execute(
-            select(Subscription, Client.email, Plan.name)
+            select(Subscription, Client.email, Client.billing_country, Plan)
             .join(Client, Subscription.client_id == Client.id)
             .outerjoin(Plan, Subscription.plan_id == Plan.id)
             .where(Subscription.status == "past_due")
@@ -2127,29 +2391,34 @@ def dunning_overview(_admin: Client = Depends(get_superadmin)):
 
         now = datetime.now(UTC)
         items: list[dict[str, Any]] = []
-        for sub, email, plan_name in rows:
+        totals: dict[str, int] = {}
+        for sub, email, billing_country, plan in rows:
             since = sub.past_due_since
             if since is not None and since.tzinfo is None:
                 since = since.replace(tzinfo=UTC)
             elapsed = (now - since).days if since else None
+            currency = charge_currency(billing_country)
+            at_risk = _cycle_at_risk_minor(plan, sub.billing_cycle, currency)
+            if at_risk is not None:
+                totals[currency] = totals.get(currency, 0) + at_risk
             items.append(
                 {
                     "subscription_id": sub.id,
                     "client_id": sub.client_id,
                     "client_email": email,
-                    "plan_name": plan_name,
+                    "plan_name": plan.name if plan else None,
                     "billing_cycle": sub.billing_cycle,
                     "past_due_since": since.isoformat() if since else None,
                     "days_elapsed": elapsed,
                     "days_left": max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed) if elapsed is not None else None,
                     "emails_sent": sorted((sub.dunning_emails_sent or {}).keys()),
-                    "at_risk_minor": sub.plan.monthly_price_cents if sub.plan else 0,
-                    "currency": (sub.plan.currency if sub.plan else None) or "INR",
+                    "cycle_at_risk_minor": at_risk,
+                    "currency": currency,
                 }
             )
         return {
             "count": len(items),
-            "at_risk_minor_total": sum(i["at_risk_minor"] for i in items),
+            "at_risk_by_currency": [{"currency": code, "minor": minor} for code, minor in sorted(totals.items())],
             "grace_days": PAYMENT_FAILED_GRACE_DAYS,
             "items": items,
         }

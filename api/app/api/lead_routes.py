@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
@@ -17,7 +18,7 @@ from app.core.csv_safety import csv_safe_row
 from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
-from app.schemas.validators import RowId, SessionId
+from app.schemas.validators import EmailAddress, RowId, SearchTerm, SessionId
 from app.services.email_design import esc, h1, p, shell
 from app.services.email_service import send_email_async
 from app.services.lead_service import build_lead_response
@@ -519,6 +520,158 @@ def export_leads_csv(
         )
 
 
+# ── Email suppressions ───────────────────────────────────────────────────────
+#
+# ``EmailSuppression`` is the permanent per-bot do-not-email list. Until now it
+# was written only by the public unsubscribe link and read only by Gate 3 in
+# ``send_manual_follow_up`` above, so a customer had no way to see who had
+# unsubscribed, or to notice that an address they expected to reach was
+# suppressed. These two endpoints expose it.
+#
+# There is deliberately **no DELETE**: the model's own docstring states a row is
+# never removed by application code. Re-enabling mail to someone who asked to
+# stop is a consent decision (this product's lawful basis under India's DPDP Act
+# is consent-only), not a CRUD operation.
+
+
+class CreateSuppressionRequest(BaseModel):
+    """Body for ``POST /leads/suppressions``.
+
+    Lets a customer honour an out-of-band "stop emailing me" (said on a call,
+    replied to the email, raised in a ticket) without waiting for the visitor
+    to click the unsubscribe link. Safe in every direction: the only thing it
+    can do is stop mail.
+    """
+
+    bot_id: RowId
+    email: EmailAddress
+    # The three values the model documents. ``unsubscribe`` is what a customer
+    # recording a manual opt-out means; the other two exist so a bounce or
+    # complaint imported by hand keeps its real provenance.
+    reason: Literal["unsubscribe", "hard_bounce", "spam_complaint"] = "unsubscribe"
+
+
+def _suppression_response(row: EmailSuppression, bot_names: dict[int, str]) -> dict:
+    return {
+        "id": row.id,
+        "bot_id": row.bot_id,
+        "bot_name": bot_names.get(row.bot_id),
+        "email": row.email,
+        "reason": row.reason,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/suppressions")
+def list_suppressions(
+    bot_id: RowId | None = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: SearchTerm | None = Query(None, description="Case-insensitive substring match on the email address"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """List the addresses suppressed for this workspace's bots.
+
+    TENANT SCOPING: ``EmailSuppression`` carries no ``client_id``, only
+    ``bot_id``. Every row returned here is therefore filtered through the
+    caller's own bot ids (``_resolve_client_bot_ids``, the same helper /
+    same 403 ``list_leads`` uses). Without that filter this endpoint would
+    hand out other tenants' visitors' email addresses.
+    """
+    with get_session() as session:
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
+        if not bot_ids:
+            return {"suppressions": [], "total": 0, "page": page, "limit": limit}
+
+        conditions = [EmailSuppression.bot_id.in_(bot_ids)]
+        if search:
+            # ``ilike`` needs the wildcards escaped or a stray ``%`` in the
+            # search box would match every row.
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append(EmailSuppression.email.ilike(f"%{escaped}%", escape="\\"))
+
+        total = int(session.execute(select(func.count(EmailSuppression.id)).where(*conditions)).scalar_one() or 0)
+
+        rows = (
+            session.execute(
+                select(EmailSuppression)
+                .where(*conditions)
+                .order_by(desc(EmailSuppression.created_at), desc(EmailSuppression.id))
+                .offset((page - 1) * limit)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        bot_names: dict[int, str] = {}
+        page_bot_ids = {row.bot_id for row in rows}
+        if page_bot_ids:
+            bot_names = dict(session.execute(select(Bot.id, Bot.name).where(Bot.id.in_(page_bot_ids))).all())
+
+        return {
+            "suppressions": [_suppression_response(row, bot_names) for row in rows],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+
+
+@router.post("/suppressions", status_code=201)
+def create_suppression(
+    body: CreateSuppressionRequest,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Suppress an address for one of the caller's bots. Idempotent.
+
+    Same tenant scoping as the list above: ``_resolve_client_bot_ids``
+    raises the 403 ``list_leads`` raises when ``bot_id`` is not the caller's,
+    so nobody can seed a suppression on another workspace's bot.
+
+    The insert mirrors ``unsubscribe_routes._do_unsubscribe``: read-then-add,
+    with an ``IntegrityError`` rollback against ``uq_email_suppressions_bot_email``
+    so two concurrent calls both settle on "already suppressed" instead of
+    500ing.
+    """
+    with get_session() as session:
+        _resolve_client_bot_ids(session, auth, body.bot_id)
+
+        existing = session.execute(
+            select(EmailSuppression).where(
+                EmailSuppression.bot_id == body.bot_id,
+                EmailSuppression.email == body.email,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            bot_name = session.execute(select(Bot.name).where(Bot.id == existing.bot_id)).scalar_one_or_none()
+            return _suppression_response(existing, {existing.bot_id: bot_name})
+
+        row = EmailSuppression(bot_id=body.bot_id, email=body.email, reason=body.reason)
+        try:
+            session.add(row)
+            session.commit()
+        except IntegrityError:
+            # Race: a concurrent unsubscribe click inserted it first. Already
+            # suppressed is the outcome we wanted, so re-read and return it.
+            session.rollback()
+            existing = session.execute(
+                select(EmailSuppression).where(
+                    EmailSuppression.bot_id == body.bot_id,
+                    EmailSuppression.email == body.email,
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                raise
+            bot_name = session.execute(select(Bot.name).where(Bot.id == existing.bot_id)).scalar_one_or_none()
+            return _suppression_response(existing, {existing.bot_id: bot_name})
+
+        session.refresh(row)
+        # PRIVACY: never log the address itself. It is visitor personal data.
+        logger.info("Suppression added | bot=%s | operator=%s", body.bot_id, auth.get("operator_id"))
+        bot_name = session.execute(select(Bot.name).where(Bot.id == row.bot_id)).scalar_one_or_none()
+        return _suppression_response(row, {row.bot_id: bot_name})
+
+
 @router.get("/{session_id}")
 def get_lead_detail(
     session_id: str,
@@ -706,7 +859,10 @@ def send_manual_follow_up(
         # Gate 4. Hard stop, no override.
         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         if bot and bot.followup_sending_paused:
-            raise HTTPException(status_code=423, detail="Sending is paused for this bot. Contact ops.")
+            raise HTTPException(
+                status_code=423,
+                detail="Follow-up sending is paused for this agent. Turn it back on in Settings to send this email.",
+            )
 
         unsubscribe_url = (
             f"{API_BASE_URL}/leads/unsubscribe?token={make_unsubscribe_token(chat_session.bot_id, lead_info.email)}"

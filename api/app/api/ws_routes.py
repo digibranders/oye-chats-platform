@@ -10,7 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 
 from app.config import PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS
-from app.core.origin_check import extract_hostname, is_origin_allowed
+from app.core.origin_check import extract_hostname, is_origin_allowed, origin_check_applies
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
@@ -306,13 +306,21 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
         bot_id = bot.id
 
-        # Origin whitelist (parity with HTTP get_current_bot). Enforced only when
-        # the customer has opted in; otherwise we keep the previous behaviour so
-        # existing widgets continue to work.
-        if bot.domain_check_enabled:
+        # Origin whitelist (parity with HTTP ``get_current_bot``). Both
+        # transports ask ``origin_check_applies`` so they cannot diverge: the
+        # flag alone is not enough, an allowlist has to be configured too.
+        # ``create_bot`` turns the flag on unconditionally, and when the caller
+        # sends no explicit list it derives one from the customer's website
+        # alone, so a bot created without a website carries
+        # ``domain_check_enabled=True`` with ``allowed_domains=[]``. Enforcing
+        # that combination here (as this branch used to) closed every live-chat
+        # socket with 4403 under ``APP_ENV=production``, while HTTP chat on the
+        # same bot kept working.
+        allowed_domains = list(bot.allowed_domains or [])
+        if origin_check_applies(domain_check_enabled=bot.domain_check_enabled, allowed=allowed_domains):
             origin_header = ws.headers.get("origin") or ws.headers.get("referer")
             hostname = extract_hostname(origin_header)
-            if not is_origin_allowed(hostname, list(bot.allowed_domains or [])):
+            if not is_origin_allowed(hostname, allowed_domains):
                 logger.info(
                     "Widget WS rejected by origin check: bot_id=%s origin=%r hostname=%r",
                     bot_id,

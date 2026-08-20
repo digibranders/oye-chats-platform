@@ -101,26 +101,90 @@ def test_a_zeroed_minimum_never_makes_an_upload_free(db):
     assert get_document_upload_cost_for_size(db, 1) == 1
 
 
-def test_the_advertised_rate_matches_the_charged_rate():
-    """Reads the UI's own copy and checks it states the rate we charge.
+def test_the_rate_is_served_to_the_client_not_reprinted_by_it(db):
+    """The advertised rate and the charged rate are the same value, once.
 
-    A comment saying "keep these in sync" is not a guard. The old bucket labels
-    drifted from the backend precisely because nothing read them.
+    This used to grep ``UsagePage.tsx`` for the string "1 credit per 250 words",
+    because the console printed the rate as prose and nothing tied the two
+    together — the five-bucket table it replaced had drifted from the backend
+    for exactly that reason. Pinning a literal across two repositories only
+    moves the drift into the test: the console rebuild dropped the sentence and
+    the guard failed, while the real defect was that a customer could no longer
+    see what an upload costs at all.
+
+    So the rate is now *served*. ``GET /credits/balance`` carries
+    ``document_upload_words_per_credit`` out of the same ``pricing_config`` key
+    ``get_document_upload_cost_for_size`` charges from, and the console renders
+    what it is given. There is one number, in one place, and a super-admin who
+    retunes it moves the price and the copy together.
+
+    What this test pins is that the value reaching the client is the value that
+    charges — including when it has been overridden, which is the case the old
+    grep could never have caught.
     """
-    import re
-    from pathlib import Path
+    from app.api.subscription_routes import _credit_costs_payload
 
-    source = Path(__file__).resolve().parents[2] / "app" / "src" / "features" / "workspace" / "UsagePage.tsx"
-    if not source.exists():  # pragma: no cover - the app tree is optional in some checkouts
-        pytest.skip("admin app source not present")
-
-    text = source.read_text()
-    stated = re.search(r"(\d+) credits? per ([\d,]+) words", text)
-    assert stated, "could not find the document-upload rate in the Usage page copy; did it move?"
-
-    credits = int(stated.group(1))
-    words = int(stated.group(2).replace(",", ""))
-    assert (credits, words) == (1, WORDS_PER_CREDIT), (
-        f"the Usage page advertises {credits} credit(s) per {words} words, but uploads are "
-        f"charged 1 per {WORDS_PER_CREDIT}"
+    served = _credit_costs_payload(db)
+    assert "document_upload_words_per_credit" in served, (
+        "GET /credits/balance no longer serves the document-upload rate; the console "
+        "cannot state what an upload costs without it"
     )
+    assert served["document_upload_words_per_credit"] == WORDS_PER_CREDIT
+
+    # An override moves both halves, which is the whole point of serving it.
+    _override(db, "credit_cost.document_upload_words_per_credit", 500)
+    assert _credit_costs_payload(db)["document_upload_words_per_credit"] == 500
+    # 2 credits for 1000 words at 1-per-500, plus the per-file floor.
+    assert get_document_upload_cost_for_size(db, 1000) == 2 + get_document_upload_cost_for_size(db, 1) - 1
+
+
+def test_a_broken_rate_override_is_never_served_as_free(db):
+    """A super-admin can save anything into the untyped JSONB ``value``.
+
+    Serving 0 or a negative rate would render in the console as "1 credit per 0
+    words" or worse be read as free, beside an action that still charges. The
+    payload must fall back to the shipped rate exactly as the deduction does.
+    """
+    from app.api.subscription_routes import _credit_costs_payload
+
+    for broken in (0, -1, "not a number", None):
+        _override(db, "credit_cost.document_upload_words_per_credit", broken)
+        assert _credit_costs_payload(db)["document_upload_words_per_credit"] == WORDS_PER_CREDIT
+
+
+def test_a_zeroed_floor_is_never_advertised_below_what_an_upload_charges(db):
+    """The floor the console prints is the floor the deduction applies.
+
+    ``credit_cost.document_upload`` is the per-file minimum and, like the rate,
+    it is untyped JSONB a super admin can save as ``0``.
+    ``get_document_upload_cost_for_size`` clamps it to at least 1 credit (see
+    ``test_a_zeroed_minimum_never_makes_an_upload_free``), but the balance
+    payload used to serve the raw config value beside it — so the console
+    advertised a free upload that ingestion still charged for. That is the same
+    price/charge divergence the rate above exists to prevent, one field over.
+    """
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", 0)
+    served = _credit_costs_payload(db)["document_upload"]
+    # An empty document is charged exactly the floor, so it reads the clamped
+    # value straight out of the charge path rather than restating the clamp.
+    assert served == get_document_upload_cost_for_size(db, 0)
+    assert served == 1, "a zeroed floor must reach the console as the 1 credit it actually costs"
+
+
+@pytest.mark.parametrize("broken", [-3, None, "free", [0]])
+def test_an_unusable_floor_is_served_as_what_it_charges(db, broken):
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", broken)
+    assert _credit_costs_payload(db)["document_upload"] == get_document_upload_cost_for_size(db, 0)
+
+
+def test_a_real_floor_override_moves_both_halves(db):
+    """The clamp must not flatten a legitimate super-admin price to 1."""
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", 7)
+    assert _credit_costs_payload(db)["document_upload"] == 7
+    assert get_document_upload_cost_for_size(db, 1) == 7
