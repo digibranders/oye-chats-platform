@@ -96,6 +96,10 @@ def test_session_detail_404s_for_a_missing_id_rather_than_422(db, monkeypatch):
     """
     res = _api(db, monkeypatch).get("/superadmin/sessions/no-such-session-id")
 
+    # Both halves, as the docstring promises. 404 alone would still pass if the
+    # route regressed to some other refusal, and 422 is the specific regression
+    # this test exists to catch, so it is named rather than merely excluded.
+    assert res.status_code != 422, f"the path parameter rejected a UUID-shaped id again: {res.text}"
     assert res.status_code == 404, res.text
 
 

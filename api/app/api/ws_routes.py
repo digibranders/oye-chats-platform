@@ -309,9 +309,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         # Origin whitelist (parity with HTTP ``get_current_bot``). Both
         # transports ask ``origin_check_applies`` so they cannot diverge: the
         # flag alone is not enough, an allowlist has to be configured too.
-        # ``create_bot`` turns the flag on unconditionally, and when the caller
-        # sends no explicit list it derives one from the customer's website
-        # alone, so a bot created without a website carries
+        # ``create_bot`` defaults the flag ON (a caller can pass
+        # ``domain_check_enabled=false``, but nothing in the console does), and
+        # when the caller sends no explicit list it derives one from the
+        # customer's website alone, so a bot created without a website carries
         # ``domain_check_enabled=True`` with ``allowed_domains=[]``. Enforcing
         # that combination here (as this branch used to) closed every live-chat
         # socket with 4403 under ``APP_ENV=production``, while HTTP chat on the

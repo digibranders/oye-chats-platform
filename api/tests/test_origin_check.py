@@ -132,17 +132,39 @@ def test_www_matching(host, allowed, expected):
     assert is_origin_allowed(host, allowed, app_env="production") is expected
 
 
-def test_www_widening_is_one_directional():
-    """A ``www.`` host is admitted by the apex, never the reverse.
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "www.acme.com",
+        # Repeated labels too. A single strip left this normalizing to
+        # ``www.acme.com``, an entry that admits ``www.www.acme.com`` and
+        # silently EXCLUDES the customer's own apex.
+        "www.www.acme.com",
+        "www.www.www.acme.com",
+        "https://www.acme.com/contact",
+        "WWW.Acme.com",
+    ],
+)
+def test_no_entry_can_be_stored_as_a_www_host(entry):
+    """The premise the ``www.`` matching arm rests on, tested as a rule.
 
-    The asymmetry is what keeps the widening confined to one registrable domain:
-    an entry can never itself be a ``www.`` host, because every write path runs
-    through ``normalize_domain_input``.
+    That arm is only safe because the widening is one-directional: an entry can
+    never itself be a ``www.`` host, so it can only ever widen apex -> www and
+    never www -> some other apex. That holds only if EVERY leading ``www.`` is
+    stripped, which is why this asserts a rule rather than one example.
     """
+    assert normalize_domain_input(entry) == "acme.com"
+
+
+def test_www_widening_is_one_directional():
+    """A ``www.`` host is admitted by the apex, never the reverse."""
     assert normalize_domain_input("www.acme.com") == "acme.com"
     # And the hostname side is deliberately NOT stripped, which is why the
     # matching arm has to exist at all.
     assert extract_hostname("https://www.acme.com") == "www.acme.com"
+    assert is_origin_allowed("www.acme.com", ["acme.com"], app_env="production")
+    # The reverse: an apex host is NOT admitted by a *.-less subdomain entry.
+    assert not is_origin_allowed("acme.com", ["shop.acme.com"], app_env="production")
 
 
 def test_wildcard_matches_subdomain():
@@ -215,3 +237,28 @@ def test_allowed_entry_with_whitespace_and_empty_strings_skipped():
 )
 def test_origin_check_applies(enabled, allowed, expected):
     assert origin_check_applies(domain_check_enabled=enabled, allowed=allowed) is expected
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "https://" + "a" * 5000,
+        "https://" + ("a" * 60 + ".") * 20 + "com",
+    ],
+)
+def test_an_oversized_hostname_is_refused_rather_than_returned(header):
+    """The header is attacker-supplied and the hostname is not only compared.
+
+    ``bot_routes`` stores it as ``Bot.widget_last_origin``, which rides into the
+    bot-config cache entry every widget bootstrap reads. DNS caps a name at 253
+    characters, so anything longer is not a host: refusing it keeps junk out of
+    a hot-path cache without inventing a truncated string the caller could not
+    tell apart from a real hostname.
+    """
+    assert extract_hostname(header) is None
+
+
+def test_a_hostname_at_the_dns_limit_still_parses():
+    """The bound is the DNS limit, not an arbitrary short cap."""
+    host = "a" * 249 + ".com"
+    assert extract_hostname(f"https://{host}") == host

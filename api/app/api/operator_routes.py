@@ -603,19 +603,14 @@ async def update_operator(
                         status_code=400,
                         detail="You cannot deactivate your own account.",
                     )
-                # Hand in-flight conversations back to the queue instead of
-                # dropping the visitor onto the bot. ``delete_operator``
-                # uses ``status='bot'`` because the row is about to vanish;
-                # here another operator can still pick the visitor up, so
-                # mirror the bot-reassignment branch above and re-queue.
-                session.execute(
-                    update(ChatSession)
-                    .where(
-                        ChatSession.assigned_operator_id == operator.id,
-                        ChatSession.status == "live",
-                    )
-                    .values(assigned_operator_id=None, status="waiting")
-                )
+                # In-flight conversations are NOT re-queued here. They are
+                # handed over to ``manager.handle_operator_deactivated`` after
+                # the commit, which finds them by ``status == 'live'`` and moves
+                # DB rows and in-process queue state together. Clearing the rows
+                # here would hide the sessions from that call: it would see zero
+                # live sessions, never append them to ``manager.waiting_queue``
+                # and never drop ``manager.assignments``, leaving the visitor
+                # marked ``waiting`` in the DB but invisible to every operator.
                 operator.is_active = False
                 # Availability goes with it, in the same transaction. The
                 # WebSocket's concurrent-operator cap counts
@@ -623,9 +618,8 @@ async def update_operator(
                 # (``ws_routes`` seat check), so a deactivated operator left
                 # marked online keeps occupying a paid seat and can refuse a
                 # legitimate teammate's connect with ``seat_limit``. Nothing
-                # clears it later either: ``disconnect_operator_and_broadcast``
-                # only drops the in-process socket reference, and a deactivated
-                # operator cannot reconnect to set it again.
+                # clears it later either: a deactivated operator cannot
+                # reconnect to set it again.
                 operator.is_online = False
                 deactivated = True
             active_changed = True
@@ -648,11 +642,24 @@ async def update_operator(
     if department_changed:
         await manager.update_operator_department(operator_id, new_department_id)
 
-    # A deactivated operator must not keep an open console socket. Drop the
-    # connection through the manager so presence, the roster broadcast and any
-    # residual assignment state are cleaned up by the existing path.
+    # A deactivated operator must not keep an open console socket: the operator
+    # WS handlers never re-read ``is_active``, so an open connection would still
+    # accept chats and send messages after the seat was revoked. This closes it
+    # and immediately re-queues the operator's in-flight conversations — no
+    # grace period, because an inactive operator cannot reconnect.
+    #
+    # Deliberately non-fatal. The seat change is already committed and the API
+    # contract is "the operator is deactivated"; a live-chat teardown failure
+    # must not turn that into a 500 that invites the caller to retry an
+    # already-applied change. It is logged loudly instead.
     if deactivated:
-        await manager.disconnect_operator_and_broadcast(operator_id)
+        try:
+            await manager.handle_operator_deactivated(operator_id)
+        except Exception:
+            logger.exception(
+                "Failed to release live sessions for deactivated operator %s",
+                operator_id,
+            )
 
     return {"success": True, "message": f"Operator '{operator_name}' updated."}
 

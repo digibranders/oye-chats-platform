@@ -35,13 +35,30 @@ _DOMAIN_PATTERN = re.compile(
     r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
 _LOCAL_HOSTS = {"localhost", "127.0.0.1"}
+# RFC 1035: a fully-qualified domain name is at most 255 octets on the wire,
+# which is 253 characters in presentation form.
+_MAX_HOSTNAME_LENGTH = 253
 
 
 def extract_hostname(origin_or_referer: str | None) -> str | None:
     """Return the lowercase hostname for an ``Origin``/``Referer`` header.
 
     Strips scheme, port, path, query, and fragment. Returns ``None`` for
-    missing or unparseable values so the caller can decide what to do.
+    missing, unparseable, or over-long values so the caller can decide what to
+    do.
+
+    The length bound matters because the header is attacker-supplied and the
+    hostname does not only feed the allowlist comparison: ``bot_routes`` also
+    stores it as ``Bot.widget_last_origin``, which then rides into the
+    bot-config Redis entry every widget bootstrap reads. ``urlparse`` is happy
+    to return a five-kilobyte "hostname", so without this the public settings
+    endpoint let anyone holding the (public) bot key write multi-kilobyte junk
+    into a hot-path cache entry.
+
+    Rejecting rather than truncating is the fail-closed half: DNS caps a name
+    at 253 octets, so nothing longer is a real host and nothing longer could
+    legitimately match an allowlist entry. A truncated value, by contrast,
+    would be a string the caller could not tell apart from a genuine hostname.
     """
     if not origin_or_referer:
         return None
@@ -56,7 +73,9 @@ def extract_hostname(origin_or_referer: str | None) -> str | None:
     except ValueError:
         return None
     host = (parsed.hostname or "").strip().lower()
-    return host or None
+    if not host or len(host) > _MAX_HOSTNAME_LENGTH:
+        return None
+    return host
 
 
 def normalize_domain_input(raw: str) -> str:
@@ -92,7 +111,12 @@ def normalize_domain_input(raw: str) -> str:
     # Drop any port, path, or trailing slash that survived parsing.
     cleaned = cleaned.split("/", 1)[0]
     cleaned = cleaned.split(":", 1)[0]
-    if cleaned.startswith("www."):
+    # Every leading ``www.``, not just the first. One strip left
+    # ``www.www.acme.com`` normalizing to ``www.acme.com``, which is a stored
+    # entry that silently EXCLUDES the customer's apex -- the exact failure
+    # this strip exists to prevent -- and it falsified the one-directional
+    # argument the ``www.`` arm of :func:`is_origin_allowed` rests on.
+    while cleaned.startswith("www."):
         cleaned = cleaned[4:]
 
     if not cleaned:
@@ -152,13 +176,15 @@ def is_origin_allowed(
             return True
         # ``acme.com`` also admits ``www.acme.com``.
         #
-        # ``normalize_domain_input`` strips a leading ``www.`` before an entry is
-        # persisted, and every write path into ``Bot.allowed_domains`` goes
+        # ``normalize_domain_input`` strips EVERY leading ``www.`` before an
+        # entry is persisted, and every write path into ``Bot.allowed_domains`` goes
         # through it: ``_normalize_allowed_domains`` (both request schemas),
         # ``_derive_allowed_domains_from_website`` (the create-flow default), and
         # the Razorpay note replay in ``razorpay_service``, which only echoes back
         # values those two already normalized. A customer therefore *cannot*
-        # store ``www.acme.com`` as an entry -- listing the apex is the only way
+        # store ``www.acme.com`` as an entry (nor ``www.www.acme.com``, which is
+        # why that strip is a loop and not a single test) -- listing the apex is
+        # the only way
         # to express the site at all -- while the browser sends the real
         # ``https://www.acme.com`` Origin, which ``extract_hostname``
         # deliberately keeps intact. Without this arm the customer's own

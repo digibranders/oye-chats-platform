@@ -121,6 +121,12 @@ class ConnectionManager:
     DEFAULT_VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
     DEFAULT_OPERATOR_DISCONNECT_TIMEOUT = 60  # seconds
 
+    # Terminal close code for an operator socket the server is revoking. The
+    # console maps this to auth-failed and deliberately does NOT reconnect,
+    # which is right for a deactivated operator: their key no longer
+    # authenticates, so a reconnect loop would only hammer the WS endpoint.
+    DEACTIVATED_CLOSE_CODE = 4003
+
     def __init__(self):
         # session_id → WebSocket
         self.visitor_connections: dict[str, WebSocket] = {}
@@ -775,6 +781,38 @@ class ConnectionManager:
 
         await self.broadcast_operators_update()
         return len(orphaned_sessions)
+
+    async def handle_operator_deactivated(self, operator_id: int) -> int:
+        """Tear down a deactivated operator's console session immediately.
+
+        A soft deactivation is not a flaky network drop, so the grace period in
+        ``_operator_disconnect_timeout`` is the wrong tool for it. Reconnection
+        is impossible (``_resolve_operator_from_key`` refuses an inactive
+        operator), so waiting the timeout out only strands every in-flight
+        visitor for that long before doing exactly this work. Worse, the
+        operator WS handlers never re-read ``is_active``: a socket left open
+        after deactivation can still accept queued chats and send messages, so
+        the connection has to be closed, not merely forgotten.
+
+        Order matters. The socket is closed first, so the revoked console can do
+        nothing further and the re-queue broadcast that follows reaches only the
+        operators who are still entitled to the work. The DB re-queue then runs
+        inside ``mark_operator_offline_now``, which finds the sessions by
+        ``status == 'live'`` — callers must therefore leave those rows alone and
+        let this method move them, not pre-clear them.
+
+        Returns the number of sessions handed back to the queue.
+        """
+        ws = self.operator_connections.pop(operator_id, None)
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.close(code=self.DEACTIVATED_CLOSE_CODE, reason="Operator account deactivated")
+        # ``mark_operator_offline_now`` cancels any grace-period task first, so a
+        # disconnect handler that reacted to the close above is absorbed here.
+        return await self.mark_operator_offline_now(
+            operator_id,
+            visitor_message="Your operator is no longer available. Finding another one...",
+        )
 
     # ── Handoff flow ──
 

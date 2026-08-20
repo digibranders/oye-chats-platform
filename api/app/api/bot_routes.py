@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.auth import (
     bot_subscription_status,
@@ -2631,41 +2632,59 @@ def _lock_workspace_for_bot_admission(session, client_id: int) -> None:
     racing a resume) otherwise both read ``active_bot_count = 0`` and both
     commit, which is the same over-allocation the gate is there to prevent.
 
-    Takes the same lock the sibling seat gate takes: operator reactivation goes
-    through ``invite_service._require_seat_available``, whose
-    ``_lock_active_subscription_for_workspace`` acquires ``SELECT ... FOR
-    UPDATE`` on the workspace's newest live subscription. Reusing it means the
-    two gates agree on what "the workspace lock" is.
+    ALWAYS the ``Client`` row, never a subscription. That is the whole point:
+    it is the one row every workspace is guaranteed to have exactly one of, so
+    which row gets locked cannot depend on data a concurrent transaction is
+    free to change.
 
-    That helper returns ``None`` for a workspace with no live subscription --
-    i.e. the Free account, which is precisely where the one-bot limit bites --
-    so this falls back to locking the ``Client`` row, the one row every
-    workspace is guaranteed to have. Exactly one of the two locks is taken, so
-    no caller ever holds both and this cannot participate in a lock cycle.
-    ``Client`` is the same row ``knowledge_quota_service`` locks for the same
-    TOCTOU reason.
+    An earlier version tried the seat gate's
+    ``invite_service._lock_active_subscription_for_workspace`` first and fell
+    back to ``Client`` only when it returned ``None`` (the Free account, which
+    is precisely where the one-bot limit bites). That is two statements with a
+    gap, and the choice between them is data-dependent, so it did not
+    serialize: caller A evaluates the subscription lookup on a workspace with
+    none and gets ``None``; before A reaches the fallback, a per-bot checkout
+    webhook INSERTs an active subscription and commits (an INSERT conflicts
+    with nothing A holds, because A holds nothing yet); A then locks the
+    ``Client`` row and counts, while caller B sees the new subscription, locks
+    the SUBSCRIPTION row and counts the same free slot. Two disjoint locks,
+    both callers admitted -- exactly the over-allocation this exists to stop.
 
-    Best-effort by design: locking is a Postgres concept and most of this
-    module's tests drive mocked sessions, so a non-Postgres bind (or any
-    failure to acquire) degrades to today's unlocked behaviour rather than
-    failing the request.
+    Locking one unconditional row also keeps this out of any lock cycle: bot
+    admission takes ``Client`` and only ``Client``, the seat gate takes a
+    subscription and only a subscription, and no transaction holds both. Bots
+    and seats are separate quotas, so they do not need to serialize against
+    each other -- only against themselves. ``Client`` is the same row
+    ``knowledge_quota_service`` locks, for the same TOCTOU reason.
+
+    A non-Postgres bind degrades to unlocked, because locking is a Postgres
+    concept and most of this module's tests drive mocked sessions. A genuine
+    failure to ACQUIRE does not degrade: proceeding unlocked is the
+    over-allocation, so a lock timeout or deadlock surfaces as a 503 the caller
+    can retry rather than a silent double-admission.
     """
+    bind = None
     try:
         bind = session.get_bind()
-        if bind is None or bind.dialect.name != "postgresql":
-            return
-        from app.db.models import Client
-        from app.services import invite_service
+    except Exception:  # pragma: no cover - a session with no resolvable bind
+        logger.warning("bot admission lock: no bind for client=%s. Proceeding unlocked", client_id, exc_info=True)
+        return
+    if bind is None or getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+        return
 
-        if invite_service._lock_active_subscription_for_workspace(session, client_id) is not None:  # noqa: SLF001
-            return
+    from app.db.models import Client
+
+    try:
         session.execute(select(Client).where(Client.id == client_id).with_for_update(of=Client)).scalar_one_or_none()
-    except Exception:
-        logger.warning(
-            "bot admission lock unavailable for client=%s. Proceeding unlocked",
-            client_id,
-            exc_info=True,
-        )
+    except SQLAlchemyError as exc:
+        # Deliberately NOT swallowed. See the docstring: the unlocked path is
+        # the bug this function exists to prevent, so a caller who could not be
+        # serialized is refused rather than admitted on a guess.
+        logger.warning("bot admission lock unavailable for client=%s", client_id, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not check your plan limits just now. Please try again.",
+        ) from exc
 
 
 def _require_reactivation_allowed(session, bot: Bot, client_id: int) -> None:
@@ -2793,6 +2812,15 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         # something a 30-minute support session should be able
                         # to do on the customer's behalf.
                         "is_active",
+                        # Re-arming outbound mail to the customer's visitors.
+                        # This column was platform-only until it became
+                        # customer-writable, so a support session could not
+                        # previously reach it at all. Turning a pause OFF sends
+                        # real email from the customer's domain to real people;
+                        # like the enrichment toggles above, "stop sending"
+                        # is a decision only the account holder gets to
+                        # reverse.
+                        "followup_sending_paused",
                     }
                     & update_data.keys()
                 )

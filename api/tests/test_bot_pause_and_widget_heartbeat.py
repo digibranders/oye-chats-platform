@@ -26,7 +26,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -345,36 +345,88 @@ def test_the_reactivation_gate_takes_a_workspace_lock_before_counting(db, monkey
 
 
 @pg
-def test_the_workspace_lock_falls_back_to_the_client_row(db):
-    """``_lock_active_subscription_for_workspace`` returns ``None`` for a
-    workspace with no live subscription — which is the Free account, exactly
-    where the one-bot limit bites and therefore exactly where the race matters.
-    Falling back to the ``Client`` row (the one row every workspace is
-    guaranteed to have) is what keeps those serialized.
+@pytest.mark.parametrize("subscription_status", [None, "active", "trialing", "canceled"])
+def test_the_workspace_lock_is_always_the_client_row(db, subscription_status):
+    """The lock must not depend on data another transaction can change.
 
-    ``SELECT ... FOR UPDATE`` takes a ``RowShareLock`` on the table, so the
-    lock is observable in ``pg_locks``. Scoped to this backend's own pid,
-    because ``pg_locks`` is cluster-wide and a parallel test session holding
-    the same lock would otherwise make this pass for the wrong reason.
+    This asserts the RULE, not one example, because the rule is the fix. An
+    earlier version tried the seat gate's subscription lock first and fell back
+    to ``Client`` only when the workspace had no live subscription. Two
+    statements with a data-dependent choice between them do not serialize: one
+    caller can evaluate the lookup, get nothing, and be overtaken by a checkout
+    webhook INSERTing an active subscription before it reaches the fallback --
+    after which two callers hold two DIFFERENT locks and both count the same
+    free slot.
+
+    Asserted on the SQL rather than on ``pg_locks``, deliberately. A row lock
+    on ``clients`` shows up in ``pg_locks`` as a single table-level
+    ``RowShareLock``, so once anything else in the transaction has taken one
+    (inserting a subscription does, via its foreign key) a second is
+    indistinguishable from the first and a count-based assertion silently
+    stops testing anything. The emitted statement is the thing the rule is
+    about anyway: whichever of these four states the workspace is in, exactly
+    one ``FOR UPDATE`` goes out and it names ``clients``.
     """
-    from sqlalchemy import text
+    from app.api import bot_routes
+    from app.db.models import Subscription
+
+    client = _mk_client(db, f"lock-{subscription_status}@e.com")
+    db.flush()
+    if subscription_status is not None:
+        plan = _mk_plan(db, f"plan-lock-{subscription_status}", bots_limit=1)
+        db.add(Subscription(client_id=client.id, plan_id=plan.id, status=subscription_status))
+        db.flush()
+
+    locking: list[str] = []
+    real_execute = db.execute
+
+    def _record(statement, *args, **kwargs):
+        text = str(statement)
+        if "FOR UPDATE" in text:
+            locking.append(text)
+        return real_execute(statement, *args, **kwargs)
+
+    db.execute = _record  # type: ignore[method-assign]
+    try:
+        bot_routes._lock_workspace_for_bot_admission(db, client.id)
+    finally:
+        db.execute = real_execute  # type: ignore[method-assign]
+
+    assert len(locking) == 1, (
+        f"expected exactly one locking statement with subscription_status={subscription_status!r}, "
+        f"got {len(locking)}: {locking}"
+    )
+    assert "clients" in locking[0], (
+        f"the lock must always be the client row; with subscription_status={subscription_status!r} "
+        f"it locked: {locking[0]}"
+    )
+
+
+@pg
+def test_a_failure_to_acquire_the_lock_refuses_rather_than_admits(db, monkeypatch):
+    """Proceeding unlocked IS the over-allocation, so it is not a fallback.
+
+    A lock timeout or deadlock must surface as a retryable 503, never as a
+    silent admission decided without serialization.
+    """
+    from sqlalchemy.exc import OperationalError
 
     from app.api import bot_routes
 
-    client = _mk_client(db, "lock-fallback@e.com")
+    client = _mk_client(db, "lock-fails@e.com")
     db.flush()
 
-    def _row_share_locks_on_clients() -> int:
-        return db.execute(
-            text(
-                "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
-                "WHERE c.relname = 'clients' AND l.mode = 'RowShareLock' AND l.pid = pg_backend_pid()"
-            )
-        ).scalar_one()
+    real_execute = db.execute
 
-    before = _row_share_locks_on_clients()
-    bot_routes._lock_workspace_for_bot_admission(db, client.id)
-    assert _row_share_locks_on_clients() > before, "a workspace with no subscription must still be locked"
+    def _boom(statement, *args, **kwargs):
+        if "FOR UPDATE" in str(statement):
+            raise OperationalError("SELECT ... FOR UPDATE", {}, Exception("lock timeout"))
+        return real_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db, "execute", _boom)
+    with pytest.raises(HTTPException) as caught:
+        bot_routes._lock_workspace_for_bot_admission(db, client.id)
+    assert caught.value.status_code == 503
 
 
 @pg

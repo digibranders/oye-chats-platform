@@ -567,6 +567,13 @@ class Bot(Base):
     # embed-origin enforcement, which belongs to ``allowed_domains`` /
     # ``domain_check_enabled`` and its own check in
     # ``auth._enforce_bot_origin``.
+    #
+    # Length is bounded upstream, not here: ``origin_check.extract_hostname``
+    # returns None for anything over 253 characters (the DNS presentation-form
+    # cap), so no oversized value reaches this column. That bound is load-
+    # bearing rather than tidy -- this value rides into the bot-config Redis
+    # entry that every widget bootstrap reads, and ``urlparse`` will happily
+    # call five kilobytes of junk a hostname.
     widget_last_origin = Column(String, nullable=True)
 
     # Is this chatbot serving, and is it billable? Both, and the billing half is
@@ -580,10 +587,13 @@ class Bot(Base):
     # VISITOR-facing paths filter it: ``auth.get_current_bot`` refuses an
     # inactive bot (this is what makes a pause actually pause), the
     # ``X-API-Key`` default-bot fallback next to it 404s "No active bot found",
-    # ``bot_routes.get_bot_demo_page`` 404s the public demo page, and
-    # ``subscription_routes`` filters it too. The OWNER-facing list
-    # (``GET /bots``) does NOT filter, so a paused bot stays visible to the
-    # account that owns it and can be resumed from the console.
+    # and ``bot_routes.get_bot_demo_page`` 404s the public demo page. The
+    # OWNER-facing surfaces do NOT filter: ``GET /bots`` keeps a paused bot
+    # visible to the account that owns it so it can be resumed, and
+    # ``subscription_routes.get_credit_balance`` deliberately does not filter
+    # either -- a paused agent with its own subscription is still billed and
+    # still holds an expiring balance, so hiding its card hid live money. See
+    # the argument at that function.
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
