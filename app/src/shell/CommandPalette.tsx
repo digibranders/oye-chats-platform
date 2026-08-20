@@ -51,7 +51,7 @@ export function CommandPalette({
         id: `nav:${item.to}`,
         label: item.label,
         hint: item.hint,
-        group: 'Go to',
+        group: 'Page',
         icon: item.icon,
         to: item.to,
       }),
@@ -128,8 +128,14 @@ export function CommandPalette({
               <Kbd className="shrink-0">Esc</Kbd>
             </div>
 
-            <BaseCombobox.Empty className="px-4 py-10 text-center text-sm text-text-secondary">
-              Nothing matches “{query}”.
+            {/* The Empty root stays mounted whether or not the list is empty, because
+                the library uses it as the live region that announces result counts.
+                Only its children are conditional, so any padding put here is dead
+                space above every non-empty result list. It goes on the child. */}
+            <BaseCombobox.Empty>
+              <p className="px-4 py-10 text-center text-sm text-text-secondary">
+                Nothing matches “{query}”.
+              </p>
             </BaseCombobox.Empty>
 
             <BaseCombobox.List className="max-h-80 overflow-y-auto p-1.5">
