@@ -137,9 +137,9 @@ export function ChatRatingsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by rating"
+            label="Filter by rating"
             value={rating}
-            onChange={(event) => url.set({ rating: event.target.value })}
+            onValueChange={(value) => url.set({ rating: value })}
             options={[
               { value: '', label: 'Any rating' },
               { value: 'up', label: 'Helpful' },
@@ -289,9 +289,9 @@ export function ProductFeedbackTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by status"
+            label="Filter by status"
             value={status}
-            onChange={(event) => url.set({ status: event.target.value })}
+            onValueChange={(value) => url.set({ status: value })}
             options={[
               { value: '', label: 'Any status' },
               ...FEEDBACK_STATUSES.map((value) => ({ value, label: humanise(value) })),
@@ -300,9 +300,9 @@ export function ProductFeedbackTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by type"
+            label="Filter by type"
             value={type}
-            onChange={(event) => url.set({ type: event.target.value })}
+            onValueChange={(value) => url.set({ type: value })}
             options={[
               { value: '', label: 'Any type' },
               ...FEEDBACK_TYPES.map((value) => ({ value, label: humanise(value) })),
@@ -311,9 +311,9 @@ export function ProductFeedbackTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by area"
+            label="Filter by area"
             value={area}
-            onChange={(event) => url.set({ area: event.target.value })}
+            onValueChange={(value) => url.set({ area: value })}
             options={[
               { value: '', label: 'Any area' },
               ...FEEDBACK_AREAS.map((value) => ({ value, label: humanise(value) })),
@@ -322,9 +322,9 @@ export function ProductFeedbackTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by severity"
+            label="Filter by severity"
             value={severity}
-            onChange={(event) => url.set({ severity: event.target.value })}
+            onValueChange={(value) => url.set({ severity: value })}
             options={[
               { value: '', label: 'Any severity' },
               ...FEEDBACK_SEVERITIES.map((value) => ({ value, label: value })),
@@ -497,22 +497,25 @@ function TriageDrawer({
           <Grid cols={2}>
             <Field label="Status">
               <Select
+                label="Status"
                 value={status}
-                onChange={(event) => setStatus(event.target.value)}
+                onValueChange={setStatus}
                 options={FEEDBACK_STATUSES.map((value) => ({ value, label: humanise(value) }))}
               />
             </Field>
             <Field label="Type">
               <Select
+                label="Type"
                 value={type}
-                onChange={(event) => setType(event.target.value)}
+                onValueChange={setType}
                 options={FEEDBACK_TYPES.map((value) => ({ value, label: humanise(value) }))}
               />
             </Field>
             <Field label="Area">
               <Select
+                label="Area"
                 value={area}
-                onChange={(event) => setArea(event.target.value)}
+                onValueChange={setArea}
                 options={FEEDBACK_AREAS.map((value) => ({ value, label: humanise(value) }))}
               />
             </Field>
@@ -522,9 +525,10 @@ function TriageDrawer({
               disabled={type !== 'bug'}
             >
               <Select
+                label="Severity"
                 disabled={type !== 'bug'}
                 value={severity}
-                onChange={(event) => setSeverity(event.target.value)}
+                onValueChange={setSeverity}
                 options={FEEDBACK_SEVERITIES.map((value) => ({ value, label: value }))}
               />
             </Field>

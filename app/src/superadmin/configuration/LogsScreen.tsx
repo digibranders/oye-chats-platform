@@ -92,25 +92,28 @@ export function LogsScreen() {
         <Field label="Service" hideLabel className="w-48">
           <Select
             size="sm"
+            label="Service"
             options={SERVICE_OPTIONS}
             value={service}
-            onChange={(event) => url.set({ service: event.target.value })}
+            onValueChange={(value) => url.set({ service: value })}
           />
         </Field>
         <Field label="Lines" hideLabel className="w-48">
           <Select
             size="sm"
+            label="Lines"
             options={LINE_OPTIONS}
             value={String(coerceLines(lines))}
-            onChange={(event) => url.set({ lines: event.target.value })}
+            onValueChange={(value) => url.set({ lines: value })}
           />
         </Field>
         <Field label="Level" hideLabel className="w-48">
           <Select
             size="sm"
+            label="Level"
             options={LEVEL_OPTIONS}
             value={level}
-            onChange={(event) => url.set({ level: event.target.value || null })}
+            onValueChange={(value) => url.set({ level: value || null })}
           />
         </Field>
         <div className="min-w-0 flex-1">

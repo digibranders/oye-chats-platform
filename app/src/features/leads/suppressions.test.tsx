@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SuppressionsDrawer } from './SuppressionsDrawer';
+import { pickOption } from '../../test/select';
 import { createEmailSuppression, getEmailSuppressions } from '../../services/api';
 import type { Bot } from '../../types/domain';
 
@@ -225,7 +226,7 @@ describe('SuppressionsDrawer', () => {
     expect(await screen.findByText('Choose which chatbot this applies to.')).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).toBeNull();
 
-    await user.selectOptions(screen.getByLabelText(/^Chatbot/), '2');
+    await pickOption(user, screen.getByLabelText(/^Chatbot/), 'Acme Sales');
     await user.click(screen.getByRole('button', { name: 'Add to unsubscribes' }));
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
   });

@@ -114,10 +114,11 @@ export function GstrExportTab() {
                 }
               >
                 <Select
+                  label="Filing month"
                   options={options}
                   value={selected}
-                  onChange={(event) => {
-                    url.set({ month: event.target.value });
+                  onValueChange={(value) => {
+                    url.set({ month: value });
                     setResult(null);
                     setError(null);
                   }}

@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubscriptionsTab } from './SubscriptionsTab';
+import { subscriptionLabel } from './status';
+import { pickOption } from '../../test/select';
 import type { SubscriptionRow } from './types';
 
 const get = vi.fn();
@@ -78,7 +80,7 @@ describe('SubscriptionsTab', () => {
     mount();
 
     await screen.findByText('Northwind Security');
-    await user.selectOptions(screen.getByLabelText(/filter by status/i), 'past_due');
+    await pickOption(user, screen.getByLabelText(/filter by status/i), subscriptionLabel('past_due'));
 
     await waitFor(() => expect(screen.getByTestId('url').textContent).toContain('status=past_due'));
     await waitFor(() =>
@@ -114,7 +116,7 @@ describe('SubscriptionsTab', () => {
     mount();
 
     const dialog = await openOverride(user);
-    await user.selectOptions(within(dialog).getByLabelText(/^status$/i), 'paused');
+    await pickOption(user, within(dialog).getByLabelText(/^status$/i), subscriptionLabel('paused'));
     await user.click(within(dialog).getByRole('button', { name: /apply override/i }));
 
     await waitFor(() =>
@@ -138,7 +140,7 @@ describe('SubscriptionsTab', () => {
     mount();
 
     const dialog = await openOverride(user);
-    await user.selectOptions(within(dialog).getByLabelText(/^status$/i), 'paused');
+    await pickOption(user, within(dialog).getByLabelText(/^status$/i), subscriptionLabel('paused'));
     expect(within(dialog).getByText('status Active → Paused')).toBeInTheDocument();
   });
 
@@ -199,7 +201,7 @@ describe('SubscriptionsTab', () => {
     mount();
 
     const dialog = await openOverride(user);
-    await user.selectOptions(within(dialog).getByLabelText(/^status$/i), 'paused');
+    await pickOption(user, within(dialog).getByLabelText(/^status$/i), subscriptionLabel('paused'));
     await user.click(within(dialog).getByRole('button', { name: /apply override/i }));
 
     expect(await within(dialog).findByText(/includes unlimited AI agents/)).toBeInTheDocument();

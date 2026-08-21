@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Operator } from '../../types/domain';
+import { pickOption } from '../../test/select';
 
 /**
  * Changing what somebody is allowed to do.
@@ -118,7 +119,7 @@ describe('MemberDialog', () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText(/department/i), '5');
+    await pickOption(user, screen.getByLabelText(/department/i), 'Billing');
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() =>

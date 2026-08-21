@@ -449,7 +449,7 @@ export function PrivilegesDialog({ client, open, onOpenChange, onSaved }: Accoun
         />
         {isSuperadmin ? (
           <Field label="Tier" hint="Read-only cannot write anything.">
-            <Select options={ROLES} value={role} onChange={(event) => setRole(event.target.value)} />
+            <Select label="Tier" options={ROLES} value={role} onValueChange={setRole} />
           </Field>
         ) : null}
       </div>

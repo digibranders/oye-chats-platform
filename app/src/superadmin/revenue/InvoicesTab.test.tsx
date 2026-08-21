@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvoicesTab } from './InvoicesTab';
+import { pickOption } from '../../test/select';
 import type { InvoiceRow } from './types';
 
 /**
@@ -180,7 +181,7 @@ describe('InvoicesTab', () => {
     renderTab();
 
     await screen.findByText('DB/26-27/000114');
-    await user.selectOptions(screen.getByLabelText(/document type/i), 'credit_note');
+    await pickOption(user, screen.getByLabelText(/document type/i), 'Credit notes');
 
     await waitFor(() => expect(screen.getByTestId('url').textContent).toContain('type=credit_note'));
     await waitFor(() =>

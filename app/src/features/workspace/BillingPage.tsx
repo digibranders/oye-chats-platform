@@ -138,13 +138,13 @@ export function BillingPage() {
         actions={
           scopeOptions.length > 1 ? (
             <Select
-              aria-label="Billing scope"
+              label="Billing scope"
               size="sm"
               options={scopeOptions}
               value={scopeParam ?? ''}
-              onChange={(event) => {
+              onValueChange={(value) => {
                 const next = new URLSearchParams(params);
-                if (event.target.value) next.set('chatbot', event.target.value);
+                if (value) next.set('chatbot', value);
                 else next.delete('chatbot');
                 setParams(next, { replace: true });
               }}

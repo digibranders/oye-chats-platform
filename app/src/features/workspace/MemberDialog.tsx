@@ -203,6 +203,7 @@ export function MemberDialog({
                 a placeholder renders a *disabled* option, so once a department
                 was chosen the user could never take it away again. */}
             <Select
+              label="Department"
               value={departmentId}
               options={[
                 { value: '', label: 'No department' },
@@ -211,7 +212,7 @@ export function MemberDialog({
                   label: department.name,
                 })),
               ]}
-              onChange={(event) => setDepartmentId(event.target.value)}
+              onValueChange={setDepartmentId}
             />
           </Field>
 

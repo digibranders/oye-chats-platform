@@ -1,14 +1,11 @@
-import { forwardRef, type SelectHTMLAttributes } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { useMemo } from 'react';
+import { Select as BaseSelect } from '@base-ui/react/select';
+import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
-import {
-  CONTROL_SIZE,
-  controlClass,
-  splitControlClass,
-  type ControlSize,
-} from './controlStyles';
-import { useFieldControlProps } from './fieldContext';
+import { CONTROL_SIZE, controlClass } from './controlStyles';
+import { PANEL_BASE, PANEL_POSITIONER } from '../overlays/panelStyles';
+import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
 
 export interface SelectOption<T extends string = string> {
   value: T;
@@ -16,18 +13,22 @@ export interface SelectOption<T extends string = string> {
   disabled?: boolean;
 }
 
-export interface SelectProps<T extends string = string>
-  extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'children'> {
+export interface SelectProps<T extends string = string> {
   options: readonly SelectOption<T>[];
-  size?: ControlSize;
+  /** Omit for an uncontrolled select — see `defaultValue`. */
+  value?: T;
+  /** The initial value of an uncontrolled select. Mutually exclusive with `value`. */
+  defaultValue?: T;
+  onValueChange?: (value: T) => void;
+  /** Required: the control's accessible name. */
+  label: string;
   /**
    * A first option the user cannot choose — "Select a department…".
    *
    * Use it when the field *must* end up with a value and simply has none yet.
    * When empty is a legitimate answer, use `emptyOption` instead: a disabled
    * placeholder cannot be selected, so a field with only a placeholder can be
-   * set but never cleared. That is exactly how the previous department picker
-   * shipped — assign a department and there was no way back.
+   * set but never cleared.
    */
   placeholder?: string;
   /**
@@ -38,81 +39,166 @@ export interface SelectProps<T extends string = string>
    * worse than either.
    */
   emptyOption?: string;
+  disabled?: boolean;
+  /**
+   * Whether the user must choose a value before submitting a form.
+   *
+   * Distinct from `disabled || Boolean(fieldProps.disabled)` above: this is
+   * validation, not interactivity, so it only has an effect when the control
+   * sits in a real `<form>`.
+   */
+  required?: boolean;
+  /**
+   * An explicit DOM id, for the one wiring `Field` cannot do: a `SettingRow`
+   * names its control by `htmlFor` on a real `<label>` rather than by
+   * `FieldContext`, so the caller has to hand the control the matching id
+   * itself.
+   */
+  id?: string;
+  size?: 'sm' | 'md';
+  className?: string;
 }
 
 /**
- * The chevron's clearance from the longest option is a constant 8px at every
- * size. It was 2 / 6 / 10, because the glyph sat at a fixed inset while the
- * text padding scaled — at `sm` a long option visibly kissed the arrow.
- */
-const TRAILING_PAD = { sm: 'pr-8', md: 'pr-9', lg: 'pr-10' } as const;
-
-/**
- * A native `<select>`.
+ * A single-select, fully styled — the open list is ours, not platform chrome.
  *
- * Native on purpose. A custom listbox has to reimplement type-ahead, the mobile
- * wheel picker, and every platform's own keyboard conventions, and it gets one
- * of them wrong on every release. Where the choice genuinely needs search,
- * multi-select, or rich rows, that is a `Combobox` — a different control with a
- * different job — not a heavier `Select`.
+ * `Select` used to render a native `<select>` on purpose: its own docblock
+ * argued native type-ahead, the mobile wheel picker and every platform's own
+ * keyboard conventions for free, at the cost of the *open list* being
+ * unstyleable — on Windows, a `Select` inside a `Dialog` painted a system list
+ * that ignored every token in this file. The console decided that price is no
+ * longer acceptable: every dropdown in the product renders in the product's own
+ * chrome, full stop.
  *
- * The consequence of `appearance-none` is worth stating so nobody files it
- * later: the closed control is ours, the **open list is platform chrome**. On
- * Windows a `Select` inside a `Dialog` paints a system list that ignores every
- * token in this file. That is the accepted price of the paragraph above.
+ * Base UI's `Select` gives this up for nothing behaviourally — arrow-key
+ * navigation, Home/End, type-ahead and Escape all still work exactly as they do
+ * on a native element, because the library implements the same contract on top
+ * of a real hidden `<select>` it keeps in sync for form submission. Only the
+ * *rendering* of the open list changes hands, which is the one part that was
+ * ever the problem.
+ *
+ * Deliberately still a different component from `Combobox`, not merged into it:
+ * a plain list of a dozen options gains nothing from a search box, and a search
+ * box that filters five values is a control asking a question nobody has. Use
+ * `Combobox` for a long list, a two-line row, or filtering; this is for a short
+ * fixed one.
  */
-function SelectInner<T extends string = string>(
-  { options, size = 'md', placeholder, emptyOption, className, value, ...props }: SelectProps<T>,
-  ref: React.Ref<HTMLSelectElement>,
-) {
+export function Select<T extends string = string>({
+  options,
+  value,
+  defaultValue,
+  onValueChange,
+  label,
+  placeholder,
+  emptyOption,
+  disabled = false,
+  required = false,
+  id,
+  size = 'md',
+  className,
+}: SelectProps<T>) {
+  const fieldNamesIt = useFieldNamesControl();
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];
-  // The chevron is positioned against the wrapper, so a width written at the
-  // call site has to size the wrapper — see `splitControlClass`. A `max-w-sm`
-  // select used to leave its own arrow 300px away from its box.
-  const { box, control } = splitControlClass(className);
+
+  // `emptyOption` is a real, selectable leading row; `placeholder` is a
+  // disabled one that only ever shows as the trigger's own hint text once a
+  // real value replaces it. Passing both renders only `emptyOption` — see the
+  // prop doc for why.
+  const items = useMemo(() => {
+    const leading = emptyOption
+      ? [{ value: '' as T, label: emptyOption, disabled: false }]
+      : placeholder
+        ? [{ value: '' as T, label: placeholder, disabled: true }]
+        : [];
+    return [...leading, ...options];
+  }, [emptyOption, placeholder, options]);
+  const labelFor = useMemo(() => {
+    const byValue = new Map(items.map((item) => [item.value, item.label]));
+    return (v: unknown) => byValue.get(v as T);
+  }, [items]);
+
   return (
-    <div className={cn('relative flex w-full items-center', box)}>
-      <select
-        ref={ref}
-        value={value}
+    <BaseSelect.Root
+      items={items}
+      value={value}
+      defaultValue={defaultValue}
+      required={required}
+      disabled={disabled || Boolean(fieldProps.disabled)}
+      onValueChange={onValueChange ? (next) => onValueChange((next ?? '') as T) : undefined}
+    >
+      <BaseSelect.Trigger
+        // Only self-labelling outside a `Field` — see `Combobox` for the full
+        // reasoning; the same SC 2.5.3 failure applies here. An explicit `id`
+        // means the caller is doing that wiring itself with a real `<label
+        // htmlFor>` (the `SettingRow` pattern `id`'s own doc describes), so
+        // this would double-name the control rather than name it.
+        aria-label={fieldNamesIt || id ? undefined : label}
         className={cn(
           CONTROL_BASE,
-          'peer cursor-pointer appearance-none',
+          'flex items-center justify-between gap-2 text-left',
           controlClass(size),
-          TRAILING_PAD[size],
-          control,
+          className,
         )}
         {...fieldProps}
-        {...props}
+        {...(id ? { id } : {})}
       >
-        {emptyOption ? (
-          <option value="">{emptyOption}</option>
-        ) : placeholder ? (
-          <option value="" disabled>
-            {placeholder}
-          </option>
-        ) : null}
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      {/* `peer-disabled`: the box greyed out and the arrow stayed at full
-          strength, so a disabled select looked half-enabled. */}
-      <ChevronDown
-        aria-hidden
-        className={cn(
-          'pointer-events-none absolute shrink-0 text-text-tertiary peer-disabled:text-text-disabled',
-          geometry.affixInset.trailing,
-          geometry.icon,
-        )}
-      />
-    </div>
+        {/* `Select.Value` reads the store directly, so it is correct whether the
+            select is controlled, uncontrolled, or has no listener at all —
+            unlike deriving the label from the `value` prop here, which would
+            print the placeholder forever on an uncontrolled select. */}
+        <BaseSelect.Value
+          placeholder={placeholder}
+          className="min-w-0 flex-1 truncate data-[placeholder]:text-text-disabled"
+        >
+          {(v: unknown) => labelFor(v) ?? placeholder ?? ''}
+        </BaseSelect.Value>
+        <BaseSelect.Icon>
+          <ChevronDown aria-hidden className={cn('shrink-0 text-text-tertiary', geometry.icon)} />
+        </BaseSelect.Icon>
+      </BaseSelect.Trigger>
+
+      <BaseSelect.Portal>
+        <BaseSelect.Positioner
+          className={PANEL_POSITIONER}
+          sideOffset={6}
+          collisionPadding={8}
+          // The selected row overlapping the trigger — Base UI's default for
+          // mouse input — is right for a menu but wrong for a form control:
+          // this list is reached by keyboard as often as by mouse, and a panel
+          // that opens flush under the trigger for one and on top of it for
+          // the other is a control that moves. `Combobox` never had this
+          // question because a combobox popup does not overlap by default.
+          alignItemWithTrigger={false}
+        >
+          {/* Matched to the trigger's width, so the list belongs to the
+              control it came from rather than floating at some unrelated
+              size. */}
+          <BaseSelect.Popup className={cn(PANEL_BASE, 'w-[var(--anchor-width)] min-w-52')}>
+            <BaseSelect.List className="max-h-64 overflow-y-auto p-1">
+              {items.map((item) => (
+                <BaseSelect.Item
+                  key={item.value}
+                  value={item.value}
+                  disabled={item.disabled}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-base text-text-primary',
+                    'outline-none data-[highlighted]:bg-surface-hover',
+                    'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
+                  )}
+                >
+                  <BaseSelect.ItemText className="min-w-0 flex-1 truncate">
+                    {item.label}
+                  </BaseSelect.ItemText>
+                  <BaseSelect.ItemIndicator className="shrink-0 text-accent-600">
+                    <Check aria-hidden className="h-icon-sm w-icon-sm" />
+                  </BaseSelect.ItemIndicator>
+                </BaseSelect.Item>
+              ))}
+            </BaseSelect.List>
+          </BaseSelect.Popup>
+        </BaseSelect.Positioner>
+      </BaseSelect.Portal>
+    </BaseSelect.Root>
   );
 }
-
-export const Select = forwardRef(SelectInner) as <T extends string = string>(
-  props: SelectProps<T> & { ref?: React.Ref<HTMLSelectElement> },
-) => React.ReactElement;

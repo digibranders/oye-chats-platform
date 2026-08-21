@@ -168,13 +168,11 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
               <span className="w-20 shrink-0">
                 <Select
                   size="sm"
-                  aria-label={`${dimension.label} score out of ${max}`}
+                  label={`${dimension.label} score out of ${max}`}
                   value={String(Math.min(dimension.score, max))}
                   options={scoreOptions}
                   disabled={saving}
-                  onChange={(event) =>
-                    void apply(dimension.key, dimension.label, Number(event.target.value))
-                  }
+                  onValueChange={(value) => void apply(dimension.key, dimension.label, Number(value))}
                 />
               </span>
             </li>

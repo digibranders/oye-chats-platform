@@ -316,9 +316,9 @@ function AccountsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by subscription status"
+            label="Filter by subscription status"
             value={status}
-            onChange={(event) => url.set({ status: event.target.value })}
+            onValueChange={(value) => url.set({ status: value })}
             options={STATUSES}
           />
         </div>

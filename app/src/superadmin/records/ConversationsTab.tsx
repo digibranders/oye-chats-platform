@@ -160,9 +160,9 @@ export function ConversationsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by status"
+            label="Filter by status"
             value={status}
-            onChange={(event) => url.set({ status: event.target.value })}
+            onValueChange={(value) => url.set({ status: value })}
             options={[
               { value: '', label: 'Any status' },
               { value: 'bot', label: 'Bot only' },

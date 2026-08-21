@@ -460,7 +460,7 @@ function ControlSizeMatrix() {
               {size} · {CONTROL_SIZE[size].height.replace('h-control-', '')} ·{' '}
               {CONTROL_SIZE[size].radius}
               {size === 'lg'
-                ? ' · combobox, segmented control, tag input, colour and switch stop at md'
+                ? ' · select, combobox, segmented control, tag input, colour and switch stop at md'
                 : ''}
             </Eyebrow>
             <div className="flex flex-wrap items-center gap-2 rounded-md bg-surface-sunken p-3">
@@ -470,16 +470,6 @@ function ControlSizeMatrix() {
               </Button>
               <Slot>
                 <Input size={size} aria-label={`Name ${size}`} placeholder="Acme Support" />
-              </Slot>
-              <Slot>
-                <Select
-                  size={size}
-                  aria-label={`Status ${size}`}
-                  options={[
-                    { value: 'live', label: 'Live' },
-                    { value: 'draft', label: 'Draft' },
-                  ]}
-                />
               </Slot>
               <Slot>
                 <SearchField
@@ -492,6 +482,16 @@ function ControlSizeMatrix() {
               </Slot>
               {size !== 'lg' ? (
                 <>
+                  <Slot>
+                    <Select
+                      size={size}
+                      label={`Status ${size}`}
+                      options={[
+                        { value: 'live', label: 'Live' },
+                        { value: 'draft', label: 'Draft' },
+                      ]}
+                    />
+                  </Slot>
                   <Slot>
                     <Combobox
                       size={size}
@@ -665,7 +665,9 @@ function ControlStates() {
               </Field>
               <Field label="Plan" error={error} disabled={disabled}>
                 <Select
+                  label="Plan"
                   disabled={disabled}
+                  defaultValue="standard"
                   options={[
                     { value: 'standard', label: 'Standard' },
                     { value: 'pro', label: 'Professional' },
@@ -956,6 +958,7 @@ function PrimitivesPanel() {
             </Field>
             <Field label="Plan">
               <Select
+                label="Plan"
                 options={[
                   { value: 'free', label: 'Free' },
                   { value: 'standard', label: 'Standard' },
@@ -1055,6 +1058,7 @@ function PrimitivesPanel() {
             </Field>
             <Field label="Region" hint="The same, for a select's chevron.">
               <Select
+                label="Region"
                 className="max-w-40"
                 options={[
                   { value: 'in', label: 'India' },
@@ -2857,6 +2861,7 @@ function OverlaysPanel() {
               </Field>
               <Field label="Role" hint="Operators can answer conversations but cannot change billing.">
                 <Select
+                  label="Role"
                   options={[
                     { value: 'operator', label: 'Operator' },
                     { value: 'admin', label: 'Admin' },

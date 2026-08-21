@@ -128,14 +128,14 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
           <SettingRow label="Scheduling tool" htmlFor={`${fieldId}-provider`}>
             <Select
               id={`${fieldId}-provider`}
+              label="Scheduling tool"
               required
               value={draft.providerId}
               options={MEETING_PROVIDERS.map((candidate) => ({
                 value: candidate.id,
                 label: candidate.name,
               }))}
-              onChange={(event) => {
-                const nextId = event.target.value;
+              onValueChange={(nextId) => {
                 const next = MEETING_PROVIDERS.find((candidate) => candidate.id === nextId)!;
                 const settings = readIntegrations(bot);
                 setUrlError(null);

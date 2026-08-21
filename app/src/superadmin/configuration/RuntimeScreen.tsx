@@ -186,9 +186,10 @@ export function RuntimeScreen() {
                   hint="Answers every chat message."
                 >
                   <Select
+                    label="Primary model"
                     options={models}
                     value={draft.primary_model}
-                    onChange={(event) => update({ primary_model: event.target.value })}
+                    onValueChange={(value) => update({ primary_model: value })}
                   />
                 </Field>
                 <Field
@@ -197,16 +198,18 @@ export function RuntimeScreen() {
                   hint="Used when the primary errors."
                 >
                   <Select
+                    label="Fallback model"
                     options={fallbackModels}
                     value={draft.fallback_model}
-                    onChange={(event) => update({ fallback_model: event.target.value })}
+                    onValueChange={(value) => update({ fallback_model: value })}
                   />
                 </Field>
                 <Field label="Gate model" error={shown.gate_model} hint="Relevance gate and enrichment.">
                   <Select
+                    label="Gate model"
                     options={gateModels}
                     value={draft.gate_model}
-                    onChange={(event) => update({ gate_model: event.target.value })}
+                    onValueChange={(value) => update({ gate_model: value })}
                   />
                 </Field>
               </Grid>
@@ -291,9 +294,10 @@ export function RuntimeScreen() {
               <Grid cols={2}>
               <Field label="Primary provider" hint={activeProviderNote}>
                 <Select
+                  label="Primary provider"
                   options={crawlProviders}
                   value={draft.crawl_provider_primary}
-                  onChange={(event) => update({ crawl_provider_primary: event.target.value })}
+                  onValueChange={(value) => update({ crawl_provider_primary: value })}
                 />
               </Field>
               <Field

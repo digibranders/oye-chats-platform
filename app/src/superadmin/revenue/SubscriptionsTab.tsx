@@ -162,10 +162,10 @@ export function SubscriptionsTab() {
           <div className="w-48">
             <Select
               size="sm"
-              aria-label="Filter by status"
+              label="Filter by status"
               options={STATUS_OPTIONS}
               value={status}
-              onChange={(event) => url.set({ status: event.target.value })}
+              onValueChange={(value) => url.set({ status: value })}
             />
           </div>
           <div className="w-48">
@@ -392,9 +392,10 @@ function OverrideDrawer({
 
         <Field label="Status">
           <Select
+            label="Status"
             options={SUBSCRIPTION_STATUSES.map((value) => ({ value, label: subscriptionLabel(value) }))}
             value={draft.status}
-            onChange={(event) => setDraft({ ...draft, status: event.target.value })}
+            onValueChange={(value) => setDraft({ ...draft, status: value })}
           />
         </Field>
 
@@ -414,9 +415,10 @@ function OverrideDrawer({
 
         <Field label="Billing cycle" hint="Leave unchanged unless you are correcting a mis-set cycle.">
           <Select
+            label="Billing cycle"
             options={CYCLE_OPTIONS}
             value={draft.billing_cycle}
-            onChange={(event) => setDraft({ ...draft, billing_cycle: event.target.value })}
+            onValueChange={(value) => setDraft({ ...draft, billing_cycle: value })}
           />
         </Field>
 

@@ -184,10 +184,9 @@ export function MessagePane({
               {snippets.length > 0 ? (
                 <Select
                   size="sm"
-                  aria-label="Saved replies"
+                  label="Saved replies"
                   value=""
-                  onChange={(event) => {
-                    const chosen = event.target.value;
+                  onValueChange={(chosen) => {
                     if (chosen === MANAGE_OPTION) {
                       onManageSnippets();
                       return;

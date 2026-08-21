@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LogsScreen } from './LogsScreen';
+import { LOG_SERVICES, LOG_LEVELS } from './logs-model';
+import { pickOption } from '../../test/select';
 import type { LogsResponse } from './types';
 
 const httpClient = vi.hoisted(() => ({
@@ -60,11 +62,17 @@ beforeEach(() => {
  */
 describe('LogsScreen', () => {
   it('offers exactly the two allow-listed units, and no free-text service box', async () => {
+    const user = userEvent.setup();
     httpClient.get.mockResolvedValue({ data: response });
     renderScreen();
-    const select = await screen.findByLabelText('Service');
-    const values = Array.from(select.querySelectorAll('option')).map((option) => option.value);
-    expect(values).toEqual(['oyechats-api', 'oyechats-worker']);
+    // The options only exist in the popup, not on the closed trigger, and the
+    // list has no raw values to read off the DOM — only what `LOG_SERVICES`
+    // says to render, which is what this actually has to hold.
+    await user.click(await screen.findByLabelText('Service'));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(
+      LOG_SERVICES.map((service) => service.label),
+    );
   });
 
   it('requests a bounded number of lines and nothing beyond the cap', async () => {
@@ -89,7 +97,7 @@ describe('LogsScreen', () => {
     httpClient.get.mockResolvedValue({ data: response });
     renderScreen();
     await screen.findByLabelText('Level');
-    await user.selectOptions(screen.getByLabelText('Level'), 'error');
+    await pickOption(user, screen.getByLabelText('Level'), LOG_LEVELS.find((level) => level.value === 'error')!.label);
     await waitFor(() => expect(currentSearch).toContain('level=error'));
     await waitFor(() =>
       expect(httpClient.get).toHaveBeenCalledWith('/superadmin/logs', {

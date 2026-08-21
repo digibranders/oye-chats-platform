@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UsagePage } from './UsagePage';
+import { pickOption } from '../../test/select';
 
 /**
  * jsdom has no ResizeObserver, and Recharts' ResponsiveContainer constructs one
@@ -233,7 +234,7 @@ describe('scope', () => {
   it('switching scope moves it into the URL so the view can be linked', async () => {
     renderPage();
     await screen.findAllByText('Left to spend');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Usage scope' }), '7');
+    await pickOption(userEvent.setup(), screen.getByRole('combobox', { name: 'Usage scope' }), 'Acme Support');
     await waitFor(() =>
       expect(api.getCreditHistory).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
     );
@@ -320,10 +321,11 @@ describe('a paused chatbot', () => {
     renderPage();
     await screen.findAllByText('Left to spend');
 
+    // Options live in the portalled popup, not inside the closed trigger, so
+    // the list has to actually be open before it can be queried.
+    await userEvent.setup().click(screen.getByRole('combobox', { name: 'Usage scope' }));
     expect(
-      within(screen.getByRole('combobox', { name: 'Usage scope' })).getByRole('option', {
-        name: 'Acme Support (paused)',
-      }),
+      await screen.findByRole('option', { name: 'Acme Support (paused)' }),
     ).toBeInTheDocument();
   });
 

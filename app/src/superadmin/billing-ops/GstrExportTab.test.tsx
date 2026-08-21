@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GstrExportTab } from './GstrExportTab';
+import { pickOption } from '../../test/select';
 import { monthLabel, recentMonths } from './gstr';
 
 const get = vi.fn();
@@ -59,17 +60,22 @@ describe('GstrExportTab', () => {
 
   it('marks the current month as still in progress', async () => {
     mount();
+    const user = userEvent.setup();
     const current = recentMonths(new Date(), 1)[0];
-    expect(screen.getByLabelText(/filing month/i)).toHaveTextContent(
-      `${monthLabel(current)} — still in progress`,
-    );
+    // The closed trigger shows only the selected month; the "still in
+    // progress" suffix is on an option, so the list has to actually be open.
+    await user.click(screen.getByLabelText(/filing month/i));
+    expect(
+      await screen.findByRole('option', { name: `${monthLabel(current)} — still in progress` }),
+    ).toBeInTheDocument();
   });
 
   it('defaults to the last complete month, not the one in progress', async () => {
     mount();
     const [current, previous] = recentMonths(new Date(), 2);
-    expect((screen.getByLabelText(/filing month/i) as HTMLSelectElement).value).toBe(previous);
-    expect((screen.getByLabelText(/filing month/i) as HTMLSelectElement).value).not.toBe(current);
+    const trigger = screen.getByLabelText(/filing month/i);
+    expect(trigger).toHaveTextContent(monthLabel(previous));
+    expect(trigger).not.toHaveTextContent(monthLabel(current));
   });
 
   /** The endpoint renders synchronously — there is no job, so nothing pretends there is. */
@@ -147,7 +153,7 @@ describe('GstrExportTab', () => {
     await screen.findByText(/2 document rows/);
 
     const months = recentMonths(new Date(), 4);
-    await user.selectOptions(screen.getByLabelText(/filing month/i), months[2]);
+    await pickOption(user, screen.getByLabelText(/filing month/i), monthLabel(months[2]));
     expect(screen.queryByText(/2 document rows/)).not.toBeInTheDocument();
   });
 });

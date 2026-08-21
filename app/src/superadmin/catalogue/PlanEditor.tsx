@@ -364,9 +364,10 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
               </Field>
               <Field label="Pricing model" hint="How the tier is meant to scale.">
                 <Select
+                  label="Pricing model"
                   options={PRICING_MODEL_OPTIONS}
                   value={draft.pricing_model}
-                  onChange={(event) => update({ pricing_model: event.target.value })}
+                  onValueChange={(value) => update({ pricing_model: value })}
                 />
               </Field>
               <Field label="Sort order" error={shown.sort_order} hint="Ascending. Controls the order on the pricing page.">
@@ -461,9 +462,10 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                 hint="A string feature rather than a boolean; the integration surfaces branch on its value."
               >
                 <Select
+                  label="Integrations"
                   options={INTEGRATION_OPTIONS}
                   value={draft.integrations}
-                  onChange={(event) => update({ integrations: event.target.value })}
+                  onValueChange={(value) => update({ integrations: value })}
                 />
               </Field>
             </div>

@@ -953,20 +953,24 @@ describe('Select', () => {
   it('can express a selectable "none", not only an unselectable placeholder', async () => {
     // A disabled placeholder cannot be chosen, so a field with only one can be
     // set but never cleared — which is how the department picker shipped.
-    const onChange = vi.fn();
+    const onValueChange = vi.fn();
     const user = userEvent.setup();
     render(
       <Select
-        aria-label="Department"
+        label="Department"
         emptyOption="No department"
         value="1"
-        onChange={onChange}
+        onValueChange={onValueChange}
         options={[{ value: '1', label: 'Support' }]}
       />,
     );
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Department' }), '');
-    expect(onChange).toHaveBeenCalled();
-    expect(screen.getByRole('option', { name: 'No department' })).not.toBeDisabled();
+    await user.click(screen.getByRole('combobox', { name: 'Department' }));
+    // The popup mounts through a portal after an animation frame, so the first
+    // query has to wait for it rather than assume it is already there.
+    const emptyItem = await screen.findByRole('option', { name: 'No department' });
+    expect(emptyItem).not.toHaveAttribute('aria-disabled', 'true');
+    await user.click(emptyItem);
+    expect(onValueChange).toHaveBeenCalledWith('');
   });
 });
 

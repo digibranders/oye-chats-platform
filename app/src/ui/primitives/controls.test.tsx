@@ -46,11 +46,10 @@ describe('the control size matrix', () => {
       <div>
         <Button size={size}>Save</Button>
         <Input size={size} aria-label="Query" />
-        <Select size={size} aria-label="Status" options={[{ value: 'a', label: 'A' }]} />
       </div>,
     );
 
-    for (const control of Array.from(container.querySelectorAll('button, input, select'))) {
+    for (const control of Array.from(container.querySelectorAll('button, input'))) {
       const classes = classesOf(control);
       expect(classes, `${control.tagName} height`).toContain(geometry.height);
       expect(classes, `${control.tagName} radius`).toContain(geometry.radius);
@@ -59,10 +58,11 @@ describe('the control size matrix', () => {
   });
 
   it.each(['sm', 'md'] as const)(
-    'keeps a %s combobox, search field and segmented control on the same height',
+    'keeps a %s select, combobox, search field and segmented control on the same height',
     (size) => {
       render(
         <div>
+          <Select size={size} label="Status" options={[{ value: 'a', label: 'A' }]} />
           <Combobox
             size={size}
             label="Owner"
@@ -81,6 +81,9 @@ describe('the control size matrix', () => {
         </div>,
       );
       const height = CONTROL_SIZE[size].height;
+      // `Select` and `Combobox` share `role="combobox"` — both are Base UI
+      // triggers with the same ARIA contract — so they are told apart by name.
+      expect(classesOf(screen.getByRole('combobox', { name: 'Status' }))).toContain(height);
       expect(classesOf(screen.getByRole('combobox', { name: 'Owner' }))).toContain(height);
       expect(classesOf(screen.getByRole('searchbox', { name: 'Search leads' }))).toContain(height);
       // The container owns the height and the segments fill it, so the control
@@ -110,12 +113,13 @@ describe('a width class sizes the control, not just its text box', () => {
     expect(classesOf(input)).not.toContain('max-w-40');
   });
 
-  it('does the same for a select', () => {
-    const { container } = render(
-      <Select className="max-w-40" options={[{ value: 'a', label: 'A' }]} aria-label="Region" />,
-    );
-    expect(classesOf(container.firstElementChild)).toContain('max-w-40');
-    expect(classesOf(screen.getByRole('combobox', { name: 'Region' }))).not.toContain('max-w-40');
+  it('leaves a select’s width class on the trigger — it has no wrapper to move it to', () => {
+    // Unlike `Input`, `Select` was never a wrapper around an absolutely
+    // positioned affix: the chevron sits inline beside the label, in the same
+    // flex row, so a width class belongs on the control that draws the box and
+    // there is nothing else for it to land on.
+    render(<Select className="max-w-40" options={[{ value: 'a', label: 'A' }]} label="Region" />);
+    expect(classesOf(screen.getByRole('combobox', { name: 'Region' }))).toContain('max-w-40');
   });
 
   it('leaves the class where it was when there is no wrapper to move it to', () => {

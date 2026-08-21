@@ -249,9 +249,9 @@ export function ConversationList({
             <div className="w-36">
               <Select<InboxView>
                 size="sm"
-                aria-label="Conversation scope"
+                label="Conversation scope"
                 value={view}
-                onChange={(event) => onViewChange(event.target.value as InboxView)}
+                onValueChange={onViewChange}
                 options={INBOX_VIEWS.map((value) => ({
                   value,
                   label: `${VIEW_META[value].label} (${counts[value]})`,

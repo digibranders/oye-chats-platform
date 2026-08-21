@@ -110,9 +110,9 @@ export function ChatbotsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by state"
+            label="Filter by state"
             value={state}
-            onChange={(event) => url.set({ state: event.target.value })}
+            onValueChange={(value) => url.set({ state: value })}
             options={[
               { value: '', label: 'Any state' },
               { value: 'active', label: 'Active' },

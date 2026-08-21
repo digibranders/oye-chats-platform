@@ -108,9 +108,9 @@ export function DocumentsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by source"
+            label="Filter by source"
             value={source}
-            onChange={(event) => url.set({ source: event.target.value })}
+            onValueChange={(value) => url.set({ source: value })}
             options={[
               { value: '', label: 'Any source' },
               { value: 'upload', label: 'Upload' },

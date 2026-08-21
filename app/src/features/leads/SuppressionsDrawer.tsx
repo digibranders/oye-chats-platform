@@ -248,8 +248,9 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
             {botId === null ? (
               <Field label="Chatbot" required>
                 <Select
+                  label="Chatbot"
                   value={target}
-                  onChange={(event) => setTarget(event.target.value)}
+                  onValueChange={setTarget}
                   options={[
                     { value: '', label: 'Choose a chatbot' },
                     ...bots.map((bot) => ({

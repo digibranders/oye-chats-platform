@@ -197,6 +197,7 @@ export function InviteDialog({
 
             <Field label="Department" optional hint="Routes a conversation to a group.">
               <Select
+                label="Department"
                 value={departmentId}
                 options={[
                   { value: '', label: 'No department' },
@@ -205,7 +206,7 @@ export function InviteDialog({
                     label: department.name,
                   })),
                 ]}
-                onChange={(event) => setDepartmentId(event.target.value)}
+                onValueChange={setDepartmentId}
               />
             </Field>
           </>

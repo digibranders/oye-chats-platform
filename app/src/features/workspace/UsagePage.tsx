@@ -245,11 +245,11 @@ export function UsagePage() {
         actions={
           scopeOptions.length > 1 ? (
             <Select
-              aria-label="Usage scope"
+              label="Usage scope"
               size="sm"
               options={scopeOptions}
               value={scopeParam ?? ''}
-              onChange={(event) => setParam('chatbot', event.target.value || null)}
+              onValueChange={(value) => setParam('chatbot', value || null)}
             />
           ) : undefined
         }

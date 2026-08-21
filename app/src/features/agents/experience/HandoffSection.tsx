@@ -154,22 +154,17 @@ export function HandoffSection({
                   />
                 </Field>
 
-                {/* The width is on the `Field`, not on the `Select`. A width
-                    class on the control itself narrows the `<select>` and leaves
-                    the chevron positioned against the full-width wrapper — the
-                    glyph sat 300px to the right of the box it belongs to. */}
                 <Field
                   label="Offer the handoff"
                   hint="Delay before the form appears."
                   className="max-w-xs"
                 >
                   <Select
+                    label="Offer the handoff"
                     options={HANDOFF_DELAY_OPTIONS}
                     value={String(draft.handoffDelaySeconds)}
                     disabled={readOnly}
-                    onChange={(event) =>
-                      onChange({ handoffDelaySeconds: toInt(event.target.value) })
-                    }
+                    onValueChange={(value) => onChange({ handoffDelaySeconds: toInt(value) })}
                   />
                 </Field>
 

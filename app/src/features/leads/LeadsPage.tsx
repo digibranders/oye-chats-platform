@@ -651,32 +651,28 @@ export function LeadsPage() {
                 so arrowing through the filter row was a keyboard trap. */}
             <div className="w-40">
               <Select
-                aria-label="Filter by quality"
+                label="Filter by quality"
                 value={state.tier ?? ''}
                 options={TIER_OPTIONS}
                 disabled={intelligenceLocked}
-                onChange={(event) =>
-                  update({ tier: (event.target.value || null) as TierKey | null })
-                }
+                onValueChange={(value) => update({ tier: (value || null) as TierKey | null })}
               />
             </div>
             <div className="w-36">
               <Select
-                aria-label="Filter by minimum score"
+                label="Filter by minimum score"
                 value={state.minScore === null ? '' : String(state.minScore)}
                 options={SCORE_OPTIONS}
                 disabled={intelligenceLocked}
-                onChange={(event) =>
-                  update({ minScore: event.target.value ? Number(event.target.value) : null })
-                }
+                onValueChange={(value) => update({ minScore: value ? Number(value) : null })}
               />
             </div>
             <div className="w-40">
               <Select
-                aria-label="Filter by lead type"
+                label="Filter by lead type"
                 value={state.contact}
                 options={CONTACT_OPTIONS}
-                onChange={(event) => update({ contact: event.target.value as ContactFilter })}
+                onValueChange={(value) => update({ contact: value as ContactFilter })}
               />
             </div>
             <Tooltip content={SCOPE_NOTE}>

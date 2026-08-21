@@ -173,10 +173,10 @@ export function InvoicesTab() {
           <div className="w-48">
             <Select
               size="sm"
-              aria-label="Filter by document type"
+              label="Filter by document type"
               options={TYPE_OPTIONS}
               value={invoiceType}
-              onChange={(event) => url.set({ type: event.target.value })}
+              onValueChange={(value) => url.set({ type: value })}
             />
           </div>
           {/* `aria-label` as well as `label`: outside a `Field` the primitive has

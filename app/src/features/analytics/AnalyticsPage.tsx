@@ -100,16 +100,14 @@ export function AnalyticsPage() {
   const rangeControl =
     tab === 'journey' ? (
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-tertiary" id="journey-month-label">
-          Month
-        </span>
+        <span className="text-xs text-text-tertiary">Month</span>
         <div className="w-40">
           <Select
             size="sm"
-            aria-labelledby="journey-month-label"
+            label="Month"
             options={months}
             value={month}
-            onChange={(event) => setParam('month', event.target.value, months[0]?.value ?? month)}
+            onValueChange={(value) => setParam('month', value, months[0]?.value ?? month)}
           />
         </div>
       </div>

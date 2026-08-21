@@ -260,14 +260,14 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
                     className="max-w-md"
                   >
                     <Select
+                      label="Framework"
                       disabled={configDisabled}
                       value={draft.framework}
                       options={FRAMEWORK_OPTIONS.map((option) => ({
                         value: option.key,
                         label: option.label,
                       }))}
-                      onChange={(event) => {
-                        const key = event.target.value;
+                      onValueChange={(key) => {
                         setDraft((previous) => {
                           const preset = isRecord(value.presets[key])
                             ? (value.presets[key] as Record<string, unknown>)

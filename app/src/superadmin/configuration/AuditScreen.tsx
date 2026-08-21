@@ -152,10 +152,10 @@ export function AuditScreen() {
         <div className="w-48">
           <Select
             size="sm"
-            aria-label="Filter by action"
+            label="Filter by action"
             options={actionOptions}
             value={action}
-            onChange={(event) => url.set({ action: event.target.value || null })}
+            onValueChange={(value) => url.set({ action: value || null })}
           />
         </div>
         {actor || action ? (

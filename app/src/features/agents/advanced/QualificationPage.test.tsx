@@ -156,9 +156,12 @@ describe('the four states', () => {
 
 describe('the framework picker', () => {
   it('offers only the two frameworks the API will accept', async () => {
+    const user = userEvent.setup();
     await renderSettled();
-    const select = screen.getByLabelText('Framework');
-    const options = within(select).getAllByRole('option').map((option) => option.textContent);
+    // The options live in the popup, not inside the closed trigger, so the
+    // list has to actually be open before it can be queried.
+    await user.click(screen.getByLabelText('Framework'));
+    const options = (await screen.findAllByRole('option')).map((option) => option.textContent);
 
     // CHAMP, GPCTBA/CI and "Custom" were offered before and 422 on save.
     expect(options).toEqual(['BANT', 'MEDDIC']);

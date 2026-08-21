@@ -121,9 +121,9 @@ export function OperatorsTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by role"
+            label="Filter by role"
             value={role}
-            onChange={(event) => url.set({ role: event.target.value })}
+            onValueChange={(value) => url.set({ role: value })}
             options={[
               { value: '', label: 'Every role' },
               { value: 'owner', label: 'Owner' },

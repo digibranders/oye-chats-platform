@@ -237,9 +237,9 @@ export function OfflineMessagesTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by status"
+            label="Filter by status"
             value={status}
-            onChange={(event) => url.set({ status: event.target.value })}
+            onValueChange={(value) => url.set({ status: value })}
             options={[
               { value: '', label: 'Any status' },
               { value: 'new', label: 'New' },
@@ -532,9 +532,9 @@ export function QualificationTab() {
         </div>
         <div className="w-48">
           <Select
-            aria-label="Filter by dimension"
+            label="Filter by dimension"
             value={dimension}
-            onChange={(event) => url.set({ dimension: event.target.value })}
+            onValueChange={(value) => url.set({ dimension: value })}
             options={[
               { value: '', label: 'Any dimension' },
               { value: 'budget', label: 'Budget' },
