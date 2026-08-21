@@ -112,7 +112,11 @@ export function OverviewTab() {
     <Stack>
       <Section
         title="Recurring revenue"
-        description={`Every figure on this tab is normalised. ${USD_NORMALISED_NOTE}`}
+        // "…normalised to USD." — the note opens with the currency, so the
+        // prefix has to run into it. It used to end with a full stop, which
+        // left "Every figure on this tab is normalised. USD. Amounts…": a
+        // one-word sentence in the middle of the only prose on the page.
+        description={`Every figure on this tab is normalised to ${USD_NORMALISED_NOTE}`}
       >
         {metrics.forbidden ? (
           <LockedState
@@ -140,10 +144,15 @@ export function OverviewTab() {
         ) : (
           <Card>
             <CardBody flush>
-              {/* One strip, one statement of the window, hairline-divided. The
-                  four hints under the tiles wrapped to one, one, two and two
-                  lines, so two of the four ended at a different height inside a
-                  grid that had already equalised the cells. */}
+              {/* One strip, one statement of the window, hairline-divided.
+
+                  The currency is a `hint`, not a `period`. `StatRow` used to
+                  drop the window it was given, and the workaround was to give
+                  every tile an explicit one — so "USD (converted)" printed three
+                  times in a row under three adjacent figures, in the slot whose
+                  entire purpose is stating the window once. The primitive
+                  renders the strip caption now, so the unit goes where a unit
+                  goes and the window is stated where a window goes. */}
               <StatRow
                 label="Recurring revenue"
                 period="Right now"
@@ -152,24 +161,28 @@ export function OverviewTab() {
                   {
                     label: 'MRR',
                     size: 'hero',
-                    period: USD_NORMALISED_SHORT,
+                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data ? usdCentsRounded(metrics.data.mrr_cents) : undefined,
                   },
                   {
                     label: 'ARR',
-                    period: USD_NORMALISED_SHORT,
+                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data ? usdCentsRounded(metrics.data.arr_cents) : undefined,
                   },
                   {
+                    // The window is in the label because it differs from the
+                    // strip's, and a tile whose `period` differs prints its own
+                    // line — which would make this one tile a line taller than
+                    // its three neighbours.
                     label: 'Collected, all time',
-                    period: USD_NORMALISED_SHORT,
+                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data
                       ? usdCentsRounded(metrics.data.total_revenue_cents)
                       : undefined,
                   },
                   {
                     label: 'Paying customers',
-                    period: 'Active and past due',
+                    hint: 'Active and past due',
                     value: metrics.data
                       ? formatNumber(metrics.data.total_paying_customers)
                       : undefined,
@@ -199,13 +212,6 @@ export function OverviewTab() {
             </CardBody>
           )}
         </Card>
-        {counts ? (
-          <p className="mt-2 text-xs text-text-tertiary">
-            {SUBSCRIPTION_STATUSES.filter((status) => counts[status] > 0)
-              .map((status) => `${subscriptionLabel(status)} ${counts[status]}`)
-              .join(' · ') || 'No subscriptions of any status.'}
-          </p>
-        ) : null}
       </Section>
 
       <Section

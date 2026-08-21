@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useMemo, type ReactNode } from 'react';
+import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import {
   Button,
@@ -8,16 +8,15 @@ import {
   EmptyState,
   ErrorState,
   LoadingRows,
+  NavTabs,
   Page,
   PageHeader,
   SegmentedControl,
   Select,
-  TabPanel,
-  Tabs,
   buttonClass,
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
-import { ANALYTICS_TABS, parseTab, tabFromUrl, tabUrl } from './tabs';
+import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromPath, tabFromUrl, tabUrl } from './tabs';
 import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
 import { monthOptions, parseMonth } from './month';
 import { useAnalyticsRefresh } from './useAnalyticsData';
@@ -44,21 +43,28 @@ import { FeedbackTab } from './FeedbackTab';
  * take a calendar month and nothing else — so that tab swaps the range control
  * for a month picker rather than pretending a ninety-day window is a month.
  *
- * The tab row wants to be `NavTabs` — these are routes, not panels, so a
- * `tablist` is a promise the surface cannot keep. `NavTabs` matches the active
- * tab on the *pathname*, and four of the five tabs here are distinguished only
- * by `?tab=`, so adopting it needs each tab to become a real child route under
- * `/analytics` in `src/app/routes.tsx` — outside this pass's scope. Flagged, not
- * patched around.
+ * The tab row is `NavTabs`, and each view is a real route. It was `Tabs` plus
+ * `navigate()`: a `role="tablist"` over five things that change the URL, which
+ * `Tabs`' own docstring calls a promise the surface cannot keep. Making the four
+ * query-string views into paths bought middle-click, cmd-click and
+ * open-in-new-tab on every view, `aria-current="page"` in place of
+ * `aria-selected`, and the end of Journey remounting the page — `/analytics/journey`
+ * used to resolve to a second lazy chunk that re-exported this component.
+ *
+ * Sub-routing lives here rather than in `src/app/routes.tsx`, the same shape the
+ * super-admin console uses for its own record lists. One chunk, and — the reason
+ * that matters — each view takes `botId`, `range` and `month` as typed props
+ * instead of an `useOutletContext()` cast that no compiler checks.
  */
 export function AnalyticsPage() {
   const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const [params, setParams] = useSearchParams();
   const location = useLocation();
-  const navigate = useNavigate();
   const refresh = useAnalyticsRefresh();
 
-  const tab = tabFromUrl(location.pathname, params);
+  // The path, not the query string. `?tab=` is resolved once, on the index
+  // view, and turned into a redirect — see `LegacyTabRedirect`.
+  const tab = tabFromPath(location.pathname);
   const rangeKey = parseRange(params.get('range'));
   // Resolved once per selection rather than per render: `resolveRange` reads
   // the clock, and a window that moves between two renders makes two panels on
@@ -78,6 +84,18 @@ export function AnalyticsPage() {
     // four times to leave the page.
     setParams(next, { replace: true });
   }
+
+  // The row's links carry the current filters, so following one never
+  // re-scopes the page under the reader.
+  const tabItems = useMemo(
+    () =>
+      ANALYTICS_TABS.map((entry) => ({
+        to: tabUrl(entry.value, params),
+        label: entry.label,
+        end: entry.end,
+      })),
+    [params],
+  );
 
   const rangeControl =
     tab === 'journey' ? (
@@ -177,31 +195,50 @@ export function AnalyticsPage() {
       {/* No description. The title says "Analytics", the tab row names the five
           views, the breadcrumb names the workspace and the control beside it
           states the period — a sentence restating all four was a fourth copy
-          of one fact. */}
-      <PageHeader title="Analytics" actions={actions} />
+          of one fact.
 
-      <Tabs
-        items={ANALYTICS_TABS}
-        value={tab}
-        onValueChange={(next) => navigate(tabUrl(parseTab(next), params))}
-        label="Analytics views"
-      >
-        <TabPanel value="overview">
-          <OverviewTab botId={botId} range={range} />
-        </TabPanel>
-        <TabPanel value="conversations">
-          <ConversationsTab botId={botId} range={range} />
-        </TabPanel>
-        <TabPanel value="journey">
-          <JourneyTab botId={botId} month={month} />
-        </TabPanel>
-        <TabPanel value="visitors">
-          <VisitorsTab botId={botId} range={range} />
-        </TabPanel>
-        <TabPanel value="feedback">
-          <FeedbackTab botId={botId} range={range} />
-        </TabPanel>
-      </Tabs>
+          `toolbarBleed` runs the row's hairline to the edges of the content
+          area. Inside the gutter it starts 32px in and stops 32px short, which
+          reads as an underline on a paragraph rather than the division the
+          views sit on — the same call every `NavTabs` row in the super-admin
+          console makes. */}
+      <PageHeader
+        title="Analytics"
+        actions={actions}
+        toolbarBleed
+        toolbar={<NavTabs label="Analytics views" items={tabItems} />}
+      />
+
+      <Routes>
+        <Route index element={<LegacyTabRedirect><OverviewTab botId={botId} range={range} /></LegacyTabRedirect>} />
+        <Route path="conversations" element={<ConversationsTab botId={botId} range={range} />} />
+        <Route path="journey" element={<JourneyTab botId={botId} month={month} />} />
+        <Route path="visitors" element={<VisitorsTab botId={botId} range={range} />} />
+        <Route path="feedback" element={<FeedbackTab botId={botId} range={range} />} />
+        {/* An address under `/analytics` that names nothing is the section's
+            own index, not a 404 in the shell: the reader asked for analytics
+            and there is analytics to show them. */}
+        <Route path="*" element={<Navigate to={ANALYTICS_BASE} replace />} />
+      </Routes>
     </Page>
   );
+}
+
+/**
+ * `?tab=` still resolves.
+ *
+ * The query string shipped this round, so it is in links, bookmarks and pasted
+ * messages. Rather than 404 or — worse — silently render Overview under a URL
+ * that asked for Feedback, the index view sends the reader to the real path and
+ * keeps every other parameter on the way. `replace`, so Back leaves the section
+ * instead of bouncing off the redirect.
+ */
+function LegacyTabRedirect({ children }: { children: ReactNode }) {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const requested = tabFromUrl(location.pathname, params);
+  if (requested !== DEFAULT_TAB || params.has('tab')) {
+    return <Navigate to={tabUrl(requested, params)} replace />;
+  }
+  return <>{children}</>;
 }

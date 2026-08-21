@@ -140,7 +140,7 @@ export function DocumentsFlow({
           title={`${planName}: no documents left`}
           description={`This plan covers ${formatNumber(documentAllowance.limit)} documents across this workspace. Remove one below, or move up.`}
           action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
               See plans
             </Link>
           }
@@ -157,7 +157,7 @@ export function DocumentsFlow({
           title={`${planName}: no knowledge base left`}
           description={`This plan holds ${formatNumber(characterAllowance.limit)} characters. Remove something below, or move up.`}
           action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
               See plans
             </Link>
           }
@@ -187,10 +187,13 @@ export function DocumentsFlow({
             No document limit on {planName} — uploads are charged in credits, by length.
           </p>
         ) : (
-          // The scope is in the label, because a `Meter` has nowhere else to
-          // put it and the 11px paragraph it replaces was the wrong answer.
+          // The scope is the `Meter`'s `hint` now. It was folded into the label
+          // — "Documents across this workspace" — because the primitive had
+          // nowhere else to put it, which made the name of the quota four words
+          // long and pushed the figure it is read against off to the right.
           <Meter
-            label="Documents across this workspace"
+            label="Documents"
+            hint="Across this workspace, not just this chatbot."
             used={documentAllowance.used}
             limit={documentAllowance.limit}
             tone="plan"
@@ -199,7 +202,8 @@ export function DocumentsFlow({
 
         {characterAllowance && !planLoading ? (
           <Meter
-            label={`Knowledge base — about ${formatNumber(charactersAsWords(characterAllowance.used))} words`}
+            label="Knowledge base"
+            hint={`About ${formatNumber(charactersAsWords(characterAllowance.used))} words of text stored.`}
             used={characterAllowance.used}
             limit={characterAllowance.limit}
             unit="chars"
@@ -218,7 +222,7 @@ export function DocumentsFlow({
         />
 
         {quoting ? (
-          <Progress value={null} label="Working out what these documents will cost" hideLabel={false} />
+          <Progress value={null} label="Working out what these documents will cost" />
         ) : null}
 
         {quote !== null && !affordable ? (
@@ -282,36 +286,42 @@ export function DocumentsFlow({
         description={
           quote ? (
             <>
-              <span className="block">
-                This charges <span className="figure">{formatNumber(quote.total_credits)}</span>{' '}
-                credit{quote.total_credits === 1 ? '' : 's'} from a balance of{' '}
-                <span className="figure">{formatNumber(quote.current_balance)}</span>. Documents are
-                priced by length.
-              </span>
-              <FigureList className="mt-3 max-h-48 overflow-y-auto">
-                {billable.map((file) => (
-                  <FigureRow
-                    key={file.filename}
-                    label={file.filename}
-                    value={`${formatNumber(file.credits)} credits`}
-                    hint={`${formatNumber(file.words)} words`}
-                  />
-                ))}
-                {skipped.map((file) => (
-                  <FigureRow
-                    key={file.filename}
-                    label={file.filename}
-                    value="Free"
-                    hint={uploadSkipReason(file.reason) ?? undefined}
-                  />
-                ))}
-              </FigureList>
+              This charges <span className="figure">{formatNumber(quote.total_credits)}</span>{' '}
+              credit{quote.total_credits === 1 ? '' : 's'} from a balance of{' '}
+              <span className="figure">{formatNumber(quote.current_balance)}</span>. Documents are
+              priced by length.
             </>
           ) : null
         }
         confirmLabel={`Upload for ${formatNumber(quote?.total_credits ?? 0)} credits`}
         onConfirm={upload}
-      />
+      >
+        {/* The per-file breakdown is the dialog's own block, not part of its
+            description. `description` renders inside a `<p>`, and a `<dl>` in a
+            `<p>` is invalid — React logs "cannot contain a nested <dl>" and the
+            browser closes the paragraph early, so the list escaped the block it
+            was written into. `ConfirmDialog` takes children now. */}
+        {quote ? (
+          <FigureList className="max-h-48 overflow-y-auto">
+            {billable.map((file) => (
+              <FigureRow
+                key={file.filename}
+                label={file.filename}
+                value={`${formatNumber(file.credits)} credits`}
+                hint={`${formatNumber(file.words)} words`}
+              />
+            ))}
+            {skipped.map((file) => (
+              <FigureRow
+                key={file.filename}
+                label={file.filename}
+                value="Free"
+                hint={uploadSkipReason(file.reason) ?? undefined}
+              />
+            ))}
+          </FigureList>
+        ) : null}
+      </ConfirmDialog>
     </>
   );
 }

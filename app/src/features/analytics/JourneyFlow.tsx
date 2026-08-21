@@ -6,7 +6,7 @@ import {
   Card,
   CardBody,
   CardHeader,
-  EYEBROW_CLASS,
+  Eyebrow,
   EmptyState,
   ErrorState,
   FigureList,
@@ -342,7 +342,9 @@ export function JourneyFlow({
             {/* Still a heading, so the column stays navigable by heading — but at
                 the eyebrow's own treatment rather than a 12px semibold rung the
                 type scale does not have. */}
-            <h4 className={cn(EYEBROW_CLASS, 'mt-5')}>Where they went next</h4>
+            <Eyebrow as="h4" className="mt-5">
+              Where they went next
+            </Eyebrow>
             {postChat.first_hops.length === 0 ? (
               <p className="mt-1 text-xs text-text-secondary">
                 Nobody was seen on another page after closing the chat in this month.

@@ -10,15 +10,43 @@ export interface FieldProps {
   hint?: ReactNode;
   /** A validation failure. Shown below the hint, never instead of it. */
   error?: string | null;
+  /**
+   * The value must be supplied: `aria-required`, plus " (required)" in the
+   * accessible name.
+   *
+   * **It draws no asterisk.** The console marks the *exception*, not the rule —
+   * see `optional`. A red `*` on every field of a form where every field is
+   * required carries no information at all: the sign-in card showed six of them
+   * and none of them told the reader anything they could act on. Where a form
+   * genuinely mixes, the shorter list is almost always the optional one, and
+   * "Optional" is a word rather than a glyph the reader has to have been taught.
+   */
   required?: boolean;
   /**
    * Marks the field as skippable, in the label rather than in the hint.
    *
-   * Around twenty hints in the console began with the word "Optional." — which
-   * spends the one line of guidance the field has on a fact that belongs beside
-   * the label, and reads as prose rather than as a property of the control.
+   * This is the console's only visible requiredness marker, and the convention
+   * is deliberate: mark what can be skipped, because that is what the reader can
+   * act on. Around twenty hints in the console began with the word "Optional." —
+   * which spends the one line of guidance the field has on a fact that belongs
+   * beside the label, and reads as prose rather than as a property of the
+   * control.
    */
   optional?: boolean;
+  /**
+   * A control or a note on the label's trailing edge — a "reset to default"
+   * link, a character count, a badge saying where the value came from.
+   *
+   * It goes here rather than in `Input trailing` because that slot is *inside*
+   * the field: a conditional affix there changes the input's element tree, and
+   * React remounts the input and eats the caret mid-typing. Two surfaces worked
+   * around it by rendering an always-present `invisible` badge, which is a
+   * layout hole that reserves space for something that is usually not there.
+   *
+   * The label row becomes a `justify-between` pair capped at
+   * `--container-pair`, so this never drifts a screen away from the label.
+   */
+  trailing?: ReactNode;
   disabled?: boolean;
   /** Hides the label visually but keeps it for assistive tech. */
   hideLabel?: boolean;
@@ -61,6 +89,7 @@ export function Field({
   error,
   required = false,
   optional = false,
+  trailing,
   disabled = false,
   hideLabel = false,
   reserveMessageSpace,
@@ -77,31 +106,37 @@ export function Field({
       value={{ id, labelId, descriptionId, errorId, invalid: Boolean(error), required, disabled }}
     >
       <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
-        <label
-          id={labelId}
-          htmlFor={id}
-          className={cn(
-            'text-base font-medium text-text-primary',
-            hideLabel && 'sr-only',
-            disabled && 'text-text-disabled',
-          )}
-        >
-          {label}
-          {required ? (
-            <>
-              {/* `align-middle`, because an asterisk glyph sits at cap height:
-                  a bare `*` after a 14px label renders as a tick floating well
-                  above the x-height of the word it belongs to. */}
-              <span aria-hidden className="ml-1 align-middle text-danger">
-                *
-              </span>
-              <span className="sr-only"> (required)</span>
-            </>
-          ) : null}
-          {optional && !required ? (
-            <span className="ml-1.5 text-xs font-normal text-text-tertiary">Optional</span>
-          ) : null}
-        </label>
+        {(() => {
+          const labelNode = (
+            <label
+              id={labelId}
+              htmlFor={id}
+              className={cn(
+                'text-base font-medium text-text-primary',
+                hideLabel && 'sr-only',
+                disabled && 'text-text-disabled',
+              )}
+            >
+              {label}
+              {/* Announced, never drawn. See `required` above: the visible
+                  marker in this system is "Optional", on the fields that have
+                  one. */}
+              {required ? <span className="sr-only"> (required)</span> : null}
+              {optional && !required ? (
+                <span className="ml-1.5 text-xs font-normal text-text-tertiary">Optional</span>
+              ) : null}
+            </label>
+          );
+          if (!trailing) return labelNode;
+          return (
+            // Capped, like every other label→control pair in the system: past
+            // about 640px the eye stops binding the two ends of a row.
+            <div className="flex max-w-pair items-center justify-between gap-3">
+              {labelNode}
+              <span className="flex shrink-0 items-center gap-2">{trailing}</span>
+            </div>
+          );
+        })()}
 
         {children}
 
@@ -110,9 +145,16 @@ export function Field({
           // so a single-line error costs no reflow.
           <div className={cn('flex flex-col gap-1', reserve && 'min-h-4.5')}>
             {hint ? (
-              <p id={descriptionId} className="text-xs text-text-secondary">
+              // A `div`, not a `p`. The slot takes a `ReactNode` and the two
+              // hints that most needed it — an accepted-formats list and a
+              // password rule set — are `<ul>`s, which a `<p>` may not contain:
+              // the browser closes the paragraph early and the list lands
+              // outside the element `aria-describedby` points at. Both call
+              // sites had abandoned the slot and hand-rolled the text below the
+              // field instead, unwired.
+              <div id={descriptionId} className="text-xs text-text-secondary">
                 {hint}
-              </p>
+              </div>
             ) : null}
             {error ? (
               <p
@@ -148,11 +190,26 @@ export function Field({
 export function FieldSet({
   legend,
   hint,
+  disabled = false,
   children,
   className,
 }: {
   legend: string;
   hint?: ReactNode;
+  /**
+   * Disables every control in the group, in one place.
+   *
+   * The native attribute, not a prop threaded to each child: `fieldset[disabled]`
+   * is inherited by every form control inside it by the HTML spec, including
+   * ones added later, and it survives a child that forgot to read the flag. The
+   * legend and the hint take `--color-text-disabled` to say so — never an
+   * opacity wash, which compounds with each control's own disabled treatment.
+   *
+   * Base UI's `Checkbox`, `Switch` and `Select` render spans rather than form
+   * controls and are *not* covered by the inherited attribute, so a group of
+   * those still needs a `Field disabled` around it or the prop on each.
+   */
+  disabled?: boolean;
   children: ReactNode;
   className?: string;
 }) {
@@ -160,9 +217,22 @@ export function FieldSet({
     // Not a flex column: a `<legend>` is laid out by the fieldset itself, and
     // browsers disagree about where it lands once the fieldset becomes a flex
     // container. Explicit margins reach the same 6/6 rhythm safely.
-    <fieldset className={cn('min-w-0', className)}>
-      <legend className="text-base font-medium text-text-primary">{legend}</legend>
-      {hint ? <p className="mt-1.5 text-xs text-text-secondary">{hint}</p> : null}
+    <fieldset disabled={disabled} className={cn('min-w-0', className)}>
+      <legend
+        className={cn(
+          'text-base font-medium',
+          disabled ? 'text-text-disabled' : 'text-text-primary',
+        )}
+      >
+        {legend}
+      </legend>
+      {hint ? (
+        <div
+          className={cn('mt-1.5 text-xs', disabled ? 'text-text-disabled' : 'text-text-secondary')}
+        >
+          {hint}
+        </div>
+      ) : null}
       <div className="mt-1.5">{children}</div>
     </fieldset>
   );

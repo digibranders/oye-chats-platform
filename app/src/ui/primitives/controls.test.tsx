@@ -90,6 +90,170 @@ describe('the control size matrix', () => {
   );
 });
 
+describe('a width class sizes the control, not just its text box', () => {
+  /**
+   * `Input` and `Select` are a wrapper, a control and an absolutely positioned
+   * affix — and the affix is positioned against the WRAPPER. A `max-w-sm`
+   * written at the call site landed on the `<input>` while the wrapper stayed
+   * `w-full`, so the trailing badge floated about 250px to the right of the
+   * field it belonged to and a select's chevron 300px from its own box.
+   */
+  it('routes a max-width to the wrapper the affix is positioned against', () => {
+    const { container } = render(
+      <Input className="max-w-40 figure" defaultValue="30" trailing={<span>min</span>} />,
+    );
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(classesOf(wrapper)).toContain('max-w-40');
+    // Everything that is not a width stays on the control.
+    const input = screen.getByRole('textbox');
+    expect(classesOf(input)).toContain('figure');
+    expect(classesOf(input)).not.toContain('max-w-40');
+  });
+
+  it('does the same for a select', () => {
+    const { container } = render(
+      <Select className="max-w-40" options={[{ value: 'a', label: 'A' }]} aria-label="Region" />,
+    );
+    expect(classesOf(container.firstElementChild)).toContain('max-w-40');
+    expect(classesOf(screen.getByRole('combobox', { name: 'Region' }))).not.toContain('max-w-40');
+  });
+
+  it('leaves the class where it was when there is no wrapper to move it to', () => {
+    // Without an affix the input IS the control, and splitting would only move
+    // the class somewhere it does not exist.
+    render(<Input className="max-w-40" aria-label="Bare" />);
+    expect(classesOf(screen.getByRole('textbox', { name: 'Bare' }))).toContain('max-w-40');
+  });
+});
+
+describe('a composite control draws one ring, on its box', () => {
+  /**
+   * `Combobox` and `TagInput` are a bordered box wrapped around a bare `input`.
+   * The ring belongs on the box — around a text run inside a row of chips it is
+   * meaningless — so the inner input carries `outline-none` and the box carries
+   * `FOCUS_RING`.
+   *
+   * That only works if `outline-none` can actually win. It could not: `tokens.css`
+   * was imported **unlayered** after Tailwind, so its zero-specificity
+   * `:where(…):focus-visible` rule beat every layered `.outline-none` in the app,
+   * and the inner input's ring painted anyway — at `outline-offset: 2px`, inside
+   * a panel with 1px of clearance, clipped by `overflow-hidden`, which is what
+   * drew a solid blue bar across the command palette's header. The file now
+   * declares `@layer base` and `@layer components`; these two assertions are the
+   * pair that has to stay true on either side of that fix.
+   */
+  it('puts outline-none on the input and the ring on the box', () => {
+    render(<TagInput label="Recipients" values={[]} onValuesChange={() => {}} />);
+    const input = screen.getByRole('textbox', { name: 'Recipients' });
+    expect(classesOf(input)).toContain('outline-none');
+    expect(classesOf(input.parentElement)).toContain('has-[input:focus-visible]:outline-2');
+  });
+
+  it('does the same for a combobox', () => {
+    render(
+      <Combobox
+        label="Owner"
+        options={[{ value: 'a', label: 'Ana' }]}
+        value={null}
+        onValueChange={() => {}}
+      />,
+    );
+    // The trigger is the box; the bare input only exists once the list opens.
+    expect(classesOf(screen.getByRole('combobox', { name: 'Owner' }))).not.toContain('outline-none');
+  });
+});
+
+describe('TagInput sits on the size scale', () => {
+  /**
+   * The one control still off it. Measured 58px on a 28px strip, 66 on a 34,
+   * and 38 beside a 34px `Input` in a 431px-wide row with nothing wrapped —
+   * because the shell's vertical padding and the chip's height had been chosen
+   * separately and never against the control height they had to add up to.
+   *
+   *   sm  20 chip + 4 padding + 2 border = 26, floored by `min-h-control-sm`
+   *   md  24 chip + 8 padding + 2 border = 34 exactly
+   */
+  it.each([
+    ['sm', 'min-h-control-sm', 'py-0.5', 'h-5'] as const,
+    ['md', 'min-h-control-md', 'py-1', 'h-6'] as const,
+  ])('solves its %s padding and chip against the row height', (size, floor, pad, chip) => {
+    render(
+      <TagInput
+        size={size}
+        label="Recipients"
+        values={['ops@acme.com']}
+        onValuesChange={() => {}}
+      />,
+    );
+    const shell = screen.getByRole('textbox', { name: 'Recipients' }).parentElement;
+    expect(classesOf(shell)).toContain(floor);
+    expect(classesOf(shell)).toContain(pad);
+    expect(classesOf(screen.getByText('ops@acme.com'))).toContain(chip);
+  });
+
+  it('does not force itself onto a second row inside a narrow column', () => {
+    // `min-w-[8rem]` on the inner input plus one chip needs about 15rem of
+    // inner width before the two fit on one line, so the control wrapped — and
+    // so measured 58px on a 28px strip — in any column narrower than an aside.
+    render(<TagInput label="Recipients" values={['ops@acme.com']} onValuesChange={() => {}} />);
+    expect(classesOf(screen.getByRole('textbox', { name: 'Recipients' }))).toContain('min-w-[4rem]');
+  });
+
+  it('carries its own width, so a flex row cannot shrink it to its placeholder', () => {
+    // The shell inside had `w-full`; this wrapper had no width at all, so as a
+    // flex item — which is what `SettingRow` makes it — the control rendered a
+    // 207px field in a 640px row, two thirds narrower than the `Input` above it.
+    const { container } = render(
+      <TagInput label="Recipients" values={[]} onValuesChange={() => {}} />,
+    );
+    expect(classesOf(container.firstElementChild)).toContain('w-full');
+  });
+});
+
+describe('a disabled control keeps its state', () => {
+  /**
+   * Base UI renders both of these as a `<span role="switch" data-disabled>` so a
+   * disabled control stays discoverable — and a span never matches `:disabled`.
+   * Every `disabled:` variant the component carried was therefore dead CSS that
+   * compiled, passed review and painted nothing: a disabled CHECKED switch was
+   * `--color-ink` at opacity 1, pixel-identical to a live one, and only its
+   * label dimmed.
+   */
+  it('paints a disabled switch differently depending on whether it is on', () => {
+    const { container: on } = render(
+      <Switch disabled checked onCheckedChange={() => {}} label="Live chat" hideLabel />,
+    );
+    const { container: off } = render(
+      <Switch disabled checked={false} onCheckedChange={() => {}} label="Live chat" hideLabel />,
+    );
+    const { container: live } = render(
+      <Switch checked onCheckedChange={() => {}} label="Live chat" hideLabel />,
+    );
+
+    const track = (root: HTMLElement) => classesOf(root.querySelector('[role="switch"]'));
+    expect(track(on)).toContain('data-[checked]:bg-control-disabled-on');
+    expect(track(off)).toContain('data-[unchecked]:bg-control-disabled');
+    expect(track(live)).toContain('data-[checked]:bg-ink');
+
+    // And no `disabled:` variant, which is the class of selector that could not
+    // match this element in the first place.
+    expect(track(on)).not.toContain('disabled:');
+    // Nor an opacity wash, which the token file bans and which compounds with
+    // the label's own dimming.
+    expect(track(on)).not.toContain('opacity-');
+  });
+
+  it('paints a disabled checkbox differently depending on whether it is checked', () => {
+    const { container: on } = render(<Checkbox disabled checked label="Include archived" />);
+    const { container: off } = render(<Checkbox disabled checked={false} label="Include archived" />);
+
+    const box = (root: HTMLElement) => classesOf(root.querySelector('[role="checkbox"]'));
+    expect(box(on)).toContain('data-[checked]:bg-control-disabled-on');
+    expect(box(off)).toContain('bg-control-disabled');
+    expect(box(on)).not.toContain('disabled:');
+  });
+});
+
 describe('the 24px target floor', () => {
   /**
    * `app/CLAUDE.md` #4 and WCAG 2.2 SC 2.5.8. The pseudo-element that carries
@@ -369,13 +533,34 @@ describe('Badge and Meter', () => {
     expect(screen.getByText('12').closest('[data-tone]')).toHaveAttribute('data-tone', 'ink');
   });
 
-  it('keeps a meter the same height whether or not its label is shown', () => {
+  it('hides a meter\u2019s name without hiding its figure', () => {
     const { container: labelled } = render(<Meter label="Credits" used={40} limit={100} />);
     const { container: bare } = render(<Meter hideLabel label="Credits" used={40} limit={100} />);
-    // The row is hidden, not removed — one tile 8px shorter than its peers is
-    // what made the billing grid's card bottoms disagree.
+
+    // The row is still there, so a grid of meters stays level — one tile 8px
+    // shorter than its peers is what made the billing grid's card bottoms
+    // disagree.
     expect(bare.querySelectorAll('div').length).toBe(labelled.querySelectorAll('div').length);
-    expect(classesOf(bare.querySelector('[aria-hidden="true"]'))).toContain('invisible');
+
+    // `hideLabel` used to set `invisible` on the whole row, which took the
+    // figure with it, so a meter in a `SettingRow` could not show "40 / 100"
+    // without also printing a name the row already carried. Only the name goes.
+    expect(bare.querySelector('.invisible')).toBeNull();
+    const name = within(bare).getByText('Credits');
+    expect(classesOf(name)).toContain('sr-only');
+    expect(within(bare).getByText('40')).not.toHaveClass('sr-only');
+
+    // And it is still the meter's accessible name: `sr-only` leaves the element
+    // in the tree, where `hidden` or `display:none` would take the name with it.
+    expect(within(bare).getByRole('meter', { name: 'Credits' })).toHaveAttribute(
+      'aria-valuetext',
+      '40 of 100 used, 40%',
+    );
+  });
+
+  it('prints a hint under the bar when the ceiling needs explaining', () => {
+    render(<Meter label="Seats" used={5} limit={5} hint="Adding a sixth adds a seat charge." />);
+    expect(screen.getByText('Adding a sixth adds a seat charge.')).toBeInTheDocument();
   });
 
   it('renders an unlimited meter with the same track as a bounded one', () => {

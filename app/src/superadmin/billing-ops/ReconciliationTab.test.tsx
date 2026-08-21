@@ -75,8 +75,12 @@ describe('ReconciliationTab', () => {
   it('says everything reconciles when every list is empty', async () => {
     respond(report());
     mount();
-    expect(await screen.findByText('Everything reconciles')).toBeInTheDocument();
-    expect(screen.getAllByText('Nothing here').length).toBe(KEYS.length);
+    // Twice: the banner and the table's own empty state. One table, so one
+    // empty state — the six lists used to render six "Nothing here" blocks down
+    // four screenfuls.
+    expect(await screen.findAllByText('Everything reconciles')).toHaveLength(2);
+    expect(screen.queryByRole('columnheader', { name: 'Condition' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /DB\/26-27/ })).not.toBeInTheDocument();
   });
 
   it('counts the documents that need a person', async () => {
@@ -85,18 +89,51 @@ describe('ReconciliationTab', () => {
     expect(await screen.findByText('2 documents need attention')).toBeInTheDocument();
   });
 
-  it('says what each condition means and what to do about it', async () => {
-    respond(report({ pdfs_pending: [brief()] }));
+  it('names every condition on the filter, with how many are in it', async () => {
+    respond(report({ pdfs_pending: [brief(), brief({ id: 2, invoice_number: 'DB/26-27/000115' })] }));
+    const user = userEvent.setup();
     mount();
+    await screen.findByRole('button', { name: /DB\/26-27\/000114/ });
+
+    // The condition is a column now, so its name has to be reachable as a
+    // facet rather than as one of six headings.
+    await user.click(screen.getByLabelText(/filter by condition/i));
     expect(
-      await screen.findByRole('heading', { name: 'Rendered nothing for over an hour' }),
+      await screen.findByRole('option', { name: /Rendered nothing for over an hour · 2/ }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/pango library/)).toBeInTheDocument();
+  });
+
+  it('shows the remedy for the condition being worked, and only that one', async () => {
+    respond(
+      report({
+        pdfs_pending: [brief()],
+        unnumbered_charges: [brief({ id: 2, invoice_number: 'DB/26-27/000115' })],
+      }),
+    );
+    const user = userEvent.setup();
+    mount();
+    await screen.findByRole('button', { name: /DB\/26-27\/000114/ });
+
+    // Unfiltered, no remedy is on screen: six remedies for six conditions is
+    // five answers to questions the reader is not currently asking.
+    expect(screen.queryByText(/pango library/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/filter by condition/i));
+    await user.click(await screen.findByRole('option', { name: /Rendered nothing for over an hour/ }));
+
+    expect(await screen.findByText(/pango library/)).toBeInTheDocument();
+    expect(screen.queryByText(/seller profile has never been saved/)).not.toBeInTheDocument();
   });
 
   it('names the seller profile as the usual cause of un-numbered charges', async () => {
     respond(report({ unnumbered_charges: [brief({ invoice_number: null })] }));
+    const user = userEvent.setup();
     mount();
+    await screen.findByRole('button', { name: /#1284/ });
+
+    await user.click(screen.getByLabelText(/filter by condition/i));
+    await user.click(await screen.findByRole('option', { name: /Charged, but holding no document/ }));
+
     expect(await screen.findByText(/seller profile has never been saved/)).toBeInTheDocument();
   });
 
@@ -149,11 +186,12 @@ describe('ReconciliationTab', () => {
   it('is busy while both reports load', async () => {
     get.mockReturnValue(new Promise(() => {}));
     mount();
-    // One table per anomaly block, plus the gateway table — every one of them
-    // reports busy rather than rendering an empty-state title with an ellipsis
-    // on it, which never animates and reads as a broken empty list.
+    // Both report busy rather than rendering an empty-state title with an
+    // ellipsis on it, which never animates and reads as a broken empty list.
+    // The anomaly table and the gateway table. It used to be one table per
+    // anomaly block plus the gateway table — seven headers for two schemas.
     const tables = await screen.findAllByRole('table');
-    expect(tables).toHaveLength(KEYS.length + 1);
+    expect(tables).toHaveLength(2);
     for (const table of tables) expect(table).toHaveAttribute('aria-busy', 'true');
   });
 

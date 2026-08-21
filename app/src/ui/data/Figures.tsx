@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Skeleton } from '../primitives/Skeleton';
@@ -36,7 +36,14 @@ export interface StatTileProps {
    * trend colour lies on every inverted metric.
    */
   invertTrend?: boolean;
-  /** Stands in for the *value* when there is none: "Not rated yet". */
+  /**
+   * Stands in for the *value* when there is none: "Not rated yet".
+   *
+   * Typeset as a phrase, not as a figure. It used to take the tile's whole
+   * value treatment — `.figure`, `font-semibold`, `text-xl`, full ink — so
+   * "Not rated yet" shouted louder than the `1,204` beside it, and a strip's
+   * loudest tile was the one with no number in it.
+   */
   empty?: string;
   /**
    * A sentence under the figure.
@@ -113,6 +120,8 @@ export function StatTile({
       : (delta.direction === 'up') !== invertTrend
     : null;
   const shown = value ?? empty ?? ABSENT;
+  // A non-answer is a sentence. Only a real value is a figure.
+  const isPhrase = value === undefined && Boolean(empty);
 
   return (
     <div className={cn('min-w-0', className)}>
@@ -122,9 +131,11 @@ export function StatTile({
       ) : (
         <p
           className={cn(
-            'figure mt-1.5 font-semibold leading-tight',
-            VALUE_SIZE[size],
-            value === undefined && !empty ? 'text-text-tertiary' : VALUE_TONE[tone],
+            'mt-1.5',
+            isPhrase
+              ? 'text-base text-text-tertiary'
+              : cn('figure font-semibold', VALUE_SIZE[size]),
+            value === undefined && !empty ? 'text-text-tertiary' : !isPhrase && VALUE_TONE[tone],
           )}
         >
           {shown}
@@ -157,7 +168,7 @@ export function StatTile({
         ) : null}
         {periodInherited ? null : <span className="text-text-tertiary">{period}</span>}
       </div>
-      {hint ? <p className="mt-1 text-xs leading-snug text-text-secondary">{hint}</p> : null}
+      {hint ? <p className="mt-1 text-xs text-text-secondary">{hint}</p> : null}
     </div>
   );
 }
@@ -205,27 +216,55 @@ const STAT_COLUMNS: Record<NonNullable<StatRowProps['columns']>, string> = {
  * correct when the strip wraps: `divide-x` gives the first cell of the second
  * row a left border it should not have, and no combination of `nth-child`
  * resets survives the breakpoint changing the row length.
+ *
+ * ## The window is stated, once, by the strip
+ *
+ * `StatTile.period` is required precisely so a figure can never be unanchored,
+ * and this component sets `periodInherited` on every tile it owns — which
+ * *suppresses* the tile's own line. It then printed nothing in its place, so a
+ * strip's window was stated **nowhere**: four numbers over no period at all,
+ * which is the exact defect the required prop exists to prevent. Three separate
+ * surfaces worked around it by re-stating the window in a `CardHeader` eyebrow.
+ *
+ * It is now a caption under the strip, hairline-separated and stated once, and
+ * the grid is `aria-describedby` it so the window is part of what the strip
+ * announces rather than a loose line of grey type after it. A tile that
+ * genuinely covers a different window ("Right now", "All time") still prints
+ * its own, and the caption is dropped entirely when every tile does.
  */
 export function StatRow({ period, items, columns = 4, loading = false, label, className }: StatRowProps) {
+  const captionId = useId();
+  // Only tiles that actually inherit. A strip whose every tile states its own
+  // window would otherwise carry a caption contradicted by all four of them.
+  const inherits = items.some((item) => item.period === undefined || item.period === period);
+
   return (
-    <div
-      role={label ? 'group' : undefined}
-      aria-label={label}
-      className={cn('grid overflow-hidden', STAT_COLUMNS[columns], className)}
-    >
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="-ml-px -mt-px border-l border-t border-border px-cell py-4"
-        >
-          <StatTile
-            {...item}
-            period={item.period ?? period}
-            periodInherited={item.period === undefined || item.period === period}
-            loading={loading || item.loading}
-          />
-        </div>
-      ))}
+    <div className={cn('min-w-0', className)}>
+      <div
+        role={label ? 'group' : undefined}
+        aria-label={label}
+        aria-describedby={inherits ? captionId : undefined}
+        className={cn('grid overflow-hidden', STAT_COLUMNS[columns])}
+      >
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="-ml-px -mt-px border-l border-t border-border px-cell py-4"
+          >
+            <StatTile
+              {...item}
+              period={item.period ?? period}
+              periodInherited={item.period === undefined || item.period === period}
+              loading={loading || item.loading}
+            />
+          </div>
+        ))}
+      </div>
+      {inherits ? (
+        <p id={captionId} className="border-t border-border px-cell py-2 text-xs text-text-tertiary">
+          {period}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -255,7 +294,7 @@ export function FigureRow({
       <dt className="min-w-0 text-xs text-text-secondary">
         {label}
         {hint ? (
-          <span className="mt-0.5 block text-2xs leading-snug text-text-tertiary">{hint}</span>
+          <span className="mt-0.5 block text-2xs text-text-tertiary">{hint}</span>
         ) : null}
       </dt>
       <dd

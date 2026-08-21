@@ -23,7 +23,6 @@ import {
   Select,
   Stack,
   StatRow,
-  StatusDot,
   buttonClass,
   toast,
 } from '../../ui';
@@ -254,12 +253,24 @@ export function BillingPage() {
               /* Credits get a summary here and a page of their own next door.
                  This card answers one question — am I about to run out — and
                  then hands off rather than duplicating the Usage surface. */
-              <Card>
+              /* `h-full`: a grid item stretches, but the `Card` inside the
+                 aside is a block of its own height, so the two cards in this
+                 band ended 62px apart. */
+              <Card className="h-full">
                 <CardHeader
                   eyebrow="Credits"
                   title="This period"
                   titleAs="h2"
-                  description={pool ? formatPeriod(pool.periodStart, pool.resetsAt) : undefined}
+                  /* The scope, not the period. `StatRow` states the window once
+                     as a caption under the figures it anchors, so repeating
+                     `formatPeriod` here printed the same string twice 150px
+                     apart — under a title that already says "This period". The
+                     scope is the fact this header was missing: the page has a
+                     chatbot selector, and which pool these two numbers belong to
+                     was stated nowhere on the card. It also keeps this header
+                     the same three lines as the plan header beside it, so the
+                     two cards' first rules land on one line. */
+                  description={botId === null ? 'Whole workspace' : pool?.name}
                   actions={
                     <Link to="/billing/usage" className={buttonClass('secondary', 'sm')}>
                       See usage
@@ -348,14 +359,21 @@ export function BillingPage() {
                       // is what `CardSection` is — wrapping an `Alert`, so the
                       // card drew a second hairline box 20px inside its own.
                       <CardSection className="flex flex-wrap items-center justify-between gap-3">
-                        <StatusDot
-                          tone={pool.totalRemaining <= 0 ? 'danger' : 'warning'}
-                          label={
-                            pool.totalRemaining <= 0
-                              ? 'Your chatbots have stopped answering'
-                              : `Nearly out — refills ${formatDate(pool.resetsAt)}`
-                          }
-                        />
+                        {/* A `Badge` and a sentence, not a `StatusDot`.
+                            `StatusDot` puts its label in an `sr-only` span, so
+                            the most consequential sentence on this page — your
+                            chatbots have stopped answering — rendered as a bare
+                            8px disc beside a button. */}
+                        <p className="flex min-w-0 flex-wrap items-center gap-2">
+                          <Badge tone={pool.totalRemaining <= 0 ? 'danger' : 'warning'} dot>
+                            {pool.totalRemaining <= 0 ? 'Out of credits' : 'Nearly out'}
+                          </Badge>
+                          <span className="text-xs text-text-secondary">
+                            {pool.totalRemaining <= 0
+                              ? 'Your chatbots have stopped answering.'
+                              : `Refills ${formatDate(pool.resetsAt)}.`}
+                          </span>
+                        </p>
                         <Link to="/billing/usage" className={buttonClass('primary', 'sm')}>
                           <Coins aria-hidden />
                           Buy credits

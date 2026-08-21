@@ -3,7 +3,7 @@ import { Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Input, type InputProps } from './Input';
 import { CONTROL_SIZE } from './controlStyles';
-import { useField } from './fieldContext';
+import { useFieldNamesControl } from './fieldContext';
 
 export interface SearchFieldProps extends Omit<InputProps, 'value' | 'onChange' | 'type'> {
   value: string;
@@ -37,7 +37,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(functi
   ref,
 ) {
   const [draft, setDraft] = useState(value);
-  const field = useField();
+  const fieldNamesIt = useFieldNamesControl();
 
   // Re-sync when the parent clears or replaces the query — a "clear filters"
   // button, or a saved view being applied.
@@ -59,7 +59,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(functi
       size={size}
       // Inside a `Field` the visible label already names it, and `aria-label`
       // would win the name computation and replace it.
-      aria-label={field ? undefined : label}
+      aria-label={fieldNamesIt ? undefined : label}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       leading={<Search aria-hidden className={CONTROL_SIZE[size].icon} />}

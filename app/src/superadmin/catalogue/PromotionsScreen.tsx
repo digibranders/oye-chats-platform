@@ -22,6 +22,7 @@ import {
   Stack,
   StatRow,
   Switch,
+  formatDate,
   formatDateTime,
   formatNumber,
   toast,
@@ -167,17 +168,23 @@ export function PromotionsScreen() {
       key: 'name',
       header: 'Campaign',
       pinned: true,
+      // Widths on all eight, so `DataTable` lays out fixed: with none, it sized
+      // itself to the campaign name and the date window and ran past the card.
+      width: '13rem',
       sortable: (a, b) => a.name.localeCompare(b.name),
       render: (promotion) => (
         <div className="min-w-0">
-          <p className="font-medium text-text-primary">{promotion.name}</p>
-          <p className="figure text-2xs text-text-tertiary">{promotion.code ?? 'no code — automatic'}</p>
+          <p className="truncate font-medium text-text-primary">{promotion.name}</p>
+          <p className="figure truncate text-2xs text-text-tertiary">
+            {promotion.code ?? 'no code — automatic'}
+          </p>
         </div>
       ),
     },
     {
       key: 'state',
       header: 'State',
+      width: '8rem',
       render: (promotion) => {
         const value = promotionState(promotion);
         return <Badge tone={STATE_TONE[value]}>{STATE_LABEL[value]}</Badge>;
@@ -186,22 +193,27 @@ export function PromotionsScreen() {
     {
       key: 'window',
       header: 'Window',
+      width: '12rem',
       secondary: true,
       render: (promotion) => (
+        // Days, not minutes: the times doubled this column's width for a
+        // precision no reader of a campaign window uses.
         <span className="figure text-xs">
-          {formatDateTime(promotion.starts_at)} → {formatDateTime(promotion.ends_at)}
+          {formatDate(promotion.starts_at)} → {formatDate(promotion.ends_at)}
         </span>
       ),
     },
     {
       key: 'free_cycles',
       header: 'Free cycles',
+      width: '6rem',
       align: 'right',
       render: (promotion) => formatNumber(promotion.free_cycles),
     },
     {
       key: 'slots',
       header: 'Slots claimed',
+      width: '8rem',
       align: 'right',
       sortable: (a, b) => a.slots_claimed - b.slots_claimed,
       render: (promotion) => promotionUsage(promotion),
@@ -209,6 +221,7 @@ export function PromotionsScreen() {
     {
       key: 'created',
       header: 'Subscriptions',
+      width: '8rem',
       align: 'right',
       secondary: true,
       render: (promotion) => formatNumber(promotion.stats?.subscriptions_created ?? 0),
@@ -216,12 +229,14 @@ export function PromotionsScreen() {
     {
       key: 'converted',
       header: 'Converted',
+      width: '6rem',
       align: 'right',
       render: (promotion) => formatNumber(promotion.stats?.converted ?? 0),
     },
     {
       key: 'actions',
       header: '',
+      width: '8rem',
       align: 'right',
       render: (promotion) => (
         <span className="flex justify-end gap-1.5">
@@ -483,8 +498,9 @@ export function PromotionsScreen() {
           </Alert>
         ) : detail.data ? (
           <div className="flex flex-col gap-5">
-            {/* One strip. The two hints under two of the four tiles wrapped to
-                a second line and left the row ending at two heights. */}
+            {/* One strip, one window. "At checkout" is where a slot is claimed,
+                not a period, so it is a hint — `period` carried it only while
+                `StatRow` was dropping the window it was handed. */}
             <StatRow
               label="Campaign performance"
               period="All time"
@@ -492,7 +508,7 @@ export function PromotionsScreen() {
                 {
                   label: 'Slots claimed',
                   value: formatNumber(detail.data.promotion.slots_claimed),
-                  period: 'At checkout',
+                  hint: 'Counted at checkout',
                 },
                 {
                   label: 'Subscriptions',

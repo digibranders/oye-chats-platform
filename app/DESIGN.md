@@ -128,14 +128,32 @@ brass, used **only** on plan, entitlement and upgrade surfaces.
 
 ### 2.5 Data
 
-One categorical ramp: `#2F5FE0 · #1F7C56 · #A8701F · #6E4FB8 · #B5322B ·
+One categorical ramp: `#123A5E · #1F7C56 · #A8701F · #6E4FB8 · #B5322B ·
 #0F6E6C · #8E4A7C · #4E5C6B`. Muted violet is permitted here and only here — as
-data, never as UI chrome. **Blue is not a data fill.** The accent means
-interactive; two panels filled their bars with `--color-accent-500` and one with
-`--color-accent-50`, a background token, at 1.05:1 on its own track. A bar,
-a ranked row and a series take the ramp. Every series clears 3:1 on the canvas. Because their
-greyscale spread is narrow, charts never lean on hue alone: series carry direct
-labels or a legend, and lines vary dash pattern past four.
+data, never as UI chrome. **The interactive blue is not a data fill.** The accent
+means interactive; two panels filled their bars with `--color-accent-500` and one
+with `--color-accent-50`, a background token, at 1.05:1 on its own track. A bar,
+a ranked row and a series take the ramp. Every series clears 3:1 on the canvas.
+Because their greyscale spread is narrow, charts never lean on hue alone: series
+carry direct labels or a legend, and lines vary dash pattern past four.
+
+The first series was `#2F5FE0` — one step from `--color-accent-500` (`#3A6AE6`),
+4.68 against its 4.09 on the canvas — so the *default* fill of every ranked bar
+and every first line read as interactive, and the rule above was broken by the
+token it pointed at. It is now a deep petrol navy at **10.0 on the canvas**:
+twice as dark as the accent and far less saturated, so a bar cannot be mistaken
+for a link, and blue keeps its categorical strength where it is genuinely useful.
+
+| Series | Hex | Canvas |
+|---|---|---|
+| `--chart-1` | `#123A5E` | 10.00 |
+| `--chart-2` | `#1F7C56` | 4.40 |
+| `--chart-3` | `#A8701F` | 3.58 |
+| `--chart-4` | `#6E4FB8` | 5.16 |
+| `--chart-5` | `#B5322B` | 5.19 |
+| `--chart-6` | `#0F6E6C` | 5.17 |
+| `--chart-7` | `#8E4A7C` | 5.24 |
+| `--chart-8` | `#4E5C6B` | 5.84 |
 
 ### 2.6 Verified contrast
 
@@ -157,6 +175,23 @@ that fails its role's bar.
 White on fills: ink 17.89 · accent 4.79 · success 5.80 · danger 6.08 · warning
 4.72. Status text on its own tint: success 5.59 · warning 5.18 · danger 6.18 ·
 accent 8.01 · neutral 5.09 · plan 5.73.
+
+**`--surface-sunken` is a surface inside `--surface`, never on `--canvas`.**
+The two are 1.8 L* apart, under the 2.4 floor the neutral ramp is spaced by, so
+a sunken block on the page ground has no visible edge — the assistant's chat
+bubble, painted that way on the transcript's canvas, was effectively invisible.
+On white it is 4.5 L* and reads as the recess it is meant to be. A block that
+must separate itself from the canvas is `--surface` with a hairline, or it
+carries a border of its own.
+
+**A disabled control has its own two fills.** `--color-control-disabled`
+(`#DDD9D0`, 1.41 on white) is a disabled control that is *off*;
+`--color-control-disabled-on` (`#8F8B82`, 2.41 against it) is one that is *on*.
+Without the second, a disabled checked switch had no honest colour to take and
+shipped as `--color-ink` at full strength — indistinguishable from a live one,
+with only its label dimmed. Neither is a surface or a text token borrowed for the
+job: a switch track is neither, and reaching across roles is how one token ends
+up meaning two things.
 
 **An opacity modifier on a text token is banned.** A ratio measured at full
 strength does not survive `/70`; that is how the previous system's most-used
@@ -269,6 +304,14 @@ mounted, so scroll position and half-written replies survive. A secondary nav
 beside its content is `SidebarLayout`. If a page renders more than three `Stack`
 children in a row and none of them is a table, it is wrong.
 
+**A dialog's grid takes `cols="pairs"`.** The card ramp's two-up step is 48rem
+and a dialog body is 408–856px after its padding, so `cols={2}` can never fire
+inside one — which is why four `sm:grid-cols-2` strings survived in dialogs,
+asking the viewport a question only the panel can answer. `pairs` is a different
+claim, not a smaller threshold on the same one: *these two fields are short and
+belong on one line*, from 24rem of container. There is no three-up form of it —
+three short fields on a row is a `Toolbar`.
+
 **A pair is a pair.** A label and its control, a term and its value, a bar and
 its figure — these bind visually only while they are close. Stretched across a
 1440px card by `justify-between` they stop being a pair and the middle of the
@@ -281,18 +324,80 @@ a record is deleted, not styled.
 
 **A setting is a `SettingRow`, not a card.** A card per setting costs about
 130px of chrome to present one control. A run of them is a `SettingGroup`: name
-left, control right, a hairline between.
+left, control right, a hairline between — and the group's card is capped at
+`--container-form` (672), because a list of settings is a form and a form has a
+measure. Capping the *pair* stops the pair breaking; it does nothing about the
+box, and on a 1945px page the hairline ran 1,300px past the control it was
+underlining. The row publishes a `FieldContext`, so
+its control gets `aria-describedby`, `aria-invalid` and `aria-required` from the
+row rather than from ten hand-written call sites — but not the *name*: a row
+heading is the row talking about the setting, and a control that names itself
+keeps its own name unless the caller wires the two with `htmlFor`. Anything in a
+group that is not a row — an explanation, a preview, an `Alert` — is a
+`SettingBand`, which is the group's `CardBody`.
+
+**A recess inside a card is a `Well`, never a nested `Card`.** Card-in-card is a
+doubled hairline down both sides and two radii a pixel apart at all four
+corners, which is the "broken corner" this rebuild is largely about. A `Well` is
+8px — the card's radius less its own gutter — bordered, and sunken unless its
+content already has a fill of its own.
 
 **A number lives in a `StatRow`.** Never a lone tile, never a hand-written
 `grid grid-cols-4`, and the period is stated once for the row rather than
-repeated on every tile. The one number a page is *about* is the only one that
-takes `size="hero"`.
+repeated on every tile — *by the row*, in its own caption. It shipped saying it
+nowhere: the strip told every tile to suppress its window and then printed
+nothing in its place, so four figures stood over no period at all and three
+surfaces re-stated it in a `CardHeader` eyebrow. The one number a page is *about*
+is the only one that takes `size="hero"`.
+
+**`main` is the longer column.** `Columns` is exactly as tall as its taller
+side, so an aside taller than the main column leaves a large empty rectangle —
+about 530px of it on Deploy at 1440. Nothing the primitive can do fills that
+hole and it should not try: the hole is the layout telling the truth, and an
+aside that carries the work is not an aside. Put the longer block in `main`, drop
+to a `Stack`, or use `Grid` and admit the two are peers. `stickyAside` is for a
+summary the reader works beside; when it is taller than the viewport it caps
+itself and scrolls its own overflow, because a sticky element that has stopped
+moving parks everything below the fold permanently out of reach.
+
+**A sticky column head sticks inside its own table.** It cannot stick to the
+page: the table's wrapper has to scroll X for a wide table, `overflow-x: auto`
+forces `overflow-y: auto` with it, and an element sticks to its nearest scrolling
+ancestor. So the head's offset is always 0, and the body is bounded
+automatically past the point at which losing the column names costs the reader
+something. `DataTable.stickyOffset` was a prop for an offset that can never be
+right, and it rendered as an empty band at the top of the card plus a header
+overlapping row 1.
+
+**A sticky bar draws its hairline only once it is stuck.** `border-b` says "this
+is floating over content"; drawn at rest and full-bleed through the page gutter
+it is a rule across the whole viewport that aligns with nothing. `Toolbar`
+watches a one-pixel sentinel above itself and paints the border only when the
+sentinel leaves the viewport.
+
+**A table in a narrow column takes `fit`.** The default — every cell on one
+line, the table free to be wider than its box, an `overflow-auto` wrapper — is
+what makes a pinned column mean anything on a wide table, and it is wrong in a
+two-up grid, where the last column is simply clipped at the card's right edge
+behind a scroll affordance nobody finds. `fit` switches to `table-fixed` and
+ellipsises; declare a `width` on the columns that must not give.
 
 **Breakpoints are container queries, not viewport queries.** This console has
 panes. A `Grid` inside a 320px inbox pane on a 1920px monitor is one column, and
 only the container knows that. `Page` declares `@container/page` and every
-primitive that narrows the measure re-declares it, so `@3xl/page:` always means
-"the box I am actually in is at least 768 wide", wherever it is written.
+primitive that narrows the measure re-declares it — including **a dialog's and a
+drawer's body**, which did not, so `Grid`, `Columns` and `PropertyGrid
+columns={2}` walked past the panel and measured the page: a 480px drawer rendered
+a two-up grid at 240px a column on a 1440px screen, and four call sites gave up
+and wrote `sm:grid-cols-2`, which asks the same wrong question. `@3xl/page:`
+always means "the box I am actually in is at least 768 wide", wherever it is
+written.
+
+The same query answers a shape, not only a count. `PropertyGrid` keeps a fixed
+label column only above 24rem of *container*; below it the pair stacks, which is
+what stops "First seen / 2 Jun 2026, 10:00" wrapping onto three lines and a URL
+breaking mid-word in an 18rem aside. A component that can tell how much room it
+has does not need a prop the call site has to keep in sync with its own layout.
 
 **The page box never moves.** `Page` is left-anchored. It used to be `mx-auto`,
 so navigating from a wide page to a narrow one slid the title, the tab row and
@@ -332,20 +437,49 @@ reader to scroll.
   thirty times a day does not want the numbers arriving.
 - `prefers-reduced-motion` **removes** animation rather than shortening it. A
   pulse compressed to 0.01ms strobes; an entrance compressed to 0.01ms flashes.
-- One z-ladder: sticky 10 · rail 20 · topbar 30 · scrim 40 · overlay 50 · toast
-  60 · banner 70. The system this replaces put the mobile scrim and the top bar
-  both on 20, with the bar later in the DOM, so the bar painted above its own
-  scrim and stayed clickable. **A rung is only real on a positioned element**,
-  and an overlay's z-index belongs on its positioner, not on the popup Base UI
-  renders as a static child. A panel and its own backdrop never share a rung:
-  relying on DOM order is the failure the ladder exists to prevent.
+- **A selected tab is marked off `aria-selected`, never off a library's
+  `data-*`.** `TAB_SELECTED` keyed off `data-[selected]` while Base UI emitted
+  `data-active`, so the marker matched nothing and every `Tabs` row in the
+  console — Team, Integrations, `/dev/ui`'s own — rendered identical grey labels
+  with `box-shadow: none`, while route-driven `NavTabs` was correct. Two tab rows
+  a user must read as one control looked different from each other. `data-*` is a
+  private state name that can be renamed in a minor release; `aria-selected` is
+  what `role="tab"` guarantees and what the screen reader is already reading, so
+  a marker keyed off it cannot go quiet without also being an accessibility bug.
+  The test asserts the attribute, because a selector that never fires is
+  invisible in its own diff.
+- One z-ladder: sticky 10 · topbar 30 · scrim 40 · overlay 50 · toast 60 ·
+  banner 70. The system this replaces put the mobile scrim and the top bar both
+  on 20, with the bar later in the DOM, so the bar painted above its own scrim
+  and stayed clickable. **A rung is only real on a positioned element**, and an
+  overlay's z-index belongs on its positioner, not on the popup Base UI renders
+  as a static child. A panel and its own backdrop never share a rung: relying on
+  DOM order is the failure the ladder exists to prevent. **A raw `z-[40]` is
+  banned everywhere** — `scale.test.ts` fails the build on it — because a number
+  chosen inline is chosen against whatever was on screen that day and records
+  nothing about what it was chosen against.
+- The ladder had a **rail 20** rung with zero consumers, and could never have
+  had one: the desktop rail is a grid child in normal flow with no z-index at
+  all, and the mobile rail is a real dialog on `overlay`. It is gone. A rung
+  nothing paints with is a claim the ladder cannot keep.
 - **A must-see bar is a layout row, not an overlay.** It renders in the shell's
   banner slot above the top bar and pushes the chrome down. The impersonation
   bar was `position: fixed` at rung 70 with a `body { padding-top }` rule
   compensating — and that rule targeted two attributes the rebuilt shell does
   not have, so the bar covered the top bar and the shell hung 36px below the
   fold.
-- **Every surface ships loading, empty, error and forbidden.** They are one
+- - **An indeterminate bar stays indeterminate under `prefers-reduced-motion`.**
+  It becomes a dimmed *full* track, never a stopped sliver: a 0.01ms one-shot
+  ends and `translate` reverts, so the travelling sliver settled at a third of
+  the track and read as a confident, determinate 33% — a false answer to the one
+  question the bar exists to say it cannot answer. Crawling and training are the
+  product's core async state and this is their only signal.
+- **A state seated in a padded container passes `flush`.** Two gutters add up,
+  and the state's copy then sits 20px inside every label around it. A table's
+  empty state is forced to `inline` and `flush` by the table: a no-rows table is
+  a row that says why, not a 340px poster with a 48px disc in it.
+
+**Every surface ships loading, empty, error and forbidden.** They are one
   decision, not four: "nothing here yet", "nothing matched your filter", "we
   could not load this" and "your plan does not include this" are different
   answers, and a single blank panel makes the reader guess which one they got.
@@ -360,31 +494,46 @@ reader to scroll.
 ## 6. Rules
 
 1. No raw hex, no arbitrary font size, no opacity modifier on a text token,
-   outside `tokens.css`. Enforced by `src/ui/scale.test.ts`.
+   outside `tokens.css`. Also: no `disabled:opacity-*` — disabled is stated in
+   tokens; no raw `z-[<number>]` — every rung comes off the ladder in §5; and no
+   `leading-*` inside `src/ui` — each type rung ships its own line-height, and
+   `leading-none` is the single exception, because a fixed-height inline chip
+   needs *no* leading rather than a different one. Enforced by
+   `src/ui/scale.test.ts`, which reads **the whole of `src/`**: it used to glob
+   `src/ui` alone, so the forty thousand lines the rules actually govern were
+   unguarded and a `text-3xl` walked straight through it.
 2. **A feature may not define a visual primitive.** If a screen needs one that
    does not exist, it goes into `src/ui/` first. The system this replaces had
    three parallel component libraries, seven Toggle implementations, five
    drawers, six chart palettes and twelve copies of one loading block, because
    nothing owned any of them.
 3. Colour is never the only signal.
-4. No decorative iconography. An icon labels a distinct concept or it does not
+4. **Mark the exception, not the rule.** A field that must be filled gets
+   `aria-required` and "(required)" in its accessible name, and **no asterisk**;
+   a field that may be skipped is labelled `Optional`. Marking every required
+   field is the convention that carries no information in this product: almost
+   every form in the console is required end to end, and the sign-in card showed
+   six red asterisks that told the reader nothing they could act on. Where a form
+   genuinely mixes, the shorter list is the optional one — and "Optional" is a
+   word, not a glyph the reader has to have been taught.
+5. No decorative iconography. An icon labels a distinct concept or it does not
    ship.
-5. No pill-shaped inputs, no fully-round cards, no glass, no gradient chrome.
-6. Destructive actions are `danger` **outline**, never a filled red button, and
+6. No pill-shaped inputs, no fully-round cards, no glass, no gradient chrome.
+7. Destructive actions are `danger` **outline**, never a filled red button, and
    always confirm. A filled red button is easy to hit by accident and reads as
    the expected path; a destructive action should look like a decision.
-7. Every table has sort, an empty state, a loading skeleton, a row count and a
+8. Every table has sort, an empty state, a loading skeleton, a row count and a
    keyboard path.
-8. A toast confirms; an alert explains. Anything the user must read in order to
+9. A toast confirms; an alert explains. Anything the user must read in order to
    proceed stays on the page, beside the control that produced it.
-9. Tooltips are a component, never the native `title` attribute — which is
+10. Tooltips are a component, never the native `title` attribute — which is
    unreachable by keyboard, invisible on touch, and waits a second before it
    appears.
-10. Every figure is `.figure`. Every absent value is `—`, never `0` or a blank
+11. Every figure is `.figure`. Every absent value is `—`, never `0` or a blank
     cell. A count in the chrome is a figure too, and it is capped: `99+`, from
     one helper, so the same queue cannot read `9+` in the top bar and `14` in
     the rail.
-11. **A destination has exactly one name, in exactly one place.** The rail
+12. **A destination has exactly one name, in exactly one place.** The rail
     printed "Chatbots" as a nav row and again forty pixels below as the label of
     the group listing them; the account menu offered two items that opened the
     identical screen, and a third that 404'd. A trail that names the wrong page

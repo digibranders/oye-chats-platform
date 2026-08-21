@@ -2,6 +2,17 @@ import type { SessionDetails } from './liveChatProtocol';
 
 /** Everything the visitor pane can show, whatever record it came from. */
 export interface VisitorProfile {
+  /**
+   * Which record this was built from.
+   *
+   * An offline message has no session behind it, so `Department`, `Assigned
+   * to`, `Last active`, `Messages` and `Rated this chat` are not *absent* for
+   * it — they do not exist. The pane rendered all five as `—`, which says "we
+   * looked and found nothing" about five facts nobody could ever have, and put
+   * seven dashes in a ten-row list. It states only the rows the record can
+   * carry instead.
+   */
+  kind: 'session' | 'offline';
   name: string;
   email: string | null;
   phone: string | null;
@@ -36,6 +47,7 @@ export interface VisitorProfile {
 export function profileFromSession(details: SessionDetails, fallbackName: string): VisitorProfile {
   const lead = details.lead_info;
   return {
+    kind: 'session',
     name: lead?.name?.trim() || fallbackName,
     email: lead?.email ?? null,
     phone: lead?.phone ?? null,

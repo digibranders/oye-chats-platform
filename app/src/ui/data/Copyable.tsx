@@ -150,7 +150,7 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
           keyboard, or its overflowing content is unreadable without a mouse. */}
       <pre
         tabIndex={0}
-        className="overflow-x-auto bg-surface-sunken px-3 py-2.5 font-mono text-xs leading-relaxed text-text-primary"
+        className="overflow-x-auto bg-surface-sunken px-3 py-2.5 font-mono text-xs text-text-primary"
       >
         <code>{code}</code>
       </pre>

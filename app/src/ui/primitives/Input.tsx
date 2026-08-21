@@ -1,7 +1,13 @@
 import { forwardRef, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { CONTROL_SIZE, DISABLED_CONTROL, controlClass, type ControlSize } from './controlStyles';
+import {
+  CONTROL_SIZE,
+  DISABLED_CONTROL,
+  controlClass,
+  splitControlClass,
+  type ControlSize,
+} from './controlStyles';
 import { useFieldControlProps } from './fieldContext';
 
 /**
@@ -98,6 +104,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   ) : null;
 
   const trailingSlot = reveal ?? trailing;
+  const affixed = Boolean(leading || trailingSlot);
+  // Width sizes the control, and with an affix the control is the wrapper. See
+  // `splitControlClass`: this is what stops a `max-w-sm` input parking its own
+  // trailing badge 250px to the right of itself.
+  const { box, control } = affixed ? splitControlClass(className) : { box: undefined, control: className };
 
   const input = (
     <input
@@ -108,17 +119,17 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         controlClass(size),
         leading && geometry.affixPad.leading,
         trailingSlot && geometry.affixPad.trailing,
-        className,
+        control,
       )}
       {...fieldProps}
       {...props}
     />
   );
 
-  if (!leading && !trailingSlot) return input;
+  if (!affixed) return input;
 
   return (
-    <div className="relative flex w-full items-center">
+    <div className={cn('relative flex w-full items-center', box)}>
       {leading ? (
         // `pointer-events-none` so a click on the icon still lands in the field.
         // A trailing slot is usually a real control, so it keeps its events.

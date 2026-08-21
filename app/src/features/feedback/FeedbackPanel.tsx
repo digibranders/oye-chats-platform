@@ -191,13 +191,23 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
         </CardBody>
       </Card>
 
-      <Grid cols={2} gap="section" align="start">
+      {/* Stretched, not `align="start"`. `Grid` says `start` is wrong for a row
+          of panels, and here it was the difference between a shared bottom edge
+          and a 920px hole down the left column — the log's own list is bounded
+          now (see `FeedbackList`), so the two are within a card-header of each
+          other rather than a screen apart. */}
+      <Grid cols={2} gap="section">
         <Card>
           <CardHeader
             eyebrow="Priorities"
             title="Fix these first"
             titleAs="h2"
-            description="The questions visitors most often marked unhelpful. Pick one to filter the log beside it."
+            // Short enough that "Add knowledge" stays in the header's action
+            // slot. At the full sentence the description and the button came to
+            // 585px in a 512px header, so `CardHeader` wrapped the button onto
+            // its own row at the *left* while Export on the card beside it sat
+            // top-right — two panels in one `Grid`, two action placements.
+            description="Most often marked unhelpful. Pick one to filter the log."
             actions={
               // Every row's next action is "add a document" or "fix the
               // answer", and both live in the knowledge base. Without this the

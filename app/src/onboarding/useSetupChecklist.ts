@@ -69,11 +69,15 @@ export function useSetupChecklist() {
   const branded = Boolean(primary?.bot_logo || primary?.avatar_type);
   const installed = Boolean(primary?.widget_installed_at);
 
+  // Every step carries one. Two of the six used to pass `''`, so the checklist
+  // drew four 75px rows and two 55px ones down a single card — and one of the
+  // four ended in a full stop while the other three did not. They are labels,
+  // not sentences: no terminal punctuation, and none of them optional.
   const steps: SetupStep[] = [
     {
       id: 'create',
       label: 'Create your chatbot',
-      description: '',
+      description: 'Name it, point it at your site',
       done: bots.length > 0,
       to: '/welcome',
     },
@@ -87,14 +91,14 @@ export function useSetupChecklist() {
     {
       id: 'brand',
       label: 'Make it yours',
-      description: 'Your colours, your avatar, your greeting.',
+      description: 'Your colours, your avatar, your greeting',
       done: branded,
       to: primary ? agentPath(primary.id, 'experience') : '/chatbots',
     },
     {
       id: 'test',
       label: 'Ask it a question',
-      description: '',
+      description: 'See exactly what a visitor gets',
       done: conversations > 0,
       to: primary ? agentPath(primary.id, 'overview') : '/chatbots',
     },

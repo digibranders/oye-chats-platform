@@ -51,7 +51,10 @@ export function AffiliatePage() {
 
   const poolPct = profile?.commissionPct ?? 0;
   const activeCount = codes.filter((code) => code.active).length;
-  const atCap = profile != null && activeCount >= profile.maxActiveCodes;
+  // `maxActiveCodes > 0` guards the zero case: with no cap on record, `0 >= 0`
+  // put "You are using all your active codes" above an empty table.
+  const atCap =
+    profile != null && profile.maxActiveCodes > 0 && activeCount >= profile.maxActiveCodes;
 
   const setActive = useMutation({
     mutationFn: ({ code, active }: { code: AffiliateCodeView; active: boolean }) =>
@@ -287,7 +290,7 @@ export function AffiliatePage() {
           }
           empty={
             <EmptyState
-              icon={Handshake}
+              size="inline"
               title="No codes yet"
               description={`Create one and share its link. You keep up to ${formatPct(poolPct)} of what everyone who signs up through it pays.`}
               action={

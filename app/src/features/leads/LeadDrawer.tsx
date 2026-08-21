@@ -186,8 +186,12 @@ function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
         <Badge tone={tier.tone}>{tier.label}</Badge>
         {rating !== null ? <VisitorRating rating={rating} /> : null}
       </div>
+      {/* `hideLabel`: the figure above the bar is "82 / 100" at 2xl beside the
+          tier badge. A label row would restate it in 12px grey directly
+          underneath. */}
       <Progress
         className="mt-3"
+        hideLabel
         value={lead.score}
         label={`Quality score: ${lead.score} out of 100`}
         tone={tier.tone === 'success' ? 'success' : tier.tone === 'warning' ? 'warning' : 'accent'}

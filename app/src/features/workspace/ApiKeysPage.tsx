@@ -15,6 +15,7 @@ import {
   ErrorState,
   LoadingRows,
   LockedState,
+  SettingBand,
   SettingGroup,
   SettingRow,
   buttonClass,
@@ -118,9 +119,9 @@ export function ApiKeysPage() {
             }
           >
             {apiKey.isPending ? (
-              <div className="px-cell py-4">
+              <SettingBand>
                 <LoadingRows rows={1} />
-              </div>
+              </SettingBand>
             ) : apiKey.isError ? (
               <ErrorState
                 size="panel"

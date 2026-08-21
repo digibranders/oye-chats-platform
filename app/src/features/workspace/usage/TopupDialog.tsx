@@ -261,6 +261,8 @@ export function TopupDialog({
             description="This is usually temporary. If it persists, contact support and we will arrange a top-up manually."
           />
         ) : (
+          // Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
+          // body is 632px. See the round-two report.
           <ul className="grid gap-3 sm:grid-cols-2">
             {(packs.data ?? []).map((pack, index) => {
               const amountInr = chargeInr(pack);
@@ -277,7 +279,12 @@ export function TopupDialog({
                     className={cn(
                       'w-full rounded-lg border bg-surface p-4 text-left transition-colors',
                       'hover:border-border-strong hover:bg-surface-hover',
-                      'disabled:cursor-not-allowed disabled:opacity-60',
+                      // Tokens, not an opacity wash — see `DISABLED_CONTROL`.
+                      // The card holds a price, a credit count and a plan-toned
+                      // border, and 0.6 over all four takes the price to about
+                      // 2.9:1 while leaving the brass border reading as live.
+                      'disabled:cursor-not-allowed disabled:border-border',
+                      'disabled:bg-surface-sunken disabled:text-text-disabled',
                       index === featured
                         ? 'border-plan shadow-[inset_0_0_0_1px_var(--color-plan)]'
                         : 'border-border',

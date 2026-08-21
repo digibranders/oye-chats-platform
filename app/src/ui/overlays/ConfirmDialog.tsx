@@ -34,6 +34,18 @@ export interface ConfirmDialogProps {
    */
   confirmPhrase?: string;
   confirmPhraseLabel?: string;
+  /**
+   * Anything the consequence needs that a sentence cannot carry — an `Alert`
+   * with what will be lost, a `PropertyGrid` of what is about to be deleted, a
+   * list of affected seats.
+   *
+   * It goes below the description and above the confirm-phrase field, which is
+   * the order the user reads in: what will happen, then the evidence, then the
+   * thing they have to type. It exists because `AlertDialog.Description`
+   * renders a `<p>`, so an `Alert` — a `<div>` — could not be put in the body
+   * at all, and two surfaces shipped the warning *outside* the dialog instead.
+   */
+  children?: ReactNode;
 }
 
 /**
@@ -68,7 +80,7 @@ export interface ConfirmDialogProps {
  *
  * Cancel is `secondary`, not `ghost`. Two equal-weight outlined buttons where
  * colour is the only difference is precisely the "this is a decision" reading
- * DESIGN.md §6.6 asks for — where before, the destructive button was the only
+ * DESIGN.md §6.7 asks for — where before, the destructive button was the only
  * thing on the footer with any chrome at all, so the eye went straight to it.
  */
 export function ConfirmDialog({
@@ -82,6 +94,7 @@ export function ConfirmDialog({
   destructive = false,
   confirmPhrase,
   confirmPhraseLabel,
+  children,
 }: ConfirmDialogProps) {
   // Focus lands on Cancel, not on the destructive button and not on the popup
   // itself. When the next keypress can delete something, the default answer has
@@ -138,6 +151,8 @@ export function ConfirmDialog({
             <AlertDialog.Description className={OVERLAY_DESCRIPTION}>
               {description}
             </AlertDialog.Description>
+
+            {children ? <div className="mt-4">{children}</div> : null}
 
             {confirmPhrase ? (
               <Field

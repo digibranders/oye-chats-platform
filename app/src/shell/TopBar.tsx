@@ -28,6 +28,15 @@ export interface TopBarProps {
  * the breadcrumb sat 32px right of the page title at every width and 84px right
  * of it at 1920. The trail naming the page and the title of the page were never
  * on the same line. Both now read `--spacing-gutter` / `--spacing-gutter-lg`.
+ *
+ * **Below 1024 there is no trail**, because below 1024 there is a drawer trigger
+ * in front of it and one left edge cannot survive both. Measured at 1000px: the
+ * crumb landed at x=58 against a page title at x=24 — the same two-left-edges
+ * defect, one breakpoint below where it was fixed. Every link the trail offers
+ * is a row in the drawer that button opens, its last crumb is the `h1` forty
+ * pixels underneath it, and at 375px "Chatbots › Acme Support › Knowledge"
+ * truncates to "Chatbots ›…". Dropping it costs a duplicate; keeping it costs
+ * the alignment the bar was rebuilt for.
  */
 export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true }: TopBarProps) {
   const crumbs = useBreadcrumbs();
@@ -51,42 +60,46 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
         </Button>
       ) : null}
 
-      <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
-        <ol className="flex min-w-0 items-center gap-1.5 text-sm">
-          {crumbs.map((crumb, index) => (
-            <Fragment key={`${crumb.label}-${index}`}>
-              {index > 0 ? (
-                <li aria-hidden className="shrink-0">
-                  {/* A chevron, optically centred by the flex row. It was a
-                      literal `/` at body size in `--text-tertiary` (5.38:1),
-                      sitting on the baseline and nearly as heavy as the labels
-                      it separated. */}
-                  <ChevronRight className="h-3.5 w-3.5 text-border-strong" />
+      {isMobile ? (
+        <div className="flex-1" />
+      ) : (
+        <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+          <ol className="flex min-w-0 items-center gap-1.5 text-sm">
+            {crumbs.map((crumb, index) => (
+              <Fragment key={`${crumb.label}-${index}`}>
+                {index > 0 ? (
+                  <li aria-hidden className="shrink-0">
+                    {/* A chevron, optically centred by the flex row. It was a
+                        literal `/` at body size in `--text-tertiary` (5.38:1),
+                        sitting on the baseline and nearly as heavy as the labels
+                        it separated. */}
+                    <ChevronRight className="h-3.5 w-3.5 text-border-strong" />
+                  </li>
+                ) : null}
+                <li className="min-w-0">
+                  {crumb.pending ? (
+                    <Skeleton className="h-3.5 w-28" />
+                  ) : crumb.to && index < crumbs.length - 1 ? (
+                    <Link
+                      to={crumb.to}
+                      className="block truncate text-text-secondary underline-offset-2 transition-colors hover:text-text-primary hover:underline"
+                    >
+                      {crumb.label}
+                    </Link>
+                  ) : (
+                    <span
+                      aria-current={index === crumbs.length - 1 ? 'page' : undefined}
+                      className="block truncate font-medium text-text-primary"
+                    >
+                      {crumb.label}
+                    </span>
+                  )}
                 </li>
-              ) : null}
-              <li className="min-w-0">
-                {crumb.pending ? (
-                  <Skeleton className="h-3.5 w-28" />
-                ) : crumb.to && index < crumbs.length - 1 ? (
-                  <Link
-                    to={crumb.to}
-                    className="block truncate text-text-secondary underline-offset-2 transition-colors hover:text-text-primary hover:underline"
-                  >
-                    {crumb.label}
-                  </Link>
-                ) : (
-                  <span
-                    aria-current={index === crumbs.length - 1 ? 'page' : undefined}
-                    className="block truncate font-medium text-text-primary"
-                  >
-                    {crumb.label}
-                  </span>
-                )}
-              </li>
-            </Fragment>
-          ))}
-        </ol>
-      </nav>
+              </Fragment>
+            ))}
+          </ol>
+        </nav>
+      )}
 
       <div className="flex shrink-0 items-center gap-1">
         {searchable ? (

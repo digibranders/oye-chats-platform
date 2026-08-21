@@ -25,6 +25,7 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { PAGE_SIZE } from '../recordListState';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import {
   couponCreatePayload,
@@ -53,7 +54,6 @@ const STATE_LABEL: Record<OfferState, string> = {
   inactive: 'Deactivated',
 };
 
-const PAGE_SIZE = 20;
 
 /**
  * Coupons.
@@ -234,16 +234,22 @@ export function CouponsScreen() {
           <Button size="sm" variant="ghost" onClick={() => startEdit(coupon)}>
             Edit
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setActionError(null);
-              setRemoving(coupon);
-            }}
-          >
-            {(coupon.redemptions ?? 0) > 0 ? 'Deactivate' : 'Delete'}
-          </Button>
+          {/* A row already deactivated and already redeemed has nothing left to
+              offer: it cannot be deleted (the redemptions are a record) and it
+              cannot be deactivated twice. It was still showing "Deactivate",
+              which does nothing. */}
+          {coupon.is_active || (coupon.redemptions ?? 0) === 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setActionError(null);
+                setRemoving(coupon);
+              }}
+            >
+              {(coupon.redemptions ?? 0) > 0 ? 'Deactivate' : 'Delete'}
+            </Button>
+          ) : null}
         </span>
       ),
     },

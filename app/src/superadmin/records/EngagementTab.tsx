@@ -11,6 +11,7 @@ import {
   Select,
   Stack,
   Toolbar,
+  Tooltip,
   formatDateTime,
   toast,
   type Column,
@@ -151,11 +152,20 @@ export function OfflineMessagesTab() {
     }
   }
 
+  /**
+   * Every column carries a width, so the table lays out fixed.
+   *
+   * Without one on all six, `DataTable` sizes to its content — here a whole
+   * message body — and this table ran 193px past the card, taking "Received"
+   * and the row's own control off screen. The message truncates and the full
+   * text is a hover, which is also what the drawer at the end of the row opens.
+   */
   const columns: Column<OfflineMessageRow>[] = [
     {
       key: 'visitor_name',
       header: 'Visitor',
       pinned: true,
+      width: '16rem',
       sortable: true,
       render: (row) => (
         <div className="min-w-0">
@@ -167,18 +177,31 @@ export function OfflineMessagesTab() {
     {
       key: 'message_body',
       header: 'Message',
-      render: (row) => <span className="text-text-secondary">{row.message_body}</span>,
+      width: '18rem',
+      render: (row) => (
+        <Tooltip content={row.message_body}>
+          <span className="block truncate text-text-secondary">{row.message_body}</span>
+        </Tooltip>
+      ),
     },
-    { key: 'bot_name', header: 'Chatbot', sortable: true, render: (row) => row.bot_name ?? '—' },
+    {
+      key: 'bot_name',
+      header: 'Chatbot',
+      width: '12rem',
+      sortable: true,
+      render: (row) => <span className="block truncate">{row.bot_name ?? '—'}</span>,
+    },
     {
       key: 'status',
       header: 'Status',
+      width: '8rem',
       sortable: true,
       render: (row) => <Badge tone={OFFLINE_TONES[row.status] ?? 'neutral'}>{row.status}</Badge>,
     },
     {
       key: 'created_at',
       header: 'Received',
+      width: '10rem',
       sortable: true,
       secondary: true,
       render: (row) => formatDateTime(row.created_at),
@@ -186,6 +209,7 @@ export function OfflineMessagesTab() {
     {
       key: 'actions',
       header: 'Open',
+      width: '6rem',
       align: 'right',
       render: (row) => (
         <Button size="sm" variant="ghost" onClick={() => setReading(row)}>

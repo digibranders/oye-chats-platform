@@ -53,6 +53,14 @@ const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
  * The rule is stated once on the card now, and the state is marked on the
  * control. It sits in `Input`'s trailing slot because `Field` has no slot beside
  * its label — reported as a `src/ui` gap.
+ *
+ * Every field on this tab is the card's own width, and none of them carries a
+ * width class. Five of the nine used to be `max-w-sm` with no rule behind which
+ * — one right edge at 384 and another at 638, alternating down a single column.
+ * Worse, a width on `Input` lands on the `<input>` while the trailing slot is
+ * positioned against the wrapper, which is still full width: the badge below
+ * detached from its own field and floated 250px to its right. A width on a
+ * control here goes on the `Field`, never on the control.
  */
 function defaultMark(value: string) {
   // Always rendered, hidden rather than removed: `Input` returns a bare
@@ -156,7 +164,6 @@ export function MessagesSection({
               disabled={readOnly}
               placeholder="Acme Assistant"
               onChange={(event) => onChange({ displayName: event.target.value })}
-              className="max-w-sm"
             />
           </Field>
           <Field label="Launcher text" hint="Beside the closed launcher.">
@@ -167,7 +174,6 @@ export function MessagesSection({
               placeholder={PLACEHOLDERS.launcherName}
               trailing={defaultMark(draft.launcherName)}
               onChange={(event) => onChange({ launcherName: event.target.value })}
-              className="max-w-sm"
             />
           </Field>
         </CardBody>
@@ -208,7 +214,6 @@ export function MessagesSection({
               placeholder={PLACEHOLDERS.inputPlaceholder}
               trailing={defaultMark(draft.inputPlaceholder)}
               onChange={(event) => onChange({ inputPlaceholder: event.target.value })}
-              className="max-w-sm"
             />
           </Field>
         </CardBody>
@@ -232,7 +237,15 @@ export function MessagesSection({
         />
         <CardBody className="flex flex-col gap-4">
           {quickActions.length === 0 ? (
-            <EmptyState size="inline" title="No starter questions yet" />
+            // `-mx-cell`: the `CardBody` has already drawn the 20px gutter, and
+            // a state draws its own so it lands on the card title's left edge
+            // when seated flush. Without it this line sat 20px inside every
+            // label and control around it.
+            <EmptyState
+              size="inline"
+              className="-mx-cell"
+              title="No starter questions yet"
+            />
           ) : (
             <ul className="flex flex-col gap-2">
               {quickActions.map((action, index) => (
@@ -401,7 +414,6 @@ export function MessagesSection({
                   placeholder={PLACEHOLDERS.liveChatLabel}
                   trailing={defaultMark(draft.liveChatLabel)}
                   onChange={(event) => onChange({ liveChatLabel: event.target.value })}
-                  className="max-w-sm"
                 />
               </Field>
               <Field label="Rating prompt" hint="Asked once a live conversation ends.">
@@ -422,7 +434,6 @@ export function MessagesSection({
                   placeholder={PLACEHOLDERS.endChatLabel}
                   trailing={defaultMark(draft.endChatLabel)}
                   onChange={(event) => onChange({ endChatLabel: event.target.value })}
-                  className="max-w-sm"
                 />
               </Field>
             </>

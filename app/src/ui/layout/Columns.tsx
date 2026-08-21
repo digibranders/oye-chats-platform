@@ -23,7 +23,10 @@ export interface ColumnsProps {
   /**
    * The aside holds still while the main column scrolls. For a summary that has
    * to stay readable while the reader works beside it — an order total, a
-   * widget preview. Not for an aside taller than the viewport.
+   * widget preview.
+   *
+   * An aside taller than the viewport scrolls inside itself rather than pinning
+   * its own bottom off screen — see the note on the component.
    */
   stickyAside?: boolean;
   /** Names the aside's landmark, e.g. "Order summary". */
@@ -49,6 +52,25 @@ export interface ColumnsProps {
  * reordered flex or grid leaves the tab sequence in source order, so a keyboard
  * user tabs from the first visible column into the *last* one — and an aside on
  * the start edge is normally read first anyway.
+ *
+ * ## `main` is the longer column. That is the contract.
+ *
+ * A two-column grid is exactly as tall as its taller column, so when the aside
+ * is the taller one the main column ends in a large empty rectangle — about
+ * 530px of it on Deploy at 1440. Nothing this component can do fills that hole,
+ * and it should not try: a grid that reflowed to hide it would move the reader's
+ * column out from under them the moment a fixture changed by one row. The hole
+ * is the layout telling the truth about the page — the aside is carrying the
+ * work, and an aside that carries the work is not an aside. The fix is at the
+ * call site, and it is one of three: put the longer block in `main`, drop to a
+ * single `Stack`, or use `Grid` and admit the two blocks are peers.
+ *
+ * What *was* this component's fault is the sticky case. A sticky aside taller
+ * than the viewport pins its top at `top-gutter` and parks everything below the
+ * fold permanently out of reach — there is no scroll position that reveals it,
+ * because the element has stopped moving. It now caps itself at the viewport
+ * and scrolls its own overflow, so the cap costs nothing when the aside fits
+ * (no scrollbar appears) and rescues it when it does not.
  */
 export function Columns({
   main,
@@ -64,7 +86,11 @@ export function Columns({
       aria-label={asideLabel}
       className={cn(
         '@container/page min-w-0',
-        stickyAside && '@4xl/page:sticky @4xl/page:top-gutter @4xl/page:self-start',
+        stickyAside &&
+          cn(
+            '@4xl/page:sticky @4xl/page:top-gutter @4xl/page:self-start',
+            '@4xl/page:max-h-[calc(100dvh-var(--spacing-gutter)*2)] @4xl/page:overflow-y-auto',
+          ),
       )}
     >
       {aside}

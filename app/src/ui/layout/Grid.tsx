@@ -21,10 +21,34 @@ const COLS = {
   4: 'grid-cols-2 @3xl/page:grid-cols-4',
 } as const;
 
+/**
+ * The pair step, for two SHORT fields on one line.
+ *
+ * The ramp above is sized for cards, and a dialog body is 408–856px after its
+ * padding — so `cols={2}` (768) can never fire inside one and `cols={3}` (1024)
+ * never fires at all. Four `sm:grid-cols-2` strings survived in dialogs for
+ * exactly that reason, asking the viewport a question only the panel can answer.
+ *
+ * `pairs` is a different claim from `cols={2}`, not a smaller threshold on the
+ * same one: it means *these two things are short and belong on one line* — a
+ * city and a postal code, a first and last name, a currency and an amount — and
+ * 24rem is where two 12rem fields stop being cramped. It is deliberately not
+ * available for three, because "three short fields" is a row of controls, which
+ * is a `Toolbar`, and naively widening the card ramp instead would have turned
+ * three plan cards into two and a widow.
+ */
+const PAIRS = 'grid-cols-1 @sm/page:grid-cols-2';
+
 export interface GridProps {
   children: ReactNode;
-  /** Columns at the widest step. The ramp is fixed; there is no 5-up. */
-  cols: 2 | 3 | 4;
+  /**
+   * Columns at the widest step. The ramp is fixed; there is no 5-up.
+   *
+   * `'pairs'` is not a count — it is "two short fields on one line, from 24rem
+   * of container". Use it inside a dialog or a drawer, where the card ramp's
+   * 48rem step can never fire. See `PAIRS`.
+   */
+  cols: 2 | 3 | 4 | 'pairs';
   /** 16 between cards (the default), 24 between card *groups*. */
   gap?: 'card' | 'section';
   /**
@@ -74,7 +98,7 @@ export function Grid({
       aria-label={Tag === 'ul' ? label : undefined}
       className={cn(
         'grid',
-        COLS[cols],
+        cols === 'pairs' ? PAIRS : COLS[cols],
         gap === 'section' ? 'gap-6' : 'gap-4',
         align === 'start' && 'items-start',
         className,

@@ -100,7 +100,7 @@ export function WebsiteFlow({
           title={`${planName}: no website pages left`}
           description={`This plan covers ${formatNumber(pageAllowance.limit)} pages. Remove a website below, or move up.`}
           action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
               See plans
             </Link>
           }

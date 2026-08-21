@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnalyticsPage } from './AnalyticsPage';
 
@@ -9,9 +9,14 @@ import { AnalyticsPage } from './AnalyticsPage';
  * The URL contract, end to end.
  *
  * Tab state was component-local, so refresh and Back always landed on the first
- * tab, and the range control only ever moved a chart. Both live in the query
- * string now, which is only true if the page actually writes them there — a
- * fact no amount of unit testing the helpers can establish on its own.
+ * tab, and the range control only ever moved a chart. The views are real routes
+ * now and the period is a query parameter — which is only true if the page
+ * actually renders links to those routes and writes that parameter, a fact no
+ * amount of unit testing the helpers can establish on its own.
+ *
+ * Rendered under the same `analytics/*` splat `src/app/routes.tsx` mounts, so
+ * the page's own `<Routes>` resolves against the address the test names rather
+ * than against `/`.
  */
 
 vi.mock('../../context/BotContext', () => ({
@@ -57,7 +62,9 @@ function renderPage(entry: string) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
-        <AnalyticsPage />
+        <Routes>
+          <Route path="/analytics/*" element={<AnalyticsPage />} />
+        </Routes>
         <Probe />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -69,29 +76,56 @@ beforeEach(() => {
 });
 
 describe('AnalyticsPage', () => {
-  it('opens on the tab named in the URL rather than always the first one', () => {
+  it('opens on the view named in the path rather than always the first one', () => {
+    renderPage('/analytics/visitors');
+    expect(screen.getByRole('link', { name: 'Visitors' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('names its views with links, not tabs', () => {
+    // A `tablist` promises every tab controls a panel in the document. These
+    // are addresses, so they are links — which is also what gives them
+    // middle-click, cmd-click and open-in-new-tab.
+    renderPage('/analytics');
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Journey' })).toHaveAttribute(
+      'href',
+      '/analytics/journey',
+    );
+  });
+
+  it('redirects the legacy ?tab= link to the view it names', async () => {
+    // It shipped, so it is in bookmarks and pasted messages. Rendering Overview
+    // under an address that asked for Visitors would be the quiet failure.
     renderPage('/analytics?tab=visitors');
-    expect(screen.getByRole('tab', { name: 'Visitors' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() =>
+      expect(screen.getByTestId('url')).toHaveTextContent('/analytics/visitors'),
+    );
+    expect(screen.getByTestId('url')).not.toHaveTextContent('tab=');
   });
 
-  it('treats the legacy journey path as the journey tab', () => {
-    renderPage('/analytics/journey');
-    expect(screen.getByRole('tab', { name: 'Journey' })).toHaveAttribute('aria-selected', 'true');
+  it('keeps the reporting period while redirecting a legacy link', async () => {
+    renderPage('/analytics?tab=feedback&range=90d');
+    await waitFor(() =>
+      expect(screen.getByTestId('url')).toHaveTextContent('/analytics/feedback?range=90d'),
+    );
   });
 
-  it('writes the chosen tab into the URL, and journey to its own path', async () => {
+  it('sends each view to its own path', async () => {
     const user = userEvent.setup();
     renderPage('/analytics');
-    await user.click(screen.getByRole('tab', { name: 'Visitors' }));
-    expect(screen.getByTestId('url')).toHaveTextContent('/analytics?tab=visitors');
-    await user.click(screen.getByRole('tab', { name: 'Journey' }));
+    await user.click(screen.getByRole('link', { name: 'Visitors' }));
+    expect(screen.getByTestId('url')).toHaveTextContent('/analytics/visitors');
+    await user.click(screen.getByRole('link', { name: 'Journey' }));
     expect(screen.getByTestId('url')).toHaveTextContent('/analytics/journey');
   });
 
-  it('carries the reporting period across a tab change', async () => {
+  it('carries the reporting period across a change of view', async () => {
     const user = userEvent.setup();
     renderPage('/analytics?range=90d');
-    await user.click(screen.getByRole('tab', { name: 'Conversations' }));
+    await user.click(screen.getByRole('link', { name: 'Conversations' }));
     expect(screen.getByTestId('url')).toHaveTextContent('range=90d');
   });
 
@@ -100,6 +134,15 @@ describe('AnalyticsPage', () => {
     renderPage('/analytics');
     await user.click(screen.getByRole('radio', { name: '7 days' }));
     expect(screen.getByTestId('url')).toHaveTextContent('range=7d');
+  });
+
+  it('sends an address under the section that names nothing back to the index', async () => {
+    renderPage('/analytics/nonsense');
+    await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent('/analytics'));
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 
   it('offers the refresh control before anything has loaded', () => {

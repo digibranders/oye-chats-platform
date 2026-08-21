@@ -3,7 +3,9 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './primitives/Button';
-import { Field } from './primitives/Field';
+import { Badge } from './primitives/Badge';
+import { Eyebrow } from './primitives/Misc';
+import { Field, FieldSet } from './primitives/Field';
 import { Input } from './primitives/Input';
 import { Switch, Checkbox } from './primitives/Toggle';
 import { Progress } from './primitives/Progress';
@@ -77,13 +79,29 @@ describe('Field', () => {
     expect(described).toContain('not a valid address');
   });
 
-  it('marks a required field for assistive tech, not just with an asterisk', () => {
-    render(
+  it('marks the exception, not the rule', () => {
+    // DESIGN.md §6 rule 4. `required` is announced and never drawn: almost every
+    // form in this console is required end to end, and the sign-in card showed
+    // six red asterisks that told the reader nothing they could act on. The
+    // visible marker is "Optional", on the fields that have one.
+    const { rerender } = render(
       <Field label="Name" required>
         <Input />
       </Field>,
     );
-    expect(screen.getByLabelText(/name/i)).toHaveAttribute('aria-required', 'true');
+    const input = screen.getByRole('textbox', { name: /name/i });
+    expect(input).toHaveAttribute('aria-required', 'true');
+    expect(input.getAttribute('aria-required')).toBe('true');
+    expect(input).toHaveAccessibleName(/^Name\s*\(required\)$/);
+    expect(screen.queryByText('*')).toBeNull();
+
+    rerender(
+      <Field label="Reply signature" optional>
+        <Input />
+      </Field>,
+    );
+    expect(screen.getByText('Optional')).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).not.toHaveAttribute('aria-required');
   });
 });
 
@@ -165,6 +183,39 @@ describe('SegmentedControl', () => {
 });
 
 describe('Tabs', () => {
+  it('marks the selected tab, and marks it off the ARIA state', () => {
+    // This is asserted against the tab's *own* attribute rather than against a
+    // class string, because the defect it guards was a class that matched
+    // nothing: `TAB_SELECTED` keyed off `data-[selected]` and Base UI emits
+    // `data-active`, so every `Tabs` row in the console rendered three or four
+    // identical grey labels with `box-shadow: none`. A selector that never fires
+    // is invisible in its own diff and survived a full round of review.
+    render(
+      <Tabs
+        label="Views"
+        value="b"
+        onValueChange={() => {}}
+        items={[
+          { value: 'a', label: 'Overview' },
+          { value: 'b', label: 'Members' },
+        ]}
+      >
+        <TabPanel value="a">A</TabPanel>
+        <TabPanel value="b">B</TabPanel>
+      </Tabs>,
+    );
+
+    const selected = screen.getByRole('tab', { name: 'Members' });
+    const idle = screen.getByRole('tab', { name: 'Overview' });
+    expect(selected).toHaveAttribute('aria-selected', 'true');
+    expect(idle).toHaveAttribute('aria-selected', 'false');
+
+    // The marker is keyed off that attribute, so the one thing that cannot
+    // silently stop matching is the thing the screen reader is already reading.
+    expect(selected.className).toContain('aria-[selected=true]:shadow-');
+    expect(selected.className).not.toContain('data-[selected]');
+  });
+
   it('does not select a tab merely because an arrow key landed on it', async () => {
     // Radix defaults to automatic activation. That is how the previous tab row
     // fired its upgrade modal at a keyboard user who was only passing through.
@@ -567,6 +618,135 @@ describe('Checkbox and Progress accessible names', () => {
     // thing it communicates.
     render(<Progress value={null} label="Reading your website" />);
     expect(screen.getByRole('progressbar', { name: /reading your website/i })).toBeInTheDocument();
+  });
+
+  it('shows the label it was given, unless it is told not to', () => {
+    // `hideLabel` defaulted to TRUE: a required `label` prop that rendered
+    // nothing unless a second prop was found and unset. `Meter` — the sibling
+    // with the same prop — has always defaulted to showing it, and two
+    // primitives disagreeing about one prop name is the drift `src/ui` exists
+    // to stop.
+    const { rerender } = render(<Progress value={40} label="Crawling acme.com" />);
+    expect(screen.getByText('Crawling acme.com')).toBeInTheDocument();
+
+    rerender(<Progress value={40} hideLabel label="Crawling acme.com" />);
+    expect(screen.queryByText('Crawling acme.com')).toBeNull();
+    // Still named, because a bare bar with no accessible name says nothing.
+    expect(screen.getByRole('progressbar', { name: 'Crawling acme.com' })).toBeInTheDocument();
+  });
+});
+
+describe('Field trailing', () => {
+  it('puts a control on the label row instead of inside the input', () => {
+    // `Input trailing` is inside the control: a conditional affix there changes
+    // the input's element tree, React remounts it and the caret is lost
+    // mid-typing — two surfaces shipped an always-present `invisible` badge to
+    // avoid it, which reserves a hole for something usually not there.
+    render(
+      <Field label="Greeting" trailing={<Button size="sm">Reset</Button>}>
+        <Input placeholder="Hi — ask me anything." />
+      </Field>,
+    );
+    const reset = screen.getByRole('button', { name: 'Reset' });
+    const label = screen.getByText('Greeting');
+    // Same row as the label, not inside the field.
+    expect(reset.closest('label')).toBeNull();
+    expect(label.parentElement).toContainElement(reset);
+    // Capped like every other pair in the system.
+    expect(label.parentElement?.className).toContain('max-w-pair');
+  });
+});
+
+describe('a Field hint can be more than a sentence', () => {
+  it('takes a list without dropping it outside the described element', () => {
+    // The slot was a `<p>`, which may not contain a `<ul>`: the browser closes
+    // the paragraph early and the list lands outside the element
+    // `aria-describedby` points at, so both call sites that needed one
+    // abandoned the slot and hand-rolled unwired text under the field.
+    render(
+      <Field
+        label="New password"
+        hint={
+          <ul>
+            <li>At least 12 characters</li>
+            <li>One number, or one symbol</li>
+          </ul>
+        }
+      >
+        <Input type="password" />
+      </Field>,
+    );
+
+    const input = screen.getByLabelText('New password');
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const hint = document.getElementById(describedBy as string);
+    expect(hint).not.toBeNull();
+    // The list is INSIDE the described element, which is the whole point.
+    expect(within(hint as HTMLElement).getAllByRole('listitem')).toHaveLength(2);
+  });
+});
+
+describe('FieldSet disabled', () => {
+  it('disables every control in the group through the native attribute', () => {
+    // `fieldset[disabled]` is inherited by every form control inside it by the
+    // HTML spec, including ones added later, and it survives a child that
+    // forgot to read a flag.
+    render(
+      <FieldSet legend="Weekly digest" disabled hint="Not on your plan.">
+        <Input aria-label="Digest recipient" defaultValue="ops@acme.com" />
+        <Button>Send a test</Button>
+      </FieldSet>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Digest recipient' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send a test' })).toBeDisabled();
+    // In tokens, never in an opacity wash: a wash compounds with each control's
+    // own disabled treatment.
+    expect(screen.getByText('Weekly digest').className).toContain('text-text-disabled');
+  });
+});
+
+describe('Eyebrow', () => {
+  it('renders as a dt, so an eyebrow can name a fact inside a definition list', () => {
+    // `dl > div` may hold `dt` and `dd` and nothing else, so three surfaces
+    // reached past the component for `EYEBROW_CLASS` instead.
+    render(
+      <dl>
+        <div>
+          <Eyebrow as="dt">Bot key</Eyebrow>
+          <dd>bot-6a42</dd>
+        </div>
+      </dl>,
+    );
+    expect(screen.getByText('Bot key').tagName).toBe('DT');
+  });
+});
+
+describe('Badge is a usable trigger', () => {
+  it('forwards its ref and spreads its props, so a tooltip on it can open', async () => {
+    // Base UI renders a trigger by cloning its child with a ref and a full set
+    // of handlers. `Badge` accepted neither, so every clone succeeded silently
+    // and no tooltip on a badge has ever opened — and several review items were
+    // closed as "not possible" because of it.
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <Tooltip content="Scored 82 on BANT in the last 24 hours.">
+          <Badge tone="success" tabIndex={0}>
+            qualified
+          </Badge>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+
+    const badge = screen.getByText('qualified').closest('[data-tone]') as HTMLElement;
+    await user.hover(badge);
+    expect(await screen.findByText('Scored 82 on BANT in the last 24 hours.')).toBeInTheDocument();
+    // The badge itself is the trigger — Base UI stamps its open state onto the
+    // element it cloned — and it kept the props the call site gave it.
+    expect(badge.getAttribute('data-popup-open')).not.toBeNull();
+    expect(badge).toHaveAttribute('tabindex', '0');
+    expect(badge).toHaveAttribute('data-tone', 'success');
   });
 });
 

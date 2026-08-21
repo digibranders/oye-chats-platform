@@ -18,6 +18,7 @@ import {
   VIEW_META,
   byRecency,
   matchesQuery,
+  shortAgo,
   waitLabel,
   waitTone,
   type InboxItem,
@@ -79,6 +80,7 @@ function Row({
       aria-selected={selected}
       tabIndex={selected ? 0 : -1}
       data-item-id={item.id}
+      title={item.at ? `${item.name} · ${formatRelative(item.at)}` : item.name}
       onClick={() => onSelect(item)}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -125,8 +127,15 @@ function Row({
               {wait}
             </Badge>
           ) : (
+            /* `14h`, not `14 hours ago`. See `shortAgo`. The long form is
+               still announced and still on the row's title, so nothing is
+               lost — only the ~90px the phrase was costing the name beside
+               it. An `aria-label` on the row would have been the shorter
+               diff and would have thrown away the preview and the unread
+               count with it. */
             <span className="figure shrink-0 text-2xs text-text-tertiary">
-              {formatRelative(item.at)}
+              <span aria-hidden>{shortAgo(item.at, now)}</span>
+              <span className="sr-only">{formatRelative(item.at)}</span>
             </span>
           )}
           {/* On line 1, pinned, and capped. It used to be `ml-auto` inside a

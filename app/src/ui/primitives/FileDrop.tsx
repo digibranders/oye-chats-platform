@@ -200,6 +200,9 @@ export function FileDrop({
                       className="mt-1"
                       size="sm"
                       value={value ?? null}
+                      // The row above already prints the file name; this bar is
+                      // 4px of chrome under it, not a labelled figure.
+                      hideLabel
                       label={`Uploading ${file.name}`}
                     />
                   ) : null}

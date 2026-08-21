@@ -156,3 +156,39 @@ export const FOCUS_RING = cn(
  * still did not paint. `controls.test.tsx` caught it; the same applies to the
  * `peer-focus-visible:` set in `FileDrop`.
  */
+
+/**
+ * Utilities that size the control's BOX, not its text.
+ *
+ * `Input` and `Select` are a wrapper plus a control plus an absolutely
+ * positioned affix, and the affix is positioned against the wrapper. So a width
+ * class written at the call site — `<Input className="max-w-sm" />` — landed on
+ * the `<input>` while the wrapper stayed `w-full`, and the trailing badge
+ * floated about 250px to the right of the field it belonged to; a `Select`'s
+ * chevron ended up 300px from its own box. The class is not wrong at the call
+ * site: width is a property of the control, and the control is the whole thing.
+ *
+ * These utilities are therefore routed to the wrapper and everything else stays
+ * on the control. Variant prefixes are stripped before the test, so
+ * `sm:max-w-xs` and `@lg/page:w-40` are still widths.
+ */
+const BOX_UTILITY =
+  /^(?:w-|min-w-|max-w-|basis-|flex-\d|flex-\[|grow|shrink|self-|justify-self-|col-span-|order-)/;
+
+export interface SplitControlClass {
+  /** Goes on the positioned wrapper. */
+  box?: string;
+  /** Goes on the `input` / `select` itself. */
+  control?: string;
+}
+
+export function splitControlClass(className?: string): SplitControlClass {
+  if (!className) return {};
+  const box: string[] = [];
+  const control: string[] = [];
+  for (const token of className.split(/\s+/).filter(Boolean)) {
+    const bare = token.replace(/^!/, '').replace(/^(?:[\w@/[\]().-]+:)+/, '');
+    (BOX_UTILITY.test(bare) ? box : control).push(token);
+  }
+  return { box: box.join(' ') || undefined, control: control.join(' ') || undefined };
+}

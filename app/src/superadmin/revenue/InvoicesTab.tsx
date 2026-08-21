@@ -78,7 +78,7 @@ export function InvoicesTab() {
       key: 'number',
       header: 'Document',
       pinned: true,
-      width: '14rem',
+      width: '13rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="figure truncate text-sm font-medium text-text-primary">
@@ -91,7 +91,7 @@ export function InvoicesTab() {
     {
       key: 'customer',
       header: 'Customer',
-      width: '14rem',
+      width: '13rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm text-text-primary">

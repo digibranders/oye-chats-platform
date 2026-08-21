@@ -54,9 +54,16 @@ export function ImpersonateCard({ client }: { client: ClientDetail }) {
         ) : null}
 
         {/* Four facts, not four sentences: the consequence is in the confirm,
-            which is where it is actually read. */}
+            which is where it is actually read.
+
+            One column, not two. `PropertyGrid`'s `columns={2}` decides from the
+            width of the whole grid, but the row layout inside each half then
+            gets a `minmax(7rem,10rem)` label against whatever is left — so in
+            this 555px card each fact had about 130px for its value and
+            "Both accounts, the token id and the expiry" came out over five
+            lines. Reported to the system; one column is the right shape here
+            regardless. */}
         <PropertyGrid
-          columns={2}
           density="compact"
           items={[
             { label: 'Token lifetime', value: <span className="figure">30 minutes</span> },

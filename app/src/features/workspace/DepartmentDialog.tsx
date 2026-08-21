@@ -120,7 +120,7 @@ export function DepartmentDialog({
           />
         </Field>
 
-        <Field label="Description" hint="Optional. Reminds your team what belongs here.">
+        <Field label="Description" optional hint="Reminds your team what belongs here.">
           <Textarea
             rows={2}
             value={description}

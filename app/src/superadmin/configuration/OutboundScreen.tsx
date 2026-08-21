@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Badge,
@@ -15,6 +15,7 @@ import {
   Section,
   Stack,
   Switch,
+  Tooltip,
   formatDateTime,
   formatNumber,
   toast,
@@ -22,7 +23,9 @@ import {
 } from '../../ui';
 import { platform } from '../client';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
+import { PAGE_SIZE } from '../recordListState';
 import type {
+  EmailTemplate,
   EmailTemplates,
   FailedWebhook,
   WebhookDelivery,
@@ -41,7 +44,6 @@ import type {
  * So both confirms say that in those words, and neither is a one-click action.
  */
 
-const PAGE_SIZE = 25;
 
 type View = 'deliveries' | 'registrations' | 'failed' | 'email';
 
@@ -146,6 +148,74 @@ export function OutboundScreen({ view }: { view: View }) {
     },
   ];
 
+  const templateColumns: Column<EmailTemplate>[] = [
+    {
+      key: 'name',
+      header: 'Template',
+      pinned: true,
+      width: '16rem',
+      sortable: (a, b) => a.name.localeCompare(b.name),
+      render: (row) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{row.name}</p>
+          <p className="figure truncate text-2xs text-text-tertiary">{row.key}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'category',
+      header: 'Category',
+      width: '9rem',
+      sortable: (a, b) => a.category.localeCompare(b.category),
+      // The endpoint's categories are its own slugs; three card headers used to
+      // print them raw.
+      render: (row) => <span className="text-sm capitalize">{row.category.replace(/_/g, ' ')}</span>,
+    },
+    {
+      key: 'audience',
+      header: 'Audience',
+      width: '8rem',
+      render: (row) => <Badge tone="neutral">{row.audience}</Badge>,
+    },
+    {
+      key: 'trigger',
+      header: 'Trigger',
+      width: '11rem',
+      secondary: true,
+      render: (row) => <span className="figure text-sm">{row.trigger}</span>,
+    },
+    {
+      key: 'metered',
+      header: 'Metered',
+      width: '7rem',
+      secondary: true,
+      render: (row) =>
+        row.metered ? (
+          <Badge tone="warning">Costs credits</Badge>
+        ) : (
+          <span className="text-text-tertiary">—</span>
+        ),
+    },
+    {
+      // Last, truncated, and the full sentence on hover. Unbounded, this column
+      // pushed the table past the card's right edge and took the one after it
+      // off screen entirely.
+      key: 'description',
+      header: 'When it goes out',
+      // A declared width, so every column has one and the table lays out fixed
+      // rather than sizing to this sentence and pushing itself off the card.
+      width: '19rem',
+      secondary: true,
+      render: (row) => (
+        <Tooltip content={`${row.description} Sent by ${row.sender_fn}.`}>
+          <span className="block truncate text-sm text-text-secondary">
+            {row.description}
+          </span>
+        </Tooltip>
+      ),
+    },
+  ];
+
   const registrationColumns: Column<WebhookRegistration>[] = [
     {
       key: 'url',
@@ -209,21 +279,28 @@ export function OutboundScreen({ view }: { view: View }) {
   ];
 
   const failedColumns: Column<FailedWebhook>[] = [
+    // Widths on all six: the error string is a whole exception message, and
+    // without one the table sized itself to it and hung 144px off the card,
+    // taking "Received" and the replay control with it.
     {
       key: 'event',
       header: 'Event',
       pinned: true,
+      width: '16rem',
       render: (row) => (
         <div className="min-w-0">
-          <p className="figure font-medium text-text-primary">{row.event_type ?? 'unknown'}</p>
-          <p className="figure text-2xs text-text-tertiary">{row.event_id ?? '—'}</p>
+          <p className="figure truncate font-medium text-text-primary">
+            {row.event_type ?? 'unknown'}
+          </p>
+          <p className="figure truncate text-2xs text-text-tertiary">{row.event_id ?? '—'}</p>
         </div>
       ),
     },
-    { key: 'provider', header: 'Provider', render: (row) => row.provider },
+    { key: 'provider', header: 'Provider', width: '8rem', render: (row) => row.provider },
     {
       key: 'status',
       header: 'State',
+      width: '8rem',
       render: (row) => (
         <Badge tone={row.status === 'replayed' ? 'success' : row.status === 'ignored' ? 'neutral' : 'danger'}>
           {row.status}
@@ -233,12 +310,21 @@ export function OutboundScreen({ view }: { view: View }) {
     {
       key: 'error',
       header: 'Why it dead-lettered',
+      width: '21rem',
       secondary: true,
-      render: (row) => <span className="figure text-xs">{row.error ?? '—'}</span>,
+      render: (row) =>
+        row.error ? (
+          <Tooltip content={row.error}>
+            <span className="figure block truncate text-xs">{row.error}</span>
+          </Tooltip>
+        ) : (
+          <span className="text-text-tertiary">—</span>
+        ),
     },
     {
       key: 'created',
       header: 'Received',
+      width: '10rem',
       align: 'right',
       secondary: true,
       sortable: (a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''),
@@ -247,6 +333,7 @@ export function OutboundScreen({ view }: { view: View }) {
     {
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
+      width: '7rem',
       align: 'right',
       render: (row) => (
         <Button
@@ -263,16 +350,6 @@ export function OutboundScreen({ view }: { view: View }) {
 
   const activeList =
     view === 'deliveries' ? deliveries : view === 'registrations' ? registrations : view === 'failed' ? failed : null;
-
-  const templatesByCategory = useMemo(() => {
-    const grouped = new Map<string, EmailTemplates['templates']>();
-    for (const template of email.data?.templates ?? []) {
-      const list = grouped.get(template.category) ?? [];
-      list.push(template);
-      grouped.set(template.category, list);
-    }
-    return [...grouped.entries()];
-  }, [email.data]);
 
   if (activeList?.forbidden || email.forbidden) {
     return (
@@ -421,39 +498,47 @@ export function OutboundScreen({ view }: { view: View }) {
                           <span className="figure">{formatNumber(email.data.templates.length)}</span>
                         ),
                       },
+                      {
+                        label: 'Bodies',
+                        value: (
+                          <a
+                            href={email.data.manage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent-600 underline-offset-2 hover:underline"
+                          >
+                            Edit in {email.data.provider}
+                          </a>
+                        ),
+                      },
                     ]}
                   />
                 </CardBody>
               </Card>
 
-              {templatesByCategory.map(([category, templates]) => (
-                <Card key={category}>
-                  <CardHeader titleAs="h3" title={category.replace(/_/g, ' ')} />
-                  <CardBody>
-                    <ul className="flex flex-col gap-3">
-                      {templates.map((template) => (
-                        <li key={template.key} className="border-b border-border pb-3 last:border-b-0 last:pb-0">
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <p className="text-base font-medium text-text-primary">{template.name}</p>
-                            <span className="flex items-center gap-2">
-                              <Badge tone="neutral">{template.audience}</Badge>
-                              <span className="figure text-2xs text-text-tertiary">
-                                id {template.id ?? '—'}
-                              </span>
-                            </span>
-                          </div>
-                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-                            {template.description}
-                          </p>
-                          <p className="figure mt-1 text-2xs text-text-tertiary">
-                            Triggered by {template.trigger} · {template.sender_fn}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </CardBody>
-                </Card>
-              ))}
+              {/* A table, not eighteen prose blocks in three cards.
+
+                  Each template was a name, a full sentence of description and a
+                  mono trigger line stacked three-high at 76px a row, so a
+                  registry of eighteen ran to 2.6 screenfuls with 60% of every
+                  card empty to the right. Every field on it is a column: this is
+                  the same list of the same shape as the three webhook views on
+                  the sibling tabs, and those are already tables. The category
+                  becomes a sortable column, which also retires three card
+                  headers whose titles were raw slugs — `lifecycle`, `billing`. */}
+              <DataTable
+                caption="Transactional email templates"
+                columns={templateColumns}
+                rows={email.data.templates}
+                rowKey={(row) => row.key}
+                rowNoun="template"
+                empty={
+                  <EmptyState
+                    title="No template is registered"
+                    description="The platform sends nothing transactional at all, which on a product with sign-up and billing means the catalogue failed to load rather than that it is empty."
+                  />
+                }
+              />
             </div>
           ) : null}
         </Section>

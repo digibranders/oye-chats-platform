@@ -6,20 +6,24 @@ import {
   Card,
   CardBody,
   CodeBlock,
+  Combobox,
   DataTable,
   Dialog,
   EmptyState,
   LockedState,
   Section,
   Stack,
+  Toolbar,
+  Tooltip,
   formatDateTime,
   formatNumber,
   type Column,
   type Tone,
 } from '../../ui';
-import { usePlatformList, usePlatformResource } from '../usePlatform';
+import { RecordList } from '../RecordList';
+import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
-import { PAGE_SIZE } from '../recordListState';
+import { PAGE_SIZE, byDate, byText, usePagedRows } from '../recordListState';
 import { InvoiceDrawer } from './InvoiceDrawer';
 import { invoiceStatusLabel, invoiceStatusTone, invoiceTypeLabel } from './invoice';
 import type { AnomalyBrief, AnomalyKey, GatewayRun, ReconciliationResponse } from './types';
@@ -35,6 +39,14 @@ import type { AnomalyBrief, AnomalyKey, GatewayRun, ReconciliationResponse } fro
  * The **gateway report** is external: what the nightly job found when it
  * compared Razorpay's view of the money against ours.
  *
+ * **One table, with the condition as a column.** It was six, one per invariant,
+ * each with its own heading, its own sentence of meaning, its own remedy
+ * `Alert`, its own column head and its own row-count footer — the same four
+ * columns declared six times over twenty-eight rows in total, at 4.6 screenfuls.
+ * Six tables that share a schema are one table with a facet, which is also the
+ * only shape that answers "what is the oldest thing wrong here" — a question the
+ * grouped form could not be asked at all, because sorting was per block.
+ *
  * Amounts are conspicuously absent from the anomaly tables. The endpoint's brief
  * (`invoice_reports._brief`) returns `amount_cents` with **no currency field**,
  * so there is no honest way to render it as money — a rupee figure printed with
@@ -45,6 +57,15 @@ import type { AnomalyBrief, AnomalyKey, GatewayRun, ReconciliationResponse } fro
 interface AnomalyGroup {
   key: AnomalyKey;
   title: string;
+  /**
+   * The condition as a *label*, for the column's badge.
+   *
+   * `title` is a sentence, and a sentence in a badge in a 17rem column
+   * truncates to "Charged, but holding n…" on every row. The badge says the
+   * thing in two or three words; the sentence stays on the filter option, where
+   * there is room for it, and the full definition is a tooltip.
+   */
+  badge: string;
   tone: Tone;
   /** What the condition means. */
   meaning: string;
@@ -55,6 +76,7 @@ interface AnomalyGroup {
 const GROUPS: readonly AnomalyGroup[] = [
   {
     key: 'unnumbered_charges',
+    badge: 'No document',
     title: 'Charged, but holding no document',
     tone: 'danger',
     meaning:
@@ -64,6 +86,7 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
   {
     key: 'refunds_without_credit_note',
+    badge: 'No credit note',
     title: 'Refunded without a credit note',
     tone: 'danger',
     meaning:
@@ -73,6 +96,7 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
   {
     key: 'broken_totals',
+    badge: 'Totals broken',
     title: 'Tax components do not reconcile',
     tone: 'danger',
     meaning:
@@ -81,6 +105,7 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
   {
     key: 'exports_without_fx',
+    badge: 'No rupee mirror',
     title: 'Export with no rupee mirror',
     tone: 'danger',
     meaning:
@@ -90,6 +115,7 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
   {
     key: 'pdfs_pending',
+    badge: 'PDF pending',
     title: 'Rendered nothing for over an hour',
     tone: 'warning',
     meaning:
@@ -99,6 +125,7 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
   {
     key: 'emails_pending',
+    badge: 'Not delivered',
     title: 'Rendered but never delivered',
     tone: 'warning',
     meaning:
@@ -108,7 +135,28 @@ const GROUPS: readonly AnomalyGroup[] = [
   },
 ];
 
+const GROUP_BY_KEY = new Map(GROUPS.map((group) => [group.key, group]));
+
+/** One brief, carrying the invariant it broke. */
+interface Anomaly extends AnomalyBrief {
+  anomaly: AnomalyKey;
+}
+
+/**
+ * Flatten the six lists into one, in the order `GROUPS` declares — which is
+ * severity order, so an unfiltered, unsorted table opens on the documents a
+ * customer paid for and never received.
+ */
+function flatten(report: ReconciliationResponse | null): Anomaly[] {
+  if (!report) return [];
+  return GROUPS.flatMap((group) =>
+    (report[group.key] ?? []).map((brief) => ({ ...brief, anomaly: group.key })),
+  );
+}
+
 export function ReconciliationTab() {
+  const url = useUrlState();
+  const condition = url.get('condition');
   const report = usePlatformResource<ReconciliationResponse>('/billing/reconciliation');
   const runs = usePlatformList<GatewayRun>('/reconciliation/gateway', {
     key: 'runs',
@@ -120,12 +168,34 @@ export function ReconciliationTab() {
   const counts = report.data?.counts;
   const totalAnomalies = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : null;
 
-  const columns: readonly Column<AnomalyBrief>[] = [
+  const anomalies = flatten(report.data);
+  const paged = usePagedRows(anomalies, {
+    url,
+    filter: condition ? (row) => row.anomaly === condition : undefined,
+    comparators: {
+      anomaly: byText((row) => GROUP_BY_KEY.get(row.anomaly)?.badge ?? row.anomaly),
+      document: byText((row) => row.invoice_number ?? String(row.id)),
+      issued: byDate((row) => row.issued_at),
+    },
+  });
+
+  // The remedy for the one condition being looked at. Six of these used to be
+  // on screen at once, above six tables, which is five remedies for problems the
+  // reader is not currently holding.
+  const focused = condition ? GROUP_BY_KEY.get(condition as AnomalyKey) : undefined;
+
+  const conditionOptions = GROUPS.map((group) => ({
+    value: group.key,
+    label: `${group.title} · ${formatNumber(counts?.[group.key] ?? 0)}`,
+  }));
+
+  const columns: readonly Column<Anomaly>[] = [
     {
       key: 'document',
       header: 'Document',
       pinned: true,
       width: '14rem',
+      sortable: true,
       render: (row) => (
         <div className="min-w-0">
           <p className="figure truncate text-sm font-medium text-text-primary">
@@ -134,6 +204,28 @@ export function ReconciliationTab() {
           <p className="truncate text-2xs text-text-tertiary">{invoiceTypeLabel(row.invoice_type)}</p>
         </div>
       ),
+    },
+    {
+      key: 'anomaly',
+      header: 'Condition',
+      width: '11rem',
+      sortable: true,
+      render: (row) => {
+        const group = GROUP_BY_KEY.get(row.anomaly);
+        if (!group) return <span className="text-sm text-text-secondary">{row.anomaly}</span>;
+        // The meaning is a tooltip on the badge, not a paragraph above the
+        // table: it is a definition a reader needs once, which is what a
+        // tooltip is for — the same argument `RecordList.note` already makes.
+        return (
+          <Tooltip content={`${group.title}. ${group.meaning}`}>
+            <span className="inline-flex">
+              <Badge tone={group.tone} dot>
+                {group.badge}
+              </Badge>
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       key: 'status',
@@ -154,6 +246,7 @@ export function ReconciliationTab() {
     {
       key: 'issued',
       header: 'Issued',
+      sortable: true,
       render: (row) => <span className="figure text-sm">{formatDateTime(row.issued_at)}</span>,
     },
   ];
@@ -216,7 +309,7 @@ export function ReconciliationTab() {
               tone="danger"
               title={`${formatNumber(totalAnomalies)} document${totalAnomalies === 1 ? '' : 's'} need attention`}
             >
-              Each block below is a condition that should never persist: a customer holding — or
+              Every row is a condition that should never persist: a customer holding — or
               missing — a legal document.
             </Alert>
           ) : null}
@@ -230,77 +323,75 @@ export function ReconciliationTab() {
               </Button>
             }
           >
-            <Stack>
-              {report.error && !report.data ? (
-                <Card>
-                  <CardBody>
-                    <Alert
-                      tone="danger"
-                      live
-                      title="The anomaly report could not be loaded"
-                      action={
-                        <Button size="sm" variant="secondary" onClick={report.reload}>
-                          Try again
-                        </Button>
+            {report.error && !report.data ? (
+              <Card>
+                <CardBody>
+                  <Alert
+                    tone="danger"
+                    live
+                    title="The anomaly report could not be loaded"
+                    action={
+                      <Button size="sm" variant="secondary" onClick={report.reload}>
+                        Try again
+                      </Button>
+                    }
+                  >
+                    {report.error}
+                  </Alert>
+                </CardBody>
+              </Card>
+            ) : (
+              <>
+                <Toolbar sticky className="mb-3">
+                  <div className="w-80">
+                    <Combobox
+                      size="sm"
+                      label="Filter by condition"
+                      value={condition || null}
+                      onValueChange={(next) => url.set({ condition: next })}
+                      options={conditionOptions}
+                      placeholder="Every condition"
+                      clearable
+                    />
+                  </div>
+                  {condition ? (
+                    <Button size="sm" variant="ghost" onClick={() => url.set({ condition: null })}>
+                      Show every condition
+                    </Button>
+                  ) : null}
+                </Toolbar>
+
+                {/* One remedy, for the condition actually being worked. */}
+                {focused && (counts?.[focused.key] ?? 0) > 0 ? (
+                  <Alert tone={focused.tone} title="What to do" className="mb-3">
+                    {focused.remedy}
+                  </Alert>
+                ) : null}
+
+                <RecordList
+                  caption="Invoice anomalies, most serious condition first"
+                  columns={columns}
+                  paged={paged}
+                  rowKey={(row) => `${row.anomaly}-${row.id}`}
+                  rowNoun="document"
+                  what="the invoice anomaly report"
+                  loading={report.loading && !report.data}
+                  onRowClick={(row) => setOpenInvoice(row.id)}
+                  note="The report's brief carries an amount with no currency, so no figure is shown here. Open a row for the invoice's own currency and total."
+                  empty={
+                    <EmptyState
+                      compact
+                      title={condition ? 'Nothing in this condition' : 'Everything reconciles'}
+                      description={
+                        condition
+                          ? 'No document is currently breaking this invariant.'
+                          : 'None of the six invariants is broken.'
                       }
-                    >
-                      {report.error}
-                    </Alert>
-                  </CardBody>
-                </Card>
-              ) : (
-                GROUPS.map((group) => {
-                  const rows = report.data?.[group.key] ?? [];
-                  const count = counts?.[group.key] ?? 0;
-                  return (
-                    // A `Section`, not a `Card` around a `DataTable`: the table
-                    // draws its own surface, so the card was a second hairline
-                    // and a second radius twenty pixels outside the first, six
-                    // times down this page.
-                    <Section
-                      key={group.key}
-                      title={group.title}
-                      description={group.meaning}
-                      actions={
-                        count === 0 ? (
-                          <Badge tone="success" dot>
-                            Clear
-                          </Badge>
-                        ) : (
-                          <Badge tone={group.tone} dot>
-                            <span className="figure">{formatNumber(count)}</span> affected
-                          </Badge>
-                        )
-                      }
-                    >
-                      {count > 0 ? (
-                        <Alert tone={group.tone} title="What to do" className="mb-3">
-                          {group.remedy}
-                        </Alert>
-                      ) : null}
-                      <DataTable
-                        caption={group.title}
-                        columns={columns}
-                        rows={rows}
-                        rowKey={(row) => String(row.id)}
-                        rowNoun="document"
-                        rowLabel={(row) => row.invoice_number ?? `document ${row.id}`}
-                        onRowClick={(row) => setOpenInvoice(row.id)}
-                        loading={report.loading && !report.data}
-                        pageSize={PAGE_SIZE}
-                        empty={
-                          <EmptyState
-                            compact
-                            title="Nothing here"
-                            description="No document is in this condition."
-                          />
-                        }
-                      />
-                    </Section>
-                  );
-                })
-              )}
-            </Stack>
+                    />
+                  }
+                />
+              </>
+            )}
           </Section>
         </>
       )}

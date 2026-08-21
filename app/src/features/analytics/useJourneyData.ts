@@ -30,6 +30,49 @@ import { buildOutcomes, type FilterableOutcome, type JourneyOutcome } from './jo
  * separate query now, and it only runs once an outcome is selected.
  */
 
+/**
+ * Every list these endpoints return, guaranteed to be a list.
+ *
+ * The journey hooks were the only readers in `features/analytics` that handed
+ * a raw API payload straight to a component: `analytics-types.ts` narrows the
+ * dashboard, the ratings and the lead funnel — "so a missing key never crashes
+ * a card and never silently renders as `0`" — `visitors.ts` narrows the visitor
+ * list, and `leadModel.readFunnel` narrows the funnel. These four were typed
+ * and trusted.
+ *
+ * A build of the API that answers 200 without `sequences` therefore did not
+ * degrade the flow diagram, it threw `Cannot read properties of undefined
+ * (reading 'map')` out of a `useMemo` and took the whole route to the page
+ * error boundary — the one panel on this surface that cannot fail softly. The
+ * shapes are declared optional here on purpose: the compiler believes the
+ * `.d.ts`, and the thing being defended against is the response disagreeing
+ * with it.
+ */
+export function list<T>(value: readonly T[] | undefined | null): T[] {
+  return Array.isArray(value) ? [...value] : [];
+}
+
+export function safeSequences(raw: JourneyPreChatSequencesResponse): JourneyPreChatSequencesResponse {
+  return { ...raw, sequences: list(raw?.sequences) };
+}
+
+export function safePostChat(raw: JourneyPostChatResponse): JourneyPostChatResponse {
+  return {
+    ...raw,
+    first_hops: list(raw?.first_hops),
+    all_hops: list(raw?.all_hops),
+    full_sequences: list(raw?.full_sequences),
+  };
+}
+
+export function safePaths(raw: JourneyConversionPathsResponse): JourneyConversionPathsResponse {
+  return { ...raw, paths: list(raw?.paths) };
+}
+
+export function safeTopPages(raw: JourneyTopPagesResponse): JourneyTopPagesResponse {
+  return { ...raw, rows: list(raw?.rows) };
+}
+
 /** Pages ranked in the influence panel. The endpoint caps at 100. */
 const TOP_PAGES_LIMIT = 20;
 
@@ -64,12 +107,13 @@ export function useJourneyData(botId: number | null, month: string) {
         getJourneyPostChat(id, { period: month, limit: POST_CHAT_LIMIT }),
         getJourneyPreChatSequences(id, { period: month, limit: SEQUENCE_LIMIT }),
       ]);
+      const safePost = safePostChat(postChat);
       return {
         summary,
-        prePages,
-        postChat,
-        preChatSequences,
-        outcomes: buildOutcomes({ summary, postChat }),
+        prePages: safeTopPages(prePages),
+        postChat: safePost,
+        preChatSequences: safeSequences(preChatSequences),
+        outcomes: buildOutcomes({ summary, postChat: safePost }),
       };
     },
   });
@@ -101,7 +145,7 @@ export function useJourneyPaths(
       getJourneyConversionPaths(botId as number, outcome as FilterableOutcome, {
         period: month,
         limit: PATH_LIMIT,
-      }),
+      }).then(safePaths),
   });
 
   return {

@@ -359,8 +359,9 @@ export function CreateAgentDialog({
 
           <Field
             label="Website"
+            optional
             error={websiteError}
-            hint="Optional. It is where the chatbot reads from first, and where you will install it."
+            hint="Where the chatbot reads from first, and where you will install it."
           >
             <Input
               value={website}

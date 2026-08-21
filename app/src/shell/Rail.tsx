@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Bot, PanelLeft, Plus, ShieldAlert, X } from 'lucide-react';
 import {
   RailBackLink,
@@ -8,6 +8,7 @@ import {
   RailItem,
   Tooltip,
   cn,
+  formatBadgeCount,
 } from '../ui';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
@@ -22,7 +23,6 @@ import {
   railFooter,
   railPrimary,
 } from './nav';
-import { formatBadgeCount } from './badgeCount';
 import { OyeChatsMark } from './OyeChatsMark';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { AgentSwitcher } from './AgentSwitcher';
@@ -142,6 +142,12 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
     !isImpersonating() && (superAdminFlag === 'true' || superAdminFlag === '1');
 
   const primary = railPrimary(isOperator);
+  // `/welcome` *is* Home for a workspace with no chatbot — `HomePage` redirects
+  // there rather than rendering a page of zeros, and `/welcome/:agentId` is the
+  // second half of the same flow. `NavLink end` matched neither, so the rail
+  // went blank on the first two screens a new customer ever sees, at exactly the
+  // moment they most need to know where they are.
+  const onFirstRun = pathname === '/welcome' || pathname.startsWith('/welcome/');
   const footerItems = railFooter(isOperator);
   const inAgentScope = Boolean(scopedAgentId) && !isOperator;
   // The first three in workspace order, not the three most recently opened —
@@ -259,6 +265,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
               to={item.to}
               label={item.label}
               end={item.end}
+              active={item.to === '/' && onFirstRun ? true : undefined}
               collapsed={collapsed}
               onNavigate={onNavigate}
               glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
@@ -280,14 +287,19 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                 collapsed={collapsed}
                 action={
                   <Tooltip content="New chatbot">
-                    <NavLink
+                    {/* A `Link`, not a `NavLink`. `/chatbots?new=1` matches the
+                        path `/chatbots`, so on the list page `NavLink` stamped
+                        this button with `aria-current="page"` — a screen reader
+                        announced the create control as the current destination,
+                        alongside the "All chatbots" row that actually was. */}
+                    <Link
                       to="/chatbots?new=1"
                       onClick={onNavigate}
                       aria-label="New chatbot"
                       className="-mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
                     >
                       <Plus aria-hidden className="h-icon-sm w-icon-sm" />
-                    </NavLink>
+                    </Link>
                   </Tooltip>
                 }
               >

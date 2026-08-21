@@ -1,4 +1,4 @@
-import { Check, Circle } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { cn } from '../../ui';
 import { passwordChecks } from './authFlow';
 
@@ -16,8 +16,15 @@ export interface PasswordRulesProps {
  * put the rules in the error instead.
  *
  * Each row carries its state as a word for assistive tech as well as a glyph,
- * because a tick and an empty circle are the same shape at a glance and colour
- * is never the only signal in this system.
+ * because a tick and an unmet marker are close to the same shape at a glance and
+ * colour is never the only signal in this system.
+ *
+ * **The unmet marker is a dot, not an outlined circle.** `Circle` at 14px beside
+ * a left-aligned label is a radio button — three of them stacked under a field
+ * on the sign-up form read as an unanswered radio group, and the first thing a
+ * new customer did with the password rules was try to click one. A dot in the
+ * same 14px box says "not yet" without offering to be pressed, and keeps the
+ * label column on one edge whichever state a row is in.
  *
  * **Spans with list roles, not a `<ul>`.** Both call sites pass this as a
  * `Field`'s `hint`, and `Field` renders its hint inside a `<p>` — where a `<ul>`
@@ -41,11 +48,13 @@ export function PasswordRules({ value }: PasswordRulesProps) {
             check.met ? 'text-success' : 'text-text-secondary',
           )}
         >
-          {check.met ? (
-            <Check aria-hidden className="h-icon-sm w-icon-sm shrink-0" strokeWidth={2.5} />
-          ) : (
-            <Circle aria-hidden className="h-icon-sm w-icon-sm shrink-0 text-text-tertiary" />
-          )}
+          <span aria-hidden className="flex h-icon-sm w-icon-sm shrink-0 items-center justify-center">
+            {check.met ? (
+              <Check className="h-icon-sm w-icon-sm" strokeWidth={2.5} />
+            ) : (
+              <span className="h-1 w-1 rounded-full bg-text-tertiary" />
+            )}
+          </span>
           <span>{check.label}</span>
           <span className="sr-only">{check.met ? ' — done' : ' — not yet'}</span>
         </span>

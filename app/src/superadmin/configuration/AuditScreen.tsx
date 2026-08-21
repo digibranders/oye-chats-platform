@@ -20,6 +20,7 @@ import {
   type SelectOption,
 } from '../../ui';
 import { usePlatformList, useUrlState } from '../usePlatform';
+import { PAGE_SIZE } from '../recordListState';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import type { AuditEntry } from './types';
 
@@ -36,8 +37,6 @@ import type { AuditEntry } from './types';
  * loud rather than implying it is showing everything. The action list is built
  * from what came back, because there is no endpoint that enumerates them.
  */
-
-const PAGE_SIZE = 25;
 
 function actionTone(action: string): 'danger' | 'warning' | 'neutral' {
   if (/delete|deactivate|revoke|refund|replay/.test(action)) return 'danger';
@@ -75,6 +74,10 @@ export function AuditScreen() {
     ];
   }, [audit.items, action]);
 
+  // The console's page size, not a local one. Three screens declared their own
+  // — 20, 25 and 25 — so a reader who paged through coupons, then the audit log,
+  // then a webhook list met three different page lengths for no reason any of
+  // them could state.
   const pageRows = useMemo(
     () => audit.items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [audit.items, page],

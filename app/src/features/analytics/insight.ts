@@ -14,6 +14,11 @@ import { delta } from './range';
  * standing alone, and nothing fires on a sample too small to mean anything: a
  * workspace that went from two conversations to four has not doubled, it has
  * had a quiet fortnight.
+ *
+ * And nothing fires on good news that the tiles above already state. Every
+ * insight here has to carry something the strip cannot — an instruction, or a
+ * figure that is not on it. Otherwise it is a second copy of a number, styled
+ * as an interruption.
  */
 
 export type InsightTone = 'success' | 'warning' | 'neutral';
@@ -56,22 +61,27 @@ export function deriveInsights(input: InsightInput): Insight[] {
   const change = delta(input.conversations, input.previousConversations);
   const prior = input.previousConversations ?? 0;
 
+  // Falls only.
+  //
+  // A rise was a full-width tinted banner saying "Conversations are up 101% on
+  // the previous 30 days" about 40px under a tile already reading `↑ +101% vs
+  // the previous 30 days` — the same fact, in the same words, with the same
+  // number, and nothing to do about it. An alert is for something that needs
+  // attention; a good month does not. A fall carries an instruction the tile
+  // cannot ("check the widget is still installed"), which is what earns it the
+  // interruption.
   if (
     change &&
+    change.direction === 'down' &&
     input.comparisonLabel &&
     prior >= MIN_PRIOR_CONVERSATIONS &&
     Math.abs(change.percent) >= MATERIAL_CHANGE_PERCENT
   ) {
-    const down = change.direction === 'down';
     insights.push({
       id: 'conversation-trend',
-      tone: down ? 'warning' : 'success',
-      title: `Conversations are ${down ? 'down' : 'up'} ${Math.abs(change.percent)}% on ${input.comparisonLabel}`,
-      body: `${input.conversations.toLocaleString()} in ${input.rangeLabel.toLowerCase()}, against ${prior.toLocaleString()} before it.${
-        down
-          ? ' Check that the widget is still installed on every page it was on.'
-          : ' Whatever changed, it is working.'
-      }`,
+      tone: 'warning',
+      title: `Conversations are down ${Math.abs(change.percent)}% on ${input.comparisonLabel}`,
+      body: `${input.conversations.toLocaleString()} in ${input.rangeLabel.toLowerCase()}, against ${prior.toLocaleString()} before it. Check that the widget is still installed on every page it was on.`,
     });
   }
 

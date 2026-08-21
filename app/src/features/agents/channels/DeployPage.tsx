@@ -55,14 +55,28 @@ function DeploySkeleton() {
         </Stack>
       }
       main={
-        <Card>
-          <CardBody className="space-y-3">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-control-md w-full" />
-            <Skeleton className="h-32 w-full rounded-md" />
-            <Skeleton className="h-control-md w-72" />
-          </CardBody>
-        </Card>
+        <Stack>
+          <Card>
+            <CardBody className="space-y-3">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-control-md w-full" />
+              <Skeleton className="h-32 w-full rounded-md" />
+              <Skeleton className="h-control-md w-72" />
+            </CardBody>
+          </Card>
+          {/* The help tabs are part of the shape that arrives, and they are in
+              this column: without them the page grew by ~300px under the reader
+              the moment the chatbot landed. */}
+          <div className="space-y-6">
+            <Skeleton className="h-10 w-72" />
+            <Card>
+              <CardBody className="space-y-3">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-control-md w-80" />
+              </CardBody>
+            </Card>
+          </div>
+        </Stack>
       }
     />
   );
@@ -239,16 +253,68 @@ export function DeployPage() {
           stickyAside
           asideLabel="Install status"
           main={
-            <SnippetSection
-              botKey={botKey}
-              botName={bot.name || 'OyeChats'}
-              botId={agentId}
-              env={deploy.env}
-              apiBaseUrl={deploy.apiBaseUrl}
-              platform={platform}
-              attribution={attribution}
-              resolving={entitlementsLoading}
-            />
+            <Stack>
+              <SnippetSection
+                botKey={botKey}
+                botName={bot.name || 'OyeChats'}
+                botId={agentId}
+                env={deploy.env}
+                apiBaseUrl={deploy.apiBaseUrl}
+                platform={platform}
+                attribution={attribution}
+                resolving={entitlementsLoading}
+              />
+
+              {/* Help, only when wanted: two tabs over one card, instead of two
+                  more cards the reader has to scroll past to reach anything. A
+                  broken install opens on the checklist.
+
+                  It sits in `main`, not under the grid. `Columns` is exactly as
+                  tall as its taller column, and the snippet alone was shorter
+                  than the status rail beside it — so the left column ended in
+                  about 290px of empty page, and the help card below then ran the
+                  full width, changing the reader's measure mid-scroll. Both are
+                  the same fix: put the longer block in `main`. */}
+              <Tabs
+                label="Install help"
+                value={activeHelpTab}
+                onValueChange={(next) => setHelpTab(next as HelpTab)}
+                items={[
+                  { value: 'platform', label: 'Instructions for your platform' },
+                  { value: 'troubleshoot', label: 'Not showing up' },
+                ]}
+              >
+                <TabPanel value="platform">
+                  <Card>
+                    <CardBody>
+                      <PlatformGuide
+                        botKey={botKey}
+                        env={deploy.env}
+                        platformId={platformId}
+                        onPlatformChange={setPlatformId}
+                        attribution={attribution}
+                        resolving={entitlementsLoading}
+                      />
+                    </CardBody>
+                  </Card>
+                </TabPanel>
+                <TabPanel value="troubleshoot">
+                  <Card>
+                    <CardBody flush>
+                      <TroubleshootSection
+                        botKey={botKey}
+                        env={deploy.env}
+                        apiBaseUrl={deploy.apiBaseUrl}
+                        website={website}
+                        domains={domains}
+                        domainsConfigured={domains.length}
+                        domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                      />
+                    </CardBody>
+                  </Card>
+                </TabPanel>
+              </Tabs>
+            </Stack>
           }
           aside={
             <Stack>
@@ -272,83 +338,36 @@ export function DeployPage() {
 
               {/* A hosted page that runs this chatbot, for a customer whose site
                   is not ready — or who wants a colleague to try it before it
-                  goes live. The share and open counts land on this chatbot's
-                  Overview, where every other figure about it already lives. */}
+                  goes live. How often it is opened is counted on this chatbot's
+                  Overview, under "Demo shares", where every other figure about
+                  it already lives — this card carries the link and nothing else.
+                  It used to carry a second ghost control labelled "Opens", which
+                  read as a truncated label rather than as a destination. */}
               <Card>
                 <CardHeader size="sm" titleAs="h2" title="Share a link instead" />
                 <CardBody className="space-y-2">
                   <CopyField value={demoUrl} label="demo link" compact />
-                  <div className="flex flex-wrap items-center gap-1">
-                    <a
-                      href={demoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={buttonClass('ghost', 'sm')}
-                      onClick={() => {
-                        // Attribution is best-effort and deliberately unawaited:
-                        // a failed count must never stand between the customer
-                        // and the link they just clicked.
-                        void trackDemoShareClick(agentId).catch(() => undefined);
-                      }}
-                    >
-                      Open
-                      <span className="sr-only"> the demo (opens in a new tab)</span>
-                    </a>
-                    <Link
-                      to={agentPath(agentId, 'overview')}
-                      className={buttonClass('ghost', 'sm')}
-                    >
-                      Opens
-                    </Link>
-                  </div>
+                  <a
+                    href={demoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={buttonClass('ghost', 'sm')}
+                    onClick={() => {
+                      // Attribution is best-effort and deliberately unawaited: a
+                      // failed count must never stand between the customer and
+                      // the link they just clicked.
+                      void trackDemoShareClick(agentId).catch(() => undefined);
+                    }}
+                  >
+                    <ExternalLink aria-hidden />
+                    Open it
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </a>
                 </CardBody>
               </Card>
             </Stack>
           }
         />
-
-        {/* Help, only when wanted: two tabs over one card, instead of two more
-            full-width cards the reader has to scroll past to reach anything.
-            A broken install opens on the checklist. */}
-        <Tabs
-          label="Install help"
-          value={activeHelpTab}
-          onValueChange={(next) => setHelpTab(next as HelpTab)}
-          items={[
-            { value: 'platform', label: 'Instructions for your platform' },
-            { value: 'troubleshoot', label: 'Not showing up' },
-          ]}
-        >
-          <TabPanel value="platform">
-            <Card>
-              <CardBody>
-                <PlatformGuide
-                  botKey={botKey}
-                  env={deploy.env}
-                  platformId={platformId}
-                  onPlatformChange={setPlatformId}
-                  attribution={attribution}
-                  resolving={entitlementsLoading}
-                />
-              </CardBody>
-            </Card>
-          </TabPanel>
-          <TabPanel value="troubleshoot">
-            <Card>
-              <CardBody flush>
-                <TroubleshootSection
-                  botKey={botKey}
-                  env={deploy.env}
-                  apiBaseUrl={deploy.apiBaseUrl}
-                  website={website}
-                  domains={domains}
-                  domainsConfigured={domains.length}
-                  domainCheckEnabled={Boolean(bot.domain_check_enabled)}
-                />
-              </CardBody>
-            </Card>
-          </TabPanel>
-        </Tabs>
       </Stack>
     </Page>
   );

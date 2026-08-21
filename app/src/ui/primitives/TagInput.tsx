@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
 import { CONTROL_SIZE, FOCUS_RING, HIT_AREA } from './controlStyles';
-import { useField, useFieldControlProps } from './fieldContext';
+import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
 
 export interface TagInputProps {
   values: readonly string[];
@@ -36,8 +36,27 @@ const SEPARATORS = /[,;\s]+/;
  * of an `Input` stacked above it. The wrapper was `px-2` against every other
  * `md` control's 12, which put the placeholder 4px to the left of the field
  * above it in the same form.
+ *
+ * The VERTICAL half is what kept this control off the size scale. It was
+ * `py-1` / `py-1.5` around a fixed `h-6` chip, which is 24 + 8 + 2 = 34 at
+ * `sm` (against 28) and 24 + 12 + 2 = 38 at `md` (against 34) — measured at
+ * 38px beside a 34px `Input` in a 431px-wide row, with nothing wrapped. The
+ * padding and the chip are now solved together against the control height:
+ *
+ *   sm  20 chip + 4 padding + 2 border = 26, floored by `min-h-control-sm` = 28
+ *   md  24 chip + 8 padding + 2 border = 34 exactly
+ *
+ * so a single-line tag list is the same height as the `Input`, `Select` and
+ * `Button` beside it. `controls.test.tsx` measures this, and the size matrix in
+ * `/dev/ui` renders it on the same strip as everything else.
  */
-const SHELL_PAD = { sm: 'px-1 py-1', md: 'px-1.5 py-1.5' } as const;
+const SHELL_PAD = { sm: 'px-1 py-0.5', md: 'px-1.5 py-1' } as const;
+
+/** The chip, sized so the row above holds. 20 in a 28 row, 24 in a 34 row. */
+const CHIP_SIZE = {
+  sm: { chip: 'h-5 gap-1 pl-1.5 pr-0.5', remove: 'h-4 w-4' },
+  md: { chip: 'h-6 gap-1 pl-2 pr-1', remove: 'h-5 w-5' },
+} as const;
 
 /**
  * A list of short values built by typing.
@@ -70,11 +89,12 @@ export function TagInput({
 }: TagInputProps) {
   const [draft, setDraft] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
-  const field = useField();
+  const fieldNamesIt = useFieldNamesControl();
   const fieldProps = useFieldControlProps();
   const inputRef = useRef<HTMLInputElement>(null);
   const errorsId = useId();
   const geometry = CONTROL_SIZE[size];
+  const chipSize = CHIP_SIZE[size];
   const isDisabled = disabled || Boolean(fieldProps.disabled);
 
   function commit(raw: string) {
@@ -130,7 +150,12 @@ export function TagInput({
       .join(' ') || undefined;
 
   return (
-    <div className={className}>
+    // `w-full`. The shell inside carries it, but this wrapper had no width of
+    // its own, so as a flex item — which is what `SettingRow` makes it — the
+    // control shrank to its placeholder and rendered a 207px field in a 640px
+    // row, two thirds narrower than the `Input` above it. A tag list is a
+    // full-width control; the width belongs here, not at ten call sites.
+    <div className={cn('w-full min-w-0', className)}>
       <div
         // With wrapped chips the second row's trailing whitespace is dead space;
         // every mail client focuses the field on a click anywhere in the box.
@@ -155,7 +180,8 @@ export function TagInput({
           <span
             key={item}
             className={cn(
-              'inline-flex h-6 items-center gap-1 rounded-xs border pl-2 pr-1 text-xs',
+              'inline-flex items-center rounded-xs border text-xs',
+              chipSize.chip,
               // A chip was `bg-surface-sunken` with no border on a white field —
               // 4.5 L* for its whole boundary — and when the field was disabled
               // the two were literally the same colour, so the values vanished.
@@ -172,7 +198,8 @@ export function TagInput({
               aria-label={`Remove ${item}`}
               onClick={() => onValuesChange(values.filter((candidate) => candidate !== item))}
               className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-text-tertiary',
+                'flex shrink-0 items-center justify-center rounded-xs text-text-tertiary',
+                chipSize.remove,
                 'transition-colors duration-[var(--dur-fast)] hover:bg-danger-tint hover:text-danger',
                 'disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:bg-transparent',
                 // 20px of glyph in a 24px target: this is the destructive
@@ -187,9 +214,12 @@ export function TagInput({
         <input
           ref={inputRef}
           type="text"
-          // Only outside a `Field`: inside one the visible label already names
-          // the control, and `aria-label` would replace it.
-          aria-label={field ? undefined : label}
+          // Dropped only when the surrounding field actually names this
+          // control: inside a `Field` the visible `<label for>` already does,
+          // and `aria-label` would replace it. A container that publishes the
+          // field's wiring without a name — a `SettingRow` with no `htmlFor` —
+          // leaves the naming here, where it belongs.
+          aria-label={fieldNamesIt ? undefined : label}
           value={draft}
           disabled={isDisabled}
           placeholder={values.length === 0 ? placeholder : undefined}
@@ -204,7 +234,14 @@ export function TagInput({
             }
           }}
           className={cn(
-            'min-w-[8rem] flex-1 bg-transparent px-1.5 text-text-primary outline-none placeholder:text-text-disabled',
+            // 4rem, not 8. `min-w-[8rem]` plus one chip needs about 15rem of
+            // inner width before the two fit on one line, so this control wrapped
+            // to two rows — and so measured 58px on a 28px strip and 62 on a 34
+            // — inside any column narrower than an 18rem aside. The minimum only
+            // binds in a cramped container, where smaller is what is wanted; at
+            // the width this control actually ships at (a stacked `SettingRow`,
+            // ~640px) `flex-1` gives it everything the chips do not use.
+            'min-w-[4rem] flex-1 bg-transparent px-1.5 text-text-primary outline-none placeholder:text-text-disabled',
             geometry.text,
           )}
           {...fieldProps}

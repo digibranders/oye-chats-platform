@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Coins, History } from 'lucide-react';
+import { Coins } from 'lucide-react';
 import {
   ABSENT,
   Alert,
@@ -306,7 +306,9 @@ export function UsagePage() {
               eyebrow={botId === null ? 'Whole workspace' : pool.name}
               title="Credits"
               titleAs="h2"
-              description={formatPeriod(pool.periodStart, pool.resetsAt)}
+              /* No `description`. `StatRow` states the window once, as a caption
+                 under the four figures it anchors, so `formatPeriod` in the
+                 header printed the same string a second time 120px above it. */
               actions={
                 <Button
                   size="sm"
@@ -390,12 +392,19 @@ export function UsagePage() {
           {/* The trend and the rate table cover the same period and the reader
               checks one against the other, so they stand side by side rather
               than 400px apart in one column. */}
-          <Grid cols={2} gap="section" align="start">
+          {/* Not `align="start"`. These are two panels, and `start` let the
+              chart card stop 155px above the rate table beside it — the ragged
+              bottom edge `Grid`'s own docstring calls wrong for a row of
+              panels. The `description` is here for the same reason: without it
+              this header was two lines against the rate card's three, so the
+              two cards' body rules sat 21px apart. */}
+          <Grid cols={2} gap="section">
             <Card>
               <CardHeader
                 eyebrow="Consumption"
                 title={`Credits spent per day in ${scopeLabel}`}
                 titleAs="h2"
+                description={`Last ${days} days`}
                 actions={
                   <SegmentedControl
                     label="Trend window"
@@ -578,7 +587,7 @@ export function UsagePage() {
                 onRetry={() => void usage.ledger.refetch()}
                 empty={
                   <EmptyState
-                    icon={History}
+                    size="inline"
                     title={page > 1 ? 'Nothing further back' : 'No credit movements yet'}
                     description={
                       page > 1

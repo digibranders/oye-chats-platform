@@ -17,8 +17,20 @@ export interface HomeAgent {
 /** The window every figure on Home covers, stated once by the `StatRow`. */
 export const HOME_WINDOW_DAYS = 30;
 
-/** How many recent leads the activity card shows. Eight fills the rail exactly. */
-const RECENT_LIMIT = 8;
+/**
+ * How many recent leads the activity card shows.
+ *
+ * Six, because `Columns` requires the aside to be the shorter track and six rows
+ * is what keeps it under the work column at the page's ordinary shape. It is a
+ * *sample* with a link to the rest, not a list — the card's header goes to
+ * `/leads`, which is where an unbounded one belongs.
+ *
+ * Sliced here as well as sent as `limit`. A card whose height is decided by
+ * whatever the server felt like returning is not a layout: the endpoint honours
+ * `limit` today, and the first time it does not the aside grows past the fold
+ * and takes the page's bottom edge with it.
+ */
+const RECENT_LIMIT = 6;
 
 export interface HomeDelta {
   value: string;
@@ -152,7 +164,7 @@ export function useHomeData() {
     unreadLoading: offline.isPending,
     live,
     needsAttention: agents.filter((agent) => agent.health.needsAttention),
-    recentLeads: (recent.data?.leads ?? []) as Lead[],
+    recentLeads: ((recent.data?.leads ?? []) as Lead[]).slice(0, RECENT_LIMIT),
     recentLoading: recent.isPending,
     recentAvailable: !recent.isError,
   };

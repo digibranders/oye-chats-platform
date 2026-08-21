@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookOpen, FileText, Globe, MoreHorizontal, RefreshCw, SearchX, Sparkles, Trash2 } from 'lucide-react';
+import { FileText, Globe, MoreHorizontal, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -29,6 +29,18 @@ import {
   type RecrawlMode,
   type SourceKind,
 } from './knowledge-model';
+
+/**
+ * Pages this source is made of, or `null` when nothing recorded any.
+ *
+ * A website knows how many pages were read. A document knows only if the
+ * extractor reported a page count — a `.txt` never does — and guessing its
+ * passage count in that column is what made the table state one number twice.
+ */
+function pageCount(source: KnowledgeSource): number | null {
+  const pages = isWebsiteSource(source.name) ? source.page_count : source.doc_page_count;
+  return typeof pages === 'number' && pages > 0 ? pages : null;
+}
 
 export interface SourcesTableProps {
   sources: readonly KnowledgeSource[];
@@ -130,7 +142,7 @@ export function SourcesTable({
       {
         key: 'state',
         header: 'State',
-        width: '9rem',
+        width: '8rem',
         sortable: (a, b) =>
           sourceState(a, crawlingDomain).label.localeCompare(sourceState(b, crawlingDomain).label),
         render: (row) => {
@@ -148,12 +160,21 @@ export function SourcesTable({
         },
       },
       {
-        key: 'size',
-        header: 'Size',
-        align: 'right',
-        width: '8rem',
-        sortable: (a, b) => sourceUnits(a).count - sourceUnits(b).count,
-        render: (row) => sourceUnits(row).label,
+        // Pages, not "Size". `sourceUnits` falls back to the passage count for a
+        // document whose page count the backend never recorded, so the column
+        // printed "42 passages" beside a Passages column reading 42 — one fact,
+        // twice, in two adjacent columns, at the cost of 8rem in a pane that was
+        // already overflowing its card. It states pages where pages are known
+        // and `—` where they are not.
+        key: 'pages',
+        header: 'Pages',
+        type: 'number',
+        width: '6rem',
+        sortable: (a, b) => (pageCount(a) ?? -1) - (pageCount(b) ?? -1),
+        render: (row) => {
+          const pages = pageCount(row);
+          return pages === null ? '—' : formatNumber(pages);
+        },
       },
       {
         key: 'passages',
@@ -168,7 +189,7 @@ export function SourcesTable({
           </Tooltip>
         ),
         type: 'number',
-        width: '7rem',
+        width: '6.5rem',
         secondary: true,
         sortable: (a, b) => (a.chunk_count ?? 0) - (b.chunk_count ?? 0),
         render: (row) => (row.chunk_count ? formatNumber(row.chunk_count) : '—'),
@@ -180,7 +201,7 @@ export function SourcesTable({
         // columns is the kind of collision a reader has to stop and resolve.
         header: 'Last trained',
         type: 'number',
-        width: '9rem',
+        width: '8rem',
         sortable: (a, b) => Date.parse(a.ingested_at ?? '') - Date.parse(b.ingested_at ?? ''),
         render: (row) => (row.ingested_at ? formatDate(row.ingested_at) : '—'),
       },
@@ -188,7 +209,7 @@ export function SourcesTable({
         key: 'actions',
         header: 'Actions',
         align: 'right',
-        width: '5rem',
+        width: '4.5rem',
         render: (row) => {
           const website = isWebsiteSource(row.name);
           return (
@@ -283,6 +304,7 @@ export function SourcesTable({
 
       <DataTable
         seated
+        fit
         columns={columns}
         rows={visible}
         selectedKeys={selected}
@@ -309,13 +331,13 @@ export function SourcesTable({
         empty={
           filtered ? (
             <EmptyState
-              icon={SearchX}
+              size="inline"
               title="No source matches"
               description="Nothing here matches that search and filter."
             />
           ) : (
             <EmptyState
-              icon={BookOpen}
+              size="inline"
               title="This chatbot has nothing to answer from yet"
               description="Train it on your website, or upload a document."
             />
@@ -333,18 +355,11 @@ export function SourcesTable({
         description={
           confirming ? (
             <>
-              <span className="block">
-                {confirming.name} and its{' '}
-                <span className="figure">{formatNumber(confirming.chunk_count ?? 0)}</span> indexed
-                passage{(confirming.chunk_count ?? 0) === 1 ? '' : 's'} are deleted. This chatbot
-                stops answering from it immediately, and the credits already spent on it are not
-                returned.
-              </span>
-              <span className="mt-2 block">
-                {isWebsiteSource(confirming.name)
-                  ? `Training it again later re-reads all ${confirmingUnits?.label ?? 'its pages'} and charges for them.`
-                  : 'You would need the original file to add it again.'}
-              </span>
+              {confirming.name} and its{' '}
+              <span className="figure">{formatNumber(confirming.chunk_count ?? 0)}</span> indexed
+              passage{(confirming.chunk_count ?? 0) === 1 ? '' : 's'} are deleted. This chatbot
+              stops answering from it immediately, and the credits already spent on it are not
+              returned.
             </>
           ) : null
         }
@@ -354,7 +369,19 @@ export function SourcesTable({
           await onDelete(confirming);
           setConfirming(null);
         }}
-      />
+      >
+        {/* The consequence of adding it back, as the dialog's own second block.
+            It used to be a second `<span className="block">` smuggled into
+            `description` — one paragraph pretending to be a string — because
+            `ConfirmDialog` took no children. It does now. */}
+        {confirming ? (
+          <p className="text-prose text-text-secondary">
+            {isWebsiteSource(confirming.name)
+              ? `Training it again later re-reads all ${confirmingUnits?.label ?? 'its pages'} and charges for them.`
+              : 'You would need the original file to add it again.'}
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       {/* One confirmation for the whole selection. A customer who crawled a site
           and wants nine of its documents gone did it nine times, each behind its

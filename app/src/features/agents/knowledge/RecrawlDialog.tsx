@@ -141,7 +141,7 @@ export function RecrawlDialog({
           title="Updated-pages-only re-training is on Standard and above"
           description="Standard compares your site and charges only for changed pages. Your plan re-reads and charges for all of them."
           action={
-            <Link to="/billing" className={buttonClass('primary', 'md')}>
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
               See plans
             </Link>
           }

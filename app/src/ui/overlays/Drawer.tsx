@@ -13,9 +13,19 @@ import {
   OverlayHeader,
 } from './overlayParts';
 
-export type DrawerWidth = 'sm' | 'md' | 'lg' | 'xl';
+export type DrawerWidth = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
+/**
+ * `xs` is 320px, and it is a real size rather than a smaller `sm`.
+ *
+ * It is the width of a pane — the inbox's visitor panel, the column picker, a
+ * filter list — and those panes exist at that width in the page already. A
+ * drawer holding one at `sm` (448) either stretches the pane's own layout or
+ * leaves 128px of empty gutter beside it, which is why two surfaces put a
+ * fixed-width `div` inside a drawer and let the drawer's padding double up.
+ */
 const WIDTHS: Record<DrawerWidth, string> = {
+  xs: 'sm:max-w-80',
   sm: 'sm:max-w-md',
   md: 'sm:max-w-lg',
   lg: 'sm:max-w-2xl',
@@ -32,6 +42,13 @@ export interface DrawerProps {
   children: ReactNode;
   footer?: ReactNode;
   width?: DrawerWidth;
+  /**
+   * Drops the body's 20px padding, for a child that owns its own edges — a
+   * `DataTable seated`, a `SettingGroup`, a pane that already draws its own
+   * gutter. Without it that child is inset 20px from a panel it was built to
+   * reach, and its hairlines stop short of the drawer's border.
+   */
+  flush?: boolean;
   dismissible?: boolean;
   className?: string;
 }
@@ -65,6 +82,7 @@ export function Drawer({
   children,
   footer,
   width = 'md',
+  flush = false,
   dismissible = true,
   className,
 }: DrawerProps) {
@@ -110,7 +128,7 @@ export function Drawer({
             ) : null}
           </OverlayHeader>
 
-          <div className={OVERLAY_BODY}>{children}</div>
+          <div className={cn(OVERLAY_BODY, flush && 'p-0')}>{children}</div>
 
           {footer ? <div className={OVERLAY_FOOTER}>{footer}</div> : null}
         </BaseDialog.Popup>

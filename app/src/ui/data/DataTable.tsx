@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useState, type MouseEvent, type ReactNode, type UIEvent } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
@@ -58,7 +66,17 @@ export interface Column<T> {
    * is how the wrong record gets edited.
    */
   pinned?: boolean;
-  /** Hide below `md`. For columns that are context rather than the point. */
+  /**
+   * Hide while the table itself is under 768px. For a column that is context
+   * rather than the point.
+   *
+   * A **container** query, not `md:`. A viewport breakpoint asks the window how
+   * wide the browser is, which in a console full of panes is never the question:
+   * between 768 and about 1400 every column showed regardless of how narrow its
+   * card was, which is what clipped the action column off a table in a two-up
+   * grid and lost two columns from `/chatbots` at 1280. The table declares
+   * `@container/page` on its own root, so this asks the only box that knows.
+   */
   secondary?: boolean;
   /**
    * Render this cell as `<th scope="row">` rather than `<td>`.
@@ -97,6 +115,17 @@ export interface DataTableProps<T> {
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  /**
+   * The empty state's copy, as an `EmptyState`.
+   *
+   * Whatever is passed is rendered at **`size="inline"`**, whether the caller
+   * said so or not: a table with no rows is a row that says why, not a poster.
+   * `EmptyState`'s own default is `page` — a 340px centred block around a 48px
+   * disc — so a table given a plain `<EmptyState title=… />` rendered a full
+   * hero inside its own body, which is exactly what happened to the knowledge
+   * gaps table. `size` is cloned onto the element rather than documented as a
+   * rule call sites have to remember.
+   */
   empty?: ReactNode;
   /**
    * The fourth state: this table's data is not this seat's to see.
@@ -106,6 +135,24 @@ export interface DataTableProps<T> {
    * fourth — a feature reintroducing a system responsibility.
    */
   forbidden?: { title: string; description: string; action?: ReactNode } | null;
+
+  /**
+   * Let the table shrink to its container instead of scrolling wider than it.
+   *
+   * The default is right for a wide table: `min-w-max` plus an `overflow-auto`
+   * wrapper keeps every cell on one line and scrolls sideways, which is what
+   * makes a pinned column mean anything. It is wrong for a table in a narrow
+   * column — Home's chatbot table in a two-up grid lost its action column at the
+   * card's right edge, with the scroll affordance a 6-pixel bar under 44px rows
+   * that nobody finds. A four-column table in a 26rem column does not want to be
+   * scrolled; it wants to be narrower.
+   *
+   * `fit` switches the table to `table-fixed` and ellipsises every cell that has
+   * not opted into `wrap`. Columns share the width equally unless they declare
+   * one, so a `fit` table normally wants `width` on the columns that need it —
+   * the action column, the status column — and nothing on the one that gives.
+   */
+  fit?: boolean;
 
   /**
    * Drop the table's own card, for a table seated inside one.
@@ -171,6 +218,20 @@ export interface DataTableProps<T> {
   rowNoun?: string;
   rowNounPlural?: string;
   /**
+   * Prints the row count under the table. On by default (DESIGN.md rule 8).
+   *
+   * Turn it off only for a table whose length is a **fixed fact of the schema**
+   * rather than a measurement of the data — a six-row reference of what each
+   * webhook event means, a four-row key for a status column. "6 rows" under a
+   * table that can never have a seventh is a number the reader has to read and
+   * then discard. Anything a query returned keeps its count: that is the number
+   * that tells "12 sources" from "12 of 400".
+   *
+   * A pager, when there is one, always states the count — it is the sentence
+   * that makes the pager mean anything — so this only governs the bare form.
+   */
+  countSummary?: boolean;
+  /**
    * A real `<tfoot>` — a totals row, aligned with the columns it totals.
    *
    * The caller supplies the `<tr>`s. Two surfaces under `/billing` hand-built
@@ -188,14 +249,31 @@ export interface DataTableProps<T> {
    *
    * It used to be tied to `maxHeight`, which is passed at **zero** of the app's
    * 40 call sites, so no table in the console has ever had a sticky head and
-   * every one of them lost its column names after eight rows. Sticky is now the
-   * default and the table caps its own body once it is longer than it can be
-   * read at once (`AUTO_BOUND_ROWS`), which is the only way `position: sticky`
-   * can do anything: the wrapper has to scroll X for wide tables, and an element
-   * sticks to its nearest scrolling ancestor — that wrapper — not to the page.
+   * every one of them lost its column names after eight rows.
+   *
+   * The head sticks to the table's own scrolling body, which is the only thing
+   * it *can* stick to: the wrapper has to scroll X for a wide table, and
+   * `overflow-x: auto` forces `overflow-y` to `auto` as well, so the wrapper is
+   * a scroll container in both axes and an element sticks to its nearest
+   * scrolling ancestor. A table can therefore never stick its head to the
+   * *page*. The body is bounded automatically past `AUTO_BOUND_ROWS`, which is
+   * the point at which losing the column names actually costs the reader
+   * something; under that the page scrolls as one piece, which is right.
    */
   stickyHeader?: boolean;
-  /** Offset for a sticky toolbar above the table, e.g. `'2.75rem'`. */
+  /**
+   * @deprecated Ignored, and it never worked.
+   *
+   * It set `top` on the `thead` — but the head sticks inside the table's own
+   * scroller, whose top edge is the card's top edge, so the only correct value
+   * is 0. A non-zero one rendered as an empty band at the top of the card *and*
+   * a header overlapping the first row: on Leads, a 52px band with the `thead`
+   * at y=454 over a first row at y=446.
+   *
+   * The offset it was reaching for — clearing a sticky toolbar above the table —
+   * is not the table's problem: that toolbar is outside the table's scroller and
+   * never overlaps it. Delete the prop at the call site.
+   */
   stickyOffset?: string;
   className?: string;
 }
@@ -259,7 +337,7 @@ const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-rig
  *    sat unused in a dead directory. A server-paged table does not *offer* a
  *    client sort it would then refuse to perform.
  * 5. **All four states are the table's job**, plus the row count DESIGN.md
- *    rule 7 requires — which lives in a footer that is always there, not inside
+ *    rule 8 requires — which lives in a footer that is always there, not inside
  *    a pager that appears only past one page.
  * 6. **Geometry comes from the density triplet** (`--row-h`, `--cell-x`,
  *    `--cell-y`), so `Page density="dense"` re-spaces every table in the app
@@ -280,6 +358,7 @@ export function DataTable<T>({
   onRetry,
   empty,
   forbidden = null,
+  fit = false,
   seated = false,
   onRowClick,
   sort: controlledSort,
@@ -295,10 +374,12 @@ export function DataTable<T>({
   rowCount,
   rowNoun = 'row',
   rowNounPlural,
+  countSummary = true,
   footer,
   maxHeight,
   stickyHeader = true,
-  stickyOffset,
+  // Accepted and ignored. See the prop's own note.
+  stickyOffset: _stickyOffset,
   className,
 }: DataTableProps<T>) {
   const [uncontrolledPage, setUncontrolledPage] = useState(0);
@@ -427,20 +508,44 @@ export function DataTable<T>({
           ? 'empty'
           : 'rows';
 
-  // `table-fixed` only when every column has declared a width — otherwise auto
-  // layout is the honest model and `width` stays a suggestion.
-  const fixedLayout = columns.length > 0 && columns.every((column) => column.width);
+  // `table-fixed` when every column has declared a width, or when the caller has
+  // asked the table to fit its column — otherwise auto layout is the honest
+  // model and `width` stays a suggestion.
+  const fixedLayout = fit || (columns.length > 0 && columns.every((column) => column.width));
   const scrollMax =
     maxHeight ?? (stickyHeader && visibleRows.length > AUTO_BOUND_ROWS ? AUTO_BOUND_HEIGHT : undefined);
 
-  // Whether the body has been scrolled sideways, written straight onto the DOM
-  // rather than held in state: a pinned column needs an edge only once content
-  // is actually travelling underneath it, and re-rendering forty rows on every
-  // scroll frame to learn that is not worth it.
-  function handleScroll(event: UIEvent<HTMLDivElement>) {
-    const element = event.currentTarget;
-    element.dataset.scrolled = element.scrollLeft > 0 ? 'true' : 'false';
-  }
+  // Where the body is, horizontally, written straight onto the DOM rather than
+  // held in state: a pinned column needs its trailing edge only once content is
+  // actually travelling underneath it, the right-hand fade only while there is
+  // more to the right, and re-rendering forty rows on every scroll frame to
+  // learn either is not worth it.
+  //
+  // `data-scroll-end` has to be correct before the first scroll event, or a
+  // table that overflows on load shows no edge at all until it is touched —
+  // which is exactly the table this fixes. `syncScroll` runs from the ref
+  // callback on mount and from a `ResizeObserver` when the column changes width.
+  const syncScroll = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    const scrolled = element.scrollLeft > 0;
+    // 1px of slack: a fractional layout width leaves `scrollWidth` a hair above
+    // `scrollLeft + clientWidth` at the true end and the fade never turns off.
+    const atEnd = element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+    element.dataset.scrolled = scrolled ? 'true' : 'false';
+    element.dataset.scrollEnd = atEnd ? 'true' : 'false';
+  }, []);
+
+  // React 19 runs the function a ref callback returns as its cleanup.
+  const attachScroller = useCallback(
+    (element: HTMLDivElement | null) => {
+      syncScroll(element);
+      if (!element || typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver(() => syncScroll(element));
+      observer.observe(element);
+      return () => observer.disconnect();
+    },
+    [syncScroll],
+  );
 
   const noun = totalRows === 1 ? rowNoun : (rowNounPlural ?? `${rowNoun}s`);
   const headCellClass =
@@ -453,13 +558,17 @@ export function DataTable<T>({
   return (
     <div
       className={cn(
-        'relative',
+        // `@container/page`, so `Column.secondary` — and any `Grid` or
+        // `PropertyGrid` rendered inside a cell — measures THIS TABLE. See the
+        // note on `secondary`.
+        'console-scroll-edge relative @container/page',
         !seated && 'overflow-hidden rounded-lg border border-border bg-surface',
         className,
       )}
     >
       <div
-        onScroll={handleScroll}
+        ref={attachScroller}
+        onScroll={(event) => syncScroll(event.currentTarget)}
         className="overflow-auto"
         style={scrollMax ? { maxHeight: scrollMax } : undefined}
       >
@@ -468,10 +577,9 @@ export function DataTable<T>({
           aria-busy={loading || undefined}
         >
           <caption className="sr-only">{caption}</caption>
-          <thead
-            className={cn(stickyHeader && 'sticky z-[var(--z-sticky)]')}
-            style={stickyHeader ? { top: stickyOffset ?? 0 } : undefined}
-          >
+          {/* `top: 0` always — see `stickyOffset`. The head sticks inside the
+              table's own scroller, whose top edge is the card's. */}
+          <thead className={cn(stickyHeader && 'sticky top-0 z-[var(--z-sticky)]')}>
             <tr>
               {selectable ? (
                 <th scope="col" className={cn(headCellClass, selectCellClass)}>
@@ -506,7 +614,7 @@ export function DataTable<T>({
                       'px-[var(--cell-x)]',
                       ALIGN_CLASS[align],
                       column.pinned && 'is-pinned sticky left-0 z-[var(--z-sticky)]',
-                      column.secondary && 'hidden md:table-cell',
+                      column.secondary && 'hidden @3xl/page:table-cell',
                     )}
                   >
                     {sortable ? (
@@ -550,7 +658,7 @@ export function DataTable<T>({
                       key={column.key}
                       className={cn(
                         'h-[var(--row-h)] px-[var(--cell-x)] py-[var(--cell-y)]',
-                        column.secondary && 'hidden md:table-cell',
+                        column.secondary && 'hidden @3xl/page:table-cell',
                       )}
                     >
                       <Skeleton className="h-3 w-full max-w-40" />
@@ -563,13 +671,14 @@ export function DataTable<T>({
                 {/* The cell carries no row hairline: it is a state, not a row,
                     and the inset shadow would double the container's own edge. */}
                 <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
-                  <ErrorState size="inline" description={error ?? undefined} onRetry={onRetry} />
+                  <ErrorState flush size="inline" description={error ?? undefined} onRetry={onRetry} />
                 </td>
               </tr>
             ) : state === 'forbidden' && forbidden ? (
               <tr>
                 <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
                   <LockedState
+                    flush
                     size="inline"
                     title={forbidden.title}
                     description={forbidden.description}
@@ -580,12 +689,20 @@ export function DataTable<T>({
             ) : state === 'empty' ? (
               <tr>
                 <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
-                  {empty ?? (
-                    <EmptyState
-                      size="inline"
-                      title="Nothing to show"
-                      description="No rows matched."
-                    />
+                  {isValidElement<{ size?: string; flush?: boolean }>(empty) ? (
+                    // The table owns the geometry of its own body. `flush` too:
+                    // the cell already carries `--cell-x`, so a state drawing
+                    // its own gutter sits 20px inside every other cell's text.
+                    cloneElement(empty, { size: 'inline', flush: true })
+                  ) : (
+                    empty ?? (
+                      <EmptyState
+                        flush
+                        size="inline"
+                        title="Nothing to show"
+                        description="No rows matched."
+                      />
+                    )
                   )}
                 </td>
               </tr>
@@ -641,16 +758,21 @@ export function DataTable<T>({
                             ALIGN_CLASS[align],
                             figure && 'figure',
                             column.wrap ? 'whitespace-normal' : 'whitespace-nowrap',
-                            (column.truncate ?? Boolean(column.width)) && !column.wrap && 'truncate',
+                            // Under `fit` there is nowhere for an over-long cell
+                            // to go, so truncation is the default rather than
+                            // something a `width` happens to switch on.
+                            (column.truncate ?? (fit || Boolean(column.width))) &&
+                              !column.wrap &&
+                              'truncate',
                             // A pinned cell paints its own ground, so it needs
                             // the row's hover repeated on it — otherwise the
                             // pinned column stays white while the row lights up.
                             column.pinned &&
                               cn(
-                                'is-pinned sticky left-0 z-[1]',
+                                'is-pinned sticky left-0 z-1',
                                 'bg-surface group-hover:bg-surface-hover group-data-[selected]:bg-accent-50',
                               ),
-                            column.secondary && 'hidden md:table-cell',
+                            column.secondary && 'hidden @3xl/page:table-cell',
                           )}
                         >
                           {activates ? (
@@ -712,12 +834,12 @@ export function DataTable<T>({
       {/* The count is not part of the pager. It used to be, so a table with one
           page — six of the app's forty have no `pageSize` at all — printed no
           count anywhere, and the reader could not tell "12 sources" from "12 of
-          400". DESIGN.md rule 7 asks for it on every table.
+          400". DESIGN.md rule 8 asks for it on every table.
 
           No `border-t`: the last row's own inset hairline is already the rule
           above this bar, and drawing a second one is what made every table look
           bottom-heavy. */}
-      {/* The row count DESIGN.md rule 7 asks of every table — which used to live
+      {/* The row count DESIGN.md rule 8 asks of every table — which used to live
           inside the pager, so a table with one page (six of the app's forty pass
           no `pageSize` at all) reported its size nowhere and the reader could not
           tell "12 sources" from "12 of 400".
@@ -767,11 +889,11 @@ export function DataTable<T>({
               </Button>
             </div>
           </nav>
-        ) : (
+        ) : countSummary ? (
           <p className="px-[var(--cell-x)] py-2 text-xs text-text-secondary" aria-live="polite">
             <span className="figure">{totalRows}</span> {noun}
           </p>
-        )
+        ) : null
       ) : null}
     </div>
   );

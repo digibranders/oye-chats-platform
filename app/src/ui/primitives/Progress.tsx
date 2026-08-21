@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { Meter as BaseMeter } from '@base-ui/react/meter';
 import { Progress as BaseProgress } from '@base-ui/react/progress';
 import { cn } from '../lib/cn';
@@ -8,6 +9,21 @@ export interface ProgressProps {
   value: number | null;
   /** Required: names what is progressing. */
   label: string;
+  /**
+   * Drop the label row, leaving 6px of bare bar.
+   *
+   * Off by default, and it used to be **on**: a required `label` prop that
+   * rendered nothing unless you also found and unset a second prop. A call site
+   * writing `<Progress value={40} label="Crawling acme.com" />` got a nameless
+   * bar and no hint that the string it had been made to supply was invisible.
+   * `Meter` — the sibling with the same prop — has always defaulted to showing
+   * it, and two primitives that disagree about the same prop name is the drift
+   * this directory exists to stop.
+   *
+   * Pass it for a bar that is chrome inside a row a heading already names.
+   * A *set* of bars must agree on it, or the labelled one is 30px and the bare
+   * one is 6 and they do not share a baseline.
+   */
   hideLabel?: boolean;
   tone?: 'accent' | 'success' | 'warning' | 'danger';
   size?: 'sm' | 'md';
@@ -33,12 +49,14 @@ const METER_TONE = { ...PROGRESS_TONE, plan: 'bg-plan' } as const;
  * A task in flight: a crawl, a training run, an upload.
  *
  * The indeterminate form is a travelling sliver rather than a filled bar, so it
- * never implies a completion percentage it does not know.
+ * never implies a completion percentage it does not know — and under
+ * `prefers-reduced-motion` it becomes a dimmed FULL track rather than a stopped
+ * sliver, for the same reason. See `.console-indeterminate` in `tokens.css`.
  */
 export function Progress({
   value,
   label,
-  hideLabel = true,
+  hideLabel = false,
   tone = 'accent',
   size = 'md',
   className,
@@ -55,13 +73,10 @@ export function Progress({
       aria-label={hideLabel ? label : undefined}
       className={cn('w-full', className)}
     >
-      {/* A hidden label removes the row rather than reserving it, because
-          `hideLabel` defaults to true and this bar is most often 6px of chrome
-          inside a table row — reserving 24px there would be worse than the
-          problem it solves. The consequence: a *set* of bars must agree on
-          `hideLabel`, or the labelled one is 30px and the bare one is 6 and
-          they do not share a baseline. `Meter`, which is the one that appears
-          in grids of peers, reserves instead. */}
+      {/* A hidden label removes the row rather than reserving it: a bar asked
+          to be bare is usually 6px of chrome inside a table row, and reserving
+          24px there would be worse than the problem it solves. `Meter`, which
+          is the one that appears in grids of peers, reserves instead. */}
       {!hideLabel ? (
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <BaseProgress.Label className="text-xs text-text-secondary">{label}</BaseProgress.Label>
@@ -80,7 +95,12 @@ export function Progress({
           className={cn(
             'block h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-console)]',
             PROGRESS_TONE[tone],
-            clamped == null && 'w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite]',
+            // `console-indeterminate` is a hook for the reduced-motion rule in
+            // `tokens.css`, not a style: with the animation shortened to 0.01ms
+            // the sliver simply stopped at a third of the track and read as a
+            // determinate 33%.
+            clamped == null &&
+              'console-indeterminate w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite]',
           )}
         />
       </BaseProgress.Track>
@@ -112,8 +132,17 @@ export interface MeterProps {
    * customer their account is broken when it is working exactly as sold.
    */
   tone?: 'plan';
-  /** Hides the label row, keeping its height so a grid of meters stays level. */
+  /**
+   * Hides the meter's *name*, keeping the figure and the row's height.
+   *
+   * It used to set `invisible` on the whole row, which took the figure with it
+   * — so a meter in a `SettingRow` whose label already names it could not show
+   * "3 / 5" without printing its own name a second time beside it. The name is
+   * the part the neighbouring heading duplicates; the figure never is.
+   */
   hideLabel?: boolean;
+  /** One clause under the bar — what the ceiling is, or what happens at it. */
+  hint?: ReactNode;
   size?: 'sm' | 'md';
   className?: string;
 }
@@ -137,6 +166,7 @@ export function Meter({
   unlimitedNote = 'No limit',
   tone: forcedTone,
   hideLabel = false,
+  hint,
   size = 'md',
   className,
 }: MeterProps) {
@@ -149,6 +179,14 @@ export function Meter({
     'mt-1.5 block w-full overflow-hidden rounded-full bg-surface-active',
     size === 'sm' ? 'h-1' : 'h-1.5',
   );
+  // `sr-only` on the label rather than `invisible` on the row: the name leaves
+  // the flow and the figure keeps the row. It stays in the accessibility tree
+  // because Base UI's `Meter.Label` is what names the meter at all.
+  const nameClass = cn('text-xs text-text-secondary', hideLabel && 'sr-only');
+  // With the name out of the flow, `justify-between` has one child left and
+  // would push the figure to the leading edge.
+  const figureClass = cn('text-xs font-medium text-text-primary', hideLabel && 'ml-auto');
+  const note = hint ? <p className="mt-1 text-xs text-text-tertiary">{hint}</p> : null;
 
   if (unlimited) {
     // The unlimited branch used to render no track at all and a note underneath,
@@ -158,14 +196,11 @@ export function Meter({
     // ceiling) and folds the note into the figure line.
     return (
       <div className={className}>
-        <div
-          aria-hidden={hideLabel || undefined}
-          className={cn('flex items-baseline justify-between gap-2', hideLabel && 'invisible')}
-        >
-          <span className="text-xs text-text-secondary">{label}</span>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className={nameClass}>{label}</span>
           {/* The note keeps its own element, and stays out of the `.figure`
               run: it is a sentence, and mono tabular figures are for numbers. */}
-          <span className="flex items-baseline gap-1">
+          <span className={cn('flex items-baseline gap-1', hideLabel && 'ml-auto')}>
             <span className="figure text-xs font-medium text-text-primary">
               {formatNumber(used)}
             </span>
@@ -174,6 +209,7 @@ export function Meter({
           </span>
         </div>
         <div className={track} />
+        {note}
       </div>
     );
   }
@@ -190,12 +226,9 @@ export function Meter({
       }
       className={className}
     >
-      <div
-        aria-hidden={hideLabel || undefined}
-        className={cn('flex items-baseline justify-between gap-2', hideLabel && 'invisible')}
-      >
-        <BaseMeter.Label className="text-xs text-text-secondary">{label}</BaseMeter.Label>
-        <span className="figure text-xs font-medium text-text-primary">
+      <div className="flex items-baseline justify-between gap-2">
+        <BaseMeter.Label className={nameClass}>{label}</BaseMeter.Label>
+        <span className={cn('figure', figureClass)}>
           {formatNumber(used)}
           <span className="text-text-tertiary"> / {formatNumber(limit)}</span>
           {unit ? <span className="text-text-tertiary"> {unit}</span> : null}
@@ -209,6 +242,7 @@ export function Meter({
           )}
         />
       </BaseMeter.Track>
+      {note}
     </BaseMeter.Root>
   );
 }

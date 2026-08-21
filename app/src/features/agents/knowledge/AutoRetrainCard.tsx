@@ -136,12 +136,14 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       ) : section.forbidden ? (
         <CardBody>
           <EmptyState
+            size="panel"
             title="Not yours to change"
             description="Only an owner or admin can change the schedule."
           />
         </CardBody>
       ) : section.error ? (
         <ErrorState
+          size="panel"
           title="We could not load the weekly retrain"
           description={section.error}
           onRetry={section.retry}
@@ -149,6 +151,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       ) : status === null ? (
         <CardBody>
           <EmptyState
+            size="panel"
             title="Nothing to show"
             description="This chatbot has no retrain schedule yet."
           />
@@ -163,7 +166,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             title={`Weekly auto-retrain is on Standard and above`}
             description={`On Standard and above this runs weekly, charging only for pages that changed. Your ${planName} plan re-trains when you ask it to.`}
             action={
-              <Link to="/billing" className={buttonClass('primary', 'md')}>
+              <Link to="/billing" className={buttonClass('primary', 'sm')}>
                 See plans
               </Link>
             }

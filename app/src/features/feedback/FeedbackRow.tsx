@@ -2,7 +2,7 @@ import {
   Badge,
   Button,
   Disclosure,
-  EYEBROW_CLASS,
+  Eyebrow,
   cn,
   formatDateTime,
   useClipboard,
@@ -94,11 +94,11 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
               "here is what someone said", so the two treatments match. */}
           <dl className="grid gap-3">
             <div className="border-l-[3px] border-l-border-strong pl-3">
-              <dt className={EYEBROW_CLASS}>Visitor asked</dt>
+              <Eyebrow as="dt">Visitor asked</Eyebrow>
               <dd className="mt-1 text-prose text-text-primary">{item.question}</dd>
             </div>
             <div className="border-l-[3px] border-l-border-strong pl-3">
-              <dt className={EYEBROW_CLASS}>Chatbot answered</dt>
+              <Eyebrow as="dt">Chatbot answered</Eyebrow>
               <dd className="mt-1 text-prose text-text-secondary">{item.answer}</dd>
             </div>
           </dl>

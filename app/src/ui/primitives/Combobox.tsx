@@ -5,7 +5,7 @@ import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
 import { CONTROL_SIZE, controlClass } from './controlStyles';
 import { PANEL_BASE, PANEL_POSITIONER } from '../overlays/panelStyles';
-import { useField, useFieldControlProps } from './fieldContext';
+import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
 
 export interface ComboboxOption<T extends string> {
   value: T;
@@ -81,7 +81,7 @@ export function Combobox<T extends string>({
   size = 'md',
   className,
 }: ComboboxProps<T>) {
-  const field = useField();
+  const fieldNamesIt = useFieldNamesControl();
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];
   const selected = useMemo(
@@ -107,7 +107,7 @@ export function Combobox<T extends string>({
         // name computation — so a field labelled "Search" announced as "Search
         // leads", which is an SC 2.5.3 Label-in-Name failure the gallery was
         // modelling as correct usage.
-        aria-label={field ? undefined : label}
+        aria-label={fieldNamesIt ? undefined : label}
         className={cn(
           CONTROL_BASE,
           'flex items-center justify-between gap-2 text-left',

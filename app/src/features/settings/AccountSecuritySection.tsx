@@ -9,6 +9,7 @@ import {
   CardFooter,
   ConfirmDialog,
   Input,
+  SettingBand,
   SettingGroup,
   SettingRow,
   toast,
@@ -87,11 +88,11 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
     <SettingGroup title="Password">
       <form onSubmit={submit}>
         {change.isError ? (
-          <div className="px-cell pt-4">
+          <SettingBand>
             <Alert tone="danger" live title="We could not change your password">
               {errorMessage(change.error, 'Please check your current password and try again.')}
             </Alert>
-          </div>
+          </SettingBand>
         ) : null}
 
         <SettingRow
@@ -121,7 +122,6 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
             type="password"
             revealable
             required
-            aria-invalid={errors.current ? true : undefined}
             autoComplete="current-password"
             value={current}
             onChange={(event) => {
@@ -131,19 +131,22 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
           />
         </SettingRow>
 
+        {/* Not `stacked`. The rules are a description, and a description
+            belongs in the label column: stacking put a full-width input under
+            them, so the middle one of three password fields was 672px wide
+            while the two around it were 256px. The rules sit under the label
+            like every other row's hint and the three controls line up. */}
         <SettingRow
           label="New password"
           htmlFor={`${fieldId}-next`}
           error={errors.next}
           description={<PasswordRules value={next} />}
-          stacked
         >
           <Input
             id={`${fieldId}-next`}
             type="password"
             revealable
             required
-            aria-invalid={errors.next ? true : undefined}
             autoComplete="new-password"
             value={next}
             onChange={(event) => {
@@ -163,7 +166,6 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
             type="password"
             revealable
             required
-            aria-invalid={errors.confirm ? true : undefined}
             autoComplete="new-password"
             value={confirm}
             onChange={(event) => {
@@ -313,11 +315,11 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
         {step === 'request' ? (
           <form onSubmit={submitRequest}>
             {request.isError ? (
-              <div className="px-cell pt-4">
+              <SettingBand>
                 <Alert tone="danger" live title="We could not start that change">
                   {errorMessage(request.error, 'Please check the address and your password.')}
                 </Alert>
-              </div>
+              </SettingBand>
             ) : null}
 
             <SettingRow
@@ -330,7 +332,6 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                 id={`${emailFieldId}-new`}
                 type="email"
                 required
-                aria-invalid={emailError ? true : undefined}
                 value={email}
                 autoComplete="off"
                 onChange={(event) => {
@@ -350,7 +351,6 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                 type="password"
                 revealable
                 required
-                aria-invalid={passwordError ? true : undefined}
                 autoComplete="current-password"
                 value={password}
                 onChange={(event) => {

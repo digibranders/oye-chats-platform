@@ -11,6 +11,49 @@ import { Button } from '../primitives/Button';
  * imagined it. Four accessibility defects shipped invisible in their own diffs
  * before that was the rule here.
  */
+describe('PropertyGrid stacks in a column too narrow for a row', () => {
+  it('asks its own container, not the viewport', () => {
+    render(<PropertyGrid items={[{ label: 'First seen', value: '2 Jun 2026, 10:00' }]} />);
+    const row = screen.getByText('First seen').closest('div');
+
+    // Stacked is the BASE and the two-column row is the enhancement, so the
+    // narrow case is correct with no query at all. The label column used to be
+    // `minmax(7rem,10rem)` at every width, so in an 18rem aside a 112px label
+    // left about 120px for the value: a timestamp wrapped onto three lines and
+    // a URL broke mid-word.
+    expect(row?.className).toContain('grid-cols-[minmax(0,1fr)]');
+    expect(row?.className).toContain('@sm/page:grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)]');
+
+    // A container query, so an 18rem aside on a 1920px screen gets the narrow
+    // shape — which the `sm:` viewport query its predecessor used never did.
+    expect(row?.className).not.toContain('sm:grid-cols-[minmax(7rem');
+  });
+
+  it('gives an inspector a narrower label track than a page does', () => {
+    // `compact` is the inspector density and an inspector is narrow by
+    // definition: a 10rem label track in a 288px pane left 71px for the value,
+    // which broke `amara@example.com` as `amara@ex / ample.com`. The names in
+    // an inspector are short, so the track can be.
+    render(
+      <PropertyGrid density="compact" items={[{ label: 'Email', value: 'amara@example.com' }]} />,
+    );
+    const row = screen.getByText('Email').closest('div');
+    expect(row?.className).toContain('@sm/page:grid-cols-[minmax(4.5rem,8rem)_minmax(0,1fr)]');
+    expect(row?.className).not.toContain('minmax(7rem,10rem)');
+  });
+
+  it('keeps forcing the stack when the caller asks for it', () => {
+    render(
+      <PropertyGrid
+        layout="stacked"
+        items={[{ label: 'First seen', value: '2 Jun 2026, 10:00' }]}
+      />,
+    );
+    const row = screen.getByText('First seen').closest('div');
+    expect(row?.className).not.toContain('@sm/page:grid-cols-');
+  });
+});
+
 describe('PropertyGrid', () => {
   it('pairs every label with its value as a definition list', () => {
     render(
@@ -31,7 +74,7 @@ describe('PropertyGrid', () => {
   });
 
   it('prints an em dash for an absent value rather than a blank cell', () => {
-    // DESIGN.md rule 10. A blank cell cannot be told apart from a render that
+    // DESIGN.md rule 11. A blank cell cannot be told apart from a render that
     // failed, and `0` is a measurement somebody took.
     render(
       <PropertyGrid

@@ -250,8 +250,11 @@ export function BotDetailPage() {
           </Section>
 
           <Section
-            title="Its records"
-            description="Counts only. The lists live in Records, filtered where the API allows it."
+            title="Related lists"
+            // It said "Counts only" over four links carrying no count. What is
+            // here is the set of Records views the API can filter to one
+            // chatbot, which is what the section should say it is.
+            description="These open the Records list filtered to this chatbot, where the API can filter by one."
           >
             <div className="flex flex-wrap gap-2">
               {/* Only the links that work. The three the API cannot filter by

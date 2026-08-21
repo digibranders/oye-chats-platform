@@ -6,14 +6,11 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
   ChartFrame,
   CodeBlock,
   DataTable,
   EmptyState,
-  Grid,
   LoadingRows,
-  PropertyGrid,
   SegmentedControl,
   StatRow,
   Stack,
@@ -25,7 +22,9 @@ import {
   type Column,
 } from '../../ui';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
-import { CHART_AXIS, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { SeriesTooltip } from '../SeriesTooltip';
+import { dayTick } from '../chartTicks';
 import { PlatformPage } from '../PlatformPage';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { USD_NORMALISED_SHORT, usdCentsRounded } from '../money';
@@ -153,7 +152,21 @@ export function CommandCentrePage() {
   }, [chartData, metric, days]);
 
   const degraded = health.data && health.data.status !== 'healthy';
-  const backedUp = queues.items.some((queue) => queue.workers_alive === 0 || queue.oldest_pending_seconds > 300);
+  const faulty = health.data
+    ? HEALTH_SERVICES.filter((service) => health.data![service.key] === 'unreachable').map(
+        (service) => service.label,
+      )
+    : [];
+  const backedUp = queues.items.some(
+    (queue) => queue.workers_alive === 0 || queue.oldest_pending_seconds > 300,
+  );
+  const stalled = queues.items
+    .filter((queue) => queue.workers_alive === 0 || queue.oldest_pending_seconds > 300)
+    .map((queue) =>
+      queue.workers_alive === 0
+        ? `${queue.queue_name} has no live worker`
+        : `${queue.queue_name} has waited ${formatDuration(queue.oldest_pending_seconds)}`,
+    );
 
   function refresh(): void {
     health.reload();
@@ -188,54 +201,60 @@ export function CommandCentrePage() {
       }
     >
       <Stack>
+        {/* Each alert names the thing that is wrong. They used to describe the
+            *class* of fault in a sentence — "at least one service is
+            unreachable", "a queue has no live worker" — and then send the reader
+            to a panel to find out which, which is two reads for one fact. */}
         {degraded ? (
           <Alert tone="danger" live title="The platform is degraded">
-            At least one service the API depends on is unreachable. The services below say which.
+            {faulty.length > 0 ? `Unreachable: ${faulty.join(', ')}.` : 'A service the API depends on is not answering.'}
           </Alert>
         ) : null}
         {backedUp ? (
           <Alert tone="warning" title="Work is not draining">
-            A queue has no live worker, or its oldest job has been waiting more than five minutes.
-            Ingestion, invoice PDFs and qualification all run through it.
+            {stalled.length > 0
+              ? `${stalled.join(', ')} — ingestion, invoice PDFs and qualification all run through these.`
+              : 'A queue has no live worker, or its oldest job has been waiting more than five minutes.'}
           </Alert>
         ) : null}
 
-        {/* One band, three peers: is anything broken, is anything backing up,
-            and how the month is going. They used to be three full-width cards
-            stacked down four screenfuls of an ops console's front page. */}
-        <Grid cols={3} align="start">
-          <Card>
-            <CardHeader size="sm" titleAs="h2" title="Services" />
-            {health.loading && !health.data ? (
-              <CardBody>
-                <LoadingRows rows={5} />
-              </CardBody>
-            ) : health.data ? (
-              <CardBody>
-                <PropertyGrid
-                  label="Service health"
-                  density="compact"
-                  items={[
-                    ...HEALTH_SERVICES.map((service) => ({
-                      label: service.label,
-                      value: (
-                        <Badge tone={serviceTone(health.data![service.key])} dot>
-                          {serviceLabel(health.data![service.key])}
-                        </Badge>
-                      ),
-                    })),
-                    {
-                      label: 'API version',
-                      value: <span className="figure">{health.data.version}</span>,
-                    },
-                  ]}
-                />
-              </CardBody>
-            ) : null}
-          </Card>
+        {/* Three bands, in the order the questions are asked: is anything
+            broken, is anything backing up, and how the month is going.
 
+            It was one `Grid cols={3}` row of three cards, which put every panel
+            in a 323px column. At that width `PropertyGrid` correctly falls back
+            to stacked, so six service facts cost 322px instead of ~200; the
+            queue table lost its last two columns off the card's right edge; and
+            the two short cards ended 154px and 213px above the tall one, so the
+            band carried a hole the width of two thirds of the page. Each panel
+            now gets the width its content actually needs. */}
+        <Card>
+          {/* No header: every chip names itself, and a 44px header band over one
+              44px row of chips is more chrome than content. */}
+          <CardBody className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {health.loading && !health.data ? (
+              <LoadingRows rows={1} />
+            ) : health.data ? (
+              <>
+                {HEALTH_SERVICES.map((service) => (
+                  <span key={service.key} className="flex items-center gap-2">
+                    <span className="text-xs text-text-secondary">{service.label}</span>
+                    <Badge tone={serviceTone(health.data![service.key])} dot>
+                      {serviceLabel(health.data![service.key])}
+                    </Badge>
+                  </span>
+                ))}
+                <span className="flex items-center gap-2">
+                  <span className="text-xs text-text-secondary">API version</span>
+                  <span className="figure text-sm">{health.data.version}</span>
+                </span>
+              </>
+            ) : null}
+          </CardBody>
+        </Card>
+
+        <Section title="Queues">
           <Card>
-            <CardHeader size="sm" titleAs="h2" title="Queues" />
             <CardBody flush>
               {/* A table, not five tiles per queue in a five-column grid: with
                   two queues that was ten tiles whose only tie to their row was
@@ -253,18 +272,19 @@ export function CommandCentrePage() {
                   <EmptyState
                     size="inline"
                     title="No queue reported"
-                    description="Redis did not answer — the services panel says whether it is reachable."
+                    description="Redis did not answer — the services strip above says whether it is reachable."
                   />
                 }
               />
             </CardBody>
           </Card>
+        </Section>
 
+        <Section title="The month">
           <Card>
-            <CardHeader size="sm" titleAs="h2" title="The month" />
             <CardBody flush>
               <StatRow
-                columns={2}
+                columns={4}
                 label="This month"
                 period="This month"
                 loading={centre.loading || stats.loading}
@@ -275,7 +295,10 @@ export function CommandCentrePage() {
                     value: centre.data
                       ? usdCentsRounded(centre.data.revenue_current_month_cents)
                       : undefined,
-                    period: centre.data
+                    // The comparison is a comparison, and the window is the
+                    // strip's. `period` used to carry both, which is what made
+                    // the strip state its window nowhere.
+                    hint: centre.data
                       ? `${usdCentsRounded(centre.data.revenue_last_month_cents)} last month`
                       : USD_NORMALISED_SHORT,
                     delta:
@@ -298,16 +321,16 @@ export function CommandCentrePage() {
                     value: centre.data
                       ? usdCentsRounded(centre.data.growth_current_year_cents)
                       : undefined,
-                    period: USD_NORMALISED_SHORT,
+                    hint: USD_NORMALISED_SHORT,
                   },
                   {
                     label: 'Signups this month',
                     value: centre.data
                       ? formatNumber(centre.data.signups_current_month)
                       : undefined,
-                    period: centre.data
+                    hint: centre.data
                       ? `${formatNumber(centre.data.signups_last_month)} last month`
-                      : 'This month',
+                      : undefined,
                   },
                   {
                     label: 'Accounts',
@@ -340,7 +363,7 @@ export function CommandCentrePage() {
               />
             </CardBody>
           </Card>
-        </Grid>
+        </Section>
 
         <Section
           title="Over time"
@@ -374,9 +397,26 @@ export function CommandCentrePage() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={CHART_MARGIN}>
                 <CartesianGrid {...CHART_GRID} />
-                <XAxis dataKey="date" {...CHART_AXIS} />
-                <YAxis {...CHART_AXIS} width={48} />
-                <RechartsTooltip />
+                <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
+                <YAxis {...CHART_AXIS} tickFormatter={(value: number) => formatCompact(value)} width={48} />
+                {/* The app's tooltip, not Recharts' default: the default is an
+                    unthemed white box with a browser font that ignores the dark
+                    palette entirely. */}
+                <RechartsTooltip
+                  cursor={CHART_CURSOR}
+                  content={
+                    <SeriesTooltip
+                      name={METRICS.find((entry) => entry.value === metric)?.label ?? 'Revenue'}
+                      format={(value) =>
+                        // `chartData` already divides revenue by 100, so the
+                        // tooltip has dollars and the formatter wants cents.
+                        metric === 'revenue'
+                          ? usdCentsRounded(Math.round(value * 100))
+                          : formatNumber(Math.round(value))
+                      }
+                    />
+                  }
+                />
                 <Area
                   type="monotone"
                   dataKey="value"
@@ -384,6 +424,10 @@ export function CommandCentrePage() {
                   fill={seriesColor(0)}
                   fillOpacity={0.12}
                   strokeWidth={2}
+                  // Off, like the customer console's activity chart: this page
+                  // re-fetches on every Refresh, and a 400ms left-to-right draw
+                  // on each one is a console that never settles.
+                  isAnimationActive={false}
                 />
               </AreaChart>
             </ResponsiveContainer>

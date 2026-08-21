@@ -154,7 +154,15 @@ export function HandoffSection({
                   />
                 </Field>
 
-                <Field label="Offer the handoff" hint="Delay before the form appears.">
+                {/* The width is on the `Field`, not on the `Select`. A width
+                    class on the control itself narrows the `<select>` and leaves
+                    the chevron positioned against the full-width wrapper — the
+                    glyph sat 300px to the right of the box it belongs to. */}
+                <Field
+                  label="Offer the handoff"
+                  hint="Delay before the form appears."
+                  className="max-w-xs"
+                >
                   <Select
                     options={HANDOFF_DELAY_OPTIONS}
                     value={String(draft.handoffDelaySeconds)}
@@ -162,12 +170,15 @@ export function HandoffSection({
                     onChange={(event) =>
                       onChange({ handoffDelaySeconds: toInt(event.target.value) })
                     }
-                    className="max-w-xs"
                   />
                 </Field>
 
                 <Grid cols={2}>
-                  <Field label="Give up waiting after" error={errors.queueTimeoutSeconds ?? null}>
+                  <Field
+                    label="Give up waiting after"
+                    error={errors.queueTimeoutSeconds ?? null}
+                    className="max-w-xs"
+                  >
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -187,6 +198,7 @@ export function HandoffSection({
                     label="Most people waiting at once"
                     hint="Past it, visitors get the offline form."
                     error={errors.maxQueueSize ?? null}
+                    className="max-w-xs"
                   >
                     <Input
                       type="number"

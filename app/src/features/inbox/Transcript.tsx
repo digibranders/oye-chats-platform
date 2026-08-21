@@ -126,7 +126,8 @@ function Attachment({ message }: { message: OperatorMessage }) {
  * A conversation, read top to bottom.
  *
  * Three voices, three grounds, no accent: the visitor speaks on white, the AI on
- * sunken paper, and your team speaks in ink — the same near-black as the
+ * sunken paper — both hairlined, because neither ground clears 2.4 L* against
+ * the canvas the thread is painted on — and your team speaks in ink — the same near-black as the
  * navigation rail, so "us" reads the same everywhere in the product. Blue is
  * left alone to mean interactive, which matters more here than anywhere else,
  * because this is the one screen where a row can be both selected and streaming.
@@ -305,7 +306,7 @@ export function Transcript({
                   ) : message.role === 'bot' ? (
                     <span
                       aria-hidden
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-sunken"
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface-sunken"
                     >
                       <Bot className="h-3 w-3 text-text-tertiary" />
                     </span>
@@ -323,7 +324,19 @@ export function Transcript({
                         mine
                           ? cn('bg-ink text-rail-text', groupEnd && 'rounded-br-xs')
                           : message.role === 'bot'
-                            ? cn('bg-surface-sunken text-text-primary', groupEnd && 'rounded-bl-xs')
+                            ? cn(
+                                // The bubble is bordered as well as filled.
+                                // `--color-surface-sunken` is 1.8 L* off the
+                                // `bg-canvas` ground this transcript sits on —
+                                // under the 2.4 L* step tokens.css sets as the
+                                // floor for a felt difference — so on a support
+                                // operator's panel the AI's bubble had no edge
+                                // at all and its text read as loose type on the
+                                // pane. The hairline draws the shape; the fill
+                                // still separates it from the visitor's white.
+                                'border border-border bg-surface-sunken text-text-primary',
+                                groupEnd && 'rounded-bl-xs',
+                              )
                             : cn(
                                 'border border-border bg-surface text-text-primary',
                                 groupEnd && 'rounded-bl-xs',

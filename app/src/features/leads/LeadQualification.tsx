@@ -147,9 +147,15 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
               <span className="w-28 shrink-0 truncate text-sm font-medium text-text-primary">
                 {dimension.label}
               </span>
+              {/* `hideLabel`: the row prints the dimension's name at its
+                  leading edge and the score at its trailing one, so a label row
+                  on the bar would be the same two facts a third time — and a
+                  30px labelled bar in a list of 6px bare ones would not share a
+                  baseline with its siblings. The `aria-label` still says both. */}
               <Progress
                 className="min-w-0 flex-1"
                 size="sm"
+                hideLabel
                 value={percent}
                 label={`${dimension.label}: ${dimension.score} out of ${max}`}
                 tone={dimension.captured ? 'success' : 'accent'}

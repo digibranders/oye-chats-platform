@@ -179,16 +179,28 @@ export function CardBody({
   );
 }
 
-/** A hairline-separated division inside a card. Use instead of nesting a card. */
+/**
+ * A hairline-separated division inside a card. Use instead of nesting a card.
+ *
+ * `tone="sunken"` sets the band on `--color-surface-sunken` — for a summary, a
+ * preview or a note that is *about* the band above it rather than more of the
+ * same. Three call sites were hand-writing `className="bg-surface-sunken"`,
+ * which is a colour decision escaping into a feature.
+ */
 export function CardSection({
   children,
+  tone = 'plain',
   className,
 }: {
   children: ReactNode;
+  tone?: 'plain' | 'sunken';
   className?: string;
 }) {
   return (
-    <div data-card-band className={cn('px-cell py-4', className)}>
+    <div
+      data-card-band
+      className={cn('px-cell py-4', tone === 'sunken' && 'bg-surface-sunken', className)}
+    >
       {children}
     </div>
   );
@@ -215,6 +227,57 @@ export function CardFooter({
         // border's arc at both bottom corners — visible against the canvas.
         'flex flex-wrap items-center justify-end gap-2 rounded-b-inner-flush',
         'bg-surface-sunken px-cell py-3',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+export interface WellProps {
+  children: ReactNode;
+  /**
+   * `sunken` sets the well on `--color-surface-sunken` — the default, and what
+   * makes it read as a recess in the card rather than as a second card. It is
+   * 4.5 L* against the card's white and only **1.8** against the page's canvas,
+   * so a `Well` belongs inside a `Card`; on the page ground it would be a block
+   * with no visible edge, which is exactly how a chat bubble went missing. Its
+   * border carries it either way, but the fill stops meaning anything. `plain`
+   * keeps the card's own white and draws the border only, for a well holding a
+   * control that already has a fill of its own (a code block, a colour swatch),
+   * where two greys one L* apart look like a rendering fault.
+   */
+  tone?: 'sunken' | 'plain';
+  className?: string;
+}
+
+/**
+ * A bordered recess inside a card: a quoted value, a preview, a summary of what
+ * is about to happen, an empty slot waiting for content.
+ *
+ * The most-copied shape in the app after the card itself — three agents asked
+ * for it by name and six hand-rolled copies of the same
+ * `rounded-md border border-border px-3 py-2.5` were still in `features/` when
+ * this landed, at four different paddings and two radii.
+ *
+ * **8px, not 10.** A well is a child of a card, and a child inset by the card's
+ * 20px gutter takes `--radius-inner`; sharing the parent's 10 is what draws the
+ * crescent of dead space §4 calls a broken corner. 8 is close enough to read as
+ * the same family and far enough to read as *inside* it.
+ *
+ * It is not a `Card`. A card is a top-level surface with a header, a body and
+ * elevation semantics; nesting one inside another gives a doubled hairline and
+ * two radii a pixel apart, which is the single most common defect in the console
+ * this replaces. It is not `CardSection` either — that divides a card's own
+ * bands with a hairline and reaches its edges; this is an object *in* a band.
+ */
+export function Well({ children, tone = 'sunken', className }: WellProps) {
+  return (
+    <div
+      className={cn(
+        'rounded-md border border-border px-3 py-2.5',
+        tone === 'sunken' ? 'bg-surface-sunken' : 'bg-surface',
         className,
       )}
     >

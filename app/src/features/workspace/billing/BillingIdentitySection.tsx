@@ -228,8 +228,9 @@ export function BillingIdentitySection({
           {!foreign ? (
             <Field
               label="GSTIN"
+              optional
               error={errors.gstin}
-              hint="Optional. With a GSTIN we issue a B2B tax invoice and derive your place of supply from it."
+              hint="With a GSTIN we issue a B2B tax invoice and derive your place of supply from it."
             >
               <Input
                 value={form.gstin}
@@ -283,6 +284,9 @@ export function BillingIdentitySection({
               autoComplete="address-line2"
             />
           </Field>
+          {/* Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
+              body is 472px, so `Grid cols={2}` would stack a city and a postal
+              code into two full-width rows. See the round-two report. */}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="City">
               <Input

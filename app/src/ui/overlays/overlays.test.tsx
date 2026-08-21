@@ -214,6 +214,34 @@ describe('Dialog and Drawer share one padding contract', () => {
     expect(screen.getByText('Lead')).toBeInTheDocument();
     expect(classesOf(screen.getByRole('dialog'))).toContain('sm:rounded-l-xl');
   });
+
+  it('declares a page container on the body, so a grid inside asks the panel', () => {
+    // `Grid`, `Columns` and `PropertyGrid columns={2}` size themselves against
+    // the nearest container named `page`. Without one on the panel they walked
+    // past it and measured the viewport, so a 480px drawer rendered a two-up
+    // grid at 240px a column on a 1440px screen — and four call sites gave up
+    // and wrote `sm:grid-cols-2`, which asks the same wrong question.
+    render(
+      <Dialog open onOpenChange={() => {}} title="Invite a teammate">
+        <p>Body</p>
+      </Dialog>,
+    );
+    const body = screen.getByText('Body').parentElement;
+    expect(classesOf(body)).toContain('@container/page');
+  });
+
+  it('lets a drawer hold a pane at the pane\u2019s own width, and reach its edges', () => {
+    render(
+      <Drawer open onOpenChange={() => {}} width="xs" flush title="Columns">
+        <p>Body</p>
+      </Drawer>,
+    );
+    // 320px, the width the inbox's visitor panel and the column picker already
+    // are. At `sm` (448) they either stretch or leave 128px of empty gutter.
+    expect(classesOf(screen.getByRole('dialog'))).toContain('sm:max-w-80');
+    // `flush`: the child owns its own gutter, so the body must not add one.
+    expect(classesOf(screen.getByText('Body').parentElement)).toContain('p-0');
+  });
 });
 
 describe('ConfirmDialog', () => {
@@ -262,6 +290,38 @@ describe('ConfirmDialog', () => {
     const confirm = screen.getByRole('button', { name: 'Delete' });
     expect(confirm).toBeDisabled();
     expect(confirm).toHaveAccessibleDescription('Type the name exactly to continue.');
+  });
+});
+
+describe('ConfirmDialog takes a body', () => {
+  it('renders children between the consequence and the phrase field', () => {
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="Delete Acme Support?"
+        description="Its knowledge base is deleted with it."
+        confirmLabel="Delete chatbot"
+        confirmPhrase="Acme Support"
+        onConfirm={() => {}}
+      >
+        <Alert tone="danger" title="412 documents">
+          Export the conversations first if you need them.
+        </Alert>
+      </ConfirmDialog>,
+    );
+
+    // `AlertDialog.Description` renders a `<p>`, so an `Alert` — a `<div>` —
+    // could not be put in the body at all and two surfaces shipped the warning
+    // outside the dialog instead.
+    const dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText('412 documents')).toBeInTheDocument();
+
+    // Order matters: what will happen, then the evidence, then the thing the
+    // user has to type.
+    const body = within(dialog).getByText('412 documents');
+    const phrase = within(dialog).getByLabelText(/Type Acme Support to confirm/);
+    expect(body.compareDocumentPosition(phrase) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

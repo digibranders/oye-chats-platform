@@ -159,3 +159,28 @@ describe('chart theme', () => {
     expect(CHART_MARGIN.right).toBe(0);
   });
 });
+
+
+describe('ChartLegend markers', () => {
+  it('can describe a reference line as a line', () => {
+    // The marker was always a filled dot, so a reference line — an average, a
+    // plan limit, a target — had no legal entry: describing a 1px dashed rule
+    // with a solid disc is the legend telling the reader the wrong thing about
+    // the chart it is explaining.
+    const { container } = render(
+      <ChartLegend
+        items={[
+          { label: 'Messages', seriesIndex: 0 },
+          { label: 'Average', seriesIndex: 7, marker: 'dash' },
+        ]}
+      />,
+    );
+    const [dot, dash] = Array.from(container.querySelectorAll('li > span[aria-hidden]'));
+    expect(dot.className).toContain('rounded-full');
+    expect(dot.className).toContain('h-2');
+    // A rule, not a disc — and dashed, painted with a repeating gradient
+    // because a 2px-tall element cannot show a border-style.
+    expect(dash.className).toContain('w-4');
+    expect(dash.getAttribute('style')).toContain('repeating-linear-gradient');
+  });
+});

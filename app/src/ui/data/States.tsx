@@ -133,6 +133,7 @@ function StateShell({ framed, className, children, role }: StateShellProps) {
 interface StateBodyProps {
   size: StateSize;
   align: StateAlign;
+  flush: boolean;
   icon?: LucideIcon;
   discClass: string;
   glyphClass: string;
@@ -144,6 +145,7 @@ interface StateBodyProps {
 function StateBody({
   size,
   align,
+  flush,
   icon: Icon,
   discClass,
   glyphClass,
@@ -154,7 +156,15 @@ function StateBody({
   const geometry = GEOMETRY[size];
   const centred = align === 'center';
   return (
-    <div className={cn(geometry.root, centred ? 'text-center' : 'text-left')}>
+    <div
+      className={cn(
+        geometry.root,
+        // `flush` drops only the horizontal gutter. The vertical one is the
+        // state's own breathing room and belongs to it either way.
+        flush && 'px-0',
+        centred ? 'text-center' : 'text-left',
+      )}
+    >
       {Icon && size !== 'inline' ? (
         <span
           className={cn(
@@ -173,7 +183,7 @@ function StateBody({
           className={cn(
             geometry.description,
             geometry.measure,
-            'leading-relaxed text-text-secondary',
+            'text-text-secondary',
             centred && 'mx-auto',
           )}
         >
@@ -200,6 +210,16 @@ function resolveSize(size: StateSize | undefined, compact: boolean | undefined):
 }
 
 export interface EmptyStateProps {
+  /**
+   * Drops the state's own horizontal gutter, for one seated in a container that
+   * already draws it — a `CardBody`, a `PopoverBody`, a `SettingBand`.
+   *
+   * Without it the two gutters add up and the state's copy sits 20px inside
+   * every label around it, which two surfaces had already worked around with a
+   * `-mx-cell`. A state in a `CardBody flush` still wants the gutter, so this
+   * is a prop rather than something the component can infer.
+   */
+  flush?: boolean;
   icon?: LucideIcon;
   title: string;
   /**
@@ -234,6 +254,7 @@ export function EmptyState({
   size,
   align,
   framed,
+  flush = false,
   compact,
   className,
 }: EmptyStateProps) {
@@ -242,6 +263,7 @@ export function EmptyState({
     <StateShell framed={framed ?? false} className={className}>
       <StateBody
         size={resolved}
+        flush={flush}
         align={align ?? defaultAlign(resolved)}
         icon={Icon}
         discClass="bg-surface-sunken"
@@ -255,6 +277,16 @@ export function EmptyState({
 }
 
 export interface ErrorStateProps {
+  /**
+   * Drops the state's own horizontal gutter, for one seated in a container that
+   * already draws it — a `CardBody`, a `PopoverBody`, a `SettingBand`.
+   *
+   * Without it the two gutters add up and the state's copy sits 20px inside
+   * every label around it, which two surfaces had already worked around with a
+   * `-mx-cell`. A state in a `CardBody flush` still wants the gutter, so this
+   * is a prop rather than something the component can infer.
+   */
+  flush?: boolean;
   title?: string;
   /** What actually failed, in the user's terms. Never a raw stack or status code. */
   description?: string;
@@ -296,6 +328,7 @@ export function ErrorState({
   size,
   align,
   framed,
+  flush = false,
   polite = false,
   compact,
   className,
@@ -309,6 +342,7 @@ export function ErrorState({
     >
       <StateBody
         size={resolved}
+        flush={flush}
         align={align ?? defaultAlign(resolved)}
         icon={AlertCircle}
         discClass="bg-danger-tint"
@@ -328,6 +362,8 @@ export function ErrorState({
 }
 
 export interface LockedStateProps {
+  /** Drops the state's own horizontal gutter. See `EmptyStateProps.flush`. */
+  flush?: boolean;
   title: string;
   description: string;
   /** The upsell. Never a bare "Upgrade" — name the plan and what it unlocks. */
@@ -356,6 +392,7 @@ export interface LockedStateProps {
  * concentric radii a pixel apart at the corners.
  */
 export function LockedState({
+  flush = false,
   title,
   description,
   action,
@@ -381,6 +418,7 @@ export function LockedState({
       ) : null}
       <StateBody
         size={resolved}
+        flush={flush}
         align={align ?? defaultAlign(resolved)}
         icon={Lock}
         discClass="bg-plan-tint"

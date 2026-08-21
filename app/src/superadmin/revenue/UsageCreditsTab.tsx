@@ -72,7 +72,7 @@ export function UsageCreditsTab() {
       key: 'client',
       header: 'Customer',
       pinned: true,
-      width: '15rem',
+      width: '13rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-text-primary">
@@ -87,7 +87,7 @@ export function UsageCreditsTab() {
     {
       key: 'period',
       header: 'Period',
-      width: '13rem',
+      width: '11rem',
       sortable: true,
       render: (row) => (
         <span className="figure text-sm">
@@ -99,7 +99,7 @@ export function UsageCreditsTab() {
       key: 'ai',
       header: 'AI messages',
       align: 'right',
-      width: '11rem',
+      width: '10rem',
       sortable: true,
       render: (row) => (
         <QuotaCell used={row.ai_messages_used} limit={row.ai_messages_limit} />
@@ -109,7 +109,7 @@ export function UsageCreditsTab() {
       key: 'live',
       header: 'Live chat',
       align: 'right',
-      width: '11rem',
+      width: '9rem',
       secondary: true,
       sortable: true,
       render: (row) => (
@@ -120,7 +120,7 @@ export function UsageCreditsTab() {
       key: 'scans',
       header: 'URL scans',
       align: 'right',
-      width: '10rem',
+      width: '9rem',
       secondary: true,
       sortable: true,
       render: (row) => <QuotaCell used={row.url_scans_used} limit={row.url_scans_limit} />,
@@ -129,7 +129,7 @@ export function UsageCreditsTab() {
       key: 'storage',
       header: 'Storage (MB)',
       align: 'right',
-      width: '10rem',
+      width: '9rem',
       secondary: true,
       sortable: true,
       render: (row) => <QuotaCell used={row.storage_used_mb} limit={row.storage_limit_mb} />,
@@ -138,9 +138,12 @@ export function UsageCreditsTab() {
       key: 'overage',
       // Real US dollars, not the normalised figure the rest of this section
       // carries: the server passes the stored amount through without converting.
-      header: 'Overage (already US dollars)',
+      // "Overage (USD)", with the reason on the column's own note: the full
+      // clause set the column's width, and seven widths summing to 81rem in a
+      // 70.5rem column is what pushed this table off the card.
+      header: 'Overage (USD)',
       align: 'right',
-      width: '11rem',
+      width: '9rem',
       sortable: true,
       render: (row) =>
         row.overage_messages === 0 && row.overage_amount_cents === 0 ? (
@@ -268,6 +271,7 @@ export function UsageCreditsTab() {
           onRetry={usage.reload}
           loaded={usage.items.length}
           cap={SERVER_CAP}
+          note="Overage is in real US dollars, not the normalised figure the rest of this section carries: the server passes the stored amount through without converting it. Limits are the account's live plan limits, not the ones frozen on the record."
           empty={
             <EmptyState
               title={clientId ? 'No usage for that client' : 'No usage recorded'}

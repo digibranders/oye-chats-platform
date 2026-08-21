@@ -295,7 +295,6 @@ export function VoiceSection({
               disabled={readOnly}
               placeholder="Acme Inc."
               onChange={(event) => onChange({ companyName: event.target.value })}
-              className="max-w-sm"
             />
           </Field>
           <Field label="What you do">

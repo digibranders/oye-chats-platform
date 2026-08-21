@@ -7,10 +7,13 @@ import {
   CardHeader,
   Columns,
   ErrorState,
+  Eyebrow,
   Field,
   LockedState,
+  Measure,
   Page,
   PageHeader,
+  PropertyGrid,
   SaveBar,
   Select,
   Skeleton,
@@ -396,29 +399,39 @@ export function QualificationPage() {
     return (
       <Page>
         <PageHeader title={TITLE} />
-        <LockedState
-          title="Lead scoring is not included on your plan"
-          description={`Your workspace is on ${planName || 'a plan'} without lead qualification. On Standard and above, the chatbot scores each visitor and emails you the ones worth calling.`}
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
-            </Link>
-          }
-          preview={
-            // `px-6`, matching `LockedState`'s own body: at `px-5` the preview's
-            // left edge sat 4px inside the lock message's, in one bordered box.
-            <div className="px-6 py-5">
-              <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-                What you would configure
-              </p>
-              <ul className="mt-2 space-y-1.5 text-prose text-text-secondary">
-                <li>Four scoring dimensions, each with the answers that earn points.</li>
-                <li>The score at which a lead becomes marketing-, sales-accepted, or sales-qualified.</li>
-                <li>Who is emailed, and which webhook is called, the moment one turns hot.</li>
-              </ul>
-            </div>
-          }
-        />
+        {/* A reading measure. `LockedState size="page"` draws its own card and
+            centres about 400px of copy in it, so at the page's full width the
+            card was 1,128px of white around one paragraph — the emptiest surface
+            in the console saying the least. */}
+        <Measure width="reading">
+          <LockedState
+            title="Lead scoring is not included on your plan"
+            description={`Your workspace is on ${planName || 'a plan'} without lead qualification. On Standard and above, the chatbot scores each visitor and emails you the ones worth calling.`}
+            action={
+              <Link to="/billing" className={buttonClass('primary', 'sm')}>
+                See plans
+              </Link>
+            }
+            preview={
+              // A `PropertyGrid`, not three dimmed sentences: what is behind the
+              // lock is three named things, and naming them left-to-right is
+              // both shorter and closer to the shape of the page it previews.
+              // `px-cell` matches the state's own body, so the two share a left
+              // edge inside the one bordered box.
+              <div className="px-cell pb-1 pt-5">
+                <Eyebrow>What you would configure</Eyebrow>
+                <PropertyGrid
+                  className="mt-2"
+                  items={[
+                    { label: 'Dimensions', value: 'Four, each with the answers that earn points' },
+                    { label: 'Thresholds', value: 'Where a lead turns marketing-, sales-accepted, or sales-qualified' },
+                    { label: 'When one turns hot', value: 'Who is emailed, and which webhook fires' },
+                  ]}
+                />
+              </div>
+            }
+          />
+        </Measure>
       </Page>
     );
   }

@@ -79,13 +79,14 @@ export function BusinessHoursField({
 
       {value ? (
         <>
-          <Field label="Time zone">
+          {/* The cap is on the `Field`: on the `Select` it narrows the box and
+              leaves the chevron against the full-width wrapper. */}
+          <Field label="Time zone" className="max-w-xs">
             <Select
               options={zones}
               value={timezone}
               disabled={disabled}
               onChange={(event) => onChange({ ...value, timezone: event.target.value })}
-              className="max-w-xs"
             />
           </Field>
 

@@ -78,7 +78,16 @@ export function PlatformGuide({
       </Field>
 
       {!platform ? (
-        <EmptyState size="inline" title="Choose a platform to see the steps" />
+        // `-mx-cell` because this panel is already inside a `CardBody`, which
+        // has drawn the 20px gutter once. Every state draws `px-cell` of its
+        // own so that a state seated in a flush body lands on the card title's
+        // left edge — seated in a padded one it lands 20px inside it, and the
+        // one line of copy here sat visibly proud of the field label above it.
+        <EmptyState
+          size="inline"
+          className="-mx-cell"
+          title="Choose a platform to see the steps"
+        />
       ) : resolving ? (
         <div aria-busy aria-label="Working out which snippet your plan needs" className="space-y-3">
           <Skeleton className="h-16 w-full rounded-md" />

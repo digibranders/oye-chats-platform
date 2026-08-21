@@ -57,6 +57,16 @@
   --color-canvas: #efede6;          /* L*  93.7  the page ground               */
   --color-surface-active: #e9e6dd;  /* L*  91.3  pressed                       */
 
+  /* SUNKEN IS A SURFACE INSIDE `--color-surface`, NEVER ON `--color-canvas`.
+     The two are 1.8 L* apart — under the 2.4 floor this ramp is built on — so a
+     sunken block on the page ground has no edge at all: the assistant's chat
+     bubble, painted sunken on the transcript's canvas, was effectively
+     invisible. On white it is 4.5 L* and reads as a recess, which is what it is
+     for. A block that has to separate itself from the canvas is
+     `--color-surface` with a hairline (`Card`, `Well`), or it carries a border
+     of its own — which is why `SaveBar` and `SegmentedControl` may sit sunken on
+     the page and a bare `<div class="bg-surface-sunken">` may not. */
+
   --color-border: #e2dfd7;          /* decorative hairline ONLY                */
   --color-border-strong: #8b877f;   /* control boundaries — 3.58 / 3.05 / 3.20 */
 
@@ -127,6 +137,21 @@
   --color-neutral-fill: #6e6a62;
   --color-neutral-tint: #e4e1d7;    /* text on tint: 5.09. Distinct from sunken. */
 
+  /* A disabled control's own fills, in the two states it can be disabled in.
+     Their own tokens rather than a surface and a text colour borrowed for the
+     job: a switch track is neither a surface nor type, and reaching for
+     --color-text-disabled as a fill is how a role gets two meanings.
+
+     The `-on` value is what makes a disabled CHECKED control readable as
+     checked. Without it the only honest options were an opacity wash — which
+     the file bans, and which compounds to 0.36 on a labelled checkbox — or
+     nothing at all, which is what shipped: a disabled checked switch was
+     byte-identical to a live one (both --color-ink, opacity 1) and only its
+     label dimmed. 2.41 between the two disabled fills is a step the eye reads
+     without either of them claiming to be live. */
+  --color-control-disabled: #ddd9d0;    /* disabled + off — 1.41 on white     */
+  --color-control-disabled-on: #8f8b82; /* disabled + on  — 2.41 on the above */
+
   /* Reserved brass. Plan, entitlement and upgrade surfaces only, so "this is a
      paid capability" reads at a glance without inventing a status. */
   --color-plan: #755814;            /* 6.64 / 5.67 / 5.93                      */
@@ -140,8 +165,15 @@
      a different colour on three adjacent pages. Muted violet is permitted here
      and ONLY here — as data, never as UI chrome. Every series clears 3:1 on the
      canvas; past four, charts also vary dash pattern, because the greyscale
-     spread is narrow and hue alone stops separating them. */
-  --color-chart-1: #2f5fe0;
+     spread is narrow and hue alone stops separating them.
+
+     The first series was #2F5FE0 — one step from --color-accent-500 (#3A6AE6)
+     at 4.79 on the canvas — so the DEFAULT fill of every ranked bar and every
+     first line read as interactive, against §2.5's own rule. It is now a deep
+     petrol navy: 10.0 on the canvas against the accent's 4.09, roughly twice as
+     dark and far less saturated, so a bar cannot be mistaken for a link and blue
+     keeps its categorical strength where it is genuinely useful — in data. */
+  --color-chart-1: #123a5e;
   --color-chart-2: #1f7c56;
   --color-chart-3: #a8701f;
   --color-chart-4: #6e4fb8;
@@ -283,10 +315,17 @@
 
   /* One ladder for everything that stacks. The system this replaces put the
      mobile scrim and the top bar both on z-20, with the bar later in the DOM,
-     so the bar painted above its own scrim and stayed clickable. */
+     so the bar painted above its own scrim and stayed clickable.
+
+     `--z-rail: 20` was on the ladder with zero consumers and, unlike the
+     rungs above and below it, could never have had one: the
+     desktop rail is a grid child in normal flow with no z-index at all, and the
+     mobile rail is a real dialog on `--z-overlay`. A rung nothing paints with
+     is a claim the ladder cannot keep, so it is gone rather than repointed.
+     `scale.test.ts` bans a raw `z-[<number>]` anywhere in the app, so the only
+     way to stack is to name a rung here. */
   --z-base: 0;
   --z-sticky: 10;           /* sticky toolbars and table heads                 */
-  --z-rail: 20;             /* the navigation rail                            */
   --z-topbar: 30;
   --z-scrim: 40;            /* the mobile rail's backdrop                      */
   --z-overlay: 50;          /* dialogs, drawers, menus, popovers, tooltips     */
@@ -305,65 +344,71 @@
 }
 
 /* =============================================================================
-   Base
+   Base — in `@layer base`, and that is load-bearing rather than tidy.
+
+   `src/index.css` imports Tailwind — which declares `theme, base, components,
+   utilities` and puts every utility inside one of them — and then imports this
+   file. An UNLAYERED rule beats a rule in ANY layer whatever its specificity,
+   so everything below used to win against the utility written to override it.
+
+   The visible consequence was the focus ring. `:where(a[href], button, …)
+   :focus-visible` has zero specificity and still beat `.outline-none` at all
+   seventeen call sites that write it. `Combobox`, `TagInput` and the command
+   palette each draw their ring on the BOX around a bare input — and each got
+   the inner input's ring painted anyway, at `outline-offset: 2px`, inside a
+   panel with 1px of clearance, clipped by the popup's `overflow-hidden`: a
+   solid blue bar across the palette's header. `body`'s own colours had the same
+   power over a `bg-*` utility, and `.figure` over `font-mono`'s siblings.
+
+   Naming the layers puts this file where it belongs — under every utility. The
+   `@theme` block and the `:root` custom properties stay unlayered, because
+   layers order *declarations that conflict* and neither of those can.
    ============================================================================= */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* The console is a tool, not a page: native smooth scrolling fights the
+       inbox's programmatic scroll-to-latest. */
+    scroll-behavior: auto;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  /* One focus ring, everywhere.
+
+     `outline`, not `box-shadow`. The system uses inset box-shadows for structure
+     — the active tab's underline, the table's hairlines, a switch thumb's seam —
+     and a box-shadow ring overwrites all of them, so focusing an active tab used
+     to erase the marker that said it was active. An outline also follows
+     `border-radius` on its own and is never clipped by an `overflow: hidden`
+     ancestor, which a ring on a table cell always is.
+
+     `[tabindex]` is deliberately absent from the selector: it matches the
+     programmatically-focused content element of every Radix overlay, which would
+     flash a ring around an entire dialog as it opens. */
+  :where(a[href], button, input, select, textarea, summary):focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: 2px;
+  }
 }
 
-html {
-  /* The console is a tool, not a page: native smooth scrolling fights the
-     inbox's programmatic scroll-to-latest. */
-  scroll-behavior: auto;
-  -webkit-text-size-adjust: 100%;
-}
-
-body {
-  margin: 0;
-  background-color: var(--color-canvas);
-  color: var(--color-text-primary);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: var(--text-base--line-height);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: 'ss01', 'cv11';
-}
-
-/* Every figure in the console. Mono family plus tabular figures, so a column of
-   numbers cannot jitter between renders and a live count cannot shuffle its own
-   digits sideways.
-
-   `font-feature-settings` REPLACES rather than extends, so `ss01` and `cv11`
-   have to be restated here — dropping `cv11` on exactly the elements that
-   render API keys and session ids is how a lowercase `l` starts being read as a
-   `1`. */
-.figure {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'ss01', 'cv11', 'tnum';
-  letter-spacing: -0.01em;
-}
-
-/* One focus ring, everywhere.
-
-   `outline`, not `box-shadow`. The system uses inset box-shadows for structure
-   — the active tab's underline, the table's hairlines, a switch thumb's seam —
-   and a box-shadow ring overwrites all of them, so focusing an active tab used
-   to erase the marker that said it was active. An outline also follows
-   `border-radius` on its own and is never clipped by an `overflow: hidden`
-   ancestor, which a ring on a table cell always is.
-
-   `[tabindex]` is deliberately absent from the selector: it matches the
-   programmatically-focused content element of every Radix overlay, which would
-   flash a ring around an entire dialog as it opens. */
-:where(a[href], button, input, select, textarea, summary):focus-visible {
-  outline: 2px solid var(--color-accent-500);
-  outline-offset: 2px;
-}
 
 /* A skeleton has to breathe to read as "loading" rather than "broken". The
    blanket reduced-motion rule below only shortens durations, which would freeze
@@ -375,137 +420,204 @@ body {
   50%  { opacity: 0.45; }
 }
 
-.console-skeleton {
-  background-color: var(--color-surface-sunken);
-  animation: console-pulse 1.6s ease-in-out infinite;
-}
+/* =============================================================================
+   Components — in `@layer components`, one rung above `base` and still under
+   every utility, so a call site can always override one of these classes with a
+   utility and see it take effect.
+   ============================================================================= */
 
-/* A sticky cell in a `border-collapse` table arrives with no borders of its own:
-   the table paints them, not the cell, so the rest of the row shows through
-   underneath a pinned column or a stuck header. `border-separate` with hairlines
-   drawn as inset shadows makes the boundary travel with the cell. */
-.console-table {
-  border-collapse: separate;
-  border-spacing: 0;
-}
+@layer components {
+  /* Every figure in the console. Mono family plus tabular figures, so a column
+     of numbers cannot jitter between renders and a live count cannot shuffle
+     its own digits sideways.
 
-.console-table th,
-.console-table td {
-  box-shadow: inset 0 -1px 0 var(--color-border);
-}
-
-.console-table .is-pinned {
-  box-shadow:
-    inset 0 -1px 0 var(--color-border),
-    inset -1px 0 0 var(--color-border);
-}
-
-/* -----------------------------------------------------------------------------
-   Overlay motion.
-
-   Written here rather than pulled from an animation plugin so the durations come
-   from the same tokens as everything else, and so the reduced-motion rule below
-   governs them like every other transition.
-
-   Base UI stamps `data-open` / `data-closed` on overlay parts and keeps the
-   element in the DOM until its animation finishes, which is what makes an exit
-   animation possible at all.
-
-   The panel keyframes animate `scale` and `opacity` only. Tailwind v4 emits
-   `-translate-x-1/2` as the standalone `translate` property rather than as
-   `transform`, so a keyframe that also wrote `transform: translate(-50%,-50%)`
-   would COMPOSE with it — the dialog would fly in from a point offset by its own
-   full width and height, then snap to centre.
-   ----------------------------------------------------------------------------- */
-@keyframes overlay-in  { from { opacity: 0; } to { opacity: 1; } }
-@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
-@keyframes panel-in    { from { opacity: 0; scale: 0.97; } to { opacity: 1; scale: 1; } }
-@keyframes panel-out   { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.97; } }
-@keyframes slide-right-in  { from { translate: 100% 0; } to { translate: 0 0; } }
-@keyframes slide-right-out { from { translate: 0 0; } to { translate: 100% 0; } }
-@keyframes slide-left-in   { from { translate: -100% 0; } to { translate: 0 0; } }
-@keyframes slide-left-out  { from { translate: 0 0; } to { translate: -100% 0; } }
-@keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
-@keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
-
-.motion-overlay[data-open]   { animation: overlay-in var(--dur) var(--ease-console-out); }
-.motion-overlay[data-closed] { animation: overlay-out var(--dur-fast) var(--ease-console); }
-.motion-panel[data-open]     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
-.motion-panel[data-closed]   { animation: panel-out var(--dur-fast) var(--ease-console); }
-.motion-slide-right[data-open]   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
-.motion-slide-right[data-closed] { animation: slide-right-out var(--dur) var(--ease-console); }
-.motion-slide-left[data-open]   { animation: slide-left-in var(--dur-slow) var(--ease-console-out); }
-.motion-slide-left[data-closed] { animation: slide-left-out var(--dur) var(--ease-console); }
-.motion-pop[data-open]   { animation: pop-in var(--dur) var(--ease-console-out); }
-.motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
-.motion-pop { transform-origin: var(--transform-origin, center); }
-
-/* -----------------------------------------------------------------------------
-   In-progress motion.
-
-   This is the console's answer to "the bot is crawling / training / streaming".
-   It is motion rather than a hue on purpose: giving progress its own colour
-   meant giving it the interactive blue, and a selected row that is also
-   streaming then says two things at once in one colour.
-   ----------------------------------------------------------------------------- */
-@keyframes indeterminate {
-  0%   { translate: -100% 0; }
-  100% { translate: 300% 0; }
-}
-
-/* The brand mark is a C made of three dots — a bubble mid-typing. Working is the
-   mark, animating. */
-@keyframes typing-dot {
-  0%, 60%, 100% { opacity: 0.25; translate: 0 0; }
-  30%           { opacity: 1; translate: 0 -2px; }
-}
-
-.typing-dot { animation: typing-dot 1.2s var(--ease-console) infinite; }
-.typing-dot:nth-child(2) { animation-delay: 0.15s; }
-.typing-dot:nth-child(3) { animation-delay: 0.3s; }
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+     `font-feature-settings` REPLACES rather than extends, so `ss01` and `cv11`
+     have to be restated here — dropping `cv11` on exactly the elements that
+     render API keys and session ids is how a lowercase `l` starts being read as
+     a `1`. */
+  .figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'ss01', 'cv11', 'tnum';
+    letter-spacing: -0.01em;
   }
 
-  /* Overridden rather than shortened: a 0.01ms pulse strobes, and a 0.01ms
-     entrance is a flash. These stop entirely. */
-  .console-skeleton,
-  .motion-overlay,
-  .motion-panel,
-  .motion-slide-right,
-  .motion-slide-left,
-  .motion-pop,
-  .typing-dot {
-    animation: none !important;
-    opacity: 1;
+  .console-skeleton {
+    background-color: var(--color-surface-sunken);
+    animation: console-pulse 1.6s ease-in-out infinite;
   }
-}
 
-/* -----------------------------------------------------------------------------
-   Windows High Contrast.
+  /* A sticky cell in a `border-collapse` table arrives with no borders of its own:
+     the table paints them, not the cell, so the rest of the row shows through
+     underneath a pinned column or a stuck header. `border-separate` with hairlines
+     drawn as inset shadows makes the boundary travel with the cell. */
+  .console-table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
 
-   Every status in this system is encoded as a background tint, and forced-colors
-   mode strips backgrounds — which would render success, warning, danger and
-   neutral badges identically. A border is the one decoration the mode keeps, so
-   each tinted surface grows one.
-   ----------------------------------------------------------------------------- */
-@media (forced-colors: active) {
   .console-table th,
   .console-table td {
-    border-bottom: 1px solid CanvasText;
+    box-shadow: inset 0 -1px 0 var(--color-border);
   }
 
-  [data-tone] {
-    border: 1px solid CanvasText;
+  /* A pinned column's trailing edge exists to say "content is travelling under
+     this". It was drawn unconditionally, so every pinned table that had nothing
+     to scroll — which is most of them, most of the time — showed a lone vertical
+     rule down the middle of itself with no meaning at all. `DataTable`'s own
+     comment already said the edge was scoped to `data-scrolled`; only the
+     comment was. */
+  [data-scrolled='true'] .console-table .is-pinned {
+    box-shadow:
+      inset 0 -1px 0 var(--color-border),
+      inset -1px 0 0 var(--color-border);
   }
 
-  :where(a[href], button, input, select, textarea, summary):focus-visible {
-    outline: 2px solid Highlight;
+  /* The other edge of the same fact.
+     A table wider than its box gets a scrollbar and, at 44px rows under a 6px
+     bar, nothing else: the last column is simply cut off at the card's border
+     and there is no signal that anything continues. The fade is drawn on the
+     table's OUTER box — an `::after` on the scroller itself would scroll away
+     with the content — and only while there is more to the right.
+
+     No z-index: the sticky head sits at `--z-sticky` in this same stacking
+     context, and generated content of the outer box paints after it, so the
+     fade covers the header too and the edge reads as one line. */
+  .console-scroll-edge::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    width: 1.5rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-console);
+    background: linear-gradient(to left, rgb(20 19 17 / 0.10), rgb(20 19 17 / 0));
+  }
+
+  .console-scroll-edge:has([data-scroll-end='false'])::after {
+    opacity: 1;
+  }
+
+  /* -----------------------------------------------------------------------------
+     Overlay motion.
+
+     Written here rather than pulled from an animation plugin so the durations come
+     from the same tokens as everything else, and so the reduced-motion rule below
+     governs them like every other transition.
+
+     Base UI stamps `data-open` / `data-closed` on overlay parts and keeps the
+     element in the DOM until its animation finishes, which is what makes an exit
+     animation possible at all.
+
+     The panel keyframes animate `scale` and `opacity` only. Tailwind v4 emits
+     `-translate-x-1/2` as the standalone `translate` property rather than as
+     `transform`, so a keyframe that also wrote `transform: translate(-50%,-50%)`
+     would COMPOSE with it — the dialog would fly in from a point offset by its own
+     full width and height, then snap to centre.
+     ----------------------------------------------------------------------------- */
+  @keyframes overlay-in  { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+  @keyframes panel-in    { from { opacity: 0; scale: 0.97; } to { opacity: 1; scale: 1; } }
+  @keyframes panel-out   { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.97; } }
+  @keyframes slide-right-in  { from { translate: 100% 0; } to { translate: 0 0; } }
+  @keyframes slide-right-out { from { translate: 0 0; } to { translate: 100% 0; } }
+  @keyframes slide-left-in   { from { translate: -100% 0; } to { translate: 0 0; } }
+  @keyframes slide-left-out  { from { translate: 0 0; } to { translate: -100% 0; } }
+  @keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
+  @keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
+
+  .motion-overlay[data-open]   { animation: overlay-in var(--dur) var(--ease-console-out); }
+  .motion-overlay[data-closed] { animation: overlay-out var(--dur-fast) var(--ease-console); }
+  .motion-panel[data-open]     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
+  .motion-panel[data-closed]   { animation: panel-out var(--dur-fast) var(--ease-console); }
+  .motion-slide-right[data-open]   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
+  .motion-slide-right[data-closed] { animation: slide-right-out var(--dur) var(--ease-console); }
+  .motion-slide-left[data-open]   { animation: slide-left-in var(--dur-slow) var(--ease-console-out); }
+  .motion-slide-left[data-closed] { animation: slide-left-out var(--dur) var(--ease-console); }
+  .motion-pop[data-open]   { animation: pop-in var(--dur) var(--ease-console-out); }
+  .motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
+  .motion-pop { transform-origin: var(--transform-origin, center); }
+
+  /* -----------------------------------------------------------------------------
+     In-progress motion.
+
+     This is the console's answer to "the bot is crawling / training / streaming".
+     It is motion rather than a hue on purpose: giving progress its own colour
+     meant giving it the interactive blue, and a selected row that is also
+     streaming then says two things at once in one colour.
+     ----------------------------------------------------------------------------- */
+  @keyframes indeterminate {
+    0%   { translate: -100% 0; }
+    100% { translate: 300% 0; }
+  }
+
+  /* The brand mark is a C made of three dots — a bubble mid-typing. Working is the
+     mark, animating. */
+  @keyframes typing-dot {
+    0%, 60%, 100% { opacity: 0.25; translate: 0 0; }
+    30%           { opacity: 1; translate: 0 -2px; }
+  }
+
+  .typing-dot { animation: typing-dot 1.2s var(--ease-console) infinite; }
+  .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+
+    /* Overridden rather than shortened: a 0.01ms pulse strobes, and a 0.01ms
+       entrance is a flash. These stop entirely. */
+    .console-indeterminate {
+      /* A 0.01ms one-shot ENDS, and `translate` reverts to `none` — so the
+         travelling sliver settled at x=0 at a third of the track's width and
+         read as a static, determinate 33%. That is worse than invisible: it is
+         a confident answer to a question the bar exists to say it cannot
+         answer. A dimmed full track says "working, extent unknown", which is
+         the truth, and this is the console's only in-progress signal. */
+      animation: none !important;
+      width: 100%;
+      opacity: 0.5;
+    }
+
+    .console-skeleton,
+    .motion-overlay,
+    .motion-panel,
+    .motion-slide-right,
+    .motion-slide-left,
+    .motion-pop,
+    .typing-dot {
+      animation: none !important;
+      opacity: 1;
+    }
+  }
+
+  /* -----------------------------------------------------------------------------
+     Windows High Contrast.
+
+     Every status in this system is encoded as a background tint, and forced-colors
+     mode strips backgrounds — which would render success, warning, danger and
+     neutral badges identically. A border is the one decoration the mode keeps, so
+     each tinted surface grows one.
+     ----------------------------------------------------------------------------- */
+  @media (forced-colors: active) {
+    .console-table th,
+    .console-table td {
+      border-bottom: 1px solid CanvasText;
+    }
+
+    [data-tone] {
+      border: 1px solid CanvasText;
+    }
+
+    :where(a[href], button, input, select, textarea, summary):focus-visible {
+      outline: 2px solid Highlight;
+    }
   }
 }

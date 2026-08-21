@@ -9,6 +9,7 @@ import {
   byRecency,
   matchesQuery,
   sessionIdFromItemId,
+  shortAgo,
   toOfflineItem,
   toWaitingItem,
   waitLabel,
@@ -49,6 +50,18 @@ describe('inboxModel', () => {
     expect(waitLabel(new Date(NOW - 30_000).toISOString(), NOW)).toBe('30s');
     expect(waitLabel(new Date(NOW - 5 * 60_000).toISOString(), NOW)).toBe('5m');
     expect(waitLabel(new Date(NOW - 90 * 60_000).toISOString(), NOW)).toBe('1h 30m');
+  });
+
+  it('abbreviates a row timestamp so the name beside it keeps its width', () => {
+    // A queue where every row reads "14 hours ago" spends ~90px of a 320px row
+    // on a phrase nobody reads word by word, and truncates the name that
+    // matters. The long form is still on the row's title and announced.
+    expect(shortAgo(new Date(NOW - 20_000).toISOString(), NOW)).toBe('now');
+    expect(shortAgo(new Date(NOW - 5 * 60_000).toISOString(), NOW)).toBe('5m');
+    expect(shortAgo(new Date(NOW - 14 * 3_600_000).toISOString(), NOW)).toBe('14h');
+    expect(shortAgo(new Date(NOW - 3 * 86_400_000).toISOString(), NOW)).toBe('3d');
+    expect(shortAgo(new Date(NOW - 20 * 86_400_000).toISOString(), NOW)).toBe('2w');
+    expect(shortAgo(null, NOW)).toBe('');
   });
 
   it('escalates a wait past ten minutes rather than only counting it', () => {

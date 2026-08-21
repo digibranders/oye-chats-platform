@@ -6,6 +6,7 @@ import {
   CardBody,
   ConfirmDialog,
   ErrorState,
+  Measure,
   Page,
   PageHeader,
   SaveBar,
@@ -165,81 +166,91 @@ function BehaviourContent({
     <Page>
       <PageHeader title={TITLE} eyebrow={agentName} />
 
-      <Stack>
-        <SettingGroup title="Answering">
-          <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
-          <OperatorResponseSection
-            value={draft.operatorTimeoutSeconds}
-            liveChatAllowed={liveChatAllowed}
-            onChange={setOperatorTimeout}
+      {/* A form measure, not the page's full width.
+          `SettingRow` caps its pair at `--container-pair` (640) because past
+          that the eye stops binding a label to its control — but the card around
+          it was still 1,128px at 1440 and 1,600 at 1920, so every switch on this
+          page sat mid-card with 480px of empty white to its right and the
+          hairline running on past it. The cap belongs to the *content*, so the
+          card takes it too: 672 holds the widest pair with the card's own gutter
+          either side, and the page keeps its left edge. */}
+      <Measure width="form">
+        <Stack>
+          <SettingGroup title="Answering">
+            <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
+            <OperatorResponseSection
+              value={draft.operatorTimeoutSeconds}
+              liveChatAllowed={liveChatAllowed}
+              onChange={setOperatorTimeout}
+            />
+          </SettingGroup>
+
+          <SettingGroup
+            title="What the widget offers"
+            description={
+              isFree
+                ? 'These are switched off for visitors on the Free plan — saved, but ignored by the widget until you upgrade.'
+                : undefined
+            }
+            actions={
+              isFree ? (
+                <>
+                  <Badge tone="plan">Off on Free</Badge>
+                  <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                    See plans
+                  </Link>
+                </>
+              ) : undefined
+            }
+          >
+            <WidgetBehaviourSection
+              agentId={agentId}
+              flags={draft.featureFlags}
+              liveChatAllowed={liveChatAllowed}
+              onToggle={setFlag}
+            />
+            {/* Its own read and its own write, deliberately outside the draft: a
+                kill switch takes effect when it is pressed, not when a save bar at
+                the bottom of a long page is eventually noticed. */}
+            <FollowUpSection agentId={agentId} />
+          </SettingGroup>
+
+          <SettingGroup
+            title="Access"
+            description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+          >
+            <AccessSection
+              website={website}
+              domains={draft.allowedDomains}
+              domainCheckEnabled={draft.domainCheckEnabled}
+              sessionShareDomain={draft.sessionShareDomain}
+              onChange={setAccess}
+            />
+          </SettingGroup>
+
+          <TimingSection config={draft.widgetConfig} onChange={setConfigField} />
+
+          <SaveBar
+            dirty={state.dirty}
+            saving={state.saving}
+            saved={state.saved}
+            saveError={state.saveError}
+            blockedReason={
+              timeoutError
+                ? `The operator response window must be between 5 and 3600 seconds. ${draft.operatorTimeoutSeconds} would be rejected.`
+                : sessionError
+                  ? 'Fix the pinned parent domain under Access to save.'
+                  : null
+            }
+            onSave={() => {
+              if (lockingOut) setConfirmingLockout(true);
+              else void state.commit();
+            }}
+            onDiscard={state.discard}
+            guard="this chatbot’s behaviour settings"
           />
-        </SettingGroup>
-
-        <SettingGroup
-          title="What the widget offers"
-          description={
-            isFree
-              ? 'These are switched off for visitors on the Free plan — saved, but ignored by the widget until you upgrade.'
-              : undefined
-          }
-          actions={
-            isFree ? (
-              <>
-                <Badge tone="plan">Off on Free</Badge>
-                <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                  See plans
-                </Link>
-              </>
-            ) : undefined
-          }
-        >
-          <WidgetBehaviourSection
-            agentId={agentId}
-            flags={draft.featureFlags}
-            liveChatAllowed={liveChatAllowed}
-            onToggle={setFlag}
-          />
-          {/* Its own read and its own write, deliberately outside the draft: a
-              kill switch takes effect when it is pressed, not when a save bar at
-              the bottom of a long page is eventually noticed. */}
-          <FollowUpSection agentId={agentId} />
-        </SettingGroup>
-
-        <SettingGroup
-          title="Access"
-          description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
-        >
-          <AccessSection
-            website={website}
-            domains={draft.allowedDomains}
-            domainCheckEnabled={draft.domainCheckEnabled}
-            sessionShareDomain={draft.sessionShareDomain}
-            onChange={setAccess}
-          />
-        </SettingGroup>
-
-        <TimingSection config={draft.widgetConfig} onChange={setConfigField} />
-
-        <SaveBar
-          dirty={state.dirty}
-          saving={state.saving}
-          saved={state.saved}
-          saveError={state.saveError}
-          blockedReason={
-            timeoutError
-              ? `The operator response window must be between 5 and 3600 seconds. ${draft.operatorTimeoutSeconds} would be rejected.`
-              : sessionError
-                ? 'Fix the pinned parent domain under Access to save.'
-                : null
-          }
-          onSave={() => {
-            if (lockingOut) setConfirmingLockout(true);
-            else void state.commit();
-          }}
-          onDiscard={state.discard}
-          guard="this chatbot’s behaviour settings"
-        />
-      </Stack>
+        </Stack>
+      </Measure>
 
       {/* The allow-list is the fastest way in the product for a customer to take
           their own widget offline, so saving one that does not cover their own

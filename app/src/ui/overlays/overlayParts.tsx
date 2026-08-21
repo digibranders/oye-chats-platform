@@ -24,7 +24,19 @@ import { cn } from '../lib/cn';
  *   (58px each) around a body that breathes.
  */
 export const OVERLAY_HEADER = 'relative shrink-0 border-b border-border px-5 py-4';
-export const OVERLAY_BODY = 'min-h-0 flex-1 overflow-y-auto p-5';
+
+/**
+ * The body declares `@container/page`, and that is not decoration.
+ *
+ * `Grid`, `Columns` and `PropertyGrid columns={2}` all size themselves against
+ * the nearest container named `page`. Inside a dialog there was none, so they
+ * walked past the panel and measured the *page* — a 480px drawer on a 1440px
+ * screen therefore rendered a two-up grid at 240px a column, and four call
+ * sites gave up and wrote `sm:grid-cols-2` by hand, which asks the viewport the
+ * same wrong question. Declaring it here fixes `Dialog`, `Drawer`, `Popover` and
+ * `ConfirmDialog` in one place, because all four share this body.
+ */
+export const OVERLAY_BODY = '@container/page min-h-0 flex-1 overflow-y-auto p-5';
 export const OVERLAY_FOOTER = cn(
   'flex shrink-0 flex-wrap items-center justify-end gap-2',
   'rounded-b-[inherit] border-t border-border bg-surface-sunken px-5 py-3',

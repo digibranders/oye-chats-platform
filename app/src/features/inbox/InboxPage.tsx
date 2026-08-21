@@ -279,6 +279,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       const record = offline.messages.find((message) => message.id === selected.messageId);
       if (!record) return null;
       return {
+        kind: 'offline',
         name: selected.name,
         email: record.visitor_email ?? null,
         phone: record.visitor_phone ?? null,
@@ -537,7 +538,13 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       />
 
       {!wide ? (
-        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title="Visitor details" width="sm">
+        /* `xs` (320), not `sm` (448). This drawer stands in for the third
+           pane at widths that cannot hold it, and the pane is 288 — at `sm`
+           the same content sat in 448px with 128px of empty gutter beside it,
+           and its property rows changed shape between the two presentations of
+           one panel. `Drawer` documents `xs` as "the width of a pane… the
+           inbox's visitor panel" for exactly this. */
+        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title="Visitor details" width="xs">
           <VisitorPanel {...visitorProps} variant="drawer" />
         </Drawer>
       ) : null}

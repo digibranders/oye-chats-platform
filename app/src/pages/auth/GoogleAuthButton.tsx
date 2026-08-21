@@ -1,38 +1,6 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Button } from '../ui';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
-
-/**
- * Ask the backend whether Google OAuth is configured for this deployment.
- *
- * A deployment with no client id would render a button that redirects into a
- * 503, so the button hides itself instead. Failure is treated as "not
- * available": email and password is always there.
- */
-async function probeGoogleOAuth(): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/auth/google/status`, {
-      method: 'GET',
-      credentials: 'omit',
-    });
-    if (!response.ok) return false;
-    const data: unknown = await response.json();
-    return Boolean((data as { enabled?: boolean } | null)?.enabled);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The capability probe's cache key.
- *
- * It belongs in `src/query/keys.ts` beside the other session keys; that file is
- * owned by another workstream this cycle, so it is written out here and should
- * be folded in as `keys.session.googleOAuth()` when the two land together.
- */
-const GOOGLE_OAUTH_STATUS_KEY = ['session', 'google-oauth-status'] as const;
+import { Button } from '../../ui';
+import { GOOGLE_AUTH_BASE_URL, useGoogleAuthAvailable } from './useGoogleAuth';
 
 export interface GoogleAuthButtonProps {
   /** Visible label. The only copy difference between sign-in and sign-up. */
@@ -56,6 +24,12 @@ export interface GoogleAuthButtonProps {
 /**
  * Sign in, or sign up, with Google.
  *
+ * The capability probe is `useGoogleAuth`'s, not this file's. Both sign-in
+ * screens have to ask the same question — the button hides itself when the
+ * deployment has no OAuth client, and a component cannot report "I rendered
+ * nothing" to the parent drawing the "or" divider above it — so the probe was
+ * written out twice, in two files, under one cache key. One module owns it now.
+ *
  * A real full-page navigation rather than a popup: the OAuth dance has to
  * happen at the top level so Google's redirect lands on a URL the router can
  * read. The click is therefore one-way, which is why the button latches into a
@@ -70,20 +44,12 @@ export function GoogleAuthButton({
   className,
 }: GoogleAuthButtonProps) {
   const [leaving, setLeaving] = useState(false);
-
-  const status = useQuery({
-    queryKey: GOOGLE_OAUTH_STATUS_KEY,
-    queryFn: probeGoogleOAuth,
-    // A deployment does not gain or lose its OAuth client mid-session.
-    staleTime: Infinity,
-    gcTime: Infinity,
-    retry: false,
-  });
-
   // Render nothing until the probe answers, and nothing at all if the answer is
   // no. Showing the button first and removing it afterwards moves the email
   // form under the pointer at the moment someone is reaching for it.
-  if (status.isPending || status.data !== true) return null;
+  const available = useGoogleAuthAvailable();
+
+  if (!available) return null;
 
   const handleClick = () => {
     if (leaving) return;
@@ -91,7 +57,7 @@ export function GoogleAuthButton({
     const params = new URLSearchParams({ next, mode });
     if (promoCode) params.set('promo_code', promoCode);
     if (referralCode) params.set('referral_code', referralCode);
-    window.location.href = `${API_BASE_URL}/auth/google/login?${params.toString()}`;
+    window.location.href = `${GOOGLE_AUTH_BASE_URL}/auth/google/login?${params.toString()}`;
   };
 
   return (

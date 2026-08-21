@@ -186,7 +186,11 @@ export function InstallStatusCard({
       {checking ? (
         <CardFooter className="justify-between">
           <div className="min-w-0 flex-1">
-            <Progress value={null} label="Looking for your widget" />
+            {/* `hideLabel`: the card's own heading is `status.label`, which in
+                this state is this exact string. The bar is chrome under a
+                heading that has already named it; the `aria-label` still
+                carries the sentence. */}
+            <Progress value={null} label="Looking for your widget" hideLabel />
             <p className="mt-2 text-xs text-text-secondary">
               Open your site in another tab — this updates on its own.
             </p>

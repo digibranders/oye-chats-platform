@@ -1,4 +1,3 @@
-import { CircleCheck } from 'lucide-react';
 import {
   Card,
   CardBody,
@@ -90,6 +89,7 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
       ) : section.forbidden ? (
         <CardBody>
           <EmptyState
+            size="panel"
             title="Not yours to see"
             description="Your seat cannot read this chatbot's conversations."
           />
@@ -113,8 +113,11 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
             // pager replaces a hand-written aside under a doubled hairline.
             pageSize={GAPS_LIMIT}
             empty={
+              // `inline`: this is a table body with no rows, not a poster. At
+              // the default `page` size it drew a 48px disc and an 18px title
+              // inside a seated table and made an empty card 340px tall.
               <EmptyState
-                icon={CircleCheck}
+                size="inline"
                 title={
                   window === null
                     ? 'No unanswered questions on record'

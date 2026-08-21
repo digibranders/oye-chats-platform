@@ -82,7 +82,7 @@ vi.mock('../../../hooks/useEntitlements', () => ({
 
 // The orb is a WebGL canvas, which jsdom does not have. It is the widget's own
 // renderer and is exercised by the widget's tests, not by this page's.
-vi.mock('../../../components/PremiumOrb', () => ({ default: () => null }));
+vi.mock('./PremiumOrb', () => ({ default: () => null }));
 
 import { AgentProvider } from '../../../context/AgentContext';
 import { ExperiencePage } from './ExperiencePage';

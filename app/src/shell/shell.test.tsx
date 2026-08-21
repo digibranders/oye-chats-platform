@@ -2,12 +2,12 @@ import { render, renderHook, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TooltipProvider } from '../ui';
+import { TooltipProvider, formatBadgeCount } from '../ui';
 import { Rail } from './Rail';
+import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { ImpersonationBanner } from './ImpersonationBanner';
 import { useBreadcrumbs } from './useBreadcrumbs';
-import { formatBadgeCount } from './badgeCount';
 import { startImpersonationSession, clearImpersonationSession } from '../utils/impersonation';
 
 /**
@@ -131,6 +131,43 @@ describe('formatBadgeCount', () => {
   });
 });
 
+describe('the top bar', () => {
+  function renderBar(pathname: string, isMobile: boolean) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[pathname]}>
+            <TopBar isMobile={isMobile} onToggleRail={() => {}} onOpenSearch={() => {}} />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('carries the trail on the page gutter above 1024', () => {
+    renderBar('/billing/usage', false);
+    const trail = screen.getByRole('navigation', { name: /breadcrumb/i });
+    expect(within(trail).getByRole('link', { name: 'Billing' })).toHaveAttribute(
+      'href',
+      '/billing',
+    );
+    expect(within(trail).getByText('Usage')).toHaveAttribute('aria-current', 'page');
+    // Nothing stands in front of it: the collapse control is on the rail, so
+    // the first crumb and the page's `h1` start on one left edge.
+    expect(screen.queryByRole('button', { name: /open navigation/i })).toBeNull();
+  });
+
+  it('drops the trail below 1024, where the drawer trigger takes that edge', () => {
+    renderBar('/billing/usage', true);
+    // Measured at 1000px: a 28px trigger and a 12px gap put the crumb at x=58
+    // against a page title at x=24. Every link the trail offers is a row in the
+    // drawer this button opens, and its last crumb is the `h1` below it.
+    expect(screen.getByRole('button', { name: /open navigation/i })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: /breadcrumb/i })).toBeNull();
+  });
+});
+
 /** Render the hook at a path, with a stubbed chatbot list. */
 function crumbsAt(pathname: string) {
   return renderHook(() => useBreadcrumbs(), {
@@ -146,6 +183,10 @@ vi.mock('../context/BotContext', () => ({
     ],
     loading: false,
   }),
+}));
+
+vi.mock('../context/NotificationContext', () => ({
+  useNotifications: () => ({ items: [], unreadCount: 0, markAllRead: vi.fn(), loading: false }),
 }));
 
 vi.mock('../services/api', () => ({
@@ -213,6 +254,29 @@ describe('the rail, rendered', () => {
   it('keeps the workspace block a menu at one workspace', () => {
     renderRail('/');
     expect(screen.getByRole('button', { name: /workspace:/i })).toBeInTheDocument();
+  });
+
+  it('does not announce the create control as the page you are on', () => {
+    // `/chatbots?new=1` matches the path `/chatbots`, so as a `NavLink` this
+    // button carried `aria-current="page"` on the list page — two current
+    // destinations in one rail, one of which was a button that opens a dialog.
+    renderRail('/chatbots');
+    expect(screen.getByRole('link', { name: /new chatbot/i })).not.toHaveAttribute(
+      'aria-current',
+    );
+    expect(screen.getByRole('link', { name: /all chatbots/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it.each(['/welcome', '/welcome/12'])('reads Home as current at %s', (path) => {
+    // The first run *is* Home for a workspace with no chatbot — `HomePage`
+    // redirects there rather than rendering a page of zeros. `NavLink end`
+    // matched neither address, so the rail was blank on the first two screens a
+    // new customer ever sees.
+    renderRail(path);
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   });
 });
 

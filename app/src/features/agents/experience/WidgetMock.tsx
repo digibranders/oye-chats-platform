@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactElement, useState } from 'react';
 import { Bot, Headphones, Send, X } from 'lucide-react';
-import PremiumOrb from '../../../components/PremiumOrb';
+import PremiumOrb from './PremiumOrb';
 import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_USER_BUBBLE_COLOR,
@@ -53,13 +53,22 @@ export interface WidgetMockProps {
 }
 
 /**
- * The mock fills its column rather than sitting at a fixed 340.
+ * The mock fills its column, up to the width the real widget actually is.
  *
  * A fixed panel right-aligned inside a 384px aside left 44px of dead space on
  * its left, under a heading, a badge and a segmented control that were all
  * left-aligned at x=0 — so nothing in the preview column lined up with anything
- * else in the preview column.
+ * else in the preview column. Filling the column is right in the aside, which is
+ * narrower than the widget.
+ *
+ * It is wrong the moment the column is wider. `Columns` drops to one column
+ * below 56rem of page, and the preview then took the whole 968px measure: a
+ * chat window two and a half times the width of the one on the customer's site,
+ * wrapping bubbles and starter-question chips at a measure no visitor will ever
+ * see. `md:w-[380px]` is what `widget/src/components/themeConfigs.js` paints on
+ * every desktop theme, so that is the ceiling here.
  */
+const PANEL_MAX_WIDTH = 380;
 const PANEL_HEIGHT = 460;
 
 function text(value: string, fallback: string): string {
@@ -167,7 +176,7 @@ export function WidgetMock({
   }
 
   return (
-    <div className="flex flex-col items-stretch gap-3">
+    <div className="flex flex-col items-stretch gap-3" style={{ maxWidth: PANEL_MAX_WIDTH }}>
       {/* The chat window. `aria-label` rather than a heading: this is a picture
           of another product, and giving it a real heading would put a second
           document outline inside the page's own. */}

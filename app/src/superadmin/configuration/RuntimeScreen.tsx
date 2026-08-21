@@ -161,14 +161,24 @@ export function RuntimeScreen() {
   const activeProviderNote = config.data.known_crawl_providers.find(
     (provider) => provider.id === draft.crawl_provider_primary,
   )?.notes;
+  // The fallback row printed the bare id — `jina` — directly beside a select
+  // showing "Jina Reader" from the same list. Same list, same label.
+  const fallbackProviderId = config.data.crawler.fallback_provider;
+  const fallbackProviderLabel =
+    config.data.known_crawl_providers.find((provider) => provider.id === fallbackProviderId)
+      ?.label ?? fallbackProviderId;
 
   return (
     <Stack>
       <Section title="Models" description="LiteLLM routes to the primary and falls back on failure.">
         <Card>
           <CardBody>
-            <Grid cols={3}>
-              <Field label="Primary model" error={shown.primary_model}>
+            <Grid cols={2}>
+              <Field
+                label="Primary model"
+                error={shown.primary_model}
+                hint="Answers every chat message."
+              >
                 <Select
                   options={models}
                   value={draft.primary_model}
@@ -211,7 +221,7 @@ export function RuntimeScreen() {
       >
         <Card>
           <CardBody>
-            <Grid cols={4}>
+            <Grid cols={2}>
             <Field label="Chunk size" error={shown.chunk_size} hint="200 to 8,000 characters.">
               <Input
                 className="figure"
@@ -272,7 +282,7 @@ export function RuntimeScreen() {
       <Section title="Crawler" description="The fallback provider is always the other one; it is not separately settable.">
         <Card>
           <CardBody>
-            <Grid cols={3}>
+            <Grid cols={2}>
             <Field label="Primary provider" hint={activeProviderNote}>
               <Select
                 options={crawlProviders}
@@ -309,7 +319,7 @@ export function RuntimeScreen() {
           <CardBody className="border-t border-border">
             <p className="text-xs text-text-secondary">
               Fallback provider:{' '}
-              <span className="figure text-text-primary">{config.data.crawler.fallback_provider}</span>
+              <span className="text-text-primary">{fallbackProviderLabel}</span>
             </p>
           </CardBody>
         </Card>

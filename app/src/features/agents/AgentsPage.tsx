@@ -438,15 +438,6 @@ export function AgentsPage() {
           item.conversations === null ? '—' : formatNumber(item.conversations),
       },
       {
-        key: 'messages',
-        header: 'Messages',
-        type: 'number',
-        width: '8rem',
-        secondary: true,
-        sortable: true,
-        render: (item) => (item.messages === null ? '—' : formatNumber(item.messages)),
-      },
-      {
         key: 'passages',
         header: 'Passages',
         type: 'number',
@@ -462,7 +453,7 @@ export function AgentsPage() {
         key: 'trained',
         header: 'Last trained',
         type: 'number',
-        width: '9rem',
+        width: '8rem',
         secondary: true,
         sortable: true,
         render: ({ bot }) =>
@@ -479,10 +470,20 @@ export function AgentsPage() {
         ),
       },
       {
+        // The whole set is sized so that eight columns still fit a 1280 laptop
+        // without the card clipping its last badge: `secondary` only hides a
+        // column below `md`, so between 768 and ~1400 this table was 148px
+        // wider than the page and the install state — the one column people
+        // come here to scan — was the half sliced off at the card's edge.
         key: 'actions',
-        header: 'Actions',
+        // The word is the widest thing in the column: "Actions" plus the cell's
+        // own padding measures 79px against a 28px menu button, and those 15px
+        // were the difference between this table fitting a 1280 laptop and
+        // clipping the install badge beside it. A column of row menus names
+        // itself; the label stays for assistive tech.
+        header: <span className="sr-only">Actions</span>,
         align: 'right',
-        width: '4.5rem',
+        width: '4rem',
         render: ({ bot }) => <AgentActionsMenu bot={bot} onChanged={handleChanged} />,
       },
     ],

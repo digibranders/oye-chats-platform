@@ -167,9 +167,16 @@ describe('DunningTab', () => {
         item({ subscription_id: 2, days_left: 4, emails_sent: ['day_1', 'day_3'] }),
       ]),
     );
+    const user = userEvent.setup();
     mount();
-    expect(await screen.findByText('No dunning email sent yet')).toBeInTheDocument();
-    expect(screen.getByText('2 emails sent (day_1, day_3)')).toBeInTheDocument();
+    // The count is the cell; which steps went out is the hover. The full string
+    // set the column's width, which is what pushed the column off the card.
+    expect(await screen.findByText('None sent')).toBeInTheDocument();
+    const sent = screen.getByText('2 emails sent');
+    expect(sent).toBeInTheDocument();
+
+    await user.hover(sent);
+    expect(await screen.findByText('2 emails sent (day_1, day_3)')).toBeInTheDocument();
   });
 
   it('names the grace period the platform is actually configured with', async () => {

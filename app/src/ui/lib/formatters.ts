@@ -228,3 +228,22 @@ export function truncateId(value: string | null | undefined, head = 8, tail = 4)
   if (!value) return ABSENT;
   return value.length <= head + tail + 1 ? value : `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
+
+/**
+ * A count shown in the chrome: `formatBadgeCount(140)` → `"99+"`.
+ *
+ * One helper because there were two rules: the notification bell capped at `9+`
+ * while the rail's Inbox badge printed the raw number, so an operator with
+ * fourteen conversations waiting saw "9+" in the top bar and "14" in the rail,
+ * for overlapping facts. Nine is far too low a ceiling for a queue; ninety-nine
+ * is the number every inbox in the category uses.
+ *
+ * It lives here rather than in the shell because it is a formatter, and because
+ * a badge count is not chrome's private business — a table cell, a tab and a
+ * filter chip all cap a count the same way, and any of them reaching into
+ * `src/shell` for it would be a feature importing the shell.
+ */
+export function formatBadgeCount(value: number, cap = 99): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  return value > cap ? `${cap}+` : String(Math.floor(value));
+}

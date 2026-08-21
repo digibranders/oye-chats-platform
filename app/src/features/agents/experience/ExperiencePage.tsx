@@ -231,17 +231,25 @@ export function ExperiencePage(): ReactElement {
             </div>
           }
           aside={
-            <PreviewPanel
-              draft={draft}
-              agentName={experience.agentName}
-              agentId={experience.agentId}
-              dirty={dirty}
-              answerStale={experience.answerStale}
-              botKey={meta.botKey}
-              website={meta.website}
-              brandingText={draft.brandingText || meta.brandingText}
-              onEditState={selectTab}
-            />
+            // `max-w-96` — the aside's own 24rem. `Columns` drops to one column
+            // below 56rem of page, and without a ceiling the preview then became
+            // a 930px-wide card holding a 380px chat window: the same panel,
+            // three times the width, under a segmented control stretched across
+            // all of it. Capped, the stacked layout is the column layout with
+            // the preview moved below the form, which is what it should read as.
+            <div className="max-w-96">
+              <PreviewPanel
+                draft={draft}
+                agentName={experience.agentName}
+                agentId={experience.agentId}
+                dirty={dirty}
+                answerStale={experience.answerStale}
+                botKey={meta.botKey}
+                website={meta.website}
+                brandingText={draft.brandingText || meta.brandingText}
+                onEditState={selectTab}
+              />
+            </div>
           }
         />
 

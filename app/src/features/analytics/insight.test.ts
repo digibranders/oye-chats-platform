@@ -32,10 +32,18 @@ describe('deriveInsights. Conversation trend', () => {
     expect(insight.title).toContain('the previous 30 days');
   });
 
-  it('says so on a material rise', () => {
-    const [insight] = deriveInsights(input({ conversations: 150, previousConversations: 100 }));
-    expect(insight.tone).toBe('success');
-    expect(insight.title).toContain('up 50%');
+  it('stays quiet on a material rise, which the tile above already states', () => {
+    // The strip renders `↑ +50% vs the previous 30 days` on the Conversations
+    // tile. A tinted banner 40px below it saying the same thing in a sentence,
+    // with nothing to act on, is a second copy of one number dressed as an
+    // interruption. Only the fall earns the space, because only the fall has an
+    // instruction attached.
+    expect(deriveInsights(input({ conversations: 150, previousConversations: 100 }))).toEqual([]);
+  });
+
+  it('still names the fall, and what to do about it', () => {
+    const [insight] = deriveInsights(input({ conversations: 40, previousConversations: 100 }));
+    expect(insight.body).toContain('widget is still installed');
   });
 
   it('stays quiet on a small move', () => {

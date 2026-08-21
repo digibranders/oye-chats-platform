@@ -23,14 +23,30 @@ export const TAB_ACTIVE = 'text-text-primary shadow-[inset_0_-2px_0_var(--color-
 export const TAB_IDLE = 'text-text-secondary hover:text-text-primary';
 
 /**
- * The same marker, expressed as Base UI's `data-selected` state.
+ * The same marker, keyed off **`aria-selected`** — the tab's own ARIA contract.
+ *
+ * It was keyed off `data-[selected]`, and Base UI emits `data-active`. So the
+ * selector matched nothing: every `Tabs` row in the console — Team,
+ * Integrations, the gallery's own six — rendered three or four identical grey
+ * labels with `box-shadow: none` and no way to tell which panel you were
+ * looking at. `NavTabs`, which is route-driven and computes its own active
+ * class, was correct, so the two tab rows a user is meant to read as one control
+ * looked different from each other.
+ *
+ * `aria-selected` rather than `data-active` on purpose: `data-*` is a library's
+ * private state name and can be renamed in a minor release — which is exactly
+ * how this broke — while `aria-selected="true"` is what `role="tab"` guarantees
+ * and what a screen reader is already reading. If the marker ever stops
+ * painting again, the tab has an accessibility bug as well as a visual one, and
+ * `layout.test.tsx` asserts the computed style rather than the class string,
+ * because a class that never matches is invisible in its own diff.
  *
  * Written out in full rather than derived from `TAB_ACTIVE` at runtime: Tailwind
  * finds class names by scanning source text, so a class assembled from a
  * variable is a class that never gets generated.
  */
 export const TAB_SELECTED =
-  'data-[selected]:text-text-primary data-[selected]:shadow-[inset_0_-2px_0_var(--color-accent-500)]';
+  'aria-[selected=true]:text-text-primary aria-[selected=true]:shadow-[inset_0_-2px_0_var(--color-accent-500)]';
 
 /**
  * The scroller.

@@ -185,9 +185,14 @@ export function PlanSummary({
                 {formatNumber(agentsUsed)} <span className="text-text-tertiary">of unlimited</span>
               </span>
             ) : (
+              /* `hideLabel` now keeps the figure and drops only the name, so
+                 the meter no longer has to print "In use" beside a row already
+                 labelled "Chatbots". The name stays in the accessibility tree,
+                 where a bare "3 / 5" needs it. */
               <Meter
                 className="w-40"
-                label="In use"
+                label="Chatbots in use"
+                hideLabel
                 size="sm"
                 used={agentsUsed}
                 limit={agentQuota}
@@ -217,7 +222,8 @@ export function PlanSummary({
             ) : (
               <Meter
                 className="w-40"
-                label="In use"
+                label="Operator seats in use"
+                hideLabel
                 size="sm"
                 used={seatsUsed}
                 limit={Math.max(subscription.seats, seatQuota)}

@@ -66,7 +66,7 @@ describe('the edit form', () => {
     renderSection();
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(await screen.findByLabelText(/legal name/i)).toHaveValue('Acme Private Limited');
-    expect(screen.getByLabelText('GSTIN')).toHaveValue('29AAGCB7383J1Z4');
+    expect(screen.getByLabelText(/^GSTIN/)).toHaveValue('29AAGCB7383J1Z4');
   });
 
   it('sends only what changed, so an untouched field is never cleared', async () => {
@@ -87,7 +87,7 @@ describe('the edit form', () => {
   it('refuses an invalid GSTIN before it reaches the server', async () => {
     renderSection();
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const gstin = await screen.findByLabelText('GSTIN');
+    const gstin = await screen.findByLabelText(/^GSTIN/);
     await userEvent.clear(gstin);
     await userEvent.type(gstin, '29AAGCB7383J1ZZ');
     await userEvent.click(screen.getByRole('button', { name: /save details/i }));

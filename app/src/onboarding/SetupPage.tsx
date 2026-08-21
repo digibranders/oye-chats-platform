@@ -44,8 +44,15 @@ export function SetupPage() {
             <p className="text-base font-medium text-text-primary">
               <span className="figure">{done}</span> of <span className="figure">{total}</span> done
             </p>
+            {/* `hideLabel`, which is what `Progress` documents for "a bar that
+                is chrome inside a row a heading already names". Without it the
+                card opened with the same fact three times in three type sizes:
+                "4 of 6 done", then "Setup progress, 4 of 6 complete", then
+                "67%". The heading is the statement; the bar is the picture of
+                it; the `aria-label` still carries the sentence. */}
             <Progress
               className="mt-2"
+              hideLabel
               value={(done / total) * 100}
               label={`Setup progress, ${done} of ${total} complete`}
             />

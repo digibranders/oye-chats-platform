@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, FileSearch } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import {
   DataTable,
   Drawer,
@@ -87,6 +87,13 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         if (!open) onClose();
       }}
       width="lg"
+      // The body is the table, so it takes the drawer's full width: the header
+      // band and every row reach the edges the drawer's own header hairline
+      // does. Without `flush` the table sat in 20px of body padding inside a
+      // panel that had already drawn its gutter, and the states inside it —
+      // which draw `px-cell` themselves, so that they line up with the title —
+      // landed 40px in.
+      flush
       title={domain ?? 'Pages'}
       description={
         pages.data?.total_pages
@@ -94,9 +101,9 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
           : 'The pages this chatbot read from this website.'
       }
     >
-      {/* Seated: the drawer body already draws the surface, and the table's own
-          `rounded-lg` border put its first cell 37px from the drawer edge
-          against a title at 20. */}
+      {/* Seated: the drawer already draws the surface, and the table's own
+          `rounded-lg border` inside it was a second hairline with two
+          concentric radii — the nesting DESIGN.md §4 bans. */}
       <DataTable
         seated
         columns={columns}
@@ -116,7 +123,7 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         rowNoun="page"
         empty={
           <EmptyState
-            icon={FileSearch}
+            size="inline"
             title="No pages recorded"
             description="No per-page record. Re-training the website rebuilds it."
           />

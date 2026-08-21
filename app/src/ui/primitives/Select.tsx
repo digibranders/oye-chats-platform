@@ -2,7 +2,12 @@ import { forwardRef, type SelectHTMLAttributes } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
-import { CONTROL_SIZE, controlClass, type ControlSize } from './controlStyles';
+import {
+  CONTROL_SIZE,
+  controlClass,
+  splitControlClass,
+  type ControlSize,
+} from './controlStyles';
 import { useFieldControlProps } from './fieldContext';
 
 export interface SelectOption<T extends string = string> {
@@ -62,8 +67,12 @@ function SelectInner<T extends string = string>(
 ) {
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];
+  // The chevron is positioned against the wrapper, so a width written at the
+  // call site has to size the wrapper — see `splitControlClass`. A `max-w-sm`
+  // select used to leave its own arrow 300px away from its box.
+  const { box, control } = splitControlClass(className);
   return (
-    <div className="relative flex w-full items-center">
+    <div className={cn('relative flex w-full items-center', box)}>
       <select
         ref={ref}
         value={value}
@@ -72,7 +81,7 @@ function SelectInner<T extends string = string>(
           'peer cursor-pointer appearance-none',
           controlClass(size),
           TRAILING_PAD[size],
-          className,
+          control,
         )}
         {...fieldProps}
         {...props}

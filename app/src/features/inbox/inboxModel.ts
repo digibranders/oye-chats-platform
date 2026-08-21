@@ -255,6 +255,35 @@ export function waitLabel(since: string | null, now: number): string {
   return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d`;
 }
 
+/**
+ * When a row last moved, in one or two characters.
+ *
+ * `formatRelative` renders "14 hours ago", and every row in a busy queue says
+ * roughly the same thing at roughly the same length: about 90px of the ~200px a
+ * 320px row has for its first line, spent on a phrase the operator scans rather
+ * than reads. Behind a badge that is what truncated "Farid Haddad" to "Farid
+ * Ha…". Intercom, Front and Slack all print `14h` here for the same reason.
+ *
+ * The full phrase is not lost — the caller carries it on the row's `title` and
+ * in its accessible name, which is where a reader who wants the exact time
+ * looks anyway.
+ */
+export function shortAgo(at: string | null, now: number): string {
+  if (!at) return '';
+  const then = Date.parse(at);
+  if (Number.isNaN(then)) return '';
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 60) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  return weeks < 53 ? `${weeks}w` : `${Math.floor(days / 365)}y`;
+}
+
 /** Waiting longer than this is escalated in the list, not just counted. */
 export const WAIT_ESCALATION_MS = 10 * 60 * 1000;
 

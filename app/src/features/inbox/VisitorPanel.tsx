@@ -143,9 +143,10 @@ export interface VisitorPanelProps {
  * about the visitor, so it never competes with the conversation's own actions —
  * those stay in the conversation header, where the thing they act on is.
  *
- * The facts are a `PropertyGrid`, label left and value right on a hairline row.
- * Stacked label-above-value, eleven fields cost about 600px in a 320px pane —
- * two screens of scrolling for eleven values that are mostly `—`.
+ * The facts are a `PropertyGrid`, stacked rather than label-left/value-right:
+ * this panel is 288px wide in the pane and 320px in the drawer that stands in
+ * for it, and `rows` leaves 71px for the value at that measure. See the note in
+ * the body.
  */
 export function VisitorPanel({
   profile,
@@ -157,11 +158,23 @@ export function VisitorPanel({
   className,
 }: VisitorPanelProps) {
   const pane = variant === 'pane';
+  // Stacked, in both presentations, because both are about 288px wide.
+  //
+  // `PropertyGrid`'s `rows` keeps a `minmax(7rem,10rem)` label column, so in
+  // this pane the value column resolved to **71px**: `amara@example.com` broke
+  // as `amara@ex / ample.com`, and `Northwind Logistics`, `Chrome · macOS` and
+  // `20 Aug 2026, 08:24` each took two lines. Measured, the two layouts cost
+  // the pane exactly the same 1,153px of scroll — because `rows` was already
+  // spending two lines on most values — so this is legibility for free rather
+  // than a trade. `stacked` is documented as the layout for "a column too
+  // narrow to hold both", and 288px is that column.
+  // No `Email` row: the header above renders the same address as a `mailto:`
+  // link two lines higher. It was the same fact twice, and the copy in the
+  // grid was the one that broke mid-word.
   const identity = useMemo<PropertyItem[]>(
     () =>
       profile
         ? [
-            { label: 'Email', value: profile.email },
             { label: 'Phone', value: profile.phone },
             { label: 'Company', value: profile.company },
             { label: 'Location', value: profile.location },
@@ -205,36 +218,45 @@ export function VisitorPanel({
     return rows;
   }, [profile]);
 
-  const context = useMemo<PropertyItem[]>(
-    () =>
-      profile
-        ? [
-            { label: 'Chatbot', value: profile.botName },
-            { label: 'Department', value: profile.departmentName },
-            { label: 'Assigned to', value: profile.operatorName },
-            { label: 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
-            {
-              label: 'Last active',
-              value: profile.lastActiveAt ? formatRelative(profile.lastActiveAt) : null,
-            },
-            {
-              label: 'Messages',
-              value: profile.messageCount != null ? formatNumber(profile.messageCount) : null,
-            },
-            {
-              label: 'Rated this chat',
-              value:
-                profile.rating != null ? (
-                  <>
-                    <span className="figure">{profile.rating.toFixed(1)}</span>
-                    <span className="text-text-tertiary"> out of 5</span>
-                  </>
-                ) : null,
-            },
-          ]
-        : [],
-    [profile],
-  );
+  // An offline message has no session, so five of these seven are facts that
+  // cannot exist for it rather than facts we looked for and did not find. Seven
+  // em dashes in a row is a pane that looks broken and says nothing; `—` is
+  // reserved for a value that is genuinely absent (DESIGN.md rule 10).
+  const context = useMemo<PropertyItem[]>(() => {
+    if (!profile) return [];
+    const rows: PropertyItem[] = [{ label: 'Chatbot', value: profile.botName }];
+    if (profile.kind === 'offline') {
+      rows.push({
+        label: 'Received',
+        value: profile.startedAt ? formatDateTime(profile.startedAt) : null,
+      });
+      return rows;
+    }
+    rows.push(
+      { label: 'Department', value: profile.departmentName },
+      { label: 'Assigned to', value: profile.operatorName },
+      { label: 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
+      {
+        label: 'Last active',
+        value: profile.lastActiveAt ? formatRelative(profile.lastActiveAt) : null,
+      },
+      {
+        label: 'Messages',
+        value: profile.messageCount != null ? formatNumber(profile.messageCount) : null,
+      },
+      {
+        label: 'Rated this chat',
+        value:
+          profile.rating != null ? (
+            <>
+              <span className="figure">{profile.rating.toFixed(1)}</span>
+              <span className="text-text-tertiary"> out of 5</span>
+            </>
+          ) : null,
+      },
+    );
+    return rows;
+  }, [profile]);
 
   // A badge as the *label* of a paragraph made "Budget" green whenever a value
   // existed — colour carrying "has a value", which no other badge in the system
@@ -331,24 +353,24 @@ export function VisitorPanel({
           </div>
         ) : null}
 
-        <PropertyGrid label="Contact details" density="compact" items={identity} />
+        <PropertyGrid label="Contact details" layout="stacked" density="compact" items={identity} />
 
         {source.length > 0 ? (
           <div>
             <Eyebrow>Where they came from</Eyebrow>
-            <PropertyGrid density="compact" items={source} className="mt-1" />
+            <PropertyGrid layout="stacked" density="compact" items={source} className="mt-1" />
           </div>
         ) : null}
 
         <div>
           <Eyebrow>This conversation</Eyebrow>
-          <PropertyGrid density="compact" items={context} className="mt-1" />
+          <PropertyGrid layout="stacked" density="compact" items={context} className="mt-1" />
         </div>
 
         {bant.length > 0 ? (
           <div>
             <Eyebrow>What the AI learned</Eyebrow>
-            <PropertyGrid density="compact" items={bant} className="mt-1" />
+            <PropertyGrid layout="stacked" density="compact" items={bant} className="mt-1" />
           </div>
         ) : null}
 
@@ -362,7 +384,9 @@ export function VisitorPanel({
       aria-label="Visitor details"
       className={cn(
         'flex min-h-0 flex-col',
-        pane && 'h-full border-l border-border bg-surface',
+        // No `border-l`: `SplitPane`'s inspector section draws it, and two
+        // adjacent 1px hairlines render as a 2px rule beside a 1px one.
+        pane && 'h-full bg-surface',
         className,
       )}
     >

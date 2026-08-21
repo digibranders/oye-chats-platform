@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, Receipt } from 'lucide-react';
+import { Download } from 'lucide-react';
 import {
   ABSENT,
   Badge,
@@ -316,8 +316,12 @@ export function InvoicesSection({
           onRowClick={(row) => setOpen(row)}
           rowNoun="document"
           empty={
+            /* `inline`: a state inside a table body is a row of copy, not a
+               poster. At the default `page` size this was a 48px icon disc over
+               a centred paragraph — a 280px empty rectangle under a sortable
+               header, in a card whose every real row is left-aligned. */
             <EmptyState
-              icon={Receipt}
+              size="inline"
               title="No invoices yet"
               description="Your first invoice appears here the moment a paid plan is charged."
             />

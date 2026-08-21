@@ -16,6 +16,7 @@ import {
   CHART_MARGIN,
   ChartDataTable,
   ChartFrame,
+  ChartLegend,
   ChartTooltip,
   formatNumber,
   seriesColor,
@@ -97,6 +98,18 @@ export function FeedbackTrendChart({
       emptyTitle="Not enough ratings to plot"
       emptyDescription="A trend needs ratings on more than one day. Once visitors have rated answers across a few days, the line appears here."
       summary={summary}
+      legend={
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <ChartLegend items={[{ label: 'Helpful share', seriesIndex: RATE_SERIES }]} />
+          {/* The dashed line, named in words. `ChartLegend`'s marker is a
+              filled dot on a series colour, which cannot stand for a grey
+              dashed rule — flagged for the system rather than faked here. */}
+          <p className="text-xs text-text-secondary">
+            Dashed: average over the window,{' '}
+            <span className="figure font-medium text-text-primary">{overallRate}%</span>
+          </p>
+        </div>
+      }
       dataTable={
         <ChartDataTable
           caption="Helpful share by day"
@@ -125,17 +138,18 @@ export function FeedbackTrendChart({
             tickFormatter={(value: number) => `${value}%`}
           />
           {/* The window's own average, so a day is read against the period it
-              sits in rather than against the top of the axis. */}
+              sits in rather than against the top of the axis.
+
+              The line carries no label of its own. `insideTopRight` places the
+              text against the plot's edge, and a workspace whose average is 0%
+              — every answer marked unhelpful, which is exactly when someone
+              opens this tab — put "Average 0%" straight on top of the last date
+              on the x-axis. The figure is in the legend under the plot, where it
+              cannot collide with anything and is legible at any average. */}
           <ReferenceLine
             y={overallRate}
             stroke="var(--color-border-strong)"
             strokeDasharray="4 3"
-            label={{
-              value: `Average ${overallRate}%`,
-              position: 'insideTopRight',
-              fill: 'var(--color-text-tertiary)',
-              fontSize: 11,
-            }}
           />
           <Tooltip content={<TrendTooltip />} cursor={CHART_CURSOR} />
           <Line

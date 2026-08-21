@@ -181,10 +181,11 @@ function OverviewContent({ agent }: { agent: Bot }) {
         />
 
         <Card>
-          {/* The window is stated here, once, for the whole strip — `StatRow`
-              suppresses it on every tile that shares it. */}
+          {/* No eyebrow. `StatRow` states the window itself, in a caption under
+              the strip it belongs to — an eyebrow above the card repeated it, so
+              one card said "Last 30 days" twice, 100px apart, about the same
+              four numbers. */}
           <CardHeader
-            eyebrow={rangeLabel(days)}
             title="Performance"
             titleAs="h2"
             actions={

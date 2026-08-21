@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Badge, SettingGroup, SettingRow, Switch } from '../../../ui';
+import { Badge, Card, CardBody, CardHeader, SettingRow, Switch } from '../../../ui';
 
 interface EnrichmentRowProps {
   readonly title: string;
@@ -93,33 +93,41 @@ function LeadEnrichmentSectionInner({
   companyLookupPlanAllows,
 }: LeadEnrichmentSectionProps) {
   return (
-    <SettingGroup
-      title="Lead enrichment"
-      titleAs="h2"
-      description="Both spend credits, so both are off by default."
-    >
-      <EnrichmentRow
-        title="Email verification"
-        description="Check the address can receive mail."
-        cost="10 credits / verified lead"
-        planName="Standard"
-        planAllows={emailVerificationPlanAllows}
-        enabled={emailVerificationEnabled}
-        onToggle={onToggleEmailVerification}
+    // A `Card` with a widget header, not a `SettingGroup`: this sits in an 18rem
+    // aside beside two cards, and `SettingGroup`'s heading is `text-lg` — a
+    // page-section register, four points above the `CardHeader`s above and below
+    // it. Three blocks in one narrow column, three different heading sizes.
+    <Card>
+      <CardHeader
+        size="sm"
+        titleAs="h2"
+        title="Lead enrichment"
+        description="Both spend credits, so both are off by default."
       />
-      <EnrichmentRow
-        title="Company lookup"
-        description="Identify the company from the visitor’s IP."
-        // Stated as a condition, not a flat price. Most visitors arrive on home
-        // or mobile connections that name no employer, and those cost nothing —
-        // a bare "10 credits" would read as 10 per visitor.
-        cost="10 credits only when a company is found"
-        planName="Professional"
-        planAllows={companyLookupPlanAllows}
-        enabled={companyLookupEnabled}
-        onToggle={onToggleCompanyLookup}
-      />
-    </SettingGroup>
+      <CardBody flush>
+        <EnrichmentRow
+          title="Email verification"
+          description="Check the address can receive mail."
+          cost="10 credits / verified lead"
+          planName="Standard"
+          planAllows={emailVerificationPlanAllows}
+          enabled={emailVerificationEnabled}
+          onToggle={onToggleEmailVerification}
+        />
+        <EnrichmentRow
+          title="Company lookup"
+          description="Identify the company from the visitor’s IP."
+          // Stated as a condition, not a flat price. Most visitors arrive on home
+          // or mobile connections that name no employer, and those cost nothing —
+          // a bare "10 credits" would read as 10 per visitor.
+          cost="10 credits only when a company is found"
+          planName="Professional"
+          planAllows={companyLookupPlanAllows}
+          enabled={companyLookupEnabled}
+          onToggle={onToggleCompanyLookup}
+        />
+      </CardBody>
+    </Card>
   );
 }
 

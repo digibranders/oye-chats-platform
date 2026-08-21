@@ -129,6 +129,7 @@ import {
   SegmentedControl,
   Select,
   Separator,
+  SettingBand,
   SettingGroup,
   SettingRow,
   SidebarLayout,
@@ -148,6 +149,7 @@ import {
   Toaster,
   Toolbar,
   Tooltip,
+  Well,
   TooltipProvider,
   truncateId,
   useClipboard,
@@ -161,6 +163,7 @@ import {
   formatCompact,
   formatDate,
   formatDateTime,
+  formatBadgeCount,
   formatDuration,
   formatMoney,
   formatNumber,
@@ -587,6 +590,57 @@ const CONTROL_STATES = ['rest', 'disabled', 'error'] as const;
  * in which a double-dimmed checkbox, a disabled field that still lights on
  * hover, or chips that vanish at 36% opacity can be seen at all.
  */
+/**
+ * Checked × disabled, in one grid, because the defect was that two of these four
+ * cells were byte-identical.
+ *
+ * Base UI renders both controls as a `<span role="switch" data-disabled>`, which
+ * never matches `:disabled`, so every `disabled:` variant the component carried
+ * was dead CSS. A disabled *checked* switch painted `--color-ink` at opacity 1 —
+ * the live colour — and only its label dimmed. The four cells now differ.
+ */
+function CheckedAndDisabled() {
+  const [on, setOn] = useState(true);
+  const [off, setOff] = useState(false);
+
+  return (
+    <Card>
+      <CardHeader
+        size="sm"
+        titleAs="h3"
+        title="Checked, and disabled"
+        description="Four cells, four appearances. Read down: a disabled control keeps its state instead of losing it to a wash."
+      />
+      <CardBody className="grid gap-6 sm:grid-cols-2">
+        <Demo label="enabled">
+          <div className="flex flex-col gap-3">
+            <Switch checked={on} onCheckedChange={setOn} label="Live chat" />
+            <Switch checked={off} onCheckedChange={setOff} label="Quiet hours" />
+            <Checkbox checked label="Include archived" onCheckedChange={() => {}} />
+            <Checkbox checked={false} label="Email me a copy" onCheckedChange={() => {}} />
+            <Checkbox checked="indeterminate" label="Some rows" onCheckedChange={() => {}} />
+          </div>
+        </Demo>
+        <Demo label="disabled">
+          <div className="flex flex-col gap-3">
+            <Switch disabled checked onCheckedChange={() => {}} label="Live chat" />
+            <Switch disabled checked={false} onCheckedChange={() => {}} label="Quiet hours" />
+            <Checkbox disabled checked label="Include archived" />
+            <Checkbox disabled checked={false} label="Email me a copy" />
+            <Checkbox disabled checked="indeterminate" label="Some rows" />
+          </div>
+        </Demo>
+      </CardBody>
+      <CardSection className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Swatch name="control-disabled" className="bg-control-disabled" />
+        <Swatch name="control-disabled-on" className="bg-control-disabled-on" />
+        <Swatch name="ink · a live checked control" className="bg-ink" />
+        <Swatch name="neutral-fill · a live off track" className="bg-neutral-fill" />
+      </CardSection>
+    </Card>
+  );
+}
+
 function ControlStates() {
   const [colour, setColour] = useState('#2b54c8');
 
@@ -776,6 +830,25 @@ function EscapeHatches() {
           </div>
         </Demo>
 
+        <Demo label="Eyebrow as · dt, dd and a heading level">
+          <dl className="max-w-form">
+            <div className="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-x-4 border-t border-border py-2">
+              {/* `dl > div` may hold `dt` and `dd` and nothing else, so an
+                  eyebrow naming a fact inside one had nowhere valid to go and
+                  three surfaces reached past the component for EYEBROW_CLASS. */}
+              <Eyebrow as="dt">Bot key</Eyebrow>
+              <dd className="figure text-sm text-text-primary">bot-6a42…29b9</dd>
+            </div>
+            <div className="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-x-4 border-t border-border py-2">
+              <Eyebrow as="dt">Created</Eyebrow>
+              <dd className="text-sm text-text-primary">12 August 2026</dd>
+            </div>
+          </dl>
+          <Eyebrow as="h3" className="mt-4">
+            A heading that is genuinely only a label
+          </Eyebrow>
+        </Demo>
+
         <Demo label="Class exports">
           <div className="grid gap-x-6 md:grid-cols-2">
             <ClassToken name="CONTROL_BASE" value={CONTROL_BASE} />
@@ -929,6 +1002,79 @@ function PrimitivesPanel() {
             <Field label="System prompt" className="md:col-span-2">
               <Textarea defaultValue="You are Acme's support assistant. Answer only from the knowledge base." />
             </Field>
+
+            {/* The hint slot is a `div`, so it can hold a list. It was a `<p>`,
+                which may not contain a `<ul>` — the browser closed the paragraph
+                early and the list landed outside the element `aria-describedby`
+                points at, so both call sites that needed one abandoned the slot
+                and hand-rolled unwired text under the field instead. */}
+            <Field
+              label="New password"
+              hint={
+                <ul className="list-disc space-y-0.5 pl-4">
+                  <li>At least 12 characters</li>
+                  <li>One number, or one symbol</li>
+                  <li>Not a password you use anywhere else</li>
+                </ul>
+              }
+            >
+              <Input type="password" revealable placeholder="••••••••••••" />
+            </Field>
+
+            {/* `Field trailing`, not `Input trailing`. A conditional affix inside
+                the control changes the input's element tree, so React remounts
+                it and the caret is lost mid-typing — two surfaces shipped an
+                always-present `invisible` badge to avoid it. */}
+            <Field
+              label="Greeting"
+              trailing={
+                <>
+                  <Badge tone="neutral" size="sm">
+                    default
+                  </Badge>
+                  <Button size="sm" variant="ghost">
+                    Reset
+                  </Button>
+                </>
+              }
+              hint="The placeholder is what visitors see if you leave this empty."
+            >
+              <Input placeholder="Hi — ask me anything about our pricing." />
+            </Field>
+
+            {/* A width class sizes the CONTROL, and with an affix the control
+                is the wrapper. It used to land on the `<input>` while the
+                wrapper stayed `w-full`, so the badge floated ~250px right of
+                the field and a `Select`'s chevron 300px from its box. */}
+            <Field label="Session timeout" hint="A width class keeps its affix.">
+              <Input
+                className="max-w-40 figure"
+                defaultValue="30"
+                trailing={<span className="text-xs text-text-tertiary">min</span>}
+              />
+            </Field>
+            <Field label="Region" hint="The same, for a select's chevron.">
+              <Select
+                className="max-w-40"
+                options={[
+                  { value: 'in', label: 'India' },
+                  { value: 'eu', label: 'Europe' },
+                ]}
+                defaultValue="in"
+              />
+            </Field>
+
+            <Field
+              label="Accepted formats"
+              hint={
+                <>
+                  <Eyebrow as="span">PDF · DOCX · TXT</Eyebrow>
+                  <span className="mt-0.5 block">Up to 16 MB each.</span>
+                </>
+              }
+            >
+              <Input placeholder="Paste a link to a document" />
+            </Field>
           </CardBody>
 
           <CardSection className="grid gap-5 md:grid-cols-2">
@@ -949,6 +1095,19 @@ function PrimitivesPanel() {
                 />
                 <Checkbox checked="indeterminate" label="Partially selected" description="Some of the rows below are selected, not all." />
                 <Checkbox label="Unchecked, no description" />
+              </div>
+            </FieldSet>
+            <FieldSet
+              legend="Weekly digest"
+              disabled
+              hint="disabled on the fieldset, which the HTML spec inherits to every form control inside it — including ones added later."
+            >
+              <div className="space-y-4">
+                <Checkbox disabled label="Send me a weekly digest" />
+                <Input disabled defaultValue="ops@acme.com" aria-label="Digest recipient" />
+                <Button disabled size="sm" variant="secondary">
+                  Send a test
+                </Button>
               </div>
             </FieldSet>
             <FieldSet legend="Density" hint="A filter, so it is a radiogroup — one tab stop, arrow keys inside.">
@@ -1001,6 +1160,13 @@ function PrimitivesPanel() {
             </Demo>
           </CardBody>
         </Card>
+      </Section>
+
+      <Section
+        title="Disabled, without an opacity wash"
+        description="The one state a review of diffs cannot catch, because the class that was meant to paint it never matched anything."
+      >
+        <CheckedAndDisabled />
       </Section>
 
       <Section
@@ -1072,14 +1238,58 @@ function PrimitivesPanel() {
           </CardBody>
 
           <CardSection className="grid gap-4 sm:grid-cols-2">
-            <Progress value={64} label="Crawling acme.com" hideLabel={false} />
-            <Progress value={null} label="Waiting for the crawler" hideLabel={false} />
+            {/* `hideLabel` now defaults to FALSE on both. A required `label`
+                that rendered nothing unless a second prop was found and unset
+                was the trap; `Meter` never had it and the two disagreed. */}
+            <Progress value={64} label="Crawling acme.com" />
+            <Progress value={null} label="Waiting for the crawler" />
             <Progress value={92} label="Nearly done" tone="success" size="sm" />
-            <Progress value={38} label="Retrying" tone="warning" hideLabel />
+            <Demo label="Progress hideLabel · 6px of chrome">
+              <Progress value={38} label="Retrying" tone="warning" hideLabel />
+            </Demo>
             <Meter label="Documents" used={412} limit={500} />
             <Meter label="Credits" used={9800} limit={10000} />
             <Meter label="Seats" used={4} limit={-1} unlimitedNote="No limit on this plan" />
-            <Meter label="Knowledge" used={500} limit={500} tone="plan" unit="pages" />
+            <Meter
+              label="Knowledge"
+              used={500}
+              limit={500}
+              tone="plan"
+              unit="pages"
+              hint="A full allowance on a plan that includes this much is a price, not a fault."
+            />
+            <Demo label="Meter hideLabel · the figure survives">
+              <Meter hideLabel label="Budget" used={3} limit={5} />
+            </Demo>
+            <Demo label="Meter · named, for comparison">
+              <Meter label="Budget" used={3} limit={5} />
+            </Demo>
+          </CardSection>
+
+          <CardSection>
+            <Eyebrow className="mb-1.5">
+              Badge · a tooltip trigger, which needs a forwarded ref
+            </Eyebrow>
+            <p className="mb-3 max-w-form text-xs text-text-secondary">
+              Base UI renders a trigger by cloning its child with a ref and a full set of
+              handlers. `Badge` accepted neither, so every one of these clones succeeded
+              silently and no tooltip on a badge has ever opened. Hover or focus one.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Tooltip content="Scored 82 on BANT in the last 24 hours.">
+                <Badge tone="success" dot tabIndex={0}>
+                  qualified
+                </Badge>
+              </Tooltip>
+              <Tooltip content="No reply from the widget for 6 minutes.">
+                <Badge tone="warning" dot tabIndex={0}>
+                  stalled
+                </Badge>
+              </Tooltip>
+              <Tooltip content="This workspace is on the Professional plan.">
+                <StatusDot tone="plan" label="Professional" tabIndex={0} />
+              </Tooltip>
+            </div>
           </CardSection>
 
           <CardSection className="flex flex-wrap items-end gap-6">
@@ -1134,6 +1344,15 @@ function PrimitivesPanel() {
 /* ---------------------------------------------------------------- layout */
 
 const MEASURE_WIDTHS: MeasureWidth[] = ['form', 'reading', 'full'];
+
+/** The five facts that broke `PropertyGrid` in an aside: two long, three short. */
+const NARROW_FACTS = [
+  { label: 'First seen', value: '2 Jun 2026, 10:00' },
+  { label: 'Source', value: 'https://acme.com/pricing' },
+  { label: 'Company', value: 'Northwind' },
+  { label: 'Conversations', value: <span className="figure">6</span> },
+  { label: 'Referrer', value: undefined },
+];
 
 function LayoutPanel() {
   const [quietHours, setQuietHours] = useState(false);
@@ -1259,6 +1478,11 @@ function LayoutPanel() {
             <CardBody className="text-sm text-text-secondary">A body.</CardBody>
             <CardSection className="text-sm text-text-secondary">
               A section — a second band under its own hairline.
+            </CardSection>
+            <CardSection tone="sunken" className="text-sm text-text-secondary">
+              tone=&quot;sunken&quot; — for a band that is <em>about</em> the one above it. Three
+              call sites were hand-writing the background, which is a colour decision escaping
+              into a feature.
             </CardSection>
             <CardFooter>
               <Button size="sm" variant="ghost">Cancel</Button>
@@ -1395,13 +1619,79 @@ function LayoutPanel() {
             <SettingRow label="Welcome message" htmlFor="gallery-ws-welcome" stacked>
               <Textarea id="gallery-ws-welcome" rows={2} defaultValue="Hi — ask me anything about our pricing." />
             </SettingRow>
+            <SettingRow
+              label="Reply-to"
+              description="Empty uses the owner's address."
+              stacked
+              required
+            >
+              {/* No `htmlFor`: the row publishes the field's wiring but does not
+                  claim the control's name, so the tag list keeps its own. */}
+              <TagInput
+                label="Reply-to address"
+                values={['support@acme.com']}
+                maxValues={1}
+                onValuesChange={() => {}}
+              />
+            </SettingRow>
             <SettingRow label="Custom domain" badge={<Badge tone="plan">Professional</Badge>} disabled>
-              <Button size="sm" variant="secondary" disabled>
-                Configure
+              {/* `disabled` dims the row's own type in tokens. It deliberately
+                  does not disable what is inside: a locked row very often holds
+                  the control that unlocks it. */}
+              <Button size="sm" variant="secondary">
+                Upgrade
               </Button>
             </SettingRow>
+            <SettingBand>
+              <Alert tone="neutral">
+                A <code className="font-mono text-xs">SettingBand</code> is the group&rsquo;s
+                own <code className="font-mono text-xs">CardBody</code>: anything that is not
+                a row, standing on the same 20px gutter, hairline-separated like the rows
+                above it. Eight surfaces were hand-writing this padding.
+              </Alert>
+            </SettingBand>
           </SettingGroup>
         </SidebarLayout>
+      </Section>
+
+      <Section
+        title="Well"
+        description="A bordered recess inside a card — a quoted value, a preview, a summary of what is about to happen. Not a nested Card, which is a doubled hairline and two radii a pixel apart."
+      >
+        <Grid cols={2}>
+          <Card>
+            <CardHeader size="sm" title="tone=&quot;sunken&quot;" titleAs="h3" />
+            <CardBody className="space-y-3">
+              <Well>
+                <Eyebrow>What the visitor sees</Eyebrow>
+                <p className="mt-1 text-prose text-text-primary">
+                  Hi — ask me anything about our pricing.
+                </p>
+              </Well>
+              <Well>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-text-secondary">Estimated cost</span>
+                  <span className="figure text-sm font-medium text-text-primary">412 credits</span>
+                </div>
+              </Well>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader size="sm" title="tone=&quot;plain&quot;" titleAs="h3" />
+            <CardBody className="space-y-3">
+              <Well tone="plain">
+                <div className="flex items-center gap-3">
+                  <span className="h-6 w-6 rounded-xs bg-accent-500" />
+                  <span className="figure text-sm text-text-primary">#3a6ae6</span>
+                </div>
+              </Well>
+              <p className="text-xs text-text-secondary">
+                Plain keeps the card&rsquo;s white: two greys one L* apart behind a filled
+                swatch look like a rendering fault rather than a recess.
+              </p>
+            </CardBody>
+          </Card>
+        </Grid>
       </Section>
 
       <Section
@@ -1450,6 +1740,41 @@ function LayoutPanel() {
             </CardBody>
           </Card>
         </Grid>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-[18rem_minmax(0,1fr)]">
+          <Card>
+            <CardHeader size="sm" title="In an 18rem aside" titleAs="h3" />
+            <CardBody>
+              <PropertyGrid items={NARROW_FACTS} />
+              <p className="mt-3 border-t border-border pt-3 text-2xs text-text-tertiary">
+                density=&quot;compact&quot;, the inspector density — a narrower label track, because
+                the names in an inspector are short and the values are not.
+              </p>
+              <PropertyGrid
+                density="compact"
+                items={[
+                  { label: 'Email', value: 'amara@example.com' },
+                  { label: 'Device', value: 'macOS · Chrome' },
+                ]}
+              />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader size="sm" title="The same grid, given room" titleAs="h3" />
+            <CardBody>
+              <PropertyGrid items={NARROW_FACTS} />
+            </CardBody>
+          </Card>
+        </div>
+        <p className="mt-2 max-w-reading text-xs text-text-secondary">
+          One component, no prop, two shapes. The label column was
+          <code className="mx-1 font-mono text-2xs">minmax(7rem,10rem)</code>
+          at every width, so in the aside a 112px label left about 120px for the value:
+          &ldquo;2 Jun 2026, 10:00&rdquo; wrapped onto three lines and the URL broke
+          mid-word. Below 24rem of <em>container</em> — not viewport — it stacks, which is
+          what <code className="font-mono text-2xs">layout=&quot;stacked&quot;</code> was
+          already documented as being for.
+        </p>
       </Section>
 
       <Section
@@ -1710,6 +2035,26 @@ function DataPanel() {
             </>
           }
         />
+      </Section>
+
+      <Section
+        title="Table in a narrow column — fit, not scroll"
+        description="min-w-max plus a scrolling wrapper is right for a wide table and wrong for one in a two-up grid: the last cell is clipped at the card's right edge, behind a scroll affordance nobody finds."
+      >
+        <Grid cols={2}>
+          <Card>
+            <CardHeader size="sm" title="Default · the action column is cut off" titleAs="h3" />
+            <CardBody flush>
+              <DataTable seated caption="Chatbots, scrolling" rowNoun="chatbot" {...NARROW_TABLE} />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader size="sm" title="fit · the table gives instead" titleAs="h3" />
+            <CardBody flush>
+              <DataTable seated fit caption="Chatbots, fitted" rowNoun="chatbot" {...NARROW_TABLE} />
+            </CardBody>
+          </Card>
+        </Grid>
       </Section>
 
       <Section
@@ -1979,6 +2324,25 @@ function DataPanel() {
             </Card>
           </Grid>
         <Card>
+          <CardHeader
+            size="sm"
+            title="Four digits, and a compound display"
+            titleAs="h3"
+            description="The figure column was a fixed w-16 — 64px — so it held 412 and ran out of its own box at anything longer."
+          />
+          <CardBody flush>
+            <RankedBars
+              label="Pages that send the most visitors"
+              items={[
+                { id: 'a', label: '/pricing', value: 12480, display: '12,480 · 45%' },
+                { id: 'b', label: '/docs/getting-started', value: 8021, display: '8,021 · 29%' },
+                { id: 'c', label: '/integrations/shopify', value: 4310, display: '4,310 · 16%' },
+                { id: 'd', label: '/blog/why-rag', value: 2790, display: formatMoney(279000, 'INR') },
+              ]}
+            />
+          </CardBody>
+        </Card>
+        <Card>
           <CardHeader size="sm" title="Tones" titleAs="h3" description="Blue is interactive; the ramp is data. A bar fill is never accent." />
           <CardBody flush>
             <RankedBars
@@ -2012,6 +2376,10 @@ function DataPanel() {
                     items={[
                       { label: 'Messages', seriesIndex: 0, value: '2,514' },
                       { label: 'Conversations', seriesIndex: 1, value: '575' },
+                      // A reference line, drawn as a line. The marker was
+                      // always a filled dot, so an average or a plan limit had
+                      // no legal entry at all.
+                      { label: 'Average', seriesIndex: 7, marker: 'dash', value: '359' },
                     ]}
                   />
                 }
@@ -2167,11 +2535,60 @@ function DataPanel() {
 /* -------------------------------------------------------------- overlays */
 
 const DIALOG_SIZES: DialogSize[] = ['sm', 'md', 'lg', 'xl'];
-const DRAWER_WIDTHS: DrawerWidth[] = ['sm', 'md', 'lg', 'xl'];
+/** Four columns in a half-width card — the shape that lost its last cell. */
+const NARROW_TABLE = {
+  rowKey: (row: { id: string }) => row.id,
+  rows: [
+    { id: 'b1', name: 'Acme Support — Production EU', status: 'Live', documents: '412' },
+    { id: 'b2', name: 'Northwind Sales — EMEA', status: 'Live', documents: '1,204' },
+    { id: 'b3', name: 'Beacon Health — staging', status: 'Not installed', documents: '0' },
+  ],
+  columns: [
+    {
+      key: 'name',
+      header: 'Chatbot',
+      rowHeader: true,
+      render: (row: { name: string }) => row.name,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      width: '7rem',
+      truncate: false,
+      render: (row: { status: string }) => (
+        <Badge tone={row.status === 'Live' ? 'success' : 'neutral'} dot>
+          {row.status}
+        </Badge>
+      ),
+    },
+    {
+      key: 'documents',
+      header: 'Documents',
+      type: 'number' as const,
+      width: '5.5rem',
+      render: (row: { documents: string }) => row.documents,
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right' as const,
+      width: '6rem',
+      truncate: false,
+      render: () => (
+        <Button size="sm" variant="ghost">
+          Open
+        </Button>
+      ),
+    },
+  ],
+};
+
+const DRAWER_WIDTHS: DrawerWidth[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
 function OverlaysPanel() {
   const [dialogSize, setDialogSize] = useState<DialogSize | null>(null);
   const [drawerWidth, setDrawerWidth] = useState<DrawerWidth | null>(null);
+  const [flushDrawer, setFlushDrawer] = useState(false);
   const [stubbornOpen, setStubbornOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [simpleConfirmOpen, setSimpleConfirmOpen] = useState(false);
@@ -2198,13 +2615,16 @@ function OverlaysPanel() {
                 </Button>
               </div>
             </Demo>
-            <Demo label="Drawer · four widths">
+            <Demo label="Drawer · five widths, and a flush body">
               <div className="flex flex-wrap gap-2">
                 {DRAWER_WIDTHS.map((width) => (
                   <Button key={width} variant="secondary" onClick={() => setDrawerWidth(width)}>
                     Drawer {width}
                   </Button>
                 ))}
+                <Button variant="secondary" onClick={() => setFlushDrawer(true)}>
+                  Drawer flush
+                </Button>
               </div>
             </Demo>
             <Demo label="ConfirmDialog">
@@ -2424,20 +2844,36 @@ function OverlaysPanel() {
             </>
           }
         >
-          <div className="space-y-4">
-            <Field label="Email" required>
-              <Input type="email" placeholder="teammate@acme.com" />
-            </Field>
-            <Field label="Role" hint="Operators can answer conversations but cannot change billing.">
-              <Select
-                options={[
-                  { value: 'operator', label: 'Operator' },
-                  { value: 'admin', label: 'Admin' },
-                ]}
-                defaultValue="operator"
-              />
-            </Field>
-          </div>
+          <Stack>
+            {/* `Grid cols="pairs"`, not `sm:grid-cols-2`. The overlay body
+                declares `@container/page`, so this asks the DIALOG how wide it
+                is — and `pairs` is a step a dialog can actually reach: the card
+                ramp's two-up starts at 48rem and a dialog body is 408–856px
+                after its padding, so `cols={2}` could never fire inside one.
+                Open `sm` and then `xl`. */}
+            <Grid cols="pairs">
+              <Field label="Email" required>
+                <Input type="email" placeholder="teammate@acme.com" />
+              </Field>
+              <Field label="Role" hint="Operators can answer conversations but cannot change billing.">
+                <Select
+                  options={[
+                    { value: 'operator', label: 'Operator' },
+                    { value: 'admin', label: 'Admin' },
+                  ]}
+                  defaultValue="operator"
+                />
+              </Field>
+            </Grid>
+            <PropertyGrid
+              columns={2}
+              density="compact"
+              items={[
+                { label: 'Workspace', value: 'Acme Inc' },
+                { label: 'Seats left', value: <span className="figure">1</span> },
+              ]}
+            />
+          </Stack>
         </Dialog>
       ))}
 
@@ -2480,17 +2916,49 @@ function OverlaysPanel() {
             <PropertyGrid
               items={[
                 { label: 'Email', value: 'ana@northwind.com' },
-                { label: 'Company', value: 'Northwind' },
+                { label: 'First seen', value: '2 Jun 2026, 10:00' },
+                { label: 'Source', value: 'https://acme.com/pricing' },
                 { label: 'Tier', value: 'Warm' },
               ]}
             />
             <p className="text-prose text-text-secondary">
               A drawer is square against the three edges it is anchored to and rounded on the one
-              edge that is a boundary between the panel and the page it covers.
+              edge that is a boundary between the panel and the page it covers. At{' '}
+              <code className="font-mono text-xs">xs</code> the facts stack, because the grid
+              asks its own container and 320px is not room for a label column.
             </p>
           </Stack>
         </Drawer>
       ))}
+
+      <Drawer
+        open={flushDrawer}
+        onOpenChange={setFlushDrawer}
+        width="lg"
+        flush
+        title="Columns"
+        description='flush drops the body padding for a child that owns its own edges.'
+        footer={
+          <Button variant="ghost" onClick={() => setFlushDrawer(false)}>
+            Close
+          </Button>
+        }
+      >
+        <SettingGroup>
+          <SettingRow label="Status" description="Shown as a badge in the first cell.">
+            <Switch checked label="Status column" hideLabel onCheckedChange={() => {}} />
+          </SettingRow>
+          <SettingRow label="Owner" description="Hidden below md.">
+            <Switch checked={false} label="Owner column" hideLabel onCheckedChange={() => {}} />
+          </SettingRow>
+          <SettingBand>
+            <p className="text-xs text-text-secondary">
+              Without <code className="font-mono text-2xs">flush</code> this list is inset 20px
+              from a panel it was built to reach, and its hairlines stop short of the border.
+            </p>
+          </SettingBand>
+        </SettingGroup>
+      </Drawer>
 
       <ConfirmDialog
         open={confirmOpen}
@@ -2504,7 +2972,15 @@ function OverlaysPanel() {
           setConfirmOpen(false);
           toast.success('Chatbot deleted');
         }}
-      />
+      >
+        {/* `AlertDialog.Description` renders a `<p>`, so an `Alert` — a `<div>`
+            — could not go in the body at all, and two surfaces put the warning
+            outside the dialog instead. */}
+        <Alert tone="danger" title="412 documents and 1,204 conversations">
+          Deleting the chatbot deletes its knowledge base. Export the conversations first if
+          you need them.
+        </Alert>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={simpleConfirmOpen}
@@ -2558,6 +3034,37 @@ function StatesPanel() {
               </CardBody>
             </Card>
           ))}
+        </Grid>
+      </Section>
+
+      <Section
+        title="flush · a state seated in a padded body"
+        description="A state carries its own 20px gutter. Inside a CardBody that already draws one they add up, and the state's copy sits 20px inside every label around it — worked around twice with a negative margin before this prop existed."
+      >
+        <Grid cols={2}>
+          <Card>
+            <CardHeader size="sm" title="Double-padded" titleAs="h3" />
+            <CardBody>
+              <p className="mb-2 text-xs text-text-secondary">A label on the body's gutter.</p>
+              <EmptyState
+                size="inline"
+                title="No conversations yet"
+                description="Once your chatbot is live, everything a visitor asks lands here."
+              />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader size="sm" title="flush" titleAs="h3" />
+            <CardBody>
+              <p className="mb-2 text-xs text-text-secondary">A label on the body's gutter.</p>
+              <EmptyState
+                flush
+                size="inline"
+                title="No conversations yet"
+                description="Once your chatbot is live, everything a visitor asks lands here."
+              />
+            </CardBody>
+          </Card>
         </Grid>
       </Section>
 
@@ -2707,6 +3214,11 @@ function TokensPanel() {
     { call: 'formatRelative(…, NOW)', result: formatRelative('2026-08-19T09:12:00Z', NOW) },
     { call: 'formatDuration(90)', result: formatDuration(90) },
     { call: 'truncateId(botKey)', result: truncateId('bot-6a427d4529b9') },
+    // Moved out of `src/shell/badgeCount.ts`: a badge count is a formatter, and
+    // a table cell or a tab capping one may not import from the shell.
+    { call: 'formatBadgeCount(14)', result: formatBadgeCount(14) },
+    { call: 'formatBadgeCount(140)', result: formatBadgeCount(140) },
+    { call: 'formatBadgeCount(0)', result: formatBadgeCount(0) },
     { call: 'ABSENT', result: ABSENT },
   ];
 
@@ -2744,15 +3256,31 @@ function TokensPanel() {
             <Swatch name="danger" className="bg-danger-fill" />
             <Swatch name="plan" className="bg-plan" />
           </CardBody>
+          <CardSection className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <Swatch name="control-disabled" className="bg-control-disabled" />
+            <Swatch name="control-disabled-on" className="bg-control-disabled-on" />
+          </CardSection>
         </Card>
       </Section>
 
       <Section
         title="The data ramp"
-        description="Eight series, in order, distinguishable without colour: after the fourth, a line takes a dash instead. The first series is its own blue and accent-500 is directly above it — a bar painted in the interactive blue is the defect this pairing is here to expose."
+        description="Eight series, in order, distinguishable without colour: after the fourth, a line takes a dash instead. The first series sits beside accent-500 on purpose — it used to be one step from it, so the default fill of every ranked bar read as interactive."
       >
         <Card>
           <CardBody className="space-y-3">
+            <div className="flex flex-wrap items-end gap-6">
+              <Demo label="chart-1 · the default data fill">
+                <div className="h-12 w-32 rounded-md border border-border bg-chart-1" />
+              </Demo>
+              <Demo label="accent-500 · interactive, and nothing else">
+                <div className="h-12 w-32 rounded-md border border-border bg-accent-500" />
+              </Demo>
+              <p className="max-w-form text-xs text-text-secondary">
+                10.0 on the canvas against the accent&rsquo;s 4.09 — twice as dark and far
+                less saturated. A bar in the left colour cannot be mistaken for a link.
+              </p>
+            </div>
             <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
               {CHART_SERIES.map((color, index) => (
                 <div key={color} className="min-w-0">

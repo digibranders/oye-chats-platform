@@ -11,6 +11,7 @@ import {
   Input,
   LoadingRows,
   SaveBar,
+  SettingBand,
   SettingGroup,
   SettingRow,
   Switch,
@@ -183,7 +184,7 @@ export function NotificationsSection() {
       device.phase.status === 'disabled' ||
       device.phase.status === 'incomplete' ||
       device.phase.status === 'error' ? (
-        <div className="space-y-3 px-cell py-3">
+        <SettingBand className="space-y-3">
           {device.actionError ? (
             <Alert tone="danger" live>
               {device.actionError}
@@ -215,14 +216,14 @@ export function NotificationsSection() {
               {device.phase.message}
             </Alert>
           ) : null}
-        </div>
+        </SettingBand>
       ) : null}
 
       {/* ── Every device ──────────────────────────────────────────────────── */}
       {stored.isPending ? (
-        <div className="px-cell py-4">
+        <SettingBand>
           <LoadingRows rows={3} />
-        </div>
+        </SettingBand>
       ) : stored.isError ? (
         <ErrorState
           size="panel"
@@ -233,13 +234,13 @@ export function NotificationsSection() {
       ) : (
         <>
           {save.isError ? (
-            <div className="px-cell pt-4">
+            <SettingBand>
               <Alert tone="danger" live title="We could not save that">
                 {save.error instanceof Error
                   ? save.error.message
                   : 'Something went wrong. Please try again.'}
               </Alert>
-            </div>
+            </SettingBand>
           ) : null}
 
           <SettingRow
@@ -258,33 +259,40 @@ export function NotificationsSection() {
           {/* One name for the group, visible and in a real `legend`. It used to
               carry an `sr-only` legend saying "Which events are worth a push"
               over a `<p>` reading "Worth interrupting me for" — two names for
-              one group, and the visible one was not a heading. */}
-          <FieldSet legend="Worth interrupting me for" className="px-cell py-3">
-            <div className="space-y-3">
-              {PUSH_EVENTS.map((event) => (
-                <Switch
-                  key={event.key}
-                  size="sm"
-                  label={event.label}
-                  disabled={!draft.enabled}
-                  checked={draft.events[event.key]}
-                  onCheckedChange={(next) =>
-                    setDraft((current) => ({
-                      ...current,
-                      events: { ...current.events, [event.key]: next },
-                    }))
-                  }
-                />
-              ))}
-            </div>
-          </FieldSet>
+              one group, and the visible one was not a heading.
+
+              `disabled` on the group as well as on each switch: Base UI's
+              `Switch` is a span, so the native `fieldset[disabled]` inheritance
+              does not reach it — but the legend is what tells the reader *why*
+              three switches have gone quiet, and without it the name stayed at
+              full contrast above three controls that had gone grey. */}
+          <SettingBand>
+            <FieldSet legend="Worth interrupting me for" disabled={!draft.enabled}>
+              <div className="space-y-3">
+                {PUSH_EVENTS.map((event) => (
+                  <Switch
+                    key={event.key}
+                    label={event.label}
+                    disabled={!draft.enabled}
+                    checked={draft.events[event.key]}
+                    onCheckedChange={(next) =>
+                      setDraft((current) => ({
+                        ...current,
+                        events: { ...current.events, [event.key]: next },
+                      }))
+                    }
+                  />
+                ))}
+              </div>
+            </FieldSet>
+          </SettingBand>
 
           {silenced ? (
-            <div className="px-cell pb-3">
+            <SettingBand>
               <Alert tone="warning">
                 Nothing can reach you right now. Conversations still arrive in the inbox.
               </Alert>
-            </div>
+            </SettingBand>
           ) : null}
 
           <SettingRow
@@ -321,7 +329,6 @@ export function NotificationsSection() {
                   id={`${fieldId}-from`}
                   type="time"
                   required
-                  aria-invalid={timeErrors.start ? true : undefined}
                   className="figure"
                   value={draft.quietHours.start}
                   onChange={(event) => {
@@ -348,7 +355,6 @@ export function NotificationsSection() {
                   id={`${fieldId}-until`}
                   type="time"
                   required
-                  aria-invalid={timeErrors.end ? true : undefined}
                   className="figure"
                   value={draft.quietHours.end}
                   onChange={(event) => {

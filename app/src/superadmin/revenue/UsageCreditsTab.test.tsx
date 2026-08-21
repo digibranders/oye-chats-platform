@@ -140,9 +140,16 @@ describe('UsageCreditsTab', () => {
 
   it('labels overage as US dollars, which is what the server passes through', async () => {
     respond([usage({ overage_messages: 40, overage_amount_cents: 250 })], []);
+    const user = userEvent.setup();
     mount();
     expect(await screen.findByText('$2.50')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: /already US dollars/i })).toBeInTheDocument();
+    // The head names the currency; the reason it is *not* the normalised figure
+    // the rest of the section carries moved to the list's own note, because the
+    // full clause set the column's width and pushed the table off the card.
+    expect(screen.getByRole('columnheader', { name: /overage \(USD\)/i })).toBeInTheDocument();
+
+    await user.hover(screen.getByRole('button', { name: /About Usage records/i }));
+    expect(await screen.findByText(/real US dollars, not the normalised figure/i)).toBeInTheDocument();
   });
 
   /**

@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Input, SaveBar, SettingGroup, SettingRow, toast } from '../../ui';
+import { Alert, Input, SaveBar, SettingBand, SettingGroup, SettingRow, toast } from '../../ui';
 import { updateBot } from '../../services/api';
 import type { Bot } from '../../types/domain';
 import {
@@ -82,7 +82,6 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
         className="figure"
         inputMode="numeric"
         required
-        aria-invalid={errors[field] ? true : undefined}
         trailing={field === 'maxQueue' ? undefined : <Seconds />}
         value={draft[field]}
         onChange={(event) => set(field, event.target.value)}
@@ -93,13 +92,13 @@ export function QueueSettingsCard({ bot, onSaved }: QueueSettingsCardProps) {
   return (
     <SettingGroup title="Waiting and routing">
       {save.isError ? (
-        <div className="px-cell pt-4">
+        <SettingBand>
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        </div>
+        </SettingBand>
       ) : null}
 
       <SettingRow

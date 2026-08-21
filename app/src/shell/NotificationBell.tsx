@@ -10,10 +10,10 @@ import {
   SegmentedControl,
   Tooltip,
   cn,
+  formatBadgeCount,
   formatRelative,
 } from '../ui';
 import { useNotifications } from '../context/NotificationContext';
-import { formatBadgeCount } from './badgeCount';
 
 /**
  * The notification bell.

@@ -212,7 +212,12 @@ export function CommandPalette({
               </div>
             </BaseCombobox.Empty>
 
-            <BaseCombobox.List className="max-h-80 overflow-y-auto p-1.5">
+            {/* Bounded by the viewport, not by 320 pixels. `max-h-80` showed 8
+                of 24 destinations on a 900px screen — a 400px panel with 500px
+                of empty canvas under it — and the same 320px on a 600px laptop,
+                where it is the whole window. `top-24` above plus a 2rem tail
+                is what is actually available. */}
+            <BaseCombobox.List className="max-h-[calc(100dvh-14rem)] min-h-0 overflow-y-auto p-1.5">
               {(group: CommandGroup) => (
                 <BaseCombobox.Group key={group.label} items={group.items}>
                   <BaseCombobox.GroupLabel className="px-2.5 pb-1 pt-2 font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">

@@ -6,6 +6,7 @@ import {
   Card,
   CardBody,
   ErrorState,
+  Grid,
   LoadingRows,
   Measure,
   Page,
@@ -97,12 +98,25 @@ export function SettingsPage() {
   return (
     <Page>
       {header}
-      {/* One column, deliberately: five groups of two or three rows, and a
-          second column would leave one of them orphaned. `Measure` gives it a
-          form measure inside a full-width page — the page itself no longer
-          narrows, so its title stands on the same left edge as every other
-          page's. */}
-      <Measure width="form">
+      {/* Two columns of groups, not one column of seven.
+          Every group here is a form measure wide — a label, a 256px control and
+          a hairline — so stacking all seven made `/account` the tallest page in
+          the console at 1,773px (2.1 screenfuls) while leaving 500px of the
+          content area empty down its entire right-hand side. That is a magazine
+          column, not a settings page; Linear's account settings are a 2-up grid
+          of exactly these groups.
+
+          Two `Stack`s rather than seven grid children, because a grid row is as
+          tall as its tallest cell: seven groups of very different heights laid
+          out row-major would open a hole under every short one. Each column
+          flows on its own and they meet at roughly the same bottom edge.
+
+          The split is by subject, not by height: column one is who you are and
+          how you get in — your name, your address, your password and the device
+          holding the session — and column two is what the account does once you
+          are in. It collapses to one column below `@3xl/page`, which is where
+          two form measures stop fitting side by side. */}
+      <Grid cols={2} gap="section" align="start">
         <Stack>
           <ProfileSection user={user} onSaved={applyPatch} />
 
@@ -120,18 +134,17 @@ export function SettingsPage() {
 
           <ChangePasswordCard isOperator={isOperator} />
 
-          <NotificationsSection />
-
           <AccountSessionsSection email={user.email ?? ''} />
+        </Stack>
+
+        <Stack>
+          <NotificationsSection />
 
           <ContactSection />
 
           {!isOperator ? (
             <SettingGroup>
-              <SettingRow
-                label="Workspace settings"
-                description="Company name, team, integrations and the API key."
-              >
+              <SettingRow label="Workspace settings" description="Company, team and the API key.">
                 <Link to="/settings/workspace" className={buttonClass('secondary', 'sm')}>
                   Open
                 </Link>
@@ -139,7 +152,7 @@ export function SettingsPage() {
             </SettingGroup>
           ) : null}
         </Stack>
-      </Measure>
+      </Grid>
     </Page>
   );
 }

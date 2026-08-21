@@ -354,6 +354,20 @@ export function LeadsPage() {
         key: 'lead',
         header: 'Lead',
         rowHeader: true,
+        // Pinned, because this table is wider than the card that holds it and
+        // there is no honest way to make it narrower. Eight columns came to
+        // 1,383px against 1,126 at 1440 and 966 at 1280, so Messages and Last
+        // active sat off the right edge — and the identity column scrolled away
+        // with them, leaving rows of scores with nobody's name against them.
+        // Trimming the declared widths (below) buys back 257px, which is the
+        // whole overflow at 1440 and most of it at 1280; the rest scrolls, with
+        // the name anchored and `DataTable`'s pinned-edge shadow marking it.
+        //
+        // `fit` was the other candidate and is wrong here: it is for a table in
+        // a narrow column, and forcing eight columns into 966px cut every
+        // visitor's name to "Amara (" — losing the tail of the thing the row is
+        // *about*, which is worse than scrolling to reach a message count.
+        pinned: true,
         sortable: sortable ? compareLeads.name : undefined,
         render: (lead) => <LeadCell lead={lead} />,
       },
@@ -361,7 +375,7 @@ export function LeadsPage() {
         key: 'tags',
         header: 'Tags',
         secondary: true,
-        width: '10rem',
+        width: '5rem',
         render: (lead) => {
           const tags = annotations.tagsFor(lead.session_id);
           if (tags.length === 0) return <span className="text-text-tertiary">{ABSENT}</span>;
@@ -382,7 +396,7 @@ export function LeadsPage() {
         key: 'company',
         header: 'Company',
         secondary: true,
-        width: '12rem',
+        width: '9rem',
         sortable: sortable ? compareLeads.company : undefined,
         // The domain is derived free of charge from the captured email address.
         // Personal-provider addresses correctly yield nothing, so an em dash
@@ -400,7 +414,7 @@ export function LeadsPage() {
         {
           key: 'quality',
           header: 'Quality',
-          width: '11rem',
+          width: '10rem',
           sortable: sortable ? compareLeads.score : undefined,
           render: (lead) => {
             const tier = TIER_META[normalizeTier(lead.status)];
@@ -421,14 +435,16 @@ export function LeadsPage() {
           header: 'Qualified',
           secondary: true,
           align: 'center',
-          width: '6rem',
+          // 4rem, not 6: the cell is a `4/4` chip about 34px wide, so 96px was
+          // 30px of air in a table that did not have 23px to give.
+          width: '4rem',
           render: (lead) => <QualificationCell lead={lead} />,
         },
         {
           key: 'location',
           header: 'Location',
           secondary: true,
-          width: '10rem',
+          width: '6rem',
           render: (lead) => {
             const location = formatLocation(lead.location);
             return location === 'Unknown' ? (
@@ -446,7 +462,7 @@ export function LeadsPage() {
         key: 'chats',
         header: 'Messages',
         type: 'number',
-        width: '6rem',
+        width: '5rem',
         secondary: true,
         sortable: sortable ? compareLeads.chats : undefined,
         render: (lead) => (lead.chats ? formatNumber(lead.chats) : ABSENT),
@@ -457,7 +473,7 @@ export function LeadsPage() {
         // monospace prose with tabular figures reads as a broken number column.
         key: 'last_active',
         header: 'Last active',
-        width: '10rem',
+        width: '7rem',
         sortable: sortable ? compareLeads.lastActive : undefined,
         render: (lead) => formatRelative(lead.last_active_at),
       },
@@ -572,12 +588,10 @@ export function LeadsPage() {
             window is stated once, in the header: `StatRow` suppresses it on
             every tile that inherits it and renders it nowhere itself. */}
         <Card>
-          <CardHeader
-            size="sm"
-            title="Pipeline"
-            titleAs="h2"
-            actions={<span className="text-xs text-text-tertiary">All time</span>}
-          />
+          {/* No period in the header. `StatRow` states the strip's window
+              itself, in a hairline caption under the tiles, so this printed
+              "All time" twice within 90px of itself. */}
+          <CardHeader size="sm" title="Pipeline" titleAs="h2" />
           <CardBody flush>
             <StatRow
               label="Lead pipeline"
@@ -704,9 +718,15 @@ export function LeadsPage() {
               page={serverPaged ? state.page : undefined}
               onPageChange={serverPaged ? (page) => update({ page }) : undefined}
               rowCount={serverPaged ? leads.total : undefined}
-              // The toolbar above is sticky, so the column heads have to stick
-              // below it rather than scroll away underneath it.
-              stickyOffset="3.25rem"
+              // No `stickyOffset`. `DataTable` wraps its own table in an
+              // `overflow-auto` box, so that box — not the page — is what the
+              // header sticks to, and a 3.25rem offset there is not "clear the
+              // toolbar", it is "sit 52px down from the top of the table". The
+              // rendered result was a 52px empty band at the top of the card
+              // with the column heads floating over the first row of leads
+              // (thead at y=454 against a first row at y=446). The toolbar it
+              // was trying to clear scrolls with the page and never overlaps
+              // this header at all.
               selectedKeys={selected}
               onSelectionChange={setSelected}
               bulkActions={

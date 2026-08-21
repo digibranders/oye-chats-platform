@@ -353,11 +353,20 @@ describe('MembersPage — deactivating a teammate', () => {
   });
 });
 
+/**
+ * The owner's own state is read off the button, not off a dot.
+ *
+ * These three used to gate on the text "You are / are not taking live chats",
+ * which was the `sr-only` label of a bare `StatusDot` in the toolbar — an 8px
+ * disc whose sentence nobody sighted could read. The button beside it says
+ * which state you are in, in words, to everyone; it is now the only statement
+ * of it, so it is what these assertions read.
+ */
 describe('MembersPage — the owner’s own seat', () => {
   it('offers a way in, and says it costs a seat before it is spent', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('You are not taking live chats');
+    await screen.findByRole('button', { name: /join live chat/i });
 
     await user.click(screen.getByRole('button', { name: /join live chat/i }));
     const dialog = await screen.findByRole('alertdialog');
@@ -373,7 +382,7 @@ describe('MembersPage — the owner’s own seat', () => {
       operators: [member({ id: 9, name: 'You', role: 'owner', linked_client_id: 42 })],
     });
     renderPage();
-    await screen.findByText('You are taking live chats');
+    await screen.findByRole('button', { name: /leave live chat/i });
 
     await user.click(screen.getByRole('button', { name: /leave live chat/i }));
     const dialog = await screen.findByRole('alertdialog');
@@ -387,8 +396,7 @@ describe('MembersPage — the owner’s own seat', () => {
   it('will not offer the owner a seat there is no room for', async () => {
     entitlements.limitFor = () => 1;
     renderPage();
-    await screen.findByText('You are not taking live chats');
-    expect(screen.getByRole('button', { name: /join live chat/i })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /join live chat/i })).toBeDisabled();
   });
 });
 

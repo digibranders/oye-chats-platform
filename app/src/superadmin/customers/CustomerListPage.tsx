@@ -240,7 +240,9 @@ function AccountsTab() {
     },
     {
       key: 'mrr_cents',
-      header: `MRR (${USD_NORMALISED_SHORT})`,
+      // `USD_NORMALISED_SHORT` is already parenthesised — "USD (converted)" —
+      // so wrapping it again printed "MRR (USD (converted))" in the column head.
+      header: `MRR, ${USD_NORMALISED_SHORT}`,
       align: 'right',
       sortable: true,
       render: (row) => usdCentsRounded(row.mrr_cents),
@@ -282,9 +284,11 @@ function AccountsTab() {
             tone: suspended > 0 ? 'warning' : 'neutral',
           },
           {
+            // A currency is a unit, not a window. See the note on
+            // `revenue/OverviewTab`'s strip.
             label: 'Monthly recurring',
             value: usdCentsRounded(totalMrr),
-            period: USD_NORMALISED_SHORT,
+            hint: USD_NORMALISED_SHORT,
           },
           { label: 'Showing', value: formatNumber(paged.total), period: 'After this filter' },
         ]}
@@ -359,6 +363,15 @@ const PANELS: Record<string, () => ReactElement> = {
   devices: DevicesTab,
   notifications: NotificationsTab,
 };
+
+/**
+ * The directory's own path segments, for the section router.
+ *
+ * `CustomersPage` declares a route for each of these *before* `:clientId`, which
+ * would otherwise swallow all five — see the note there. Derived from `PANELS`
+ * so a sixth list cannot be added here and stay unreachable there.
+ */
+export const DIRECTORY_SEGMENTS: readonly string[] = Object.keys(PANELS).filter(Boolean);
 
 /**
  * The customer directory.

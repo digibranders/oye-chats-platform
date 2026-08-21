@@ -5,6 +5,7 @@ import {
   Input,
   SaveBar,
   Select,
+  SettingBand,
   SettingGroup,
   SettingRow,
   Switch,
@@ -97,13 +98,13 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
   return (
     <SettingGroup title="Meeting booking">
       {save.isError ? (
-        <div className="px-cell pt-4">
+        <SettingBand>
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        </div>
+        </SettingBand>
       ) : null}
 
       {/* The off-state explanation is the switch's own description, so the row
@@ -160,7 +161,6 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
             <Input
               id={`${fieldId}-url`}
               required
-              aria-invalid={urlError ? true : undefined}
               value={draft.url}
               onChange={(event) => {
                 setUrlError(null);

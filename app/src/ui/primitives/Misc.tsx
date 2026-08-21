@@ -68,6 +68,14 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
  * the two places that needed one — the drop zone's accepted-types line and the
  * menu's group label — each re-typed the class string instead. A `span` set to
  * `block` renders identically and is valid everywhere.
+ *
+ * It also takes `dt`, `dd` and a heading level. `dl > div` may contain `dt` and
+ * `dd` and nothing else, so an eyebrow naming a group of facts inside one had
+ * nowhere valid to go, and three surfaces reached past the component for
+ * `EYEBROW_CLASS`. A heading level is for the eyebrow that is genuinely the
+ * only name a section has — where it is a label, not a heading, keep the `p`.
+ * The class carries no `font-weight`, so a heading tag inherits Preflight's
+ * reset and renders identically to the `p`.
  */
 export const EYEBROW_CLASS =
   'block font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary';
@@ -78,7 +86,7 @@ export function Eyebrow({
   className,
 }: {
   children: ReactNode;
-  as?: 'p' | 'span' | 'div';
+  as?: 'p' | 'span' | 'div' | 'dt' | 'dd' | 'h2' | 'h3' | 'h4';
   className?: string;
 }) {
   return (

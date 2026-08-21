@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { ArrowRight, Bot as BotIcon, Inbox, Plus, Users, X } from 'lucide-react';
+import { ArrowRight, Bot as BotIcon, Plus, X } from 'lucide-react';
 import {
   ABSENT,
   Avatar,
@@ -46,9 +46,23 @@ import { useHomeData, type HomeAgent } from './useHomeData';
  * numbers, a fake table and two link tiles — so the first product figure sat a
  * thousand pixels below the fold. Now: one hairline-divided figure strip across
  * the top, then two tracks. The left track is *work* — what is broken, and how
- * every chatbot is doing. The right rail is *state* — what is left to set up,
- * what came in, where to go next. That is Stripe's Home, and it is the shape
- * this page always wanted.
+ * every chatbot is doing. The right rail is *state* — what is left to set up and
+ * what came in. That is Stripe's Home, and it is the shape this page always
+ * wanted.
+ *
+ * **Each fact is stated on exactly one of the two tracks.** The first cut said
+ * everything twice: "Nothing to answer from" appeared as a row in *Needs
+ * attention* and again as the status badge of the same chatbot in the table
+ * forty pixels below it, each with its own "Add knowledge" button. The table
+ * carries the *state*, because a state is a column value and a healthy chatbot
+ * needs one too; the attention list carries the *consequence and the fix*,
+ * because that is the one thing a status badge cannot say.
+ *
+ * **`Columns` requires `main` to be the taller track**, and the first cut had it
+ * backwards — the aside ran 785px past the bottom of the work column at 1440,
+ * because it held an uncapped lead list and two link tiles that only repeated
+ * rail rows. Recent leads is now a bounded sample with a way to the rest, and
+ * the tiles are gone.
  */
 
 function greeting(now: Date): string {
@@ -128,19 +142,13 @@ export function HomePage() {
       ) : (
         <>
           {/* The figures, anchored to one window and compared to the one before
-              it. The window is stated once, in the card's header — `StatRow`
-              suppresses it on every tile that inherits it, and renders it
-              nowhere itself. A tile whose window genuinely differs still states
-              its own. */}
+              it. The window is stated once, by `StatRow`'s own caption — this
+              header used to restate it on the right, so the card printed
+              "Last 30 days" twice, sixteen pixels apart, the moment the strip
+              learned to say it itself. A tile whose window genuinely differs
+              still states its own. */}
           <Card className="mb-6">
-            <CardHeader
-              size="sm"
-              title="Workspace"
-              titleAs="h2"
-              actions={
-                <span className="text-xs text-text-tertiary">Last {home.windowDays} days</span>
-              }
-            />
+            <CardHeader size="sm" title="Workspace" titleAs="h2" />
             <CardBody flush>
               <StatRow
                 label="Workspace at a glance"
@@ -184,7 +192,12 @@ export function HomePage() {
           </Card>
 
           <Columns
-            asideWidth="md"
+            /* 18rem, not 24. `md` needs a 1024px page container, which a 1280
+               laptop — the commonest desktop width there is — does not have
+               after the rail and the gutter, so Home stacked to a single 2.5-fold
+               column on it while 1440 got the grid. `sm` engages at 896 and the
+               aside holds nothing wider than a name and a timestamp. */
+            asideWidth="sm"
             asideLabel="Setup and recent activity"
             main={
               <div className="flex flex-col gap-6">
@@ -212,7 +225,6 @@ export function HomePage() {
                 {home.recentAvailable ? (
                   <RecentActivity leads={home.recentLeads} loading={home.recentLoading} />
                 ) : null}
-                <QuickLinks />
               </div>
             }
           />
@@ -256,9 +268,12 @@ function NeedsAttention({ agents }: { agents: readonly HomeAgent[] }) {
             </Link>
             {/* `aria-hidden`: the dot beside it already carries this word for
                 assistive tech, and reading it twice per row is noise. */}
-            <span aria-hidden className="shrink-0 text-xs text-text-secondary">
-              {health.label}
-            </span>
+            {/* The *consequence*, not the state. The state is a column in the
+                table below — `health.label` on both surfaces printed "Nothing
+                to answer from" six times on one screen, three of them beside a
+                button that already said what to do about it. This row answers
+                the question the badge does not: what is it costing me? */}
+            <span className="shrink-0 text-xs text-text-secondary">{health.detail}</span>
             {health.action ? (
               <Link
                 to={agentPath(bot.id, health.action.segment)}
@@ -316,7 +331,7 @@ function AgentTable({
         key: 'website',
         header: 'Website',
         secondary: true,
-        width: '14rem',
+        width: '11rem',
         render: ({ bot }) =>
           bot.website ? (
             <span className="text-text-secondary">{bot.website}</span>
@@ -325,9 +340,13 @@ function AgentTable({
           ),
       },
       {
+        // 13rem, because "Nothing to answer from" is the longest label
+        // `agentHealth` produces and a `fit` table ellipsises rather than
+        // scrolls — at 11rem the status this card exists to report read
+        // "Nothing to answer from …".
         key: 'status',
         header: 'Status',
-        width: '11rem',
+        width: '13rem',
         render: ({ health }) => (
           <Badge tone={health.tone} dot>
             {health.label}
@@ -338,24 +357,9 @@ function AgentTable({
         key: 'chats',
         header: 'Chats',
         type: 'number',
-        width: '6rem',
+        width: '5rem',
         render: (agent) =>
           agent.conversationsLoading ? ABSENT : formatNumber(agent.conversations),
-      },
-      {
-        key: 'action',
-        header: <span className="sr-only">Actions</span>,
-        align: 'right',
-        width: '9rem',
-        render: ({ bot, health }) =>
-          health.action ? (
-            <Link
-              to={agentPath(bot.id, health.action.segment)}
-              className={buttonClass('secondary', 'sm')}
-            >
-              {health.action.label}
-            </Link>
-          ) : null,
       },
     ],
     [],
@@ -377,6 +381,7 @@ function AgentTable({
       <CardBody flush>
         <DataTable
           seated
+          fit
           caption="Your chatbots and how each one is doing"
           columns={columns}
           rows={agents}
@@ -475,7 +480,18 @@ function SetupCard({
 function RecentActivity({ leads, loading }: { leads: readonly Lead[]; loading: boolean }) {
   return (
     <Card as="section">
-      <CardHeader size="sm" title="Recent leads" titleAs="h2" />
+      <CardHeader
+        size="sm"
+        title="Recent leads"
+        titleAs="h2"
+        actions={
+          leads.length > 0 ? (
+            <Link to="/leads" className={buttonClass('ghost', 'sm')}>
+              See all
+            </Link>
+          ) : undefined
+        }
+      />
       {loading ? (
         <CardBody className="text-xs text-text-secondary">Loading…</CardBody>
       ) : leads.length === 0 ? (
@@ -506,44 +522,6 @@ function RecentActivity({ leads, loading }: { leads: readonly Lead[]; loading: b
           ))}
         </ul>
       )}
-    </Card>
-  );
-}
-
-/**
- * Where to go next.
- *
- * Two hand-rolled boxes reimplementing `Card interactive`, twenty lines apart in
- * one file, became two rows in one card. They are static navigation, so they are
- * rendered unconditionally — gating them on loaded data mounted 76px of chrome
- * under content that had already settled.
- */
-function QuickLinks() {
-  return (
-    <Card>
-      {[
-        {
-          to: '/inbox',
-          icon: Inbox,
-          label: 'Inbox',
-          hint: 'Live conversations and offline messages',
-        },
-        { to: '/leads', icon: Users, label: 'Leads', hint: 'Captured contacts, scored' },
-      ].map(({ to, icon: Icon, label, hint }) => (
-        <Link
-          key={to}
-          to={to}
-          data-card-band
-          className="flex items-center gap-3 px-cell py-3 transition-colors hover:bg-surface-hover"
-        >
-          <Icon aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-base font-medium text-text-primary">{label}</span>
-            <span className="block text-xs text-text-secondary">{hint}</span>
-          </span>
-          <ArrowRight aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary" />
-        </Link>
-      ))}
     </Card>
   );
 }

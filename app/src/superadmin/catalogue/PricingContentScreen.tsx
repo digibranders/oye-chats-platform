@@ -136,7 +136,9 @@ export function PricingContentScreen() {
           title="Pricing page copy"
           description="The public site's marketing copy. Nothing here changes what a customer is charged or may do, and there is no staging step."
         >
-          <Grid cols={2} align="start">
+          {/* `stretch`: four editors of the same kind in a two-by-two, and
+              `start` let each be its own height. */}
+          <Grid cols={2}>
             {CONTENT_BLOBS.map((blob) => {
               const parsed = parseBlob(drafts[blob.key]);
               return (

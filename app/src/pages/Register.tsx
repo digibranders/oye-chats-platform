@@ -9,7 +9,7 @@ import { Alert, Button, Field, Input, buttonClass, validateEmail } from '../ui';
 import { registerClient } from '../services/api';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
-import { GoogleAuthButton } from '../components/GoogleAuthButton';
+import { GoogleAuthButton } from './auth/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
 import { PasswordRules } from './auth/PasswordRules';
 import { useGoogleAuthAvailable } from './auth/useGoogleAuth';

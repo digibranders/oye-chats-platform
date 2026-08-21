@@ -106,11 +106,12 @@ export function IngestionProgress({
 
   return (
     <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
-      {/* The label is shown rather than hidden. This is the one place on the page
-          where something is happening that the customer cannot otherwise see,
-          and naming it in the open — with the percentage beside it when there is
-          one — is worth more than the two lines of space it costs. */}
-      <Progress value={percent} label={title} hideLabel={false} />
+      {/* The label is shown, which is `Progress`'s default. This is the one
+          place on the page where something is happening that the customer
+          cannot otherwise see, and naming it in the open — with the percentage
+          beside it when there is one — is worth more than the two lines of
+          space it costs. */}
+      <Progress value={percent} label={title} />
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
           {detail ? <p className="min-w-0 truncate text-xs text-text-tertiary">{detail}</p> : null}

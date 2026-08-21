@@ -96,9 +96,16 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
         </Alert>
       ) : null}
 
+      {/* `className="w-full"` on every `TagInput`: `stacked` promises a
+          full-width control, and `TagInput`'s inner shell carries `w-full`, but
+          its outer wrapper has no width of its own — so as a flex item it
+          shrank to its placeholder and rendered a 207px field in a 640px row,
+          two-thirds narrower than the `Input` in the row above it. The width
+          belongs in the primitive; see the note in the round-two report. */}
       <SettingGroup title="Addresses" description="Sent from notifications@oyechats.com.">
         <SettingRow label="Reply-to" description="Empty uses the owner's address." stacked>
           <TagInput
+            className="w-full"
             label="Reply-to address"
             values={draft.replyTo ? [draft.replyTo] : []}
             maxValues={1}
@@ -111,6 +118,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
 
         <SettingRow label="Default recipients" stacked disabled={restricted}>
           <TagInput
+            className="w-full"
             label="Default recipients"
             values={draft.recipients}
             disabled={restricted}
@@ -124,8 +132,11 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
         {!restricted ? (
           <>
             <SettingRow label="Route some events elsewhere" controlWidth="auto">
+              {/* No `size="sm"`. Five switches on this page sit in a
+                  `SettingRow` and four of them were the default 20px; this one
+                  was 16, which reads as a rendering fault rather than as a
+                  smaller control. */}
               <Switch
-                size="sm"
                 hideLabel
                 label="Route some events elsewhere"
                 checked={showOverrides}
@@ -152,6 +163,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                   stacked
                 >
                   <TagInput
+                    className="w-full"
                     label="Qualified lead recipients"
                     values={draft.qualifiedLead}
                     placeholder="sales@yourdomain.com"
@@ -162,6 +174,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                 </SettingRow>
                 <SettingRow label="Handoff requests go to" stacked>
                   <TagInput
+                    className="w-full"
                     label="Handoff request recipients"
                     values={draft.handoff}
                     placeholder="support@yourdomain.com"
@@ -172,6 +185,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                 </SettingRow>
                 <SettingRow label="Offline messages go to" stacked>
                   <TagInput
+                    className="w-full"
                     label="Offline message recipients"
                     values={draft.offline}
                     placeholder="inbox@yourdomain.com"

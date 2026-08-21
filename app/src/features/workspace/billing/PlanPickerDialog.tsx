@@ -296,6 +296,9 @@ export function PlanPickerDialog({
           </Alert>
         ) : null}
 
+        {/* Not `Grid`: `cols={3}` reaches three at `@5xl/page` (1024) and the
+            widest dialog body in the system is 856px, so three plans would
+            render as two and a widow. See the round-two report. */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {plans.map((plan) => {
             const trialPath =

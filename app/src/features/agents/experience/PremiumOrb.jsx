@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import orbRenderer from '../services/orbRenderer';
+import orbRenderer from '../../../services/orbRenderer';
 
 const HEX_RE = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 

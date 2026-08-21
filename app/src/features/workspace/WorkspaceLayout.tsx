@@ -81,15 +81,22 @@ export function WorkspaceLayout() {
     },
   ];
 
-  if (me.data?.is_affiliate === true) {
-    sections.push({
-      to: '/settings/affiliate',
-      label: 'Affiliate',
-      icon: Handshake,
-    });
-  }
+  const affiliate: SettingsSection = {
+    to: '/settings/affiliate',
+    label: 'Affiliate',
+    icon: Handshake,
+  };
+  if (me.data?.is_affiliate === true) sections.push(affiliate);
 
-  const active = sections.find((section) => location.pathname.startsWith(section.to));
+  // The title is resolved against every section, the nav against the ones this
+  // account may see. They were one list, so an enrolled partner whose
+  // `/auth/me` had not landed — and anyone who reaches the URL directly — got a
+  // page whose `h1` read "Settings" while the breadcrumb above it said
+  // "Affiliate". What is on the nav is a permission question; what the page is
+  // called is not.
+  const active = [...sections, affiliate].find((section) =>
+    location.pathname.startsWith(section.to),
+  );
 
   return (
     <Page>

@@ -174,8 +174,12 @@ export function FirstChatPage() {
               </div>
               {/* Indeterminate until the total is actually known: a bar that
                   jumps 0 → 100 because the denominator arrived late is worse
-                  than one that simply says it is working. */}
-              <Progress value={fraction} label="Reading your website" />
+                  than one that simply says it is working.
+
+                  `hideLabel`, because the line above already reads "Still
+                  reading <site>" with the page count beside it — the bar is the
+                  picture of a fact the heading has stated. */}
+              <Progress value={fraction} label="Reading your website" hideLabel />
               <p className="text-xs text-text-secondary">
                 Answers improve as it reads. No need to wait.
               </p>

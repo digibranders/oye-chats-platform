@@ -20,7 +20,9 @@ import {
   seriesColor,
   type Column,
 } from '../../ui';
-import { CHART_AXIS, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { SeriesTooltip } from '../SeriesTooltip';
+import { dayTick } from '../chartTicks';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
 import { byDate, byText, includesText, usePagedRows } from '../recordListState';
@@ -98,9 +100,14 @@ export function VisitorsTab() {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={daily} margin={CHART_MARGIN}>
               <CartesianGrid {...CHART_GRID} />
-              <XAxis dataKey="date" {...CHART_AXIS} />
-              <YAxis {...CHART_AXIS} width={48} />
-              <RechartsTooltip />
+              <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
+              <YAxis {...CHART_AXIS} tickFormatter={(value: number) => formatNumber(value)} width={48} />
+              {/* The app's tooltip. Recharts' default is an unthemed white panel
+                  in a browser font, and it stays white on the dark theme. */}
+              <RechartsTooltip
+                cursor={CHART_CURSOR}
+                content={<SeriesTooltip name="Page views" format={(value) => formatNumber(value)} />}
+              />
               <Area
                 type="monotone"
                 dataKey="value"
@@ -108,13 +115,21 @@ export function VisitorsTab() {
                 fill={seriesColor(0)}
                 fillOpacity={0.12}
                 strokeWidth={2}
+                // Off, like the customer console's activity chart: a
+                // left-to-right redraw on every refetch is a console that never
+                // settles.
+                isAnimationActive={false}
               />
             </AreaChart>
           </ResponsiveContainer>
         </ChartFrame>
       </Section>
 
-      <Grid cols={2} align="start">
+      {/* `stretch`, not `start`: these are four panels of the same kind, and
+          `start` left the first row ending 100px apart and the second row
+          ending 101px apart the other way. `Grid`'s own doc says `start` is for
+          a row of disclosures and wrong for a row of panels. */}
+      <Grid cols={2}>
         <RankingCard
           title="Event types"
           description="Every behavioural event the widget has reported, all time."

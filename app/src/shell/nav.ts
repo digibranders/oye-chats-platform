@@ -113,7 +113,16 @@ export const FOOTER_NAV: readonly NavItem[] = [
  * the current page was "Billing". A shortened trail is fine; a wrong one is not.
  */
 export const NAV_SECTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  '/analytics': { journey: 'Journeys' },
+  // Analytics' four sub-views became real paths (`features/analytics/tabs.ts`),
+  // so the trail names all of them. It knew only `journey` — the one that had a
+  // path before — which would have left `/analytics/feedback` with a bare
+  // "Analytics" crumb while `/analytics/journey` got two.
+  '/analytics': {
+    conversations: 'Conversations',
+    journey: 'Journeys',
+    visitors: 'Visitors',
+    feedback: 'Feedback',
+  },
   '/billing': { usage: 'Usage', reports: 'Reports' },
   '/settings': {
     workspace: 'Workspace',

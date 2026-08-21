@@ -9,7 +9,6 @@ import {
   EmptyState,
   buttonClass,
   formatNumber,
-  formatRelative,
   type Column,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
@@ -35,8 +34,14 @@ export function KnowledgeGapsPanel({
   range: ResolvedRange;
 }) {
   const { questions, loading, error, refetch } = useUnansweredQuestions(botId, range.days);
-  const now = new Date();
 
+  // Two columns, not three. This panel is one half of a two-up `Grid`, so its
+  // card is about 550px; `Question` plus a 9rem count plus an 11rem "Last
+  // asked" made the table 641px wide inside it, and `DataTable`'s own
+  // `overflow-auto` quietly clipped the last column at the card's right edge.
+  // `Column.secondary` is `hidden md:table-cell` — a *viewport* query — so it
+  // stayed visible in a 550px container on a 1440px screen. The window is
+  // already stated in the header, and the timestamp is still in the CSV.
   const columns: readonly Column<UnansweredQuestion>[] = [
     {
       key: 'question',
@@ -51,18 +56,6 @@ export function KnowledgeGapsPanel({
       width: '9rem',
       render: (row) => <span className="figure">{formatNumber(row.count)}</span>,
       sortable: (a, b) => a.count - b.count,
-    },
-    {
-      key: 'last_asked',
-      header: 'Last asked',
-      align: 'right',
-      width: '11rem',
-      secondary: true,
-      render: (row) => (
-        <span className="text-text-secondary">{formatRelative(row.last_asked, now)}</span>
-      ),
-      sortable: (a, b) =>
-        new Date(a.last_asked ?? 0).getTime() - new Date(b.last_asked ?? 0).getTime(),
     },
   ];
 
@@ -80,11 +73,16 @@ export function KnowledgeGapsPanel({
         eyebrow="Knowledge gaps"
         title="What it could not answer"
         titleAs="h2"
-        description={`Questions the chatbot had nothing to answer from · ${range.label.toLowerCase()}`}
+        // Short enough to leave the header's action slot on the same line.
+        // With the window appended, the description and the two buttons came
+        // to 548px in a 512px header, so `CardHeader` wrapped the actions onto
+        // their own row at the *left* — while the identical Export on the panel
+        // beside it sat top-right. The window is on the page's period control.
+        description="Questions the chatbot had nothing to answer from"
         actions={
           <>
             {questions.length > 0 ? (
-              <Button size="sm" variant="secondary" onClick={onExport} iconLeft={<Download aria-hidden />}>
+              <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
                 Export
               </Button>
             ) : null}

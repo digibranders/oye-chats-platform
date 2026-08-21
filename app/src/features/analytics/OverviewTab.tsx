@@ -103,10 +103,12 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
                       label: range.comparisonLabel ? `vs ${range.comparisonLabel}` : undefined,
                     }
                   : undefined,
+                // `hint` is documented as "a few words, or put it on the
+                // card": "Nothing in the previous 30 days to compare with"
+                // wrapped to two lines under a four-up strip and made that one
+                // tile 32px taller than its three peers.
                 hint:
-                  range.comparisonLabel && !conversationDelta
-                    ? `Nothing in ${range.comparisonLabel} to compare with`
-                    : undefined,
+                  range.comparisonLabel && !conversationDelta ? 'No earlier data' : undefined,
                 loading: headline.loading,
               },
               {
@@ -166,8 +168,14 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
       ) : null}
 
       {/* Peers: both answer "is this working?" at the same altitude, and a
-          reader compares them. Stacked full-width they were two screens apart. */}
-      <Grid cols={2} gap="section" align="start">
+          reader compares them. Stacked full-width they were two screens apart.
+
+          Stretched, not `align="start"`: these are panels, and `Grid` says
+          `start` is "right for a row of disclosures, wrong for a row of
+          panels". With `start` the funnel measured 452px against the ratings'
+          372 and the pair ended on two different lines 80px apart — worse when
+          either falls to an empty or locked state, where the gap was 115. */}
+      <Grid cols={2} gap="section">
         <FunnelPanel botId={botId} range={range} unlocked={hasFeature('bant')} />
         <SatisfactionPanel botId={botId} />
       </Grid>

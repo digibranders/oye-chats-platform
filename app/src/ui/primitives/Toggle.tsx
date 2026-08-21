@@ -28,6 +28,23 @@ import { useFieldControlProps } from './fieldContext';
  * multiplies to 0.36 and left the control very nearly invisible; and because
  * only one of the two paths read the `Field`'s disabled state, the two ways of
  * disabling the same control did not look the same.
+ *
+ * ## Why the state classes are computed in JS
+ *
+ * **Base UI does not render a native disabled control here.** Both roots come
+ * out as `<span role="switch" data-disabled aria-disabled="true" tabindex="-1">`
+ * — a span, so that a disabled control stays discoverable — and a span never
+ * matches `:disabled` or `:enabled`. Every `disabled:` and `enabled:` variant
+ * this file used to carry was therefore dead CSS that compiled, passed review
+ * and painted nothing: a disabled CHECKED switch rendered `--color-ink` at
+ * opacity 1, pixel-identical to a live one, with only its label dimmed. The
+ * same silence swallowed both hover rules.
+ *
+ * The two states are branched in TypeScript instead, off the same `isDisabled`
+ * the label already reads. It is not a style preference: a variant that cannot
+ * match is indistinguishable from one that has not been written yet, and
+ * `controls.test.tsx` can assert a class string but not the absence of a
+ * selector match.
  */
 
 export type CheckedState = boolean | 'indeterminate';
@@ -77,12 +94,19 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
       onCheckedChange={(next) => onCheckedChange?.(next)}
       className={cn(
         'flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border',
-        'border-border-strong bg-surface transition-colors duration-[var(--dur-fast)]',
-        'data-[checked]:border-ink data-[checked]:bg-ink',
-        'data-[indeterminate]:border-ink data-[indeterminate]:bg-ink',
-        'disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-sunken',
-        'disabled:data-[checked]:border-text-disabled disabled:data-[checked]:bg-text-disabled',
-        'disabled:data-[indeterminate]:border-text-disabled disabled:data-[indeterminate]:bg-text-disabled',
+        'transition-colors duration-[var(--dur-fast)]',
+        isDisabled
+          ? cn(
+              'cursor-not-allowed',
+              'border-border bg-control-disabled',
+              'data-[checked]:border-control-disabled-on data-[checked]:bg-control-disabled-on',
+              'data-[indeterminate]:border-control-disabled-on data-[indeterminate]:bg-control-disabled-on',
+            )
+          : cn(
+              'border-border-strong bg-surface',
+              'data-[checked]:border-ink data-[checked]:bg-ink',
+              'data-[indeterminate]:border-ink data-[indeterminate]:bg-ink',
+            ),
         HIT_AREA,
         className,
       )}
@@ -186,8 +210,11 @@ export interface SwitchProps {
  * `border-strong` is byte-identical to `--color-text-disabled`, so an *off*
  * switch was exactly the colour of disabled — and beside a genuinely disabled
  * switch the two states were nearly indistinguishable. Disabled now separates
- * the two states as well: a disabled-on switch stays darker than a disabled-off
- * one, which an opacity wash could never express.
+ * the two states as well, in its own pair of tokens: a disabled-on track is
+ * `--color-control-disabled-on` and a disabled-off track is
+ * `--color-control-disabled`, 2.41 apart, so the state survives being disabled
+ * — which an opacity wash could never express, and which the previous
+ * `disabled:` variants never got the chance to.
  */
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
   { checked, onCheckedChange, label, hideLabel = false, description, disabled, size = 'md', name, className },
@@ -216,10 +243,15 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
       className={cn(
         'inline-flex shrink-0 items-center rounded-full p-0.5',
         'transition-colors duration-[var(--dur-fast)]',
-        'data-[checked]:bg-ink data-[unchecked]:bg-neutral-fill',
-        'enabled:hover:data-[checked]:bg-ink-hover enabled:hover:data-[unchecked]:bg-text-tertiary',
-        'disabled:cursor-not-allowed',
-        'disabled:data-[checked]:bg-text-disabled disabled:data-[unchecked]:bg-surface-active',
+        isDisabled
+          ? cn(
+              'cursor-not-allowed',
+              'data-[checked]:bg-control-disabled-on data-[unchecked]:bg-control-disabled',
+            )
+          : cn(
+              'data-[checked]:bg-ink data-[unchecked]:bg-neutral-fill',
+              'hover:data-[checked]:bg-ink-hover hover:data-[unchecked]:bg-text-tertiary',
+            ),
         size === 'sm' ? 'h-4 w-7' : 'h-5 w-9',
         HIT_AREA,
         className,
@@ -234,7 +266,9 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     >
       <BaseSwitch.Thumb
         className={cn(
-          'block rounded-full bg-surface shadow-xs',
+          'block rounded-full bg-surface',
+          // The seam is elevation-adjacent; a disabled control is not lifted.
+          isDisabled ? 'shadow-none' : 'shadow-xs',
           'transition-transform duration-[var(--dur-fast)] ease-[var(--ease-console)]',
           size === 'sm'
             ? 'h-3 w-3 data-[checked]:translate-x-3'

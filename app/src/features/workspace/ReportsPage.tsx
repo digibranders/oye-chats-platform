@@ -56,7 +56,11 @@ export function ReportsPage() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   const report = query.data ?? null;
-  const rowCount = report?.rows.length ?? 0;
+  // `?.rows?.length`, not `?.rows.length`: a 200 whose body is missing the
+  // array threw `Cannot read properties of undefined` and took the route to
+  // the error boundary, where a report that failed to arrive looked like a
+  // broken console.
+  const rowCount = report?.rows?.length ?? 0;
   const windowLabel = report ? `${formatDate(report.since)} to ${formatDate(report.until)}` : '';
   const emptyReason = report ? reportEmptyReason(bots.length, rowCount) : null;
 

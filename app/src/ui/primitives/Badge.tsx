@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 
 /**
@@ -54,7 +54,7 @@ const TONE_DOT: Record<BadgeTone, string> = {
  */
 const DOT = { sm: 'h-1.5 w-1.5', md: 'h-2 w-2' } as const;
 
-export interface BadgeProps {
+export interface BadgeProps extends Omit<ComponentPropsWithoutRef<'span'>, 'children'> {
   tone?: BadgeTone;
   children: ReactNode;
   /** Adds the tone's dot. Use on states a user scans for down a column. */
@@ -77,6 +77,13 @@ export interface BadgeProps {
  * appears, which is why replacing 203 of them was an audit finding in the first
  * place.
  *
+ * **It forwards its ref and spreads the rest of its props**, which is what makes
+ * that `Tooltip` sentence true. Base UI renders a trigger by cloning its child
+ * with a ref and a full set of handlers; a component that accepts neither drops
+ * all of them on the floor and the clone succeeds silently. A tooltip on a badge
+ * therefore never opened, at any call site, and several review items were closed
+ * as "not possible" because of it.
+ *
  * `data-tone` is read by the forced-colors rule in the token layer, which gives
  * every tinted surface a border — Windows High Contrast strips backgrounds, and
  * without it all five tones render identically.
@@ -90,18 +97,20 @@ export interface BadgeProps {
  * The height is a token and the glyphs are centred by `leading-none`, not by the
  * line box: `items-center` centres an 18px line box, and Inter's cap height sits
  * above that box's centre, so the label rendered about a pixel high — visibly
- * tilted next to a dot, which *is* geometrically centred.
+ * tilted next to a dot, which *is* geometrically centred. `leading-none` is the
+ * single leading utility `scale.test.ts` still allows, and this is why: it is
+ * not a choice of line-height competing with the type scale, it is the reset a
+ * fixed-height inline chip needs in order to have no leading at all.
  */
-export function Badge({
-  tone = 'neutral',
-  children,
-  dot = false,
-  size = 'md',
-  className,
-}: BadgeProps) {
+export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
+  { tone = 'neutral', children, dot = false, size = 'md', className, ...rest },
+  ref,
+) {
   return (
     <span
+      ref={ref}
       data-tone={tone}
+      {...rest}
       className={cn(
         // Bounded, because a badge rendering a user-supplied value — a plan
         // name, a status straight off the API — will otherwise push a table
@@ -119,9 +128,9 @@ export function Badge({
       <span className="truncate">{children}</span>
     </span>
   );
-}
+});
 
-export interface StatusDotProps {
+export interface StatusDotProps extends Omit<ComponentPropsWithoutRef<'span'>, 'children'> {
   tone?: Tone;
   /**
    * A slow halo. Reserved for state that is genuinely live *right now* — an
@@ -143,15 +152,12 @@ export interface StatusDotProps {
  * The label is required rather than optional because a dot with no accessible
  * name is decoration that happens to carry the most important fact on the row.
  */
-export function StatusDot({
-  tone = 'neutral',
-  pulse = false,
-  label,
-  size = 'md',
-  className,
-}: StatusDotProps) {
+export const StatusDot = forwardRef<HTMLSpanElement, StatusDotProps>(function StatusDot(
+  { tone = 'neutral', pulse = false, label, size = 'md', className, ...rest },
+  ref,
+) {
   return (
-    <span className={cn('relative inline-flex shrink-0', DOT[size], className)}>
+    <span ref={ref} {...rest} className={cn('relative inline-flex shrink-0', DOT[size], className)}>
       {pulse ? (
         <span
           aria-hidden
@@ -168,7 +174,7 @@ export function StatusDot({
       <span className="sr-only">{label}</span>
     </span>
   );
-}
+});
 
 /**
  * Work is happening: a crawl, a training run, a streaming reply.

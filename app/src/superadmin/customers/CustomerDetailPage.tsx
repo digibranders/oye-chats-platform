@@ -122,15 +122,17 @@ export function CustomerDetailPage() {
                 period="All time"
                 items={[
                   {
+                    // Unit and definition are hints; "All time" on the strip is
+                    // the window. See the note on `revenue/OverviewTab`'s strip.
                     label: 'Monthly recurring',
                     size: 'lg',
                     value: usdCentsRounded(client.mrr_cents),
-                    period: USD_NORMALISED_SHORT,
+                    hint: USD_NORMALISED_SHORT,
                   },
                   {
                     label: 'Credit balance',
                     value: formatNumber(client.credits_balance),
-                    period: 'Ledger sum',
+                    hint: 'Ledger sum',
                     tone: client.credits_balance < 0 ? 'danger' : 'neutral',
                   },
                   { label: 'Conversations', value: formatNumber(client.total_sessions) },
@@ -140,7 +142,9 @@ export function CustomerDetailPage() {
             </CardBody>
           </Card>
 
-          <Grid cols={2} align="start">
+          {/* `stretch`: Identity and Subscription are two panels in one row and
+              `start` left the row with a 55px ragged bottom edge. */}
+          <Grid cols={2}>
             <Card>
               <CardHeader
                 titleAs="h3"
@@ -281,7 +285,9 @@ export function CustomerDetailPage() {
           </Section>
 
           <Section title="Support session" description="The most dangerous control in the product.">
-            <Grid cols={2} align="start">
+            {/* `stretch`, not `start`: two panels of the same kind, and `start`
+                left one ending 64px above the other. */}
+            <Grid cols={2}>
               <ImpersonateCard client={client} />
               <SupportSessionsPanel clientId={client.id} />
             </Grid>

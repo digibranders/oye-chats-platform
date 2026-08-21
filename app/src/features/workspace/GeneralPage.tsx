@@ -15,12 +15,12 @@ import {
   normalizeUrl,
   PropertyGrid,
   SaveBar,
+  SettingBand,
   SettingGroup,
   SettingRow,
   Stack,
   toast,
   validateUrl,
-  Columns,
 } from '../../ui';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { keys } from '../../query/keys';
@@ -38,9 +38,12 @@ import { describeDirty, useDraft } from './draft';
  * for them and the page could not tell you whether anything was unsaved. Here
  * the fields *are* the group, and the footer always says which state you are in.
  *
- * The fields and the facts are **beside** each other, not stacked: the fact
- * sheet is read-only context for the form, and as a second full-width card 500px
- * below the fields it was context nobody ever had in view while editing.
+ * The fields and the facts share one form measure, in that order. The fact
+ * sheet is read-only context for the form, and as a *full-width* card under a
+ * full-width form it was context nobody ever had in view while editing — 500px
+ * below the fields, because both boxes were 900px wide to hold a 256px control.
+ * At 672 the whole page is about 550px tall and both are on screen at once,
+ * which is what putting them side by side was trying to buy.
  *
  * What is deliberately **not** here any more: the chatbot business-hours editor.
  * It wrote `bots[0]` unconditionally, so in a workspace with two chatbots the
@@ -177,137 +180,141 @@ export function GeneralPage() {
   const botLimit = limitFor('bots');
 
   return (
-    <Columns
-      asideWidth="md"
-      stickyAside
-      asideLabel="This workspace"
-      main={
-        <SettingGroup title="Identity">
-          {save.isError ? (
-            <div className="px-cell pt-4">
-              <Alert tone="danger" live title="We could not save that">
-                {save.error instanceof Error
-                  ? save.error.message
-                  : 'Something went wrong. Please try again.'}
-              </Alert>
-            </div>
-          ) : null}
+    /* One column, not two. `Columns asideWidth="md"` splits at `@5xl/page`
+       (1024) and this content column is 904px inside the settings rail at 1440,
+       so the side-by-side layout this page was written for never rendered at the
+       width it was designed for — the fact sheet sat under the form anyway, with
+       the rail's own column empty beside it. Splitting 904 in two instead is
+       worse, not better: the control column is a fixed 256px, so a 440px half
+       leaves 120px for a label and its hint, and "Shown in the workspace
+       switcher." wraps onto three lines.
 
-          <SettingRow
-            label={FIELD_LABELS.name}
-            htmlFor={`${fieldId}-name`}
-            description="Shown in the workspace switcher."
-            error={draft.errors.name}
-          >
-            <Input
-              id={`${fieldId}-name`}
-              required
-              aria-invalid={draft.errors.name ? true : undefined}
-              value={draft.values.name}
-              onChange={(event) => draft.set('name', event.target.value)}
-              placeholder="Acme Support"
-              autoComplete="organization"
-            />
-          </SettingRow>
+       The measure is `SettingGroup`'s own now, so there is no `Measure` here:
+       both groups cap themselves at 672, which is where a label and its control
+       stay bound and where Linear, Stripe and the Razorpay dashboard all put a
+       settings form. It is also one right edge for the page — the row's 640px
+       pair cap and the save bar's edge were 264px apart at 904 wide. */
+    <Stack>
+      <SettingGroup title="Identity">
+        {save.isError ? (
+          <SettingBand>
+            <Alert tone="danger" live title="We could not save that">
+              {save.error instanceof Error
+                ? save.error.message
+                : 'Something went wrong. Please try again.'}
+            </Alert>
+          </SettingBand>
+        ) : null}
 
-          <SettingRow
-            label={FIELD_LABELS.company_name}
-            htmlFor={`${fieldId}-company`}
-            description="Printed on invoices."
-            error={draft.errors.company_name}
-          >
-            <Input
-              id={`${fieldId}-company`}
-              value={draft.values.company_name}
-              onChange={(event) => draft.set('company_name', event.target.value)}
-              placeholder="Acme Corporation"
-            />
-          </SettingRow>
-
-          <SettingRow
-            label={FIELD_LABELS.website}
-            htmlFor={`${fieldId}-website`}
-            error={draft.errors.website}
-          >
-            <Input
-              id={`${fieldId}-website`}
-              aria-invalid={draft.errors.website ? true : undefined}
-              value={draft.values.website}
-              onChange={(event) => draft.set('website', event.target.value)}
-              placeholder="acme.com"
-              inputMode="url"
-            />
-          </SettingRow>
-
-          <SaveBar
-            variant="footer"
-            dirty={draft.isDirty}
-            summary={describeDirty(draft.dirty, FIELD_LABELS)}
-            saving={save.isPending}
-            onSave={handleSave}
-            onDiscard={draft.reset}
+        <SettingRow
+          label={FIELD_LABELS.name}
+          htmlFor={`${fieldId}-name`}
+          description="Shown in the workspace switcher."
+          error={draft.errors.name}
+        >
+          <Input
+            id={`${fieldId}-name`}
+            required
+            value={draft.values.name}
+            onChange={(event) => draft.set('name', event.target.value)}
+            placeholder="Acme Support"
+            autoComplete="organization"
           />
-        </SettingGroup>
-      }
-      aside={
-        <Stack>
-          <SettingGroup title="This workspace" titleAs="h2">
-            <div className="px-cell py-1">
-              <PropertyGrid
-                items={[
-                  {
-                    label: 'Your role',
-                    value: (
-                      <Badge tone={roleTone(currentRole ?? 'owner')}>
-                        {roleLabel(currentRole ?? 'owner')}
-                      </Badge>
-                    ),
-                  },
-                  {
-                    label: 'Plan',
-                    value: (
-                      <Link
-                        to="/billing"
-                        className="text-accent-600 underline-offset-2 hover:underline"
-                      >
-                        {planName || planSlug || 'Free'}
-                      </Link>
-                    ),
-                  },
-                  {
-                    label: 'Chatbots',
-                    value: (
-                      <span className="figure">
-                        {formatNumber(bots.length)}
-                        {botLimit > 0 ? (
-                          <span className="text-text-tertiary"> of {formatNumber(botLimit)}</span>
-                        ) : null}
-                      </span>
-                    ),
-                  },
-                  {
-                    label: 'Workspace ID',
-                    value: <span className="figure">{currentWorkspaceId ?? me.data?.id}</span>,
-                  },
-                  {
-                    label: 'Workspaces',
-                    value: <span className="figure">{formatNumber(workspaces.length || 1)}</span>,
-                  },
-                  { label: 'Sign-in email', value: me.data?.email },
-                ]}
-              />
-            </div>
-            <SettingRow
-              label="Chatbot settings"
-              description="Hours, greeting, tone and the install snippet live on each chatbot."
-            >
-              <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
-                Open chatbots
-              </Link>
-            </SettingRow>
-          </SettingGroup>
-        </Stack>
-      }
-    />
+        </SettingRow>
+
+        <SettingRow
+          label={FIELD_LABELS.company_name}
+          htmlFor={`${fieldId}-company`}
+          description="Printed on invoices."
+          error={draft.errors.company_name}
+        >
+          <Input
+            id={`${fieldId}-company`}
+            value={draft.values.company_name}
+            onChange={(event) => draft.set('company_name', event.target.value)}
+            placeholder="Acme Corporation"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={FIELD_LABELS.website}
+          htmlFor={`${fieldId}-website`}
+          error={draft.errors.website}
+        >
+          <Input
+            id={`${fieldId}-website`}
+            value={draft.values.website}
+            onChange={(event) => draft.set('website', event.target.value)}
+            placeholder="acme.com"
+            inputMode="url"
+          />
+        </SettingRow>
+
+        <SaveBar
+          variant="footer"
+          dirty={draft.isDirty}
+          summary={describeDirty(draft.dirty, FIELD_LABELS)}
+          saving={save.isPending}
+          onSave={handleSave}
+          onDiscard={draft.reset}
+        />
+      </SettingGroup>
+
+      <SettingGroup title="This workspace" titleAs="h2">
+        <SettingBand>
+          <PropertyGrid
+            items={[
+              {
+                label: 'Your role',
+                value: (
+                  <Badge tone={roleTone(currentRole ?? 'owner')}>
+                    {roleLabel(currentRole ?? 'owner')}
+                  </Badge>
+                ),
+              },
+              {
+                label: 'Plan',
+                value: (
+                  <Link
+                    to="/billing"
+                    className="text-accent-600 underline-offset-2 hover:underline"
+                  >
+                    {planName || planSlug || 'Free'}
+                  </Link>
+                ),
+              },
+              {
+                label: 'Chatbots',
+                value: (
+                  <span className="figure">
+                    {formatNumber(bots.length)}
+                    {botLimit > 0 ? (
+                      <span className="text-text-tertiary"> of {formatNumber(botLimit)}</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              {
+                label: 'Workspace ID',
+                value: <span className="figure">{currentWorkspaceId ?? me.data?.id}</span>,
+              },
+              {
+                label: 'Workspaces',
+                value: <span className="figure">{formatNumber(workspaces.length || 1)}</span>,
+              },
+              { label: 'Sign-in email', value: me.data?.email },
+            ]}
+          />
+        </SettingBand>
+        <SettingRow
+          label="Chatbot settings"
+          description="Hours, greeting, tone and the install snippet live on each chatbot."
+        >
+          <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
+            Open chatbots
+          </Link>
+        </SettingRow>
+      </SettingGroup>
+    </Stack>
   );
 }

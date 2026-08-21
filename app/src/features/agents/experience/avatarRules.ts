@@ -63,5 +63,13 @@ export function validateAvatarFile(file: File): string | null {
  * surprise. `r2_service.process_image_for_logo` centre-crops to a square and
  * resizes to 512×512 PNG, and the widget then renders it inside a circle.
  */
+/**
+ * What the drop zone cannot work out for itself.
+ *
+ * `FileDrop` already prints the accepted extensions and the size ceiling from
+ * `accept` and `maxSizeBytes`, so the formats and "up to 2 MB" were being stated
+ * twice, one line apart, in two different registers. What is left is the only
+ * part that is ours to say: what happens to the image after it is uploaded.
+ */
 export const AVATAR_HINT =
-  'PNG, JPG or WebP, up to 2 MB. Square images work best — we crop to the centre square and resize to 512×512.';
+  'Square images work best — we crop to the centre square and resize to 512×512.';

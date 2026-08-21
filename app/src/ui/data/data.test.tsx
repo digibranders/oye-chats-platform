@@ -303,6 +303,7 @@ describe('Figures', () => {
     render(
       <StatRow
         period="Last 30 days"
+        label="Volume"
         columns={3}
         items={[
           { label: 'Conversations', value: '412' },
@@ -311,10 +312,36 @@ describe('Figures', () => {
         ]}
       />,
     );
-    // Four repetitions of one caption was four lines of grey type carrying one
-    // fact; the exception is the case the required prop existed for.
-    expect(screen.queryAllByText('Last 30 days')).toHaveLength(0);
+    // Once, for the strip. Four repetitions was four lines of grey type carrying
+    // one fact; **zero** — which is what shipped, because the tiles were told to
+    // suppress theirs and the strip printed nothing in their place — left the
+    // figures unanchored, which is the whole reason `period` is required.
+    const caption = screen.getByText('Last 30 days');
+    expect(screen.queryAllByText('Last 30 days')).toHaveLength(1);
+    // And it is part of what the strip announces, not a loose line after it.
+    expect(screen.getByRole('group', { name: 'Volume' })).toHaveAttribute(
+      'aria-describedby',
+      caption.id,
+    );
+    // A tile that genuinely covers a different window still states its own.
     expect(screen.getByText('Right now')).toBeInTheDocument();
+  });
+
+  it('drops the strip caption when every tile states its own window', () => {
+    render(
+      <StatRow
+        period="Last 30 days"
+        columns={2}
+        items={[
+          { label: 'Visitors now', value: '7', period: 'Right now' },
+          { label: 'Rating', value: '4.6', period: 'All time' },
+        ]}
+      />,
+    );
+    // A caption contradicted by every tile under it is worse than none.
+    expect(screen.queryByText('Last 30 days')).toBeNull();
+    expect(screen.getByText('Right now')).toBeInTheDocument();
+    expect(screen.getByText('All time')).toBeInTheDocument();
   });
 
   it('says which way a delta went in words, not only in colour and an arrow', () => {
@@ -359,5 +386,201 @@ describe('CopyField', () => {
     await user.click(screen.getByRole('button', { name: 'Reveal API key' }));
     expect(screen.getByText('sk_live_123')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hide API key' })).toBeInTheDocument();
+  });
+});
+
+describe('DataTable fits a narrow column instead of scrolling out of it', () => {
+  const COLUMNS = [
+    { key: 'name', header: 'Chatbot', render: (row: { name: string }) => row.name },
+    { key: 'documents', header: 'Documents', width: '6rem', render: () => '412' },
+    { key: 'actions', header: '', width: '5rem', render: () => <button type="button">Open</button> },
+  ];
+  const ROWS = [{ id: 'b1', name: 'Acme Support' }];
+
+  it('scrolls by default, because that is what makes a pinned column mean anything', () => {
+    const { container } = render(
+      <DataTable
+        caption="Chatbots"
+        rowKey={(row: { id: string }) => row.id}
+        rows={ROWS}
+        columns={COLUMNS}
+      />,
+    );
+    // `min-w-max` in an `overflow-auto` wrapper: every cell on one line, and the
+    // table free to be wider than its box.
+    expect(container.querySelector('table')?.className).toContain('min-w-max');
+  });
+
+  it('gives instead, when the caller says the column is the constraint', () => {
+    // Home's chatbot table in a two-up grid lost its action column at the card's
+    // right edge, behind a 6px scroll affordance under 44px rows that nobody
+    // finds. A four-column table in a 26rem column does not want to be scrolled.
+    const { container } = render(
+      <DataTable
+        fit
+        caption="Chatbots"
+        rowKey={(row: { id: string }) => row.id}
+        rows={ROWS}
+        columns={COLUMNS}
+      />,
+    );
+    const table = container.querySelector('table');
+    expect(table?.className).not.toContain('min-w-max');
+    expect(table?.className).toContain('table-fixed');
+
+    // With nowhere for an over-long cell to go, truncation is the default rather
+    // than something a `width` happens to switch on.
+    const cell = screen.getByText('Acme Support');
+    expect(cell.className).toContain('truncate');
+
+    // The action column is still rendered, which was the whole complaint.
+    expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
+  });
+});
+
+
+describe('DataTable says where its own edges are', () => {
+  const COLUMNS = [
+    { key: 'name', header: 'Chatbot', pinned: true, render: (row: { name: string }) => row.name },
+    { key: 'seen', header: 'Last seen', secondary: true, render: () => '19 Aug 2026' },
+  ];
+  const ROWS = [{ id: 'b1', name: 'Acme Support' }];
+
+  it('hides a secondary column by container width, not by viewport', () => {
+    // A viewport breakpoint asks the window how wide the browser is, which in a
+    // console full of panes is never the question: between 768 and about 1400
+    // every column showed regardless of how narrow its card was, which is what
+    // clipped the action column off a table in a two-up grid.
+    const { container } = render(
+      <DataTable
+        caption="Chatbots"
+        rowKey={(row: { id: string }) => row.id}
+        rows={ROWS}
+        columns={COLUMNS}
+      />,
+    );
+    expect(screen.getByText('19 Aug 2026').className).toContain('@3xl/page:table-cell');
+    expect(screen.getByText('19 Aug 2026').className).not.toContain('md:table-cell');
+    // Which only means anything because the table is its own container.
+    expect(container.firstElementChild?.className).toContain('@container/page');
+  });
+
+  it('marks both scroll edges on the scroller, before the first scroll event', () => {
+    // `data-scroll-end` has to be correct on mount, or a table that overflows on
+    // load shows no edge until it is touched — which is exactly the table this
+    // is for. Both attributes are written from the ref callback.
+    const { container } = render(
+      <DataTable
+        caption="Chatbots"
+        rowKey={(row: { id: string }) => row.id}
+        rows={ROWS}
+        columns={COLUMNS}
+      />,
+    );
+    const scroller = container.querySelector('.overflow-auto') as HTMLElement;
+    expect(scroller.dataset.scrolled).toBe('false');
+    expect(scroller.dataset.scrollEnd).toBe('true');
+
+    // The fade is drawn on the OUTER box: an `::after` on the scroller would
+    // scroll away with the content it is meant to be marking the end of.
+    expect(container.firstElementChild?.className).toContain('console-scroll-edge');
+  });
+});
+
+
+describe('a non-answer is not a figure', () => {
+  it('typesets StatTile.empty as a phrase', () => {
+    render(<StatTile label="Rating" value={undefined} empty="Not rated yet" period="All time" />);
+    // It used to take the tile's whole value treatment — `.figure`,
+    // `font-semibold`, `text-xl`, full ink — so "Not rated yet" shouted louder
+    // than the 1,204 beside it, and a strip's loudest tile was the one with no
+    // number in it.
+    const phrase = screen.getByText('Not rated yet');
+    expect(phrase.className).not.toContain('figure');
+    expect(phrase.className).not.toContain('font-semibold');
+    expect(phrase.className).toContain('text-text-tertiary');
+  });
+
+  it('keeps a real value a figure', () => {
+    render(<StatTile label="Conversations" value="1,204" period="Last 30 days" />);
+    expect(screen.getByText('1,204').className).toContain('figure');
+  });
+});
+
+describe('a state seated in a padded body', () => {
+  it('drops its own horizontal gutter on request', () => {
+    const { container } = render(
+      <EmptyState flush size="inline" title="No conversations yet" />,
+    );
+    // Two gutters add up, and the state's copy sits 20px inside every label
+    // around it — worked around twice with a negative margin before this.
+    const body = container.querySelector('.px-0');
+    expect(body).not.toBeNull();
+  });
+
+  it('is forced inline and flush when a table is handed one', () => {
+    // `EmptyState`'s own default is `page` — a 340px centred block around a
+    // 48px disc — so a table given a plain `<EmptyState>` rendered a full hero
+    // inside its own body. The table owns the geometry of its own body.
+    render(
+      <DataTable
+        caption="Gaps"
+        rowKey={(row: { id: string }) => row.id}
+        rows={[]}
+        columns={[{ key: 'q', header: 'Question', render: () => null }]}
+        empty={<EmptyState title="No gaps yet" description="Ask your chatbot something." />}
+      />,
+    );
+    const state = screen.getByText('No gaps yet');
+    // `inline` draws no disc and sets the title at row scale.
+    expect(state.className).toContain('text-sm');
+    expect(state.parentElement?.className).toContain('px-0');
+  });
+});
+
+
+describe('a sticky head sticks inside its own table', () => {
+  it('never takes an offset, because there is nowhere for one to be measured from', () => {
+    // The head sticks inside the table's own scroller, whose top edge is the
+    // card's — so the only correct offset is 0. `stickyOffset` set `top` on the
+    // `thead` and rendered as an empty band at the top of the card plus a
+    // header overlapping row 1: on Leads, a 52px band with the head at y=454
+    // over a first row at y=446.
+    const { container } = render(
+      <DataTable
+        caption="Leads"
+        stickyOffset="2.75rem"
+        rowKey={(row: { id: string }) => row.id}
+        rows={[{ id: 'a' }]}
+        columns={[{ key: 'name', header: 'Name', render: () => 'Ana' }]}
+      />,
+    );
+    const head = container.querySelector('thead') as HTMLElement;
+    expect(head.className).toContain('sticky');
+    expect(head.className).toContain('top-0');
+    expect(head.getAttribute('style')).toBeNull();
+  });
+});
+
+
+describe('DataTable countSummary', () => {
+  const PROPS = {
+    caption: 'Webhook reference',
+    rowKey: (row: { id: string }) => row.id,
+    rows: [{ id: 'a' }, { id: 'b' }],
+    columns: [{ key: 'event', header: 'Event', render: () => 'invoice.paid' }],
+  };
+
+  it('states the row count by default', () => {
+    const { container } = render(<DataTable {...PROPS} rowNoun="event" />);
+    expect(container.querySelector('[aria-live="polite"]')).toHaveTextContent('2 events');
+  });
+
+  it('drops it for a table whose length is a fact of the schema', () => {
+    // "6 rows" under a six-row reference of what each webhook event means is a
+    // number the reader has to read and then discard. Anything a query returned
+    // keeps its count — that is what tells "12 sources" from "12 of 400".
+    const { container } = render(<DataTable {...PROPS} rowNoun="event" countSummary={false} />);
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import {
   LockedState,
   Section,
   Stack,
+  Tooltip,
   formatNumber,
   toast,
   type Column,
@@ -18,7 +19,7 @@ import { platform } from '../client';
 import { usePlatformList } from '../usePlatform';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { PlanEditor } from './PlanEditor';
-import { formatInr, formatLimit, formatSeats, formatUsd } from './plan-model';
+import { formatInr, formatLimit, formatUsd } from './plan-model';
 import type { Plan } from './types';
 
 /**
@@ -31,7 +32,9 @@ import type { Plan } from './types';
  */
 function checkoutState(plan: Plan): { tone: 'success' | 'warning' | 'neutral'; label: string } {
   const free = plan.monthly_price_cents === 0 && plan.annual_price_cents === 0;
-  if (free) return { tone: 'neutral', label: 'Free — nothing to charge' };
+  // A word, not a sentence: "Free — nothing to charge" was the only badge in the
+  // console carrying a clause, and it set the column's width for all six rows.
+  if (free) return { tone: 'neutral', label: 'Free' };
   if (plan.razorpay_plan_id_monthly && plan.razorpay_plan_id_annual)
     return { tone: 'success', label: 'Wired' };
   if (plan.razorpay_plan_id_monthly || plan.razorpay_plan_id_annual)
@@ -134,7 +137,10 @@ export function PlansScreen() {
       header: 'Seats',
       align: 'right',
       secondary: true,
-      render: (plan) => formatSeats(plan.included_operator_seats),
+      // `formatLimit`, not `formatSeats`: the unit `formatSeats` adds is there
+      // for a summary line with no column head over it. Here the head says
+      // "Seats" and every cell repeated the word underneath it.
+      render: (plan) => formatLimit(plan.included_operator_seats),
     },
     {
       key: 'bots',
@@ -163,19 +169,32 @@ export function PlansScreen() {
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
       align: 'right',
-      render: (plan) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={plan.active_subscriptions > 0}
-          onClick={() => {
-            setActionError(null);
-            setDeleting(plan);
-          }}
-        >
-          Delist
-        </Button>
-      ),
+      render: (plan) =>
+        plan.active_subscriptions > 0 ? (
+          // A disabled control that does not say why is a dead end: every row on
+          // a healthy platform has subscribers, so this is the state an operator
+          // meets first.
+          <Tooltip
+            content={`${formatNumber(plan.active_subscriptions)} live subscriptions sit on this plan. Move them before delisting it.`}
+          >
+            <span className="inline-flex">
+              <Button size="sm" variant="ghost" disabled>
+                Delist
+              </Button>
+            </span>
+          </Tooltip>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setActionError(null);
+              setDeleting(plan);
+            }}
+          >
+            Delist
+          </Button>
+        ),
     },
   ];
 

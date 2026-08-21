@@ -97,6 +97,12 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
               loading={loading}
               loadingRows={STARS.length}
               max={ratings?.total}
+              // One figure in the figure column, the share on the meta line
+              // under the label — the same shape the funnel next door uses.
+              // `650 · 51%` does not fit `RankedBars`' 4rem figure column and
+              // wrapped onto two lines on three of the five rows, which made
+              // every row a different height in a chart whose whole point is
+              // comparing their lengths.
               items={STARS.map((star) => {
                 const count = ratings?.distribution[star] ?? 0;
                 const share = ratings && ratings.total > 0 ? count / ratings.total : 0;
@@ -104,7 +110,8 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
                   id: String(star),
                   label: `${star} ${star === 1 ? 'star' : 'stars'}`,
                   value: count,
-                  display: `${formatNumber(count)} · ${formatPercent(share)}`,
+                  display: formatNumber(count),
+                  meta: ratings && ratings.total > 0 ? `${formatPercent(share)} of all ratings` : undefined,
                 };
               })}
             />

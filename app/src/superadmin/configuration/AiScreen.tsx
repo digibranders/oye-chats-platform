@@ -24,7 +24,9 @@ import {
   type Column,
   type SegmentedItem,
 } from '../../ui';
-import { CHART_AXIS, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
+import { SeriesTooltip } from '../SeriesTooltip';
+import { dayTick } from '../chartTicks';
 import { usePlatformList, usePlatformResource } from '../usePlatform';
 import { PAGE_SIZE } from '../recordListState';
 import type { LangfuseSummary, LlmCostRow, LlmUsageRow, SafetyNetMetrics } from './types';
@@ -45,6 +47,30 @@ const RANGES: SegmentedItem<string>[] = [
   { value: '30', label: '30 days' },
   { value: '90', label: '90 days' },
 ];
+
+/**
+ * The safety-net counters, named for a reader.
+ *
+ * The endpoint returns an open map keyed by its own internal counter names, so
+ * anything not listed here still renders — de-underscored and sentence-cased —
+ * rather than disappearing.
+ */
+const SAFETY_LABELS: Record<string, string> = {
+  rerank_applied: 'Reranked',
+  relevance_gate_blocked: 'Blocked by the relevance gate',
+  fallback_model_used: 'Fell back to the second model',
+  empty_retrieval: 'Retrieved nothing',
+  prompt_injection_flagged: 'Prompt injection flagged',
+  groundedness_failed: 'Failed the groundedness check',
+  refused: 'Refused',
+};
+
+function safetyLabel(key: string): string {
+  const known = SAFETY_LABELS[key];
+  if (known) return known;
+  const words = key.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 const DIMENSIONS: SegmentedItem<string>[] = [
   { value: 'model', label: 'By model' },
@@ -214,9 +240,20 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={daily} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="date" {...CHART_AXIS} />
+                  <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
                   <YAxis {...CHART_AXIS} width={48} />
-                  <RechartsTooltip />
+                  {/* The app's tooltip. Recharts' default is an unthemed white
+                      panel that stays white on the dark theme. */}
+                  <RechartsTooltip
+                    cursor={CHART_CURSOR}
+                    content={
+                      <SeriesTooltip
+                        name="Spend"
+                        // `daily` already divides by 100, so this has dollars.
+                        format={(value) => formatMoney(Math.round(value * 100), 'USD')}
+                      />
+                    }
+                  />
                   <Area
                     type="monotone"
                     dataKey="value"
@@ -224,6 +261,10 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
                     fill={seriesColor(0)}
                     fillOpacity={0.12}
                     strokeWidth={2}
+                    // Off, like the customer console's activity chart: a
+                    // left-to-right redraw on every range change is a console
+                    // that never settles.
+                    isAnimationActive={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -336,9 +377,12 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
                 columns={3}
                 label="Safety-net counters"
                 period="Last 24 hours"
+                // Humanised. The endpoint's keys are its own — `rerank_applied`,
+                // `prompt_injection_flagged` — and five raw snake_case strings
+                // were the only labels in the console not written for a reader.
                 items={safetyRows
                   .filter((row) => row.count > 0)
-                  .map((row) => ({ label: row.name, value: formatNumber(row.count) }))}
+                  .map((row) => ({ label: safetyLabel(row.name), value: formatNumber(row.count) }))}
               />
             </CardBody>
           )}

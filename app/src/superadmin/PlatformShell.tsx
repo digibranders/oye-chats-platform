@@ -1,16 +1,16 @@
 import { Fragment, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Menu as MenuIcon, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Menu as MenuIcon, ShieldAlert } from 'lucide-react';
 import {
   Button,
-  RailBackLink,
   RailFrame,
   RailGroupLabel,
   RailItem,
   Spinner,
   Toaster,
   TooltipProvider,
+  Tooltip,
   cn,
   useMediaQuery,
 } from '../ui';
@@ -20,6 +20,15 @@ import { ForbiddenPage } from '../app/errors/ForbiddenPage';
 import { PLATFORM_NAV, isPlatformItemActive } from './nav';
 
 const MOBILE_QUERY = '(max-width: 1023px)';
+/**
+ * The width at which the rail collapses to its 60px form.
+ *
+ * The same query `AppShell` uses, and it has to be: between 1024 and 1279 the
+ * customer console's rail is 60px and this one's was 248, so crossing between
+ * the two consoles moved the content start by 188px — a larger drift than the
+ * 22px one the shared `RailFrame` was introduced to remove.
+ */
+const AUTO_COLLAPSE_QUERY = '(max-width: 1279px)';
 
 /**
  * The platform console's own frame.
@@ -51,7 +60,13 @@ const MOBILE_QUERY = '(max-width: 1023px)';
 export function PlatformShell() {
   const { pathname } = useLocation();
   const isMobile = useMediaQuery(MOBILE_QUERY);
+  const forceCollapsed = useMediaQuery(AUTO_COLLAPSE_QUERY);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Width-driven only. `AppShell` also remembers a manual preference, which this
+  // console has no control to set — the drawer is the narrow-screen answer and
+  // the rail is otherwise a function of how much room there is.
+  const collapsed = forceCollapsed && !isMobile;
 
   // A support session is somebody else's identity. The platform console acting
   // through an impersonation token would be a super-admin editing plans as the
@@ -76,58 +91,86 @@ export function PlatformShell() {
     );
   }
 
-  const rail = (
-    <RailFrame
-      navLabel="Platform console"
-      header={
-        <span className="flex h-9 min-w-0 flex-1 items-center gap-2.5 px-2.5">
-          <span className="flex h-icon-md w-icon-md shrink-0 items-center justify-center">
-            <ShieldAlert aria-hidden className="h-icon-md w-icon-md text-rail-accent" />
-          </span>
-          <span className="min-w-0 flex-1 truncate text-base font-semibold text-rail-text">
-            Platform
-          </span>
-        </span>
-      }
-      footer={
-        <ul className="flex flex-col gap-0.5">
-          <RailBackLink to="/" onNavigate={() => setDrawerOpen(false)}>
-            Back to my workspace
-          </RailBackLink>
-        </ul>
-      }
-    >
-      {PLATFORM_NAV.map((group, index) => (
-        <Fragment key={group.label ?? `group-${index}`}>
-          {group.label ? <RailGroupLabel>{group.label}</RailGroupLabel> : null}
-          {group.items.map((item) => (
+  // The drawer is always the full rail: it is an overlay with 248px to spend
+  // whatever the viewport is doing behind it.
+  function renderRail(railCollapsed: boolean) {
+    return (
+      <RailFrame
+        navLabel="Platform console"
+        header={
+          railCollapsed ? (
+            <Tooltip content="Platform console" side="right">
+              <span className="mx-auto flex h-8 w-8 items-center justify-center">
+                <ShieldAlert aria-hidden className="h-icon-md w-icon-md text-rail-accent" />
+                <span className="sr-only">Platform console</span>
+              </span>
+            </Tooltip>
+          ) : (
+            <span className="flex h-9 min-w-0 flex-1 items-center gap-2.5 px-2.5">
+              <span className="flex h-icon-md w-icon-md shrink-0 items-center justify-center">
+                <ShieldAlert aria-hidden className="h-icon-md w-icon-md text-rail-accent" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-base font-semibold text-rail-text">
+                Platform
+              </span>
+            </span>
+          )
+        }
+        footer={
+          <ul className="flex flex-col gap-0.5">
+            {/* `RailItem`, not `RailBackLink`: the back link is the one rail
+                child with no collapsed form, so at 60px it renders a clipped
+                sentence where every sibling renders a glyph and a tooltip.
+                Reported to the system; composed around here meanwhile. */}
             <RailItem
-              key={item.to}
-              to={item.to}
-              label={item.label}
-              // Several destinations here are prefixes of each other, which
-              // `NavLink`'s own matching gets wrong.
-              active={isPlatformItemActive(item, pathname)}
+              to="/"
+              label="Back to my workspace"
+              active={false}
+              collapsed={railCollapsed}
               onNavigate={() => setDrawerOpen(false)}
-              glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
+              glyph={<ArrowLeft aria-hidden className="h-icon-md w-icon-md" />}
             />
-          ))}
-        </Fragment>
-      ))}
-    </RailFrame>
-  );
+          </ul>
+        }
+      >
+        {PLATFORM_NAV.map((group, index) => (
+          <Fragment key={group.label ?? `group-${index}`}>
+            {group.label ? (
+              <RailGroupLabel collapsed={railCollapsed}>{group.label}</RailGroupLabel>
+            ) : null}
+            {group.items.map((item) => (
+              <RailItem
+                key={item.to}
+                to={item.to}
+                label={item.label}
+                // Several destinations here are prefixes of each other, which
+                // `NavLink`'s own matching gets wrong.
+                active={isPlatformItemActive(item, pathname)}
+                collapsed={railCollapsed}
+                onNavigate={() => setDrawerOpen(false)}
+                glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
+              />
+            ))}
+          </Fragment>
+        ))}
+      </RailFrame>
+    );
+  }
 
   return (
     <TooltipProvider>
       <div
         className={cn(
           'grid h-dvh overflow-hidden bg-canvas text-text-primary',
-          !isMobile && 'grid-cols-[var(--spacing-rail)_1fr]',
+          !isMobile &&
+            (collapsed
+              ? 'grid-cols-[var(--spacing-rail-collapsed)_1fr]'
+              : 'grid-cols-[var(--spacing-rail)_1fr]'),
         )}
       >
         {!isMobile ? (
           <aside id="platform-rail" className="h-full overflow-hidden">
-            {rail}
+            {renderRail(collapsed)}
           </aside>
         ) : (
           <BaseDialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
@@ -135,7 +178,7 @@ export function PlatformShell() {
               <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-scrim)] bg-overlay" />
               <BaseDialog.Popup className="motion-slide-left fixed inset-y-0 left-0 z-[var(--z-overlay)] w-rail focus:outline-none">
                 <BaseDialog.Title className="sr-only">Platform navigation</BaseDialog.Title>
-                {rail}
+                {renderRail(false)}
               </BaseDialog.Popup>
             </BaseDialog.Portal>
           </BaseDialog.Root>

@@ -364,9 +364,24 @@ describe('the table', () => {
   it('offers every column the card grid could not sort by', () => {
     renderTable();
 
-    for (const header of ['Chatbot', 'Status', 'Conversations', 'Messages', 'Passages', 'Last trained']) {
+    for (const header of ['Chatbot', 'Status', 'Conversations', 'Passages', 'Last trained']) {
       expect(screen.getByRole('button', { name: new RegExp(`^${header}$`) })).toBeInTheDocument();
     }
+  });
+
+  it('fits its columns inside a 1280 laptop rather than clipping the last badge', () => {
+    // Eight columns declaring 58.5rem of width plus the name column measured
+    // 1114px against a 966px page: `Column.secondary` only hides below `md`, so
+    // between 768 and ~1400 the install state — the column people come here to
+    // scan — was the half sliced off at the card's edge, with the scroll
+    // affordance a 6px bar under 44px rows. Messages went (it is conversations
+    // at a finer grain, and this page ranks chatbots, it does not analyse one),
+    // and the actions header is `sr-only` because the word was 15px wider than
+    // the menu button under it.
+    renderTable();
+
+    expect(screen.queryByRole('button', { name: /^Messages$/ })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })?.textContent).toBe('Actions');
   });
 
   it('states the result of a filter once, in the toolbar, and not again as a card of tiles', () => {

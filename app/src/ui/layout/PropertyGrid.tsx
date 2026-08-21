@@ -55,15 +55,25 @@ export interface PropertyGridProps {
  *
  * Three contracts it keeps:
  *
- * **Every absent value is `—`** (DESIGN.md rule 10), never `0`, never a blank
+ * **Every absent value is `—`** (DESIGN.md rule 11), never `0`, never a blank
  * cell. A blank cell is indistinguishable from a rendering failure, and `0` is a
  * measurement that was taken.
  *
- * **It re-declares `@container/page` on its own root**, so `columns={2}` asks
- * about the width of *this grid* — not the page, and not a card that happened to
- * opt into a container. The two-column form of its predecessor broke at the
- * `sm` viewport breakpoint, which is why an inbox pane 320px wide went two-up on
- * a 1920px screen.
+ * **It re-declares `@container/page` on its own root**, so `columns={2}` — and
+ * the label column itself — ask about the width of *this grid*, not the page,
+ * and not a card that happened to opt into a container. The two-column form of
+ * its predecessor broke at the `sm` viewport breakpoint, which is why an inbox
+ * pane 320px wide went two-up on a 1920px screen.
+ *
+ * **`rows` falls back to stacked below 24rem of container.** The label column
+ * was `minmax(7rem,10rem)` at every width, so in an 18rem aside — about 248px
+ * of usable grid — a 112px label left 120px for the value, and "First seen /
+ * 2 Jun 2026, 10:00" wrapped onto three lines while "https://acme.com" broke
+ * mid-word. Stacking is what `layout="stacked"` was already documented as: the
+ * shape that is right "only in a column too narrow to hold both". Which columns
+ * those are is a fact about the container, so it is a container query rather
+ * than a prop the call site has to keep in sync with its own layout — the aside
+ * on Deploy passes no prop and gets the right shape at both widths.
  *
  * **It draws no horizontal padding.** The container provides the gutter, which
  * is how a `PropertyGrid` in a `CardBody` lines up with the `CardHeader` above
@@ -150,18 +160,34 @@ function Row({
   }
 
   return (
+    // Stacked is the base and the two-column row is the enhancement, so the
+    // narrow case needs no query to be correct. 24rem is where a 7rem label, a
+    // 1rem gutter and a value long enough to be worth a row — a timestamp, a
+    // URL, an email — stop competing for the same 250px.
     <div
       className={cn(
-        'grid grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)] items-baseline gap-x-4',
-        'border-t border-border',
-        compact ? 'min-h-8 py-1.5' : 'min-h-[var(--row-h)] py-[var(--cell-y)]',
+        'grid grid-cols-[minmax(0,1fr)] border-t border-border',
+        '@sm/page:items-baseline @sm/page:gap-x-4',
+        compact
+          ? // `compact` is the inspector density, and an inspector is narrow by
+            // definition: a 10rem label track in a 288px pane leaves 71px for
+            // the value, which broke `amara@example.com` as `amara@ex /
+            // ample.com`. The names in an inspector are short — "Email",
+            // "First seen" — so the track can be.
+            'py-1.5 @sm/page:min-h-8 @sm/page:grid-cols-[minmax(4.5rem,8rem)_minmax(0,1fr)]'
+          : 'py-[var(--cell-y)] @sm/page:min-h-[var(--row-h)] @sm/page:grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)]',
       )}
     >
       {name}
       {/* The action rides inside the `dd` rather than in a third grid column:
           `dl > div` may hold `dt` and `dd` and nothing else, and an auto column
           that is empty on most rows still charges every row its `gap-x`. */}
-      <dd className="flex min-w-0 items-baseline justify-between gap-2 text-sm text-text-primary">
+      <dd
+        className={cn(
+          'mt-0.5 flex min-w-0 items-baseline justify-between gap-2 text-sm text-text-primary',
+          '@sm/page:mt-0',
+        )}
+      >
         <span className="min-w-0 break-words">{value}</span>
         {item.action ? <span className="shrink-0 self-center">{item.action}</span> : null}
       </dd>

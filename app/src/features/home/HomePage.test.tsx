@@ -100,8 +100,9 @@ describe('HomePage', () => {
 
     const strip = await screen.findByRole('group', { name: 'Workspace at a glance' });
     expect(await within(strip).findByText('100')).toBeInTheDocument();
-    // Stated once, in the card's header — not four times down a row of tiles.
-    expect(screen.getByText('Last 30 days')).toBeInTheDocument();
+    // Stated once, by the strip's own caption — not four times down a row of
+    // tiles, and not again as a `CardHeader` action beside it.
+    expect(screen.getAllByText('Last 30 days')).toHaveLength(1);
     // 100 this window against 50 in the one before it. No figure in the app
     // carried a delta before this.
     expect(within(strip).getByText('+100%')).toBeInTheDocument();
@@ -130,6 +131,59 @@ describe('HomePage', () => {
     expect(
       screen.getByText((_, node) => node?.textContent?.trim() === '2 chatbots'),
     ).toBeTruthy();
+  });
+
+  it('says the chatbot\u2019s state once, and its consequence on the other track', async () => {
+    renderHome();
+
+    // The badge in the table is the state. It appears exactly once per chatbot:
+    // the attention row above it used to print the same words, beside its own
+    // copy of the same button.
+    const table = (await screen.findByRole('columnheader', { name: 'Status' })).closest('table');
+    expect(within(table as HTMLElement).getByText('Nothing to answer from')).toBeInTheDocument();
+    // Once on screen. The remaining occurrence is the attention row's status
+    // dot naming itself for assistive tech, which is the alternative text for a
+    // 6px circle and not a second copy of the sentence.
+    const visible = screen
+      .getAllByText('Nothing to answer from')
+      .filter((node) => !node.classList.contains('sr-only'));
+    expect(visible).toHaveLength(1);
+
+    // What the attention row carries instead: why it matters, which no status
+    // badge can say.
+    expect(screen.getByText('It will tell visitors it does not know.')).toBeInTheDocument();
+    // And one call to action for it, not two forty pixels apart.
+    expect(screen.getAllByRole('link', { name: 'Add knowledge' })).toHaveLength(1);
+  });
+
+  it('bounds the activity rail and points at the page that is not bounded', async () => {
+    // Twenty-four rows came back for a `limit: 6` request and the card drew all
+    // of them, running the aside 785px past the bottom of the work column at
+    // 1440. `Columns` requires `main` to be the taller track.
+    api.getLeads.mockResolvedValue({
+      leads: Array.from({ length: 24 }, (_, index) => ({
+        session_id: `s${index}`,
+        name: `Visitor ${index}`,
+        last_active_at: '2026-08-20T09:00:00Z',
+      })),
+      total: 24,
+    });
+    renderHome();
+
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Recent leads' });
+    const card = heading.closest('[data-card]') as HTMLElement;
+    expect(await within(card).findAllByRole('listitem')).toHaveLength(6);
+    expect(within(card).getByRole('link', { name: 'See all' })).toHaveAttribute('href', '/leads');
+  });
+
+  it('does not restate the rail at the bottom of its own aside', async () => {
+    renderHome();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+
+    // Two 76px tiles linking to Inbox and Leads — rows two and three of the
+    // navigation rail, repeated below the fold of the page they are already on.
+    expect(screen.queryByText('Live conversations and offline messages')).toBeNull();
+    expect(screen.queryByText('Captured contacts, scored')).toBeNull();
   });
 
   it('lets the setup card be dismissed, and remembers it per workspace', async () => {

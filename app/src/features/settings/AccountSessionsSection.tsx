@@ -66,8 +66,11 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
           description="Rotating the workspace API key ends every session."
           controlWidth="auto"
         >
-          <Link to="/settings/developers" className={buttonClass('ghost', 'sm')}>
-            Developers
+          {/* `secondary`, not `ghost`: it is the row's only control, and a
+              borderless grey link at the right edge of a settings row reads as
+              disabled text rather than as somewhere to go. */}
+          <Link to="/settings/developers" className={buttonClass('secondary', 'sm')}>
+            Open Developers
           </Link>
         </SettingRow>
       </SettingGroup>

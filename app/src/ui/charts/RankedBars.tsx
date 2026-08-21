@@ -38,6 +38,12 @@ export interface RankedBarsProps {
    * `--color-accent-50`, a *background* token, which measured 1.05:1 against the
    * track it was painted on and could not be seen at all.
    *
+   * `--color-chart-1` itself used to be #2F5FE0, one step off `accent-500`, so
+   * the default fill still read as interactive — the rule was stated in §2.5 and
+   * broken by the token it pointed at. It is now a deep petrol navy at 10.0 on
+   * the canvas, against the accent's 4.09: unmistakably not a link, and still the
+   * strongest first series a warm-paper ramp can carry.
+   *
    * `ink` stays for the surfaces that already ask for it; a status tone is for
    * when the ranking itself carries one.
    */
@@ -120,17 +126,29 @@ export function RankedBars({
         const body = (
           <>
             <div className="flex max-w-pair items-center gap-3">
-              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{item.label}</span>
+              {/* The label carries more of the row than the bar does. It was
+                  `flex-1` against the bar's `flex-[1.4]`, which gave a whole
+                  visitor question 175px and its bar 245 — and the question is
+                  the content. The bar is the *comparison*; the row already
+                  states the number in text beside it. */}
+              <span className="min-w-0 flex-[1.6] truncate text-sm text-text-primary">
+                {item.label}
+              </span>
               <div
                 aria-hidden
-                className="hidden h-2 min-w-16 flex-[1.4] overflow-hidden rounded-xs bg-surface-sunken sm:block"
+                className="hidden h-2 min-w-16 flex-1 overflow-hidden rounded-xs bg-surface-sunken sm:block"
               >
                 <div
                   className={cn('h-full rounded-xs transition-[width] duration-[var(--dur-slow)]', TONE_FILL[tone])}
                   style={{ width: `${share}%` }}
                 />
               </div>
-              <span className="figure w-16 shrink-0 text-right text-sm font-medium text-text-primary">
+              {/* `min-w-16`, not `w-16`. A fixed 64px column holds "412" and
+                  overflows at four digits, at a currency figure, and at the
+                  `1,234 · 45%` display these rows are routinely given — the
+                  text simply ran out of its own box. The minimum still lines
+                  four rows of three-digit figures up on one right edge. */}
+              <span className="figure min-w-16 shrink-0 whitespace-nowrap text-right text-sm font-medium text-text-primary">
                 {item.display ?? item.value}
               </span>
             </div>

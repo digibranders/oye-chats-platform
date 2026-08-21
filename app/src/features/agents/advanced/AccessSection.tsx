@@ -89,17 +89,33 @@ function AccessSectionInner({
   const sessionError = sessionShareDomainError(sessionShareDomain);
   const scope = normalized ?? websiteApex;
 
+  // The reassuring reading of the allow-list is a state, not a warning: as an
+  // `Alert` it was a bordered, tinted box inside the card restating in two
+  // sentences what the checkbox under it and the chips beside it already showed.
+  // It rides the row as a badge instead, and the band is kept for the three
+  // readings that genuinely warn — off, empty, and locked out of your own site.
+  const warning = notice.id !== 'ok';
+
   return (
     <>
-      <div className="px-cell py-3">
-        <Alert tone={notice.tone} title={notice.title}>
-          {notice.body}
-        </Alert>
-      </div>
+      {warning ? (
+        <div className="px-cell py-3">
+          <Alert tone={notice.tone} title={notice.title}>
+            {notice.body}
+          </Alert>
+        </div>
+      ) : null}
 
       <SettingRow
         label="Only allow the domains listed below"
         description="An empty list allows everything."
+        badge={
+          warning ? undefined : (
+            <Badge tone="success" dot>
+              {notice.title}
+            </Badge>
+          )
+        }
         controlWidth="auto"
       >
         <Checkbox

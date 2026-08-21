@@ -14,6 +14,7 @@ import {
   Textarea,
   Stack,
   Toolbar,
+  Tooltip,
   formatDateTime,
   toast,
   type Column,
@@ -55,11 +56,22 @@ export function ChatRatingsTab() {
     },
   });
 
+  /**
+   * Every column carries a width, and the two free-text ones truncate.
+   *
+   * Without a width on all six, `DataTable` lays out `auto` and sizes itself to
+   * its content — a whole answer, unbounded. This table was 655px wider than the
+   * card it sits in, so "Account", "Visitor" and "Rated" were off screen on
+   * every row and the badge in a 130px first column wrapped its own label under
+   * its own icon. The question and the answer are what a reader hovers; the
+   * three columns that were hidden are what they scan.
+   */
   const columns: Column<ChatFeedbackRow>[] = [
     {
       key: 'feedback',
       header: 'Rating',
       pinned: true,
+      width: '8rem',
       sortable: true,
       render: (row) =>
         row.feedback > 0 ? (
@@ -77,18 +89,35 @@ export function ChatRatingsTab() {
     {
       key: 'question',
       header: 'Asked',
-      render: (row) => <span className="text-text-primary">{row.question}</span>,
+      width: '16rem',
+      render: (row) => (
+        <Tooltip content={row.question}>
+          <span className="block truncate text-text-primary">{row.question}</span>
+        </Tooltip>
+      ),
     },
     {
       key: 'answer',
       header: 'Answered',
-      render: (row) => <span className="text-text-secondary">{row.answer}</span>,
+      width: '17rem',
+      render: (row) => (
+        <Tooltip content={row.answer}>
+          <span className="block truncate text-text-secondary">{row.answer}</span>
+        </Tooltip>
+      ),
     },
-    { key: 'client_name', header: 'Account', sortable: true, render: (row) => row.client_name },
-    { key: 'user', header: 'Visitor', secondary: true, render: (row) => row.user },
+    {
+      key: 'client_name',
+      header: 'Account',
+      width: '10rem',
+      sortable: true,
+      render: (row) => <span className="block truncate">{row.client_name}</span>,
+    },
+    { key: 'user', header: 'Visitor', width: '9rem', secondary: true, render: (row) => row.user },
     {
       key: 'created_at',
       header: 'Rated',
+      width: '10rem',
       sortable: true,
       secondary: true,
       render: (row) => formatDateTime(row.created_at),
@@ -180,6 +209,7 @@ export function ProductFeedbackTab() {
       key: 'message',
       header: 'Report',
       pinned: true,
+      width: '19rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate font-medium">{row.message}</p>
@@ -190,12 +220,14 @@ export function ProductFeedbackTab() {
     {
       key: 'type',
       header: 'Type',
+      width: '9rem',
       sortable: true,
       render: (row) => (row.type ? <Badge>{humanise(row.type)}</Badge> : '—'),
     },
     {
       key: 'area',
       header: 'Area',
+      width: '8rem',
       sortable: true,
       secondary: true,
       render: (row) => humanise(row.area),
@@ -203,6 +235,7 @@ export function ProductFeedbackTab() {
     {
       key: 'severity',
       header: 'Severity',
+      width: '8rem',
       sortable: true,
       render: (row) =>
         row.severity ? (
@@ -214,6 +247,7 @@ export function ProductFeedbackTab() {
     {
       key: 'status',
       header: 'Status',
+      width: '9rem',
       sortable: true,
       render: (row) => (
         <Badge tone={FEEDBACK_STATUS_TONES[row.status] ?? 'neutral'}>{humanise(row.status)}</Badge>
@@ -222,6 +256,7 @@ export function ProductFeedbackTab() {
     {
       key: 'created_at',
       header: 'Reported',
+      width: '10rem',
       sortable: true,
       secondary: true,
       render: (row) => formatDateTime(row.created_at),
@@ -229,6 +264,7 @@ export function ProductFeedbackTab() {
     {
       key: 'actions',
       header: 'Triage',
+      width: '7rem',
       align: 'right',
       render: (row) => (
         <Button size="sm" variant="ghost" onClick={() => setTriaging(row)}>

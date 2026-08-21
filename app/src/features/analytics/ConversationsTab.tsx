@@ -115,8 +115,9 @@ export function ConversationsTab({
       </Card>
 
       {/* Peers: "what they asked" and "what we could not answer" are the same
-          question from two sides, and the reader reads one against the other. */}
-      <Grid cols={2} gap="section" align="start">
+          question from two sides, and the reader reads one against the other —
+          so they share a bottom edge. See the note in `OverviewTab`. */}
+      <Grid cols={2} gap="section">
         <TopQuestionsPanel botId={botId} />
         <KnowledgeGapsPanel botId={botId} range={range} />
       </Grid>

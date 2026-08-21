@@ -1,5 +1,6 @@
-import { type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
+import { FieldContext } from '../primitives/fieldContext';
 
 const CONTROL_WIDTHS = {
   sm: 'w-40',
@@ -34,6 +35,12 @@ export interface SettingRowProps {
   stacked?: boolean;
   /** What is wrong with the current value, in the user's terms. */
   error?: string;
+  /**
+   * The setting's value must be supplied: `aria-required`, plus " (required)"
+   * in the accessible name. No asterisk — see `Field.required`; the console
+   * marks the exception, and the exception is "Optional".
+   */
+  required?: boolean;
   disabled?: boolean;
   className?: string;
 }
@@ -60,6 +67,24 @@ export interface SettingRowProps {
  * `Page density="dense"` compresses without a single value being re-decided.
  * It carries the card's own 20px horizontal gutter, so a `SettingGroup` dropped
  * into a `CardBody flush` lines up with the `CardHeader` above it.
+ *
+ * ## It is a `Field`, wearing a row
+ *
+ * It publishes a `FieldContext`, so the control inside it picks up its `id`, its
+ * `aria-describedby` (the description *and* the error), `aria-invalid` and
+ * `aria-required` from the row, exactly as one inside a `Field` does. Before
+ * this it published nothing: one surface set `aria-invalid` by hand at ten call
+ * sites, and the error text was reachable only because it happened to be a
+ * `role="status"` live region — announced once, when it appeared, and then
+ * unreachable to anyone who arrived at the field afterwards. It keeps the live
+ * region as well; the two answer different questions.
+ *
+ * `disabled` is deliberately **not** published. A locked row's control is very
+ * often the one that unlocks it — an Upgrade button, a "request access" link —
+ * and disabling the row's contents from the row would disable that too. It
+ * dims the row's own type instead, in tokens rather than in opacity: a wash on
+ * the wrapper multiplies with each control's own disabled treatment and takes
+ * the pair to about 0.36.
  */
 export function SettingRow({
   label,
@@ -70,15 +95,42 @@ export function SettingRow({
   controlWidth = 'md',
   stacked = false,
   error,
+  required = false,
   disabled = false,
   className,
 }: SettingRowProps) {
+  const generatedId = useId();
+  // An explicit `htmlFor` wins: the caller has an id it already owns and the
+  // row must point at that one, not at a second one it invented.
+  const controlId = htmlFor ?? `${generatedId}-control`;
+  const labelId = `${generatedId}-label`;
+  const descriptionId = description ? `${generatedId}-description` : undefined;
+  const errorId = error ? `${generatedId}-error` : undefined;
   const Label = htmlFor ? 'label' : 'span';
+
   return (
+    <FieldContext.Provider
+      value={{
+        id: controlId,
+        // Only when the caller wired the row's label to the control. A row
+        // heading is not automatically the control's name: "Answering
+        // strictness" over a `RadioCards` that names itself, or "Reply-to" over
+        // a `TagInput` labelled "Reply-to address", are the row talking about
+        // the setting rather than naming the widget. Claiming the name
+        // unconditionally renamed one and left the other with no name at all.
+        labelId: htmlFor ? labelId : undefined,
+        descriptionId,
+        errorId,
+        invalid: Boolean(error),
+        required,
+        // See the note on the component: a locked row often holds the control
+        // that unlocks it.
+        disabled: false,
+      }}
+    >
     <div
       className={cn(
         'border-t border-border px-cell py-[var(--cell-y)] first:border-t-0',
-        disabled && 'opacity-60',
         className,
       )}
     >
@@ -91,18 +143,26 @@ export function SettingRow({
         <div className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <Label
+              id={labelId}
               htmlFor={htmlFor}
               className={cn(
-                'text-base font-medium text-text-primary',
+                'text-base font-medium',
+                disabled ? 'text-text-disabled' : 'text-text-primary',
                 htmlFor && !disabled && 'cursor-pointer',
               )}
             >
               {label}
+              {required ? <span className="sr-only"> (required)</span> : null}
             </Label>
             {badge}
           </span>
           {description ? (
-            <p className="mt-0.5 text-xs text-text-secondary">{description}</p>
+            <p
+              id={descriptionId}
+              className={cn('mt-0.5 text-xs', disabled ? 'text-text-disabled' : 'text-text-secondary')}
+            >
+              {description}
+            </p>
           ) : null}
         </div>
         <div
@@ -115,7 +175,11 @@ export function SettingRow({
             {children}
           </div>
           {error ? (
+            // Both an id the control is described by and a live region. The id
+            // is what makes the message reachable on arrival; the live region is
+            // what announces it when it appears under a control already focused.
             <p
+              id={errorId}
               role="status"
               aria-live="polite"
               className={cn('text-xs text-danger', stacked ? 'text-left' : 'text-right')}
@@ -126,10 +190,16 @@ export function SettingRow({
         </div>
       </div>
     </div>
+    </FieldContext.Provider>
   );
 }
 
 export interface SettingGroupProps {
+  /**
+   * `form` (672) is the measure a list of settings is read at, and the default.
+   * `full` is for a group whose rows are genuinely a wide table.
+   */
+  width?: 'form' | 'full';
   title?: string;
   titleAs?: 'h2' | 'h3';
   /** One clause about the group, when the title cannot carry it. */
@@ -152,8 +222,22 @@ export interface SettingGroupProps {
  *
  * Five settings cost about 26px of heading plus 220px of rows here. As five
  * cards they cost about 750px, which is the settings pages as they stand.
+ *
+ * **The card is capped at `--container-form` (672).** `SettingRow` caps the
+ * label→control *pair* at `--container-pair`, which stops the pair breaking; it
+ * does nothing about the box around it, so on a 1945px page the hairline ran a
+ * further 1,300px past the control it was underlining and a switch sat at
+ * x=1537 with nothing to its right. It is the same argument one level up: a
+ * list of settings is a form, and a form has a measure. Two surfaces had
+ * already wrapped this in a `Measure` by hand; the cap belongs here so the
+ * third does not have to know.
+ *
+ * The heading is capped with it, so the title, the description and the rows
+ * stand on one right edge as well as one left. Pass `width="full"` for the rare
+ * group whose rows are genuinely a wide table.
  */
 export function SettingGroup({
+  width = 'form',
   title,
   titleAs: Title = 'h2',
   description,
@@ -163,7 +247,14 @@ export function SettingGroup({
   className,
 }: SettingGroupProps) {
   return (
-    <section id={id} className={cn('scroll-mt-gutter lg:scroll-mt-gutter-lg', className)}>
+    <section
+      id={id}
+      className={cn(
+        'scroll-mt-gutter lg:scroll-mt-gutter-lg',
+        width === 'form' && 'max-w-form',
+        className,
+      )}
+    >
       {title ? (
         <div className="mb-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
@@ -177,5 +268,34 @@ export function SettingGroup({
       ) : null}
       <div className="rounded-lg border border-border bg-surface">{children}</div>
     </section>
+  );
+}
+
+/**
+ * A band of prose or controls inside a `SettingGroup`, on the group's own
+ * gutter.
+ *
+ * `SettingGroup` is a bordered box whose children are `SettingRow`s, each of
+ * which carries the 20px gutter itself. Anything that is *not* a row — an
+ * `Alert` explaining the group, a `Well` previewing the result, a paragraph
+ * about what the settings do — had no way to stand on that gutter, so eight
+ * surfaces hand-wrote `px-cell py-4` inside the group and one of them wrote
+ * `p-5`, which is the same defect `CardBody` exists to prevent one level up.
+ *
+ * It is `CardBody`'s equivalent for a setting group, hairline-separated from
+ * the row above it by the same rule the rows use, so a band reads as part of the
+ * list rather than as something dropped on top of it.
+ */
+export function SettingBand({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('border-t border-border px-cell py-4 first:border-t-0', className)}>
+      {children}
+    </div>
   );
 }

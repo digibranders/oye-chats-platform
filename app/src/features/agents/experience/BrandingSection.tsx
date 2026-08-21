@@ -10,7 +10,6 @@ import {
   CardHeader,
   Field,
   FileDrop,
-  Grid,
   Input,
   LoadingRows,
   SegmentedControl,
@@ -19,7 +18,7 @@ import {
   buttonClass,
   validateUrl,
 } from '../../../ui';
-import PremiumOrb from '../../../components/PremiumOrb';
+import PremiumOrb from './PremiumOrb';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { ColorField } from './ColorField';
 import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
@@ -212,29 +211,32 @@ export function BrandingSection({
                   {uploadError}
                 </Alert>
               ) : null}
-              {/* One line under the drop zone, one ternary. It used to be four
-                  separate status surfaces for one upload, two of which said the
-                  same thing about the fallback the 64px preview already shows. */}
-              <div className="flex items-center gap-2 text-xs text-text-secondary">
-                {uploading ? (
-                  <span className="flex items-center gap-2" role="status">
-                    <Spinner />
-                    Uploading…
-                  </span>
-                ) : draft.botLogo ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={readOnly}
-                    onClick={() => onChange({ botLogo: null })}
-                    iconLeft={<Trash2 aria-hidden />}
-                  >
-                    Remove
-                  </Button>
-                ) : (
-                  <span>No image yet.</span>
-                )}
-              </div>
+              {/* One line under the drop zone, and only when there is something
+                  to say. It used to be four separate status surfaces for one
+                  upload; the last of them read "No image yet." under an empty
+                  drop zone beside a preview already showing the fallback face —
+                  three ways of saying nothing, on the state where the panel is
+                  emptiest. */}
+              {uploading || draft.botLogo ? (
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  {uploading ? (
+                    <span className="flex items-center gap-2" role="status">
+                      <Spinner />
+                      Uploading…
+                    </span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={readOnly}
+                      onClick={() => onChange({ botLogo: null })}
+                      iconLeft={<Trash2 aria-hidden />}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -302,7 +304,12 @@ export function BrandingSection({
                 onCheckedChange={(showBranding) => onChange({ showBranding })}
               />
               {draft.showBranding ? (
-                <Grid cols={2}>
+                // `max-w-pair`, the same cap the labelled `Switch` above draws
+                // itself at. Without it the two inputs ran 38px past the switch's
+                // right edge, so one card had two right margins. `Grid cols={2}`
+                // never went two-up in this column anyway — it is 638px wide, and
+                // the ramp's two-column step is 768.
+                <div className="grid max-w-pair gap-4">
                   <Field label="Wording" error={errors.brandingText ?? null}>
                     <Input
                       value={draft.brandingText}
@@ -323,7 +330,7 @@ export function BrandingSection({
                       className="figure"
                     />
                   </Field>
-                </Grid>
+                </div>
               ) : null}
             </>
           )}

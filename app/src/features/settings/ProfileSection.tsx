@@ -5,6 +5,7 @@ import {
   Avatar,
   Input,
   SaveBar,
+  SettingBand,
   SettingGroup,
   SettingRow,
   toast,
@@ -102,13 +103,13 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   return (
     <SettingGroup title="Profile">
       {save.isError ? (
-        <div className="px-cell pt-4">
+        <SettingBand>
           <Alert tone="danger" live title="We could not save that">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. Please try again.'}
           </Alert>
-        </div>
+        </SettingBand>
       ) : null}
 
       <SettingRow
@@ -128,7 +129,6 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
         <Input
           id={`${fieldId}-name`}
           required
-          aria-invalid={draft.errors.name ? true : undefined}
           value={draft.values.name}
           onChange={(event) => draft.set('name', event.target.value)}
           autoComplete="name"
@@ -147,7 +147,6 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
             id={`${fieldId}-email`}
             type="email"
             required
-            aria-invalid={draft.errors.email ? true : undefined}
             value={draft.values.email ?? ''}
             onChange={(event) => draft.set('email', event.target.value)}
             autoComplete="email"

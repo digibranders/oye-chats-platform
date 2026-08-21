@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import {
-  Building2,
   Headphones,
   LogOut,
   MoreHorizontal,
@@ -35,7 +34,6 @@ import {
   Meter,
   Section,
   Stack,
-  StatusDot,
   Tabs,
   TabPanel,
   Toolbar,
@@ -349,14 +347,17 @@ export function MembersPage() {
       header: 'Availability',
       sortable: (a, b) =>
         Number(availability(b) === 'online') - Number(availability(a) === 'online'),
+      // A `Badge`, not a `StatusDot`. `StatusDot` renders a 8px disc and puts
+      // its label in an `sr-only` span — correct in an avatar corner, wrong in a
+      // table column, where it produced a column of bare coloured dots whose
+      // meaning was invisible to everyone who can see them and unreadable to
+      // one in twelve who cannot separate the green from the grey.
       render: (operator) => {
         const state = availability(operator);
         return (
-          <StatusDot
-            tone={state === 'online' ? 'success' : 'neutral'}
-            pulse={state === 'online'}
-            label={AVAILABILITY_LABEL[state]}
-          />
+          <Badge tone={state === 'online' ? 'success' : 'neutral'} dot>
+            {AVAILABILITY_LABEL[state]}
+          </Badge>
         );
       },
     },
@@ -590,12 +591,12 @@ export function MembersPage() {
             unit="seats"
           />
           <div className="flex flex-wrap items-center gap-3">
-            <StatusDot
-              tone={self ? 'success' : 'neutral'}
-              pulse={Boolean(self)}
-              label={self ? 'You are taking live chats' : 'You are not taking live chats'}
-            />
-            {/* The owner's own seat. The console this replaces could put an
+            {/* No `StatusDot` here. It rendered an 8px disc with its sentence in
+                an `sr-only` span, so the toolbar carried a floating dot that
+                explained nothing — and the button beside it already says which
+                state you are in, in words that everyone can read.
+
+                The owner's own seat. The console this replaces could put an
                 owner on the roster but never take them off —
                 `removeSelfAsOperator` existed in the API client and nothing
                 called it, so an owner who joined live chat was on it
@@ -651,7 +652,7 @@ export function MembersPage() {
               rowLabel={(operator) => operator.name || operator.email}
               empty={
                 <EmptyState
-                  icon={Users}
+                  size="inline"
                   title="Nobody on the roster yet"
                   description="Invite a teammate to answer live conversations, or join the roster yourself."
                   action={
@@ -684,7 +685,7 @@ export function MembersPage() {
                 rowLabel={(invite) => invite.email}
                 empty={
                   <EmptyState
-                    icon={UserPlus}
+                    size="inline"
                     title="No invitations outstanding"
                     description="Everyone you have invited has either accepted or been revoked."
                     action={
@@ -728,7 +729,7 @@ export function MembersPage() {
                 rowNoun="department"
                 empty={
                   <EmptyState
-                    icon={Building2}
+                    size="inline"
                     title="No departments"
                     description="Without departments every conversation goes to whoever is online."
                     action={
@@ -748,6 +749,7 @@ export function MembersPage() {
             ) : (
               <Card>
                 <EmptyState
+                  size="panel"
                   icon={Users}
                   title="No chatbot to route"
                   description="Queue settings belong to a chatbot. Create one and its waiting rules appear here."
@@ -951,10 +953,9 @@ function RosterPreview() {
           key: 'availability',
           header: 'Availability',
           render: (row) => (
-            <StatusDot
-              tone={row.online ? 'success' : 'neutral'}
-              label={row.online ? 'Online' : 'Offline'}
-            />
+            <Badge tone={row.online ? 'success' : 'neutral'} dot>
+              {row.online ? 'Online' : 'Offline'}
+            </Badge>
           ),
         },
       ]}

@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Eyebrow } from '../primitives/Misc';
 
@@ -254,9 +254,18 @@ export function Stack({
  * The stuck band spans the full gutter and is opaque. It used to be `-mx-2`
  * against a 24–32px gutter, so rows scrolled through the 16px strip left
  * uncovered on each side, and it was `bg-canvas/95` + `backdrop-blur`, which is
- * glass over a flat paper token — banned by DESIGN.md §6 rule 5, and pointless
- * over a ground that has no image behind it. The `border-b` is what tells the
- * reader it is stuck; without it the band has no edge at all.
+ * glass over a flat paper token — banned by DESIGN.md §6 rule 6, and pointless
+ * over a ground that has no image behind it.
+ *
+ * **The hairline appears only once the bar is actually stuck.** `border-b` is
+ * what says "this is floating over content"; drawn at rest, full-bleed through
+ * the page's gutter, it is a rule spanning the whole viewport that aligns with
+ * nothing — on Leads it cut across the page above a card whose own border sat
+ * 24px inside it. A one-pixel sentinel above the bar reports, through an
+ * `IntersectionObserver`, whether the bar has left its resting place; the state
+ * is written straight onto the DOM rather than held in React, because a
+ * re-render of a filter bar on every scroll frame is exactly what a sticky
+ * toolbar must not cost.
  */
 export function Toolbar({
   children,
@@ -267,19 +276,56 @@ export function Toolbar({
   sticky?: boolean;
   className?: string;
 }) {
-  return (
+  // React 19 runs the function a ref callback returns as its cleanup.
+  const watchSentinel = useCallback(
+    (sentinel: HTMLDivElement | null) => {
+      if (!sentinel || !sticky || typeof IntersectionObserver === 'undefined') return;
+      const bar = sentinel.nextElementSibling as HTMLElement | null;
+      if (!bar) return;
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          bar.dataset.stuck = entry.isIntersecting ? 'false' : 'true';
+        },
+        // Against the scroll container, whatever it is — the shell's `main` on a
+        // page, a pane's own scroller in the inbox.
+        { threshold: [1] },
+      );
+      observer.observe(sentinel);
+      return () => observer.disconnect();
+    },
+    [sticky],
+  );
+
+  const bar = (
     <div
+      data-stuck="false"
       className={cn(
         'flex flex-wrap items-center gap-2',
         // `top-0`, not an offset: the shell's `main` is the scroll container,
         // so the toolbar sticks to the top of its own scroll box, immediately
         // under the top bar rather than a topbar's height below it.
         sticky &&
-          'sticky top-0 z-[var(--z-sticky)] -mx-gutter border-b border-border bg-canvas px-gutter py-2 lg:-mx-gutter-lg lg:px-gutter-lg',
+          cn(
+            'sticky top-0 z-[var(--z-sticky)] -mx-gutter bg-canvas px-gutter py-2',
+            'lg:-mx-gutter-lg lg:px-gutter-lg',
+            'border-b border-transparent transition-colors duration-[var(--dur-fast)]',
+            'data-[stuck=true]:border-border',
+          ),
         className,
       )}
     >
       {children}
     </div>
+  );
+
+  if (!sticky) return bar;
+
+  return (
+    <>
+      {/* Zero height, so it changes no layout, and `-mb-px` so it cannot open a
+          1px gap between the bar and whatever is above it. */}
+      <div ref={watchSentinel} aria-hidden className="-mb-px h-px w-full" />
+      {bar}
+    </>
   );
 }

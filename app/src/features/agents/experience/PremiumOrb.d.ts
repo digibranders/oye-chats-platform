@@ -1,7 +1,7 @@
 import type { ComponentType, CSSProperties } from 'react';
 
 /**
- * Type shim for the reused `components/PremiumOrb.jsx` - the shared WebGL orb
+ * Type shim for the reused `PremiumOrb.jsx` - the shared WebGL orb
  * renderer (the same one the embeddable widget uses), with a CSS-gradient
  * fallback when WebGL is unavailable. The `.jsx` stays the runtime source; this
  * only declares its props for TypeScript consumers.

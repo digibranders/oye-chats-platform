@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OutboundScreen } from './OutboundScreen';
+import { PAGE_SIZE } from '../recordListState';
 import type { WebhookDelivery } from './types';
 
 const httpClient = vi.hoisted(() => ({
@@ -135,26 +136,35 @@ describe('OutboundScreen', () => {
 
   it('pages the delivery log and keeps the page in the URL', async () => {
     const user = userEvent.setup();
+    const total = PAGE_SIZE * 2 + 10;
     respond({
-      '/superadmin/webhooks': Array.from({ length: 60 }, (_, index) => delivery(index + 1)),
+      '/superadmin/webhooks': Array.from({ length: total }, (_, index) => delivery(index + 1)),
     });
     renderScreen();
 
     const pager = await screen.findByRole('navigation', { name: /pages/i });
-    // The pager reports the whole set, not the twenty-five rows on screen.
-    expect(pager).toHaveTextContent('1–25 of 60');
+    // The pager reports the whole set, not the page of rows on screen. Written
+    // against the console's shared `PAGE_SIZE` rather than a literal: this
+    // screen declared its own 25 while coupons declared 20 and the record lists
+    // used 50, so a reader met three page lengths crossing three tabs.
+    expect(pager).toHaveTextContent(`1–${PAGE_SIZE} of ${total}`);
 
     await user.click(within(pager).getByRole('button', { name: 'Next page' }));
     await waitFor(() => expect(currentSearch).toContain('page=2'));
-    expect(await screen.findByRole('navigation', { name: /pages/i })).toHaveTextContent('26–50 of 60');
+    expect(await screen.findByRole('navigation', { name: /pages/i })).toHaveTextContent(
+      `${PAGE_SIZE + 1}–${PAGE_SIZE * 2} of ${total}`,
+    );
   });
 
   it('opens on the page named in the URL, so a link lands where it was sent from', async () => {
+    const total = PAGE_SIZE * 2 + 10;
     respond({
-      '/superadmin/webhooks': Array.from({ length: 60 }, (_, index) => delivery(index + 1)),
+      '/superadmin/webhooks': Array.from({ length: total }, (_, index) => delivery(index + 1)),
     });
     renderScreen('/platform/platform/deliveries?page=3');
-    expect(await screen.findByRole('navigation', { name: /pages/i })).toHaveTextContent('51–60 of 60');
+    expect(await screen.findByRole('navigation', { name: /pages/i })).toHaveTextContent(
+      `${PAGE_SIZE * 2 + 1}–${total} of ${total}`,
+    );
   });
 
   /**

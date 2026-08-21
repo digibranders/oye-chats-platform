@@ -303,8 +303,11 @@ export function SessionDetailPage() {
       // The visitor, not the id. A 36-character opaque identifier set as a
       // proportional headline is unreadable and unscannable; the id itself is a
       // `CopyField` in the header, where it is mono and can be copied.
+      // "Anonymous visitor", not "Conversation": the eyebrow above already says
+      // Conversation, and the fallback made the word appear three times in the
+      // top 200px — eyebrow, title, and the first section's heading.
       title={
-        detail?.session.visitor_name ?? detail?.session.visitor_email ?? 'Conversation'
+        detail?.session.visitor_name ?? detail?.session.visitor_email ?? 'Anonymous visitor'
       }
       description={detail ? `${detail.messages.length} messages.` : undefined}
       forbidden={record.forbidden}
@@ -337,7 +340,7 @@ export function SessionDetailPage() {
         />
       ) : (
         <Stack>
-          <Section title="Conversation">
+          <Section title="Session">
             <Card>
               <CardBody>
                 <PropertyGrid

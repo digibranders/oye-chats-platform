@@ -163,6 +163,9 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
           />
         </Field>
 
+        {/* Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
+            body is 472px, so `Grid cols={2}` renders one column inside it —
+            two 8-character percent fields stacked. See the round-two report. */}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="You keep" required hint="Percent of every bill.">
             <Input

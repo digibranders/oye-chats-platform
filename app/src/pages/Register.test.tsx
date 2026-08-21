@@ -8,7 +8,7 @@ const registerClient = vi.fn();
 vi.mock('../services/api', () => ({
   registerClient: (...args: unknown[]) => registerClient(...args),
 }));
-vi.mock('../components/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
+vi.mock('./auth/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
 
 function renderRegister(entry = '/register') {
   const client = new QueryClient({

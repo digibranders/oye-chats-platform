@@ -68,7 +68,7 @@ export function DunningTab() {
     {
       key: 'client',
       header: 'Customer',
-      width: '18rem',
+      width: '17rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-text-primary">
@@ -83,7 +83,7 @@ export function DunningTab() {
     {
       key: 'plan',
       header: 'Plan',
-      width: '12rem',
+      width: '9rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate text-sm text-text-primary">{row.plan_name ?? 'No plan on record'}</p>
@@ -94,7 +94,7 @@ export function DunningTab() {
     {
       key: 'since',
       header: 'Failing since',
-      width: '12rem',
+      width: '11rem',
       render: (row) => (
         <div className="min-w-0">
           <p className="figure text-sm text-text-primary">{formatDate(row.past_due_since)}</p>
@@ -116,7 +116,7 @@ export function DunningTab() {
         </Tooltip>
       ),
       align: 'right',
-      width: '12rem',
+      width: '11rem',
       render: (row) => (
         <div>
           <p className="figure text-sm text-text-primary">
@@ -140,10 +140,22 @@ export function DunningTab() {
     {
       key: 'cadence',
       header: 'Dunning emails',
+      // This column had no declared width, so `DataTable` fell back to auto
+      // layout and sized the table to "3 emails sent (day_1, day_3, day_5)" —
+      // which pushed the whole column off the card's right edge on every row.
+      // The count is the column; which steps went out is a tooltip.
+      width: '11rem',
       secondary: true,
-      render: (row) => (
-        <span className="text-sm text-text-secondary">{cadenceSummary(row.emails_sent)}</span>
-      ),
+      render: (row) =>
+        row.emails_sent.length === 0 ? (
+          <span className="text-sm text-text-tertiary">None sent</span>
+        ) : (
+          <Tooltip content={cadenceSummary(row.emails_sent)}>
+            <span className="text-sm text-text-secondary">
+              {row.emails_sent.length === 1 ? '1 email sent' : `${row.emails_sent.length} emails sent`}
+            </span>
+          </Tooltip>
+        ),
     },
   ];
 
@@ -172,24 +184,28 @@ export function DunningTab() {
               loading={dunning.loading && !dunning.data}
               items={[
                 {
+                  // What each figure *is* is a hint; the strip states the window.
+                  // These were `period`s while `StatRow` dropped the one it was
+                  // given — a workaround that made "Platform setting" read as a
+                  // time window.
                   label: 'Failing now',
                   size: 'hero',
                   value: dunning.data ? formatNumber(dunning.data.count) : undefined,
                   tone: dunning.data && dunning.data.count > 0 ? 'danger' : 'neutral',
-                  period: 'Subscriptions in past_due',
+                  hint: 'Subscriptions in past_due',
                 },
                 {
                   label: 'Grace period',
                   value: dunning.data ? `${dunning.data.grace_days} days` : undefined,
-                  period: 'Platform setting',
+                  hint: 'Platform setting',
                 },
                 ...(totals.length === 0
-                  ? [{ label: 'At risk', value: undefined, period: 'Nothing failing' }]
+                  ? [{ label: 'At risk', value: undefined, hint: 'Nothing failing' }]
                   : totals.map((total) => ({
                       label: `At risk (${total.currency})`,
                       value: docMoneyWithCode(total.minor, total.currency),
                       // Per currency: the API's own total adds paise to cents.
-                      period: "One month's plan price",
+                      hint: "One month's plan price",
                     }))),
               ]}
             />

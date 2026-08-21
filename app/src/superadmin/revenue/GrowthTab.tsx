@@ -115,6 +115,11 @@ export function GrowthTab() {
         label: stage.label,
         value: stage.value,
         display: formatNumber(stage.value),
+        // The base is named on every row, and stays that way. It reads as six
+        // repeats of one phrase, and it was on the list of things to compress —
+        // but a bare "7%" beside "Subscribed" reads as step-to-step conversion,
+        // which overstates every drop after the first. `GrowthTab.test` pins
+        // this for that reason.
         meta: `${stage.pct}% of ${funnel.items[0]?.label.toLowerCase() ?? 'the first stage'}`,
       })),
     [funnel.items],

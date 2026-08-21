@@ -23,6 +23,7 @@ export {
   formatTime,
   formatRelative,
   formatDuration,
+  formatBadgeCount,
   truncateId,
 } from './lib/formatters';
 
@@ -33,6 +34,7 @@ export { buttonClass, BUTTON_ICON, BUTTON_ICON_SLOT } from './primitives/buttonS
 export type { ButtonVariant, ButtonSize } from './primitives/buttonStyles';
 export {
   controlClass,
+  splitControlClass,
   CONTROL_SIZE,
   DISABLED_CONTROL,
   DISABLED_FILLED,
@@ -48,7 +50,7 @@ export { Avatar } from './primitives/Avatar';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';
 export { Field, FieldSet } from './primitives/Field';
 export type { FieldProps } from './primitives/Field';
-export { useField, useFieldControlProps } from './primitives/fieldContext';
+export { useField, useFieldControlProps, useFieldGroupProps } from './primitives/fieldContext';
 export type { FieldContextValue } from './primitives/fieldContext';
 export { Input, Textarea, CONTROL_BASE } from './primitives/Input';
 export type { InputProps, TextareaProps } from './primitives/Input';
@@ -81,8 +83,8 @@ export { validateEmail, validateUrl, normalizeUrl, isHexColor } from './lib/vali
    hand-written `grid-cols-*` strings grew in `features/` and every page whose
    author did not write one rendered as a single column of full-width cards.
    `Stack` sets the rhythm BETWEEN sections; it is not how peers are arranged. */
-export { Card, CardHeader, CardBody, CardSection, CardFooter } from './layout/Card';
-export type { CardProps, CardHeaderProps } from './layout/Card';
+export { Card, CardHeader, CardBody, CardSection, CardFooter, Well } from './layout/Card';
+export type { CardProps, CardHeaderProps, WellProps } from './layout/Card';
 export { Page, PageHeader, Section, Stack, Toolbar } from './layout/Page';
 export type { PageProps, PageHeaderProps, SectionProps, PageWidth } from './layout/Page';
 export { Grid } from './layout/Grid';
@@ -99,7 +101,7 @@ export { PaneHeader } from './layout/PaneHeader';
 export type { PaneHeaderProps } from './layout/PaneHeader';
 export { PropertyGrid } from './layout/PropertyGrid';
 export type { PropertyGridProps, PropertyItem } from './layout/PropertyGrid';
-export { SettingRow, SettingGroup } from './layout/SettingRow';
+export { SettingRow, SettingGroup, SettingBand } from './layout/SettingRow';
 export type { SettingRowProps, SettingGroupProps } from './layout/SettingRow';
 export { RailFrame, RailItem, RailGroupLabel, RailBackLink } from './layout/RailFrame';
 export type { RailFrameProps, RailItemProps } from './layout/RailFrame';

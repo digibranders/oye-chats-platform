@@ -93,8 +93,13 @@ export function GstrExportTab() {
             title="Choose the filing month"
             description="One IST calendar month per file. The server rejects anything that is not a whole month."
           />
-          <CardBody className="max-w-md">
+          {/* The measure is on the field, not on the band. `max-w-md` on the
+              `CardBody` shortened the band itself, so the divider it draws
+              stopped 384px short of the card's right edge and read as a broken
+              rule. */}
+          <CardBody>
             <Field
+              className="max-w-md"
               label="Filing month"
               hint={
                 selected === currentMonth

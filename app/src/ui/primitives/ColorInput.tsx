@@ -3,7 +3,7 @@ import { cn } from '../lib/cn';
 import { isHexColor } from '../lib/validators';
 import { Input } from './Input';
 import { CONTROL_SIZE } from './controlStyles';
-import { useField } from './fieldContext';
+import { useFieldNamesControl } from './fieldContext';
 
 export interface ColorInputProps {
   value: string;
@@ -51,7 +51,7 @@ export function ColorInput({
   className,
 }: ColorInputProps) {
   const swatchId = useId();
-  const field = useField();
+  const fieldNamesIt = useFieldNamesControl();
   const valid = isHexColor(value);
   // The native picker only accepts a full six-digit hex, and handing it a
   // half-typed one makes Chrome reset its own swatch to black while the user is
@@ -83,7 +83,7 @@ export function ColorInput({
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         spellCheck={false}
-        aria-label={field ? undefined : label}
+        aria-label={fieldNamesIt ? undefined : label}
         aria-invalid={value.length > 0 && !valid ? true : undefined}
         className="figure w-32 shrink-0"
       />

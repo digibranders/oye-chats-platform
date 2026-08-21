@@ -14,7 +14,7 @@ vi.mock('../services/api', () => ({
 // The Google button probes the API for its own availability. It is not what
 // these tests are about, and leaving it in makes every one of them wait on a
 // network call that cannot succeed here.
-vi.mock('../components/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
+vi.mock('./auth/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
 
 function renderLogin(entry = '/login') {
   const client = new QueryClient({
