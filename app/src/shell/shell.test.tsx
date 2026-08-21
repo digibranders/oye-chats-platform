@@ -7,6 +7,7 @@ import { Rail } from './Rail';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { ImpersonationBanner } from './ImpersonationBanner';
+import { WORKSPACE_NAV } from './nav';
 import { useBreadcrumbs } from './useBreadcrumbs';
 import { startImpersonationSession, clearImpersonationSession } from '../utils/impersonation';
 
@@ -281,6 +282,14 @@ describe('the rail, rendered', () => {
     // new customer ever sees.
     renderRail(path);
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+  });
+});
+
+describe('WORKSPACE_NAV', () => {
+  it('lists Journey as a direct sidebar entry pointing at the Analytics tab', () => {
+    const journey = WORKSPACE_NAV.find((item) => item.label === 'Journey');
+    expect(journey).toBeDefined();
+    expect(journey?.to).toBe('/analytics/journey');
   });
 });
 

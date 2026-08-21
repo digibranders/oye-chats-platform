@@ -63,19 +63,26 @@ export function useBreadcrumbs(): Crumb[] {
       ];
     }
 
-    // Settings is a footer destination, not a `WORKSPACE_NAV` one, and the
-    // lookup used to read only the latter — which is why every `/settings/*`
-    // route rendered an empty trail.
+    // Check if the path belongs to a multi-section area (analytics, billing, settings)
+    const navSectionKey = Object.keys(NAV_SECTIONS).find(
+      (key) => pathname === key || pathname.startsWith(`${key}/`),
+    );
+
+    if (navSectionKey) {
+      const top = [...WORKSPACE_NAV, ...FOOTER_NAV].find((item) => item.to === navSectionKey);
+      if (top) {
+        const section = pathname.split('/')[2];
+        const label = section ? NAV_SECTIONS[navSectionKey]?.[section] : undefined;
+        return label ? [{ label: top.label, to: top.to }, { label }] : [{ label: top.label }];
+      }
+    }
+
     const top = [...WORKSPACE_NAV, ...FOOTER_NAV].find((item) =>
-      item.end ? pathname === item.to : pathname.startsWith(item.to),
+      item.end ? pathname === item.to : pathname === item.to || pathname.startsWith(`${item.to}/`),
     );
 
     if (top) {
-      const section = pathname.split('/')[2];
-      const label = section ? NAV_SECTIONS[top.to]?.[section] : undefined;
-      // The first crumb links only when there is a second one to come back
-      // from: a lone crumb naming the page you are already on is not a link.
-      return label ? [{ label: top.label, to: top.to }, { label }] : [{ label: top.label }];
+      return [{ label: top.label }];
     }
 
     // Your own account, onboarding, and the 404. None of them is in the rail,

@@ -2,6 +2,7 @@ import {
   BarChart3,
   Bot,
   Building2,
+  Compass,
   CreditCard,
   Gauge,
   Globe,
@@ -73,7 +74,8 @@ export const WORKSPACE_NAV: readonly NavItem[] = [
   { to: '/', label: 'Home', icon: House, end: true, hint: 'What needs you today' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, hint: 'Live chat and messages', operator: true },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', operator: true },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Conversations, journeys and outcomes' },
+  { to: '/analytics/journey', label: 'Journey', icon: Compass, hint: 'Visitor journey flow' },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, end: true, hint: 'Conversations, journeys and outcomes' },
   { to: '/chatbots', label: 'Chatbots', icon: Bot, hint: 'Create, train and deploy chatbots', placement: 'chatbots' },
   { to: '/billing', label: 'Billing', icon: CreditCard, hint: 'Plan, credits, invoices and usage', placement: 'footer' },
 ];
