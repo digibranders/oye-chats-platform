@@ -831,6 +831,14 @@ def _compute(
         entitled_seats = max(included_seats, paid_seats)
         limits["operators"] = min(operator_ceiling, entitled_seats)
 
+    # Crawl page/depth caps ride in `plan.limits` already (enforced in
+    # `document_routes.py`), but were never exposed here, so the console had
+    # no way to tell a customer their cap before a crawl was rejected for
+    # hitting it. Read-only pass-through — no adjustment needed, unlike
+    # `operators`/`bots`, because there is no purchasable add-on for either.
+    limits["max_crawl_pages"] = (plan.limits or {}).get("max_crawl_pages", UNLIMITED)
+    limits["max_crawl_depth"] = (plan.limits or {}).get("max_crawl_depth", UNLIMITED)
+
     result = PlanEntitlements(
         client_id=client_id,
         plan_slug=plan.slug,

@@ -37,7 +37,7 @@ import type { Entitlements } from '../types/domain';
 /** Most-restrictive Free-plan defaults - matches the backend's seeded Free
  * plan (`_FREE_FALLBACK_LIMITS` / `_FREE_FALLBACK_FEATURES` in
  * `plan_entitlements_service.py`) and the legacy hook's `FREE_FALLBACK`. */
-const FREE_FALLBACK: Entitlements = {
+export const FREE_FALLBACK: Entitlements = {
   plan_slug: 'free',
   plan_name: 'Free',
   subscription_status: 'none',
@@ -52,6 +52,8 @@ const FREE_FALLBACK: Entitlements = {
     page_scraping: 20,
     documents: 5,
     chat_history_days: 7,
+    max_crawl_pages: 20,
+    max_crawl_depth: 2,
   },
   features: {
     live_chat: false,
@@ -130,7 +132,12 @@ export function EntitlementsProvider({ children }: { children: ReactNode }): Rea
 export function useEntitlementsContext(): EntitlementsContextValue {
   const ctx = useContext(EntitlementsContext);
   if (!ctx) {
-    throw new Error('useEntitlementsContext must be used inside <EntitlementsProvider>');
+    return {
+      entitlements: FREE_FALLBACK,
+      loading: false,
+      error: null,
+      refresh: async () => {},
+    };
   }
   return ctx;
 }

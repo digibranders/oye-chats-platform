@@ -19,6 +19,7 @@ import {
   formatNumber,
 } from '../../../../ui';
 import type { KnowledgeSource } from '../../../../types/domain';
+import { useEntitlements } from '../../../../hooks/useEntitlements';
 import { CrawlPageTree } from '../CrawlPageTree';
 import { IngestionProgress } from '../IngestionProgress';
 import type { Allowance } from '../knowledge-model';
@@ -70,6 +71,9 @@ export function WebsiteFlow({
   onChanged,
 }: WebsiteFlowProps) {
   const flow = useCrawlDiscovery({ agentId, agentName, agentWebsite, sources, onChanged });
+  const { limitFor } = useEntitlements();
+  const maxPages = limitFor('max_crawl_pages');
+  const maxDepth = limitFor('max_crawl_depth');
   const [confirmingStart, setConfirmingStart] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
 
@@ -190,6 +194,12 @@ export function WebsiteFlow({
             onChange={(event) => flow.editUrl(event.target.value)}
           />
         </Field>
+
+        {maxPages > 0 ? (
+          <p className="text-xs text-text-tertiary">
+            Your plan crawls up to {maxPages} pages, {maxDepth} levels deep.
+          </p>
+        ) : null}
 
         {/* A price and a redirect are not hint text. Hints are read as optional;
             this one says the next press re-reads and re-charges every page. */}

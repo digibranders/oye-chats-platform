@@ -128,7 +128,9 @@ export type LimitKey =
   | 'leads'
   | 'page_scraping'
   | 'documents'
-  | 'chat_history_days';
+  | 'chat_history_days'
+  | 'max_crawl_pages'
+  | 'max_crawl_depth';
 
 /** Boolean/enum plan feature flags. */
 export type FeatureKey =
