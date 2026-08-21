@@ -160,8 +160,12 @@ export function Combobox<T extends string>({
             {/* A fixed floor under the list region, so the panel does not jump
                 from 270px to 96px as the user types past the last match. */}
             <div className="min-h-16">
-              <BaseCombobox.Empty className="px-2 py-4 text-center text-xs text-text-secondary">
-                {emptyMessage}
+              {/* `Empty`'s root always renders — Base UI uses it as the live
+                  region that announces result counts — and only its children are
+                  conditional. Padding on the root is therefore dead space above
+                  every non-empty list, so it goes on the child instead. */}
+              <BaseCombobox.Empty>
+                <p className="px-2 py-4 text-center text-xs text-text-secondary">{emptyMessage}</p>
               </BaseCombobox.Empty>
               <BaseCombobox.List className="max-h-64 overflow-y-auto p-1">
                 {(option: ComboboxOption<T>) => (

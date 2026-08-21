@@ -67,33 +67,43 @@ export function Tooltip({
   delay,
   disabled,
 }: TooltipProps) {
-  if (disabled) return <>{children}</>;
-
   const tooltip = (
     <BaseTooltip.Root>
       {/* The child itself is the trigger. Wrapping it in a fragment, or in a
           `span`, either drops the props Base UI attaches or inserts an element
-          between the label and the control it names. */}
+          between the label and the control it names.
+
+          `disabled` used to return a bare `<>{children}</>` here instead of
+          reaching this point at all. That swaps the element tree, so React
+          unmounts this trigger and mounts a fresh DOM node in its place —
+          which breaks anything holding a ref to the old one. `NotificationBell`
+          passes `disabled={open}`: the instant its popover opened, its own
+          trigger was replaced, the popover's anchor ref went stale, and the
+          panel rendered at the positioner's fallback origin instead of under
+          the bell. Keeping the trigger mounted and only skipping the popup
+          below is what disabled is actually meant to do. */}
       <BaseTooltip.Trigger render={children} />
-      <BaseTooltip.Portal>
-        {/* The z-index belongs on the Positioner; the Popup is static. */}
-        <BaseTooltip.Positioner
-          className={PANEL_POSITIONER}
-          side={side}
-          align={align}
-          sideOffset={6}
-          collisionPadding={8}
-        >
-          <BaseTooltip.Popup
-            className={cn(
-              'motion-pop max-w-xs rounded-xs bg-ink px-2 py-1',
-              'text-xs text-text-inverse shadow-md',
-            )}
+      {disabled ? null : (
+        <BaseTooltip.Portal>
+          {/* The z-index belongs on the Positioner; the Popup is static. */}
+          <BaseTooltip.Positioner
+            className={PANEL_POSITIONER}
+            side={side}
+            align={align}
+            sideOffset={6}
+            collisionPadding={8}
           >
-            {content}
-          </BaseTooltip.Popup>
-        </BaseTooltip.Positioner>
-      </BaseTooltip.Portal>
+            <BaseTooltip.Popup
+              className={cn(
+                'motion-pop max-w-xs rounded-xs bg-ink px-2 py-1',
+                'text-xs text-text-inverse shadow-md',
+              )}
+            >
+              {content}
+            </BaseTooltip.Popup>
+          </BaseTooltip.Positioner>
+        </BaseTooltip.Portal>
+      )}
     </BaseTooltip.Root>
   );
 
