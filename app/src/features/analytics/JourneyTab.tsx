@@ -4,7 +4,9 @@ import {
   Alert,
   Card,
   CardBody,
+  CardHeader,
   ErrorState,
+  Grid,
   LoadingRows,
   LockedState,
   SegmentedControl,
@@ -19,6 +21,7 @@ import { errorMessage, isPlanGate } from './useAnalyticsData';
 import { useJourneyData, useJourneyPaths } from './useJourneyData';
 import { JourneyDiagram } from './JourneyDiagram';
 import { JourneyFlow } from './JourneyFlow';
+import { JourneyOutcomesDonut } from './JourneyOutcomesDonut';
 import { JourneyPagesPanel } from './JourneyPagesPanel';
 
 /**
@@ -167,11 +170,27 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
         />
       )}
 
-      <JourneyPagesPanel
-        rows={prePages.rows}
-        journeys={summary.sessions_with_journey}
-        monthLabel={label}
-      />
+      <Grid cols={2}>
+        <JourneyPagesPanel
+          rows={prePages.rows}
+          journeys={summary.sessions_with_journey}
+          monthLabel={label}
+        />
+        <Card>
+          <CardHeader
+            eyebrow="Outcomes"
+            title="Journey outcomes"
+            titleAs="h2"
+            description={`Where visitor journeys ended · ${label}`}
+          />
+          <CardBody>
+            <JourneyOutcomesDonut
+              outcomes={outcomes}
+              total={summary.sessions_with_journey}
+            />
+          </CardBody>
+        </Card>
+      </Grid>
     </Stack>
   );
 }
