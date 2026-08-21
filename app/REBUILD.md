@@ -68,9 +68,7 @@ bug structurally harder.
 
 ### Consolidations
 
-| Today | Becomes | Why |
-|---|---|---|
-| `/journey`, a top-level scratch item | a tab inside **Analytics** | It is analytics, and it shipped as an admitted "temporary extra". The 2,011-line flow diagram it rendered went with it — its nodes were unlabelled `foreignObject` divs with an `onClick` and no `role`/`tabIndex`, so its one interaction (filter by clicking a node) was mouse-only. Replaced with the same underlying facts as ordinary, keyboard-reachable columns; the pan/zoom canvas and expand modal did not come back. See `JourneyFlow.tsx`. |
+| `/journey`, a top-level scratch item | a tab inside **Analytics** | It is analytics, and it shipped as an admitted "temporary extra". The pan/zoom canvas and expand modal came back in `JourneyDiagram.tsx`/`ZoomPanCanvas.tsx`, this time keyboard-reachable: every node is a real `<button>` with an `aria-label`, arrow keys pan, `+`/`-`/`0` zoom, and the canvas is a focusable `role="application"` region — see `ZoomPanCanvas.tsx`'s own docstring for why `application` over `region`/`img`. It ships as a view toggle next to the original accessible list (`JourneyFlow.tsx`, still the default view), not a replacement, so nothing that shipped in the interim regresses. The outcomes donut came back too, with a real screen-reader alternative (a visually-hidden data table) the original never had — its SVG was `aria-hidden="true"` with nothing behind it. `Journey` is back in the sidebar as a direct link to `/analytics/journey`, not a second standalone route, so the "mounts one hook three times, ~30 requests every 15s" problem this table's own note (below) describes does not return. |
 | Workspace: 8 rail tabs, each opening its own second-level strip | **Settings**, one home with a secondary column | Three nav levels, none in the URL. Also merges the two settings homes |
 | Billing buried inside that | **its own destination**, plus a credit meter in the rail footer | Running out of credits stops the chatbot answering customers. That is an outage, not a preference |
 | Agent "Channels" (plural, one channel) | **Deploy** | A verb the user acts on |
