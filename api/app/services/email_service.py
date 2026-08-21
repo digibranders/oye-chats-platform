@@ -1,4 +1,5 @@
-"""Email notification service using Brevo (formerly Sendinblue) transactional API.
+"""Email notification service. Transport is Brevo (HTTP API) or AWS SES (SMTP),
+selected per-environment by ``EMAIL_PROVIDER`` — see ``_send_raw_email``.
 
 Every email is rendered from the shared design system in ``email_design`` (monochrome +
 single-indigo-accent, dark-mode hardened for Outlook). All 19 senders build raw HTML in
@@ -13,6 +14,12 @@ import contextlib
 import json
 import logging
 import re
+import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -23,6 +30,11 @@ from app.config import (
     EMAIL_ENABLED,
     EMAIL_FROM_ADDRESS,
     EMAIL_FROM_NAME,
+    EMAIL_PROVIDER,
+    SES_SMTP_HOST,
+    SES_SMTP_PASSWORD,
+    SES_SMTP_PORT,
+    SES_SMTP_USERNAME,
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
@@ -233,6 +245,99 @@ def _send_brevo_template(
         return False
 
 
+# ── AWS SES transport (SMTP) ─────────────────────────────────────────────────
+
+
+def _extract_smtp_error(exc: Exception) -> str:
+    """Extract a human-readable reason from an SES SMTP failure."""
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return f"SMTP {exc.smtp_code} {exc.smtp_error!r}"
+    if isinstance(exc, smtplib.SMTPException):
+        return f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, OSError):
+        return f"network error: {exc}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _send_ses_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Send an email via AWS SES over SMTP using raw HTML. Returns True on success.
+
+    Same signature and return contract as ``_send_brevo_email`` so callers (and
+    ``_send_raw_email`` below) don't need to know which transport is active.
+    ``attachments`` stays in the Brevo shape (``{"content": <base64>, "name": <filename>}``)
+    since that's what every existing sender already builds; only this function
+    knows it needs to become a MIME part instead of a JSON field.
+    """
+    if not EMAIL_ENABLED:
+        logger.warning(
+            "Email skipped. EMAIL_ENABLED=False (no SES SMTP credentials) | to=%s subject=%s",
+            redact_email(to_email),
+            subject,
+        )
+        return False
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = formataddr((sender_name or EMAIL_FROM_NAME, EMAIL_FROM_ADDRESS))
+    msg["To"] = to_email
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    for attachment in attachments or []:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(base64.b64decode(attachment["content"]))
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{attachment["name"]}"')
+        msg.attach(part)
+
+    try:
+        with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SES_SMTP_USERNAME, SES_SMTP_PASSWORD)
+            server.sendmail(EMAIL_FROM_ADDRESS, [to_email], msg.as_string())
+        logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | provider=ses")
+        return True
+    except Exception as e:
+        reason = _extract_smtp_error(e)
+        logger.warning("SES email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
+        _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
+        return False
+
+
+def _send_raw_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Route a raw HTML send to the transport selected by ``EMAIL_PROVIDER``.
+
+    The single call site every sender should go through indirectly (via
+    ``send_email_async``) or directly (the worker task). Keeping the branch here,
+    not duplicated at each call site, means adding a third provider later is a
+    one-function change.
+    """
+    if EMAIL_PROVIDER == "ses":
+        return _send_ses_email(
+            to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+        )
+    return _send_brevo_email(
+        to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+    )
+
+
 def send_email_async(
     to_email: str,
     subject: str,
@@ -257,7 +362,7 @@ def send_email_async(
         return
 
     def _send():
-        _send_brevo_email(
+        _send_raw_email(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         )
 
