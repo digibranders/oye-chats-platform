@@ -7,6 +7,7 @@ import {
   ErrorState,
   LoadingRows,
   LockedState,
+  SegmentedControl,
   Stack,
   StatRow,
   buttonClass,
@@ -16,6 +17,7 @@ import { monthLabel } from './month';
 import { isFilterableOutcome, type FilterableOutcome } from './journeyModel';
 import { errorMessage, isPlanGate } from './useAnalyticsData';
 import { useJourneyData, useJourneyPaths } from './useJourneyData';
+import { JourneyDiagram } from './JourneyDiagram';
 import { JourneyFlow } from './JourneyFlow';
 import { JourneyPagesPanel } from './JourneyPagesPanel';
 
@@ -32,6 +34,8 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
   const rawOutcome = params.get('outcome');
   const outcome: FilterableOutcome | null =
     rawOutcome && isFilterableOutcome(rawOutcome) ? rawOutcome : null;
+  const rawView = params.get('view');
+  const view: 'list' | 'diagram' = rawView === 'diagram' ? 'diagram' : 'list';
 
   const journey = useJourneyData(botId, month);
   const paths = useJourneyPaths(botId, month, outcome);
@@ -41,6 +45,13 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
     const updated = new URLSearchParams(params);
     if (next) updated.set('outcome', next);
     else updated.delete('outcome');
+    setParams(updated, { replace: true });
+  }
+
+  function setView(next: 'list' | 'diagram') {
+    const updated = new URLSearchParams(params);
+    if (next === 'diagram') updated.set('view', next);
+    else updated.delete('view');
     setParams(updated, { replace: true });
   }
 
@@ -118,20 +129,43 @@ export function JourneyTab({ botId, month }: { botId: number | null; month: stri
         </CardBody>
       </Card>
 
-      <JourneyFlow
-        summary={summary}
-        outcomes={outcomes}
-        sequences={preChatSequences}
-        postChat={postChat}
-        monthLabel={label}
-        selectedOutcome={outcome}
-        onSelectOutcome={selectOutcome}
-        paths={paths.paths}
-        pathsLoading={paths.loading}
-        pathsError={
-          paths.error ? errorMessage(paths.error, 'The request for these routes failed.') : null
-        }
-      />
+      <div className="flex items-center justify-end">
+        <SegmentedControl<'list' | 'diagram'>
+          size="sm"
+          label="Journey view"
+          value={view}
+          onChange={setView}
+          items={[
+            { value: 'list', label: 'List' },
+            { value: 'diagram', label: 'Diagram' },
+          ]}
+        />
+      </div>
+
+      {view === 'list' ? (
+        <JourneyFlow
+          summary={summary}
+          outcomes={outcomes}
+          sequences={preChatSequences}
+          postChat={postChat}
+          monthLabel={label}
+          selectedOutcome={outcome}
+          onSelectOutcome={selectOutcome}
+          paths={paths.paths}
+          pathsLoading={paths.loading}
+          pathsError={
+            paths.error ? errorMessage(paths.error, 'The request for these routes failed.') : null
+          }
+        />
+      ) : (
+        <JourneyDiagram
+          sequences={preChatSequences}
+          centerLabel="Opened Chatbot"
+          centerValue={summary.sessions_with_journey}
+          selectedOutcome={outcome}
+          onSelectOutcome={selectOutcome}
+        />
+      )}
 
       <JourneyPagesPanel
         rows={prePages.rows}
