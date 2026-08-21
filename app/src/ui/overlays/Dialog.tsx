@@ -13,20 +13,22 @@ import {
   OverlayHeader,
 } from './overlayParts';
 
-export type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 /**
- * The only four widths a dialog may have.
+ * The widths a dialog may have.
  *
  * `xl` is `max-w-reading` — the system's own named width for a reading column —
  * rather than Tailwind's `max-w-4xl`, which is the same 896px under a name that
  * belongs to a scale this design system otherwise does not use.
+ * `full` expands to fill the viewport (used for diagram expands, etc.).
  */
 const SIZES: Record<DialogSize, string> = {
   sm: 'max-w-md',
   md: 'max-w-lg',
   lg: 'max-w-2xl',
   xl: 'max-w-reading',
+  full: 'max-w-[calc(100vw-2rem)]',
 };
 
 export interface DialogProps {

@@ -242,6 +242,15 @@ describe('Dialog and Drawer share one padding contract', () => {
     // `flush`: the child owns its own gutter, so the body must not add one.
     expect(classesOf(screen.getByText('Body').parentElement)).toContain('p-0');
   });
+
+  it('renders the full size at a near-viewport width', () => {
+    render(
+      <Dialog open onOpenChange={() => {}} title="Full size" size="full">
+        content
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog')).toHaveClass('max-w-[calc(100vw-2rem)]');
+  });
 });
 
 describe('ConfirmDialog', () => {
