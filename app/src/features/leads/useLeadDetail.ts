@@ -16,13 +16,8 @@
  * A failure in the second or third does not take the drawer down with it.
  */
 import { useCallback } from 'react';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  getChatHistory,
-  getLeadDetail,
-  getSessionDetails,
-  overrideLeadQualification,
-} from '../../services/api';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { getChatHistory, getLeadDetail, getSessionDetails } from '../../services/api';
 import { keys } from '../../query/keys';
 import type { ChatMessage, Lead } from '../../types/domain';
 
@@ -55,11 +50,6 @@ export interface LeadTranscript {
   retry: () => void;
 }
 
-export interface QualificationOverride {
-  dimension: string;
-  score: number;
-}
-
 export interface LeadDetailData {
   detail: LeadDetail | null;
   loading: boolean;
@@ -68,9 +58,6 @@ export interface LeadDetailData {
   transcript: LeadTranscript;
   /** 1–5, or `null` when this visitor never rated the conversation. */
   visitorRating: number | null;
-  /** Apply an operator score override to one qualification dimension. */
-  overrideDimension: (override: QualificationOverride) => Promise<void>;
-  overriding: boolean;
 }
 
 /**
@@ -85,7 +72,6 @@ function oldestId(page: TranscriptMessage[]): number | undefined {
 }
 
 export function useLeadDetail(sessionId: string | null): LeadDetailData {
-  const queryClient = useQueryClient();
   const enabled = sessionId !== null;
   const detailKey = keys.leads.detail(sessionId ?? '');
 
@@ -127,14 +113,6 @@ export function useLeadDetail(sessionId: string | null): LeadDetailData {
     retry: false,
   });
 
-  const override = useMutation({
-    mutationFn: ({ dimension, score }: QualificationOverride) =>
-      overrideLeadQualification(sessionId as string, dimension, score),
-    // The override rewrites the composite score and the tier, so the list page
-    // the lead came from is stale too, not just the drawer.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['leads'] }),
-  });
-
   // Pages arrive newest-page-first, and each page is itself chronological, so
   // the render order is the reverse of the page order.
   const messages = (transcript.data?.pages ?? []).slice().reverse().flat();
@@ -164,7 +142,5 @@ export function useLeadDetail(sessionId: string | null): LeadDetailData {
       retry: () => void transcript.refetch(),
     },
     visitorRating,
-    overrideDimension: (next) => override.mutateAsync(next).then(() => undefined),
-    overriding: override.isPending,
   };
 }

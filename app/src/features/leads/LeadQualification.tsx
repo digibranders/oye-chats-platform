@@ -1,32 +1,34 @@
-import { useState } from 'react';
-import { Info } from 'lucide-react';
-import { Alert, Disclosure, Progress, Select, Tooltip } from '../../ui';
+import { Disclosure, Progress } from '../../ui';
 import type { Lead, LeadSignal } from '../../types/domain';
 import { LeadSection } from './LeadSection';
 import { dimensionMax, orderedDimensions } from './leadModel';
 
 /**
- * What the chatbot learned, and the operator's way of correcting it.
+ * What the chatbot learned. Read-only — the score is derived from what the
+ * visitor said, and stays that way.
  *
- * Two defects from the audit close here.
+ * An operator override control (`PATCH /operators/session/{id}/qualification`)
+ * was built and shipped briefly here, on the reasoning that the automated
+ * extractor never downgrades a dimension, so a single false-positive
+ * extraction could pin a lead to the wrong tier with no remedy short of
+ * editing the database. Removed on review: a plain 0–{max} dropdown let an
+ * operator raise a score just as easily as correct one, which is a different
+ * capability than the one the endpoint was built to offer, and `development`
+ * never exposed the endpoint as a control for exactly that reason — the
+ * endpoint existed there, unused, behind no client function at all. If a way
+ * back from a bad extraction is needed, it wants a narrower shape than a free
+ * 0–{max} pick — most obviously, an action that can only ever lower a score,
+ * never raise one.
  *
- * The **denominator** is derived from the framework, not from the data. The
- * version this replaces took `max(100 / dimensionCount, ...observedScores)`, so
- * a single high score raised the ceiling for that lead alone and two leads on
- * the same chatbot were shown "18 / 25" and "30 / 30" — neither of which the
- * reader could compare with anything.
- *
- * And the **override** exists at all. `PATCH /operators/session/{id}/qualification`
- * has always been there and had no client function, let alone a control. The
- * automated extractor deliberately never downgrades a dimension, so one
- * false-positive extraction — a visitor claiming a budget they do not have —
- * pinned a lead to the wrong tier permanently, with no remedy short of editing
- * the database. Every override is written to the same append-only signal trail
- * as an LLM extraction, tagged as an operator's.
+ * The **denominator** is still derived from the framework, not from the data.
+ * The version this replaced took `max(100 / dimensionCount, ...observedScores)`,
+ * so a single high score raised the ceiling for that lead alone and two leads
+ * on the same chatbot were shown "18 / 25" and "30 / 30" — neither of which
+ * the reader could compare with anything.
  *
  * **It is four rows, not four boxes.** Each dimension used to be a bordered
- * panel holding a label, a figure, a `Select`, a `Progress` bar and then either
- * a bulleted list, a paragraph or "Nothing captured for this yet." — about
+ * panel holding a label, a figure, a `Progress` bar and then either a
+ * bulleted list, a paragraph or "Nothing captured for this yet." — about
  * 460px for four dimensions, with the two things a salesperson actually wants
  * (which dimensions landed, and what the visitor said) buried under three layers
  * of chrome each. One hairline row per dimension is 144px, and what the visitor
@@ -35,9 +37,6 @@ import { dimensionMax, orderedDimensions } from './leadModel';
 
 export interface LeadQualificationProps {
   lead: Lead;
-  /** Applies an operator override. Resolves once the server has recomputed. */
-  onOverride: (override: { dimension: string; score: number }) => Promise<void>;
-  saving: boolean;
 }
 
 /**
@@ -45,9 +44,11 @@ export interface LeadQualificationProps {
  * said them, so a lead who mentioned three separate needs shows all three
  * rather than only the highest-scoring one.
  *
- * Operator overrides are excluded: their `extracted_value` is the raw numeric
- * score, not something the visitor said. Values are de-duplicated
- * case-insensitively so a repeated mention appears once.
+ * `operator_override` signals are excluded even though nothing in this UI
+ * writes one any more: their `extracted_value` is the raw numeric score, not
+ * something the visitor said, and a lead scored before this control was
+ * removed can still carry one in its signal history. Values are
+ * de-duplicated case-insensitively so a repeated mention appears once.
  */
 function statedValues(signals: LeadSignal[] | undefined, dimension: string): string[] {
   if (!signals?.length) return [];
@@ -67,18 +68,11 @@ function statedValues(signals: LeadSignal[] | undefined, dimension: string): str
   return values;
 }
 
-export function LeadQualification({ lead, onOverride, saving }: LeadQualificationProps) {
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-
+export function LeadQualification({ lead }: LeadQualificationProps) {
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) return null;
 
   const max = dimensionMax(dimensions.length);
-  const scoreOptions = Array.from({ length: max + 1 }, (_, score) => ({
-    value: String(score),
-    label: String(score),
-  }));
 
   const evidence = dimensions
     .map((dimension) => ({
@@ -88,51 +82,8 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
     }))
     .filter((entry) => entry.values.length > 0 || entry.fallback);
 
-  async function apply(dimension: string, label: string, score: number): Promise<void> {
-    setError(null);
-    setSaved(null);
-    try {
-      await onOverride({ dimension, score });
-      setSaved(`${label} set to ${score} out of ${max}.`);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'That score could not be saved. Try again.',
-      );
-    }
-  }
-
   return (
-    <LeadSection
-      title="What we learned"
-      actions={
-        // Stated once, on one affordance. It used to be a `Badge` reading "You
-        // can correct these" — a state label wearing the job of an affordance
-        // hint — carrying this same tooltip.
-        <Tooltip content="Recorded against your account; recalculates the score.">
-          <button
-            type="button"
-            aria-label="About correcting a score"
-            className="flex h-6 w-6 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
-          >
-            <Info aria-hidden className="h-icon-sm w-icon-sm" />
-          </button>
-        </Tooltip>
-      }
-    >
-      {error ? (
-        <Alert tone="danger" live className="mb-2">
-          {error}
-        </Alert>
-      ) : null}
-      {/* Announced, not just shown: the score select is the only thing that
-          moved, and a sighted user sees the number change while a screen-reader
-          user would otherwise get nothing at all. */}
-      {saved && !error ? (
-        <Alert tone="success" live className="mb-2">
-          {saved}
-        </Alert>
-      ) : null}
-
+    <LeadSection title="What we learned">
       <ul>
         {dimensions.map((dimension) => {
           // Clamped for the bar only. An unevenly-weighted dimension can exceed
@@ -162,18 +113,6 @@ export function LeadQualification({ lead, onOverride, saving }: LeadQualificatio
               />
               <span className="figure w-12 shrink-0 text-right text-xs text-text-secondary">
                 {dimension.score}/{max}
-              </span>
-              {/* Boxed to a width: `Select` wraps itself in a `w-full` element,
-                  which would otherwise take the whole row. */}
-              <span className="w-20 shrink-0">
-                <Select
-                  size="sm"
-                  label={`${dimension.label} score out of ${max}`}
-                  value={String(Math.min(dimension.score, max))}
-                  options={scoreOptions}
-                  disabled={saving}
-                  onValueChange={(value) => void apply(dimension.key, dimension.label, Number(value))}
-                />
               </span>
             </li>
           );

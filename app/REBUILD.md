@@ -199,14 +199,23 @@ entries are closed.
 | B9 ✅ | `normalize_domain_input` strips a leading `www.` before storing but `extract_hostname` does not strip it from the browser's `Origin`, so an allow-list of `acme.com` blocks the customer's own `www.acme.com` homepage | backend · surfaced on Deploy. Closed: fixed at the comparison, not at extraction — `is_origin_allowed` now admits an entry's `www.` host explicitly, so a stored `acme.com` matches an incoming `www.acme.com` Origin. |
 | B10 ✅ | `widget_installed_at` is stamped once and never refreshed, and the origin the widget was seen on is read and discarded — so there is no "last seen", only a first-seen date | backend · surfaced on Deploy. Closed: `widget_last_seen_at` / `widget_last_origin` now ship on `BotResponse` (≤2 writes/bot/hour) and Deploy renders both — the origin explicitly as a browser-reported diagnostic, and an empty reading explicitly as "not recorded", never as an outage |
 
-### Orphan endpoints — closed
-Every endpoint this section used to list with no client function now has one and
-a mounted consumer, verified against the running code rather than assumed:
+### Orphan endpoints
 `GET/PUT /operators/me/notification-preferences` (per-event push + quiet hours)
-→ Settings ▸ Notifications (`notificationPreferences.ts`) · `PATCH
-/operators/session/{id}/qualification` (operator BANT override) → Leads ▸
-`LeadQualification.tsx` · `GET /ingest/status/{job_id}` (upload progress) →
-Knowledge (`knowledge-api.ts`).
+→ Settings ▸ Notifications (`notificationPreferences.ts`) · `GET
+/ingest/status/{job_id}` (upload progress) → Knowledge (`knowledge-api.ts`).
+Both verified against the running code, both closed.
+
+`PATCH /operators/session/{id}/qualification` (operator BANT override) got a
+client function and a control in `LeadQualification.tsx`, and the control came
+back out on review: a plain 0–max dropdown let an operator raise a score as
+easily as correct one, which is not the capability the endpoint was reasoned
+into existing for (a false-positive extraction the auto-scorer can only ever
+raise, never lower, with no other way back). `development` never surfaced this
+endpoint as a control either — it existed there behind zero client function,
+which is the state the frontend UI is back in now (the `overrideLeadQualification`
+wrapper in `services/api.js` is unused, kept rather than deleted in case a
+narrower control — one that can only ever lower a score — replaces this one).
+Re-opened, not closed.
 
 ### Dead client functions — closed
 `getVisitorsData` → a real, routed **Visitors** tab on Analytics
