@@ -117,6 +117,25 @@ describe('PlansScreen', () => {
     expect(await screen.findByRole('button', { name: 'Delist' })).toBeDisabled();
   });
 
+  it('does not offer to delist a plan that is already delisted', async () => {
+    // The action's confirm described an effect the row already has, and the API
+    // would have accepted it — a no-op behind a destructive dialog.
+    httpClient.get.mockResolvedValue({
+      data: [plan({ is_active: false, active_subscriptions: 0 })],
+    });
+    renderScreen();
+    expect(await screen.findByText('Delisted')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delist' })).not.toBeInTheDocument();
+  });
+
+  it('counts its rows as plans, not as rows', async () => {
+    httpClient.get.mockResolvedValue({ data: [plan(), plan({ id: 2, name: 'Scale', slug: 'scale' })] });
+    renderScreen();
+    expect(
+      await screen.findByText((_, node) => node?.textContent?.trim() === '2 plans' && node.tagName === 'P'),
+    ).toBeInTheDocument();
+  });
+
   it('does not delist until the confirmation is accepted', async () => {
     const user = userEvent.setup();
     httpClient.get.mockResolvedValue({ data: [plan()] });

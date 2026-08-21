@@ -66,6 +66,10 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
     {
       key: 'ranAt',
       header: 'Run',
+      // The one column that must not give: a truncated date is unreadable,
+      // while a truncated count is at least still a number. The three counts
+      // share whatever is left of the 24rem aside.
+      width: '8rem',
       // Every figure in the console is mono, timestamps included.
       render: (row) => (
         <span className="figure">{row.ranAt ? formatDate(row.ranAt) : '—'}</span>
@@ -75,21 +79,18 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       key: 'unchanged',
       header: 'Unchanged',
       align: 'right',
-      width: '8rem',
       render: (row) => formatNumber(row.unchanged),
     },
     {
       key: 'changed',
       header: 'Re-read',
       align: 'right',
-      width: '8rem',
       render: (row) => formatNumber(row.changed),
     },
     {
       key: 'failed',
       header: 'Failed',
       align: 'right',
-      width: '8rem',
       // A `Badge` in one branch and a bare number in the other broke the
       // column's baseline and its right edge — the cell is `figure text-right`,
       // and a 20px inline-flex pill is neither. Colour plus the column head
@@ -231,6 +232,12 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
           <CardBody flush>
             <DataTable
               seated
+              // `fit`: this card is the `aside` of a `Columns` split — 24rem, so
+              // about 344px of table. Four columns at their natural widths come
+              // to well over that, and the default would scroll them sideways
+              // behind a 6px bar under 44px rows. The three counts share what is
+              // left after the date, which is the column that must not give.
+              fit
               columns={columns}
               rows={status.history}
               rowKey={(row) => row.ranAt ?? 'unknown'}

@@ -6,6 +6,7 @@ import {
   Button,
   Checkbox,
   Input,
+  SettingBand,
   SettingRow,
   TagInput,
 } from '../../../ui';
@@ -99,11 +100,11 @@ function AccessSectionInner({
   return (
     <>
       {warning ? (
-        <div className="px-cell py-3">
+        <SettingBand>
           <Alert tone={notice.tone} title={notice.title}>
             {notice.body}
           </Alert>
-        </div>
+        </SettingBand>
       ) : null}
 
       <SettingRow

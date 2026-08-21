@@ -168,8 +168,13 @@ export function PromotionsScreen() {
       key: 'name',
       header: 'Campaign',
       pinned: true,
-      // Widths on all eight, so `DataTable` lays out fixed: with none, it sized
-      // itself to the campaign name and the date window and ran past the card.
+      // The only width here. It was on all eight, which laid the table out
+      // fixed and then ellipsised the cells that mattered: "48 of 500 cl…" on
+      // every row of "Slots claimed", and a window truncated to "11 Mar 2026 →
+      // 19 Mar 2…", while 300px of the card sat empty to the right. The reason
+      // given was a table that ran past the card — that was `Column.secondary`
+      // querying the viewport instead of the container, and it is fixed at the
+      // primitive. A campaign name is genuinely unbounded, so it keeps a width.
       width: '13rem',
       sortable: (a, b) => a.name.localeCompare(b.name),
       render: (promotion) => (
@@ -184,7 +189,6 @@ export function PromotionsScreen() {
     {
       key: 'state',
       header: 'State',
-      width: '8rem',
       render: (promotion) => {
         const value = promotionState(promotion);
         return <Badge tone={STATE_TONE[value]}>{STATE_LABEL[value]}</Badge>;
@@ -193,7 +197,6 @@ export function PromotionsScreen() {
     {
       key: 'window',
       header: 'Window',
-      width: '12rem',
       secondary: true,
       render: (promotion) => (
         // Days, not minutes: the times doubled this column's width for a
@@ -206,14 +209,12 @@ export function PromotionsScreen() {
     {
       key: 'free_cycles',
       header: 'Free cycles',
-      width: '6rem',
       align: 'right',
       render: (promotion) => formatNumber(promotion.free_cycles),
     },
     {
       key: 'slots',
       header: 'Slots claimed',
-      width: '8rem',
       align: 'right',
       sortable: (a, b) => a.slots_claimed - b.slots_claimed,
       render: (promotion) => promotionUsage(promotion),
@@ -221,7 +222,6 @@ export function PromotionsScreen() {
     {
       key: 'created',
       header: 'Subscriptions',
-      width: '8rem',
       align: 'right',
       secondary: true,
       render: (promotion) => formatNumber(promotion.stats?.subscriptions_created ?? 0),
@@ -229,14 +229,12 @@ export function PromotionsScreen() {
     {
       key: 'converted',
       header: 'Converted',
-      width: '6rem',
       align: 'right',
       render: (promotion) => formatNumber(promotion.stats?.converted ?? 0),
     },
     {
       key: 'actions',
-      header: '',
-      width: '8rem',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (promotion) => (
         <span className="flex justify-end gap-1.5">
@@ -324,6 +322,7 @@ export function PromotionsScreen() {
           rows={pageRows}
           rowKey={(promotion) => String(promotion.id)}
           rowLabel={(promotion) => promotion.name}
+          rowNoun="campaign"
           loading={promotions.loading && rows.length === 0}
           error={promotions.error}
           onRetry={promotions.reload}
@@ -378,8 +377,9 @@ export function PromotionsScreen() {
 
           <Field
             label="Code"
+            optional
             error={shown.code}
-            hint="Optional. Leave blank for a campaign that applies automatically to anyone eligible."
+            hint="Blank for a campaign that applies automatically to anyone eligible."
           >
             <Input
               className="figure"
@@ -419,7 +419,7 @@ export function PromotionsScreen() {
                 onChange={(event) => setDraft({ ...draft, free_cycles: event.target.value })}
               />
             </Field>
-            <Field label="Maximum redemptions" error={shown.max_redemptions} hint="Blank for uncapped.">
+            <Field label="Maximum redemptions" optional error={shown.max_redemptions} hint="Blank for uncapped.">
               <Input
                 className="figure"
                 inputMode="numeric"
@@ -532,6 +532,7 @@ export function PromotionsScreen() {
               rows={detail.data.redemptions}
               rowKey={(row) => String(row.subscription_id)}
               rowLabel={(row) => row.client_name ?? `Client ${row.client_id}`}
+              rowNoun="redemption"
               pageSize={PAGE_SIZE}
               empty={
                 <EmptyState

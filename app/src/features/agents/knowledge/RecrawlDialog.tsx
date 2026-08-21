@@ -10,6 +10,7 @@ import {
   FigureRow,
   LockedState,
   SegmentedControl,
+  Well,
   buttonClass,
   formatNumber,
 } from '../../../ui';
@@ -180,7 +181,7 @@ export function RecrawlDialog({
               {/* One well, four rows. It used to be a three-tile stat block
                   followed by an `Alert` restating the same arithmetic in prose,
                   and on a delta run a second `Alert` restating it again. */}
-              <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
+              <Well>
                 <FigureList>
                   <FigureRow
                     label="Unchanged"
@@ -213,7 +214,7 @@ export function RecrawlDialog({
                     tone={shortOnCredits ? 'danger' : 'neutral'}
                   />
                 </FigureList>
-              </div>
+              </Well>
 
               {shortOnCredits ? (
                 <Alert tone="plan">

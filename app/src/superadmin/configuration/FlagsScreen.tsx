@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Alert,
@@ -107,13 +107,43 @@ function flagColumns(onFlip: (row: FlagRow, next: boolean) => void): readonly Co
   ];
 }
 
+/**
+ * The same table for a row this console cannot describe.
+ *
+ * An undocumented flag has no `spec`, so the documented column set gave it a
+ * "Flag" column and a "Key" column printing the identical string, an entirely
+ * blank "Read by" column, and a dotted-underline tooltip on its name whose only
+ * content was the word "On." — twenty rows of a table where three of five
+ * columns carried nothing.
+ */
+function undocumentedColumns(
+  onFlip: (row: FlagRow, next: boolean) => void,
+): readonly Column<FlagRow>[] {
+  const documented = flagColumns(onFlip);
+  const state = documented.find((column) => column.key === 'state');
+  const changed = documented.find((column) => column.key === 'updated_at');
+  return [
+    {
+      key: 'key',
+      header: 'Flag',
+      rowHeader: true,
+      type: 'id',
+      render: (row) => row.key,
+    },
+    ...(state ? [state] : []),
+    ...(changed ? [changed] : []),
+  ];
+}
+
 export function FlagsScreen() {
   const flags = usePlatformList<ConfigRow>('/feature-flags');
   const [pending, setPending] = useState<PendingFlip | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const parts = useMemo(() => partitionFlags(flags.items), [flags.items]);
-  const columns = useMemo(() => flagColumns((row, next) => setPending({ row, next })), []);
+  const flip = useCallback((row: FlagRow, next: boolean) => setPending({ row, next }), []);
+  const columns = useMemo(() => flagColumns(flip), [flip]);
+  const looseColumns = useMemo(() => undocumentedColumns(flip), [flip]);
 
   async function commit(): Promise<void> {
     if (!pending) return;
@@ -185,7 +215,7 @@ export function FlagsScreen() {
         >
           <DataTable
             caption="Boolean rows this console cannot describe"
-            columns={columns}
+            columns={looseColumns}
             rows={parts.undocumented}
             rowKey={(row) => row.key}
             rowNoun="switch"

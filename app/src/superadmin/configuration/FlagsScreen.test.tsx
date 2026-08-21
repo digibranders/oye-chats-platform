@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +40,30 @@ beforeEach(() => {
  * API without a confirmation that names the consequence.
  */
 describe('FlagsScreen', () => {
+  /**
+   * A boolean row this console has no `spec` for has no label, no "read by" and
+   * no sentence — so the documented column set gave it a "Flag" column and a
+   * "Key" column printing the identical string, a blank column between them,
+   * and a dotted-underline tooltip whose whole content was the word "On.".
+   */
+  it('does not print an undocumented flag’s key twice, once per column', async () => {
+    httpClient.get.mockResolvedValue({
+      data: [...ROWS, { key: 'promotions_enabled', value: true, updated_at: null }],
+    });
+    renderScreen();
+
+    const table = await screen.findByRole('table', {
+      name: 'Boolean rows this console cannot describe',
+    });
+    const heads = within(table)
+      .getAllByRole('columnheader')
+      .map((cell) => cell.textContent?.trim());
+    expect(heads).toEqual(['Flag', 'State', 'Changed']);
+    expect(heads).not.toContain('Key');
+    expect(heads).not.toContain('Read by');
+    expect(within(table).getAllByText('promotions_enabled')).toHaveLength(1);
+  });
+
   it('shows the current value of every switch without opening anything', async () => {
     httpClient.get.mockResolvedValue({ data: ROWS });
     renderScreen();

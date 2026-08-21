@@ -35,7 +35,6 @@ export function ImpersonateCard({ client }: { client: ClientDetail }) {
     <Card>
       <CardHeader
         titleAs="h3"
-        eyebrow="Impersonation"
         title="Act as this customer"
         description="Opens their workspace in a new tab under a one-time token, as them."
       />

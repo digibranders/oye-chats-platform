@@ -509,13 +509,27 @@ describe('a non-answer is not a figure', () => {
 
 describe('a state seated in a padded body', () => {
   it('drops its own horizontal gutter on request', () => {
-    const { container } = render(
+    // Two gutters add up, and the state's copy sits 20px inside every label
+    // around it — worked around twice with a negative margin before the prop
+    // existed to fix it properly, and then a second time *after*: `StateBody`
+    // composed `cn(geometry.root, flush && 'px-0')` with `px-cell` bundled
+    // inside `geometry.root` — `tailwind-merge` does not know the custom
+    // `px-cell` utility shares a CSS property with `px-0`, so it kept both
+    // classes and standard utility ordering left `px-cell` live regardless of
+    // `flush`. A test asserting only that `.px-0` exists in the DOM passed the
+    // whole time, because `px-0` genuinely was there — it just never won. This
+    // asserts the gutter class itself is gone, which is the fact that matters:
+    // present is not the same question as winning.
+    const { container: flushed } = render(
       <EmptyState flush size="inline" title="No conversations yet" />,
     );
-    // Two gutters add up, and the state's copy sits 20px inside every label
-    // around it — worked around twice with a negative margin before this.
-    const body = container.querySelector('.px-0');
-    expect(body).not.toBeNull();
+    const { container: gutter } = render(
+      <EmptyState size="inline" title="No conversations yet" />,
+    );
+    const flushedBody = flushed.querySelector('.py-6');
+    const gutterBody = gutter.querySelector('.py-6');
+    expect(flushedBody?.className).not.toMatch(/\bpx-cell\b/);
+    expect(gutterBody?.className).toMatch(/\bpx-cell\b/);
   });
 
   it('is forced inline and flush when a table is handed one', () => {
@@ -534,7 +548,7 @@ describe('a state seated in a padded body', () => {
     const state = screen.getByText('No gaps yet');
     // `inline` draws no disc and sets the title at row scale.
     expect(state.className).toContain('text-sm');
-    expect(state.parentElement?.className).toContain('px-0');
+    expect(state.parentElement?.className).not.toMatch(/\bpx-cell\b/);
   });
 });
 

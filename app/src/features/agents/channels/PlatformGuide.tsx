@@ -78,14 +78,9 @@ export function PlatformGuide({
       </Field>
 
       {!platform ? (
-        // `-mx-cell` because this panel is already inside a `CardBody`, which
-        // has drawn the 20px gutter once. Every state draws `px-cell` of its
-        // own so that a state seated in a flush body lands on the card title's
-        // left edge — seated in a padded one it lands 20px inside it, and the
-        // one line of copy here sat visibly proud of the field label above it.
         <EmptyState
           size="inline"
-          className="-mx-cell"
+          flush
           title="Choose a platform to see the steps"
         />
       ) : resolving ? (

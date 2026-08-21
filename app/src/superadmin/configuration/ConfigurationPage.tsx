@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { PLATFORM_ROOT } from '../nav';
@@ -51,26 +51,11 @@ function AiRoute() {
   );
 }
 
-/**
- * The one screen here that is a *form* rather than a record book.
- *
- * The section used to declare `width="page"` for all nine, on the reasoning that
- * a field should not stretch to 1,800px. It does not: `--container-page` is
- * 90rem, and the content column at a 1440px viewport is 1,192px, so the cap
- * never engaged and Runtime rendered a two-character country field 550px wide
- * beside 1,100px of empty card. A form takes the reading measure — which is what
- * `--container-reading` is for and what the token comments say — and the seven
- * lists take every pixel.
- */
-const FORM_ROUTES = new Set([`${BASE}/runtime`]);
-
 export function ConfigurationPage() {
-  const { pathname } = useLocation();
 
   return (
     <PlatformPage
       title="Configuration"
-      width={FORM_ROUTES.has(pathname.replace(/\/$/, '')) ? 'default' : 'full'}
       toolbarBleed
       toolbar={<NavTabs label="Configuration sections" items={TABS} />}
     >

@@ -154,7 +154,10 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
           eyebrow="Satisfaction"
           title="Were the answers helpful?"
           titleAs="h2"
-          description={`Thumbs visitors left on individual answers · ${range.label.toLowerCase()}`}
+          // No window in the description. `StatRow` states it once, in its own
+          // caption under the four figures it anchors, so appending it here
+          // printed the same string twice within 90px of itself.
+          description="Thumbs visitors left on individual answers"
         />
         <CardBody flush>
           <StatRow

@@ -925,6 +925,9 @@ function LockedPreview() {
         rows={PREVIEW_ROWS}
         rowKey={(row) => row.session_id}
         rowNoun="lead"
+        // Invented rows behind a plan lock. Counting them would report the size
+        // of the illustration as though it were the size of the reader's data.
+        countSummary={false}
       />
     </div>
   );

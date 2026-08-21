@@ -113,6 +113,12 @@ export function CreditCosts({ costs, pool }: { costs: CreditCostsMap; pool: Pool
         <DataTable
           seated
           stickyHeader={false}
+          // The row count is a fixed fact of the schema here, not a measurement:
+          // this table lists the actions a credit can be spent on, and it has
+          // exactly as many rows as `CREDIT_ACTIONS` has entries. "6 rows" under
+          // a table that can never have a seventh is a number to read and then
+          // discard.
+          countSummary={false}
           caption={`Credit cost per action, and credits spent on each in ${period}`}
           columns={columns}
           rows={CREDIT_ACTIONS}

@@ -78,6 +78,7 @@ describe('WebhooksTab', () => {
 
     await screen.findByText(EVENT_ID);
     await user.type(screen.getByLabelText(/filter by provider/i), 'razorpay');
+    await user.click(await screen.findByRole('option', { name: 'razorpay' }));
 
     await waitFor(() => expect(screen.getByTestId('url').textContent).toContain('provider=razorpay'));
     await waitFor(() =>

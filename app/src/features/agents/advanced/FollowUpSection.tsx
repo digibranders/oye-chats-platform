@@ -6,6 +6,7 @@ import {
   Button,
   ConfirmDialog,
   LoadingRows,
+  SettingBand,
   SettingRow,
   Switch,
   toast,
@@ -78,9 +79,9 @@ export function FollowUpSection({ agentId }: FollowUpSectionProps) {
 
   if (bot.isPending) {
     return (
-      <div className="border-t border-border px-cell py-3">
+      <SettingBand>
         <LoadingRows rows={1} />
-      </div>
+      </SettingBand>
     );
   }
 
@@ -132,13 +133,13 @@ export function FollowUpSection({ agentId }: FollowUpSectionProps) {
           sentence twice makes a reader hunt for the second problem.
           `variables` is the direction of the write that failed. */}
       {save.isError && save.variables === false ? (
-        <div className="border-t border-border px-cell py-3">
+        <SettingBand>
           <Alert tone="danger" live title="That did not go through">
             {save.error instanceof Error
               ? save.error.message
               : 'Something went wrong. The setting is unchanged.'}
           </Alert>
-        </div>
+        </SettingBand>
       ) : null}
 
       <ConfirmDialog

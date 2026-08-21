@@ -128,8 +128,12 @@ describe('DunningTab', () => {
     // Two tiles, one per currency — never one tile adding paise to cents.
     const inrTile = (await screen.findByText('At risk (INR)')).closest('div');
     const usdTile = screen.getByText('At risk (USD)').closest('div');
-    expect(inrTile).toHaveTextContent('₹1,000.00 INR');
-    expect(usdTile).toHaveTextContent('$29.00 USD');
+    expect(inrTile).toHaveTextContent('₹1,000.00');
+    expect(usdTile).toHaveTextContent('$29.00');
+    // The code is on the label, so the figure does not repeat it: the tile used
+    // to read "At risk (INR) ₹1,000.00 INR".
+    expect(inrTile).not.toHaveTextContent('₹1,000.00 INR');
+    expect(usdTile).not.toHaveTextContent('$29.00 USD');
     // A cross-currency sum (102,900) is never printed, in any tile.
     expect(screen.queryByText(/102,900/)).not.toBeInTheDocument();
   });
@@ -147,7 +151,9 @@ describe('DunningTab', () => {
     mount();
 
     const usdTile = (await screen.findByText('At risk (USD)')).closest('div');
-    expect(usdTile).toHaveTextContent('$29.00 USD');
+    expect(usdTile).toHaveTextContent('$29.00');
+    // Not $0.00, and not a second tile: the null row contributes nothing.
+    expect(screen.queryByText('At risk (—)')).not.toBeInTheDocument();
   });
 
   it('says which cycle an annual subscription’s figure covers', async () => {

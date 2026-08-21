@@ -12,6 +12,7 @@ import {
   RadioCards,
   Textarea,
   Tooltip,
+  Well,
 } from '../../../ui';
 import { detectTone, errorMessage, fetchTonePresets, sampleTone, type TonePreset } from './experience-api';
 import {
@@ -267,10 +268,10 @@ export function VoiceSection({
               </Tooltip>
             </div>
             {sample ? (
-              <p className="flex items-start gap-2 rounded-md bg-surface-sunken px-3 py-2.5 text-prose text-text-primary">
+              <Well className="flex items-start gap-2 text-prose text-text-primary">
                 <MessageSquareQuote aria-hidden className="mt-0.5 h-icon-md w-icon-md shrink-0 text-text-tertiary" />
                 <span>{sample}</span>
-              </p>
+              </Well>
             ) : null}
             {sampleError ? (
               <Alert tone="danger" title="No sample this time" live>

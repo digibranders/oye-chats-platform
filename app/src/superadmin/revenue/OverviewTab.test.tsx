@@ -71,11 +71,17 @@ describe('OverviewTab', () => {
     expect(alert).toHaveTextContent(/not a market FX rate/);
   });
 
-  it('labels each headline figure with the currency it is in', async () => {
+  it('states the unit once for the strip rather than under every tile', async () => {
     respond();
     mount();
     expect(await screen.findByText('$4,182')).toBeInTheDocument();
-    expect(screen.getAllByText('USD (converted)').length).toBeGreaterThanOrEqual(3);
+    // The section's own description carries it. It used to print under three
+    // adjacent tiles as well — three identical grey lines saying what the
+    // paragraph above them had just said.
+    expect(screen.queryByText('USD (converted)')).not.toBeInTheDocument();
+    expect(screen.getByText(/Every figure on this tab is normalised/)).toHaveTextContent(
+      /USD\. Amounts stored in INR were converted/,
+    );
   });
 
   it('does not label a customer count as a currency', async () => {

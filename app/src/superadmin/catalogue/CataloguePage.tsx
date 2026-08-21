@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { NavTabs } from '../../ui';
 import { PlatformPage } from '../PlatformPage';
 import { PLATFORM_ROOT } from '../nav';
@@ -30,23 +30,11 @@ const TABS = [
   { to: `${BASE}/promotions`, label: 'Promotions' },
 ];
 
-/**
- * The one screen here that is a form.
- *
- * `width="page"` was declared for all five on the reasoning that a field should
- * not stretch on a wide monitor. It does not cap anything at 1440: the token is
- * 90rem and the content column is 1,192px. The pricing-page copy editor takes
- * the reading measure; the four record books take every pixel they can get.
- */
-const FORM_ROUTES = new Set([`${BASE}/content`]);
-
 export function CataloguePage() {
-  const { pathname } = useLocation();
 
   return (
     <PlatformPage
       title="Catalogue"
-      width={FORM_ROUTES.has(pathname.replace(/\/$/, '')) ? 'default' : 'full'}
       toolbarBleed
       toolbar={<NavTabs label="Catalogue sections" items={TABS} />}
     >

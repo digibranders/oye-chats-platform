@@ -125,6 +125,9 @@ export function CustomerDetailPage() {
                     // Unit and definition are hints; "All time" on the strip is
                     // the window. See the note on `revenue/OverviewTab`'s strip.
                     label: 'Monthly recurring',
+                    // A rate, not a total: the strip's "All time" is right for
+                    // the three counters and wrong for this one.
+                    period: 'Right now',
                     size: 'lg',
                     value: usdCentsRounded(client.mrr_cents),
                     hint: USD_NORMALISED_SHORT,
@@ -272,6 +275,7 @@ export function CustomerDetailPage() {
               columns={BOT_COLUMNS}
               rows={client.bots}
               rowKey={(bot) => String(bot.id)}
+              rowNoun="chatbot"
               pageSize={PAGE_SIZE}
               defaultSort={{ key: 'name', direction: 'asc' }}
               empty={

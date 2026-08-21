@@ -8,6 +8,7 @@ import {
   CardHeader,
   Disclosure,
   Field,
+  Measure,
   PropertyGrid,
   Section,
   Select,
@@ -82,130 +83,136 @@ export function GstrExportTab() {
   }
 
   return (
-    <Stack>
-      <Section
-        title="GSTR-1 export"
-        description="A document-level CSV for the accountant: B2B, B2CS, B2CL, EXP, CDNR and CDNUR sections, plus a per-section summary."
-      >
-        <Card>
-          <CardHeader
-            titleAs="h3"
-            title="Choose the filing month"
-            description="One IST calendar month per file. The server rejects anything that is not a whole month."
-          />
-          {/* The measure is on the field, not on the band. `max-w-md` on the
-              `CardBody` shortened the band itself, so the divider it draws
-              stopped 384px short of the card's right edge and read as a broken
-              rule. */}
-          <CardBody>
-            <Field
-              className="max-w-md"
-              label="Filing month"
-              hint={
-                selected === currentMonth
-                  ? 'This month is not over. The file will contain only what has been invoiced so far — useful as a draft, not for filing.'
-                  : `Documents issued in ${monthLabel(selected)}, by their supply date.`
-              }
-            >
-              <Select
-                options={options}
-                value={selected}
-                onChange={(event) => {
-                  url.set({ month: event.target.value });
-                  setResult(null);
-                  setError(null);
-                }}
-              />
-            </Field>
-          </CardBody>
-          <CardBody className="border-t border-border">
-            <Button
-              variant="primary"
-              loading={busy}
-              onClick={() => void download()}
-              iconLeft={<Download aria-hidden className="h-4 w-4" />}
-            >
-              Generate and download {monthLabel(selected)}
-            </Button>
-            <p className="mt-2 text-xs text-text-secondary">
-              The file is built when you press this and arrives in the response — nothing is queued,
-              and there is nothing to come back for. Large months take a few seconds.
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {error ? (
-        <Alert tone="danger" live title="The export was not generated">
-          {error} Nothing was downloaded.
-        </Alert>
-      ) : null}
-
-      {result ? (
-        <Alert
-          tone={result.rows === 0 ? 'warning' : 'success'}
-          live
-          title={
-            result.rows === 0
-              ? `${monthLabel(result.month)} has no documents`
-              : `${gstrFilename(result.month)} downloaded`
-          }
+    <Measure width="reading">
+      {/* The measure belongs to the content, not to the page. The section used
+          to set `Page width="default"` for this route alone, which narrowed the
+          `h1` and the tab row with it: crossing from a record tab to this one
+          shortened the tab row's hairline from 1,192px to 896 and back. */}
+      <Stack>
+        <Section
+          title="GSTR-1 export"
+          description="A document-level CSV for the accountant: B2B, B2CS, B2CL, EXP, CDNR and CDNUR sections, plus a per-section summary."
         >
-          {result.rows === 0 ? (
-            <>
-              The file downloaded, but it contains only the header and a summary of zeroes — no tax
-              invoice, credit note or receipt was issued in {monthLabel(result.month)}. Do not file
-              it as though it were a return with content until you have confirmed that is correct.
-            </>
-          ) : (
-            <>
-              {formatNumber(result.rows)} document row{result.rows === 1 ? '' : 's'}, plus the
-              per-section summary. Check your browser&rsquo;s downloads for{' '}
-              <span className="figure">{gstrFilename(result.month)}</span>.
-            </>
-          )}
-        </Alert>
-      ) : null}
+          <Card>
+            <CardHeader
+              titleAs="h3"
+              title="Choose the filing month"
+              description="One IST calendar month per file. The server rejects anything that is not a whole month."
+            />
+            {/* The measure is on the field, not on the band. `max-w-md` on the
+                `CardBody` shortened the band itself, so the divider it draws
+                stopped 384px short of the card's right edge and read as a broken
+                rule. */}
+            <CardBody>
+              <Field
+                className="max-w-md"
+                label="Filing month"
+                hint={
+                  selected === currentMonth
+                    ? 'This month is not over. The file will contain only what has been invoiced so far — useful as a draft, not for filing.'
+                    : `Documents issued in ${monthLabel(selected)}, by their supply date.`
+                }
+              >
+                <Select
+                  options={options}
+                  value={selected}
+                  onChange={(event) => {
+                    url.set({ month: event.target.value });
+                    setResult(null);
+                    setError(null);
+                  }}
+                />
+              </Field>
+            </CardBody>
+            <CardBody className="border-t border-border">
+              <Button
+                variant="primary"
+                loading={busy}
+                onClick={() => void download()}
+                iconLeft={<Download aria-hidden className="h-4 w-4" />}
+              >
+                Generate and download {monthLabel(selected)}
+              </Button>
+              <p className="mt-2 text-xs text-text-secondary">
+                The file is built when you press this and arrives in the response — nothing is queued,
+                and there is nothing to come back for. Large months take a few seconds.
+              </p>
+            </CardBody>
+          </Card>
+        </Section>
 
-      {/* Reference material, read once and then never again. It was ~90 words
-          permanently on screen above a two-control form. */}
-      <Disclosure summary="What is in the file" headingLevel={2}>
-        <div className="pt-2">
-          <PropertyGrid
-            columns={2}
-            items={[
-              {
-                label: 'Denomination',
-                value:
-                  'Rupees, to two decimals. The API works in minor units everywhere else; the return does not.',
-              },
-              {
-                label: 'Document currency',
-                value:
-                  'Carried separately in doc_currency, doc_gross_value, doc_taxable_value and doc_total_tax — what the customer actually holds, alongside the rupee figures that go on the return.',
-              },
-              {
-                label: 'FX',
-                value:
-                  'fx_rate is the Rule 34(2) rate at the time of supply, stored on the document. It is not recomputed at export time.',
-              },
-              {
-                label: 'Blank cells',
-                value:
-                  'A blank money column means the figure could not be derived, not zero. A zero-value supply prints 0.00.',
-              },
-              {
-                label: 'Encoding',
-                value: 'UTF-8 with a byte-order mark, so Excel opens non-ASCII legal names correctly.',
-              },
-              {
-              label: 'Period basis',
-              value: `IST calendar month. Today is in ${monthLabel(toMonthKey(new Date()))}.`,
-              },
-            ]}
-          />
-        </div>
-      </Disclosure>
-    </Stack>
+        {error ? (
+          <Alert tone="danger" live title="The export was not generated">
+            {error} Nothing was downloaded.
+          </Alert>
+        ) : null}
+
+        {result ? (
+          <Alert
+            tone={result.rows === 0 ? 'warning' : 'success'}
+            live
+            title={
+              result.rows === 0
+                ? `${monthLabel(result.month)} has no documents`
+                : `${gstrFilename(result.month)} downloaded`
+            }
+          >
+            {result.rows === 0 ? (
+              <>
+                The file downloaded, but it contains only the header and a summary of zeroes — no tax
+                invoice, credit note or receipt was issued in {monthLabel(result.month)}. Do not file
+                it as though it were a return with content until you have confirmed that is correct.
+              </>
+            ) : (
+              <>
+                {formatNumber(result.rows)} document row{result.rows === 1 ? '' : 's'}, plus the
+                per-section summary. Check your browser&rsquo;s downloads for{' '}
+                <span className="figure">{gstrFilename(result.month)}</span>.
+              </>
+            )}
+          </Alert>
+        ) : null}
+
+        {/* Reference material, read once and then never again. It was ~90 words
+            permanently on screen above a two-control form. */}
+        <Disclosure summary="What is in the file" headingLevel={2}>
+          <div className="pt-2">
+            <PropertyGrid
+              columns={2}
+              items={[
+                {
+                  label: 'Denomination',
+                  value:
+                    'Rupees, to two decimals. The API works in minor units everywhere else; the return does not.',
+                },
+                {
+                  label: 'Document currency',
+                  value:
+                    'Carried separately in doc_currency, doc_gross_value, doc_taxable_value and doc_total_tax — what the customer actually holds, alongside the rupee figures that go on the return.',
+                },
+                {
+                  label: 'FX',
+                  value:
+                    'fx_rate is the Rule 34(2) rate at the time of supply, stored on the document. It is not recomputed at export time.',
+                },
+                {
+                  label: 'Blank cells',
+                  value:
+                    'A blank money column means the figure could not be derived, not zero. A zero-value supply prints 0.00.',
+                },
+                {
+                  label: 'Encoding',
+                  value: 'UTF-8 with a byte-order mark, so Excel opens non-ASCII legal names correctly.',
+                },
+                {
+                label: 'Period basis',
+                value: `IST calendar month. Today is in ${monthLabel(toMonthKey(new Date()))}.`,
+                },
+              ]}
+            />
+          </div>
+        </Disclosure>
+      </Stack>
+    </Measure>
   );
 }

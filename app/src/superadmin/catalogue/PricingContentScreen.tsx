@@ -10,6 +10,7 @@ import {
   Grid,
   LoadingRows,
   LockedState,
+  Measure,
   SaveBar,
   Section,
   Stack,
@@ -124,89 +125,95 @@ export function PricingContentScreen() {
   }
 
   return (
-    <Stack>
-      {content.loading && !content.data ? (
-        <Card>
-          <CardBody>
-            <LoadingRows rows={4} />
-          </CardBody>
-        </Card>
-      ) : (
-        <Section
-          title="Pricing page copy"
-          description="The public site's marketing copy. Nothing here changes what a customer is charged or may do, and there is no staging step."
-        >
-          {/* `stretch`: four editors of the same kind in a two-by-two, and
-              `start` let each be its own height. */}
-          <Grid cols={2}>
-            {CONTENT_BLOBS.map((blob) => {
-              const parsed = parseBlob(drafts[blob.key]);
-              return (
-                <Card key={blob.key}>
-                  <CardHeader
-                    titleAs="h3"
-                    title={blob.label}
-                    description={blob.description}
-                    actions={
-                      <span className="figure text-2xs text-text-tertiary">
-                        {parsed.ok ? `${formatNumber(parsed.value.length)} items` : 'does not parse'}
-                      </span>
-                    }
-                  />
-                  <CardBody>
-                    <Field
-                      label={`${blob.label} JSON`}
-                      hideLabel
-                      error={errors[blob.key]}
-                      hint={`At most ${MAX_PRICING_ITEMS} items.`}
-                    >
-                      <Textarea
-                        rows={10}
-                        className="figure"
-                        spellCheck={false}
-                        value={drafts[blob.key]}
-                        onChange={(event) =>
-                          setDrafts((current) => ({ ...current, [blob.key]: event.target.value }))
-                        }
-                      />
-                    </Field>
-                  </CardBody>
-                </Card>
-              );
-            })}
-          </Grid>
-        </Section>
-      )}
+    <Measure width="reading">
+      {/* The measure belongs to the content, not to the page. The section used
+          to set `Page width="default"` for this route alone, which narrowed the
+          `h1` and the tab row with it: crossing from a record tab to this one
+          shortened the tab row's hairline from 1,192px to 896 and back. */}
+      <Stack>
+        {content.loading && !content.data ? (
+          <Card>
+            <CardBody>
+              <LoadingRows rows={4} />
+            </CardBody>
+          </Card>
+        ) : (
+          <Section
+            title="Pricing page copy"
+            description="The public site's marketing copy. Nothing here changes what a customer is charged or may do, and there is no staging step."
+          >
+            {/* `stretch`: four editors of the same kind in a two-by-two, and
+                `start` let each be its own height. */}
+            <Grid cols={2}>
+              {CONTENT_BLOBS.map((blob) => {
+                const parsed = parseBlob(drafts[blob.key]);
+                return (
+                  <Card key={blob.key}>
+                    <CardHeader
+                      titleAs="h3"
+                      title={blob.label}
+                      description={blob.description}
+                      actions={
+                        <span className="figure text-2xs text-text-tertiary">
+                          {parsed.ok ? `${formatNumber(parsed.value.length)} items` : 'does not parse'}
+                        </span>
+                      }
+                    />
+                    <CardBody>
+                      <Field
+                        label={`${blob.label} JSON`}
+                        hideLabel
+                        error={errors[blob.key]}
+                        hint={`At most ${MAX_PRICING_ITEMS} items.`}
+                      >
+                        <Textarea
+                          rows={10}
+                          className="figure"
+                          spellCheck={false}
+                          value={drafts[blob.key]}
+                          onChange={(event) =>
+                            setDrafts((current) => ({ ...current, [blob.key]: event.target.value }))
+                          }
+                        />
+                      </Field>
+                    </CardBody>
+                  </Card>
+                );
+              })}
+            </Grid>
+          </Section>
+        )}
 
-      <SaveBar
-        dirty={changed.length > 0}
-        saveError={saveError}
-        blockedReason={blockedReason}
-        summary={changedLabels}
-        saveLabel="Review and publish"
-        onSave={attemptSave}
-        onDiscard={() => {
-          setDrafts(original);
-          setErrors({});
-          setSaveError(null);
-        }}
-        guard="the pricing page copy"
-      />
+        <SaveBar
+          dirty={changed.length > 0}
+          saveError={saveError}
+          blockedReason={blockedReason}
+          summary={changedLabels}
+          saveLabel="Review and publish"
+          onSave={attemptSave}
+          onDiscard={() => {
+            setDrafts(original);
+            setErrors({});
+            setSaveError(null);
+          }}
+          guard="the pricing page copy"
+        />
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="Publish to the pricing page?"
-        confirmLabel="Publish"
-        onConfirm={commit}
-        description={
-          <>
-            {changed.map((key) => CONTENT_BLOBS.find((blob) => blob.key === key)?.label ?? key).join(', ')}{' '}
-            will be replaced wholesale on oyechats.com. Blobs you did not touch are not sent and stay as they
-            are.
-          </>
-        }
-      />
-    </Stack>
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          title="Publish to the pricing page?"
+          confirmLabel="Publish"
+          onConfirm={commit}
+          description={
+            <>
+              {changed.map((key) => CONTENT_BLOBS.find((blob) => blob.key === key)?.label ?? key).join(', ')}{' '}
+              will be replaced wholesale on oyechats.com. Blobs you did not touch are not sent and stay as they
+              are.
+            </>
+          }
+        />
+      </Stack>
+    </Measure>
   );
 }

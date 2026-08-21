@@ -164,7 +164,7 @@ export function PlanSummary({
       </CardBody>
 
       {disclosure ? (
-        <CardSection className="bg-surface-sunken">
+        <CardSection tone="sunken">
           <p className="text-prose text-text-secondary">{disclosure}</p>
         </CardSection>
       ) : null}

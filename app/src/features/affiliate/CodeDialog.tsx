@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, toast } from '../../ui';
+import { Alert, Button, Dialog, Field, Grid, Input, toast } from '../../ui';
 import { createAffiliateCode, updateAffiliateCode } from '../../services/api';
 import {
   formatPct,
@@ -163,10 +163,11 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
           />
         </Field>
 
-        {/* Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
-            body is 472px, so `Grid cols={2}` renders one column inside it —
-            two 8-character percent fields stacked. See the round-two report. */}
-        <div className="grid gap-4 sm:grid-cols-2">
+        {/* `pairs`, not `cols={2}`: the card ramp's 2-up step is `@3xl/page`
+            (768) and this dialog's body is 472px, so `cols={2}` would stack two
+            8-character percent fields. `pairs` is the claim that actually
+            applies — two short fields on one line, from 24rem of container. */}
+        <Grid cols="pairs">
           <Field label="You keep" required hint="Percent of every bill.">
             <Input
               value={affiliatePct}
@@ -183,7 +184,7 @@ export function CodeDialog({ open, onOpenChange, code, poolPct, onSaved }: CodeD
               className="figure"
             />
           </Field>
-        </div>
+        </Grid>
 
         {/* `Alert tone="neutral"` already draws a sunken ground with an ink
             leading rule and takes `live`. The hand-drawn box was the third copy

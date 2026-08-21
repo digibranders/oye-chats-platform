@@ -373,6 +373,7 @@ export function OutboundScreen({ view }: { view: View }) {
             rows={slice(deliveries.items)}
             rowKey={(row) => String(row.id)}
             rowLabel={(row) => `${row.event} attempt ${row.attempt}`}
+            rowNoun="attempt"
             loading={deliveries.loading && deliveries.items.length === 0}
             error={deliveries.error}
             onRetry={deliveries.reload}
@@ -401,6 +402,7 @@ export function OutboundScreen({ view }: { view: View }) {
             rows={slice(registrations.items)}
             rowKey={(row) => String(row.id)}
             rowLabel={(row) => row.url}
+            rowNoun="registration"
             loading={registrations.loading && registrations.items.length === 0}
             error={registrations.error}
             onRetry={registrations.reload}
@@ -429,6 +431,7 @@ export function OutboundScreen({ view }: { view: View }) {
             rows={slice(failed.items)}
             rowKey={(row) => String(row.id)}
             rowLabel={(row) => row.event_type ?? `event ${row.id}`}
+            rowNoun="event"
             loading={failed.loading && failed.items.length === 0}
             error={failed.error}
             onRetry={failed.reload}

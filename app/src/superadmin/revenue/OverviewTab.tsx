@@ -8,6 +8,7 @@ import {
   EmptyState,
   LoadingBars,
   LockedState,
+  Measure,
   RankedBars,
   Section,
   Stack,
@@ -19,7 +20,7 @@ import {
 import { usePlatformList, usePlatformResource } from '../usePlatform';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { PAGE_SIZE } from '../recordListState';
-import { USD_NORMALISED_NOTE, USD_NORMALISED_SHORT, usdCents, usdCentsRounded } from '../money';
+import { USD_NORMALISED_NOTE, usdCents, usdCentsRounded } from '../money';
 import { subscriptionLabel, SUBSCRIPTION_STATUSES } from './status';
 import type { RevenueCohort, RevenueMetrics } from './types';
 
@@ -146,13 +147,12 @@ export function OverviewTab() {
             <CardBody flush>
               {/* One strip, one statement of the window, hairline-divided.
 
-                  The currency is a `hint`, not a `period`. `StatRow` used to
-                  drop the window it was given, and the workaround was to give
-                  every tile an explicit one — so "USD (converted)" printed three
-                  times in a row under three adjacent figures, in the slot whose
-                  entire purpose is stating the window once. The primitive
-                  renders the strip caption now, so the unit goes where a unit
-                  goes and the window is stated where a window goes. */}
+                  The unit is stated by the section's own description and
+                  nowhere else. It used to be a `period` on every tile — the
+                  workaround for a `StatRow` that dropped the window it was
+                  given — and then a `hint` on every tile, which is the same
+                  three identical grey lines one row lower, under a paragraph
+                  that had already said it. */}
               <StatRow
                 label="Recurring revenue"
                 period="Right now"
@@ -161,12 +161,10 @@ export function OverviewTab() {
                   {
                     label: 'MRR',
                     size: 'hero',
-                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data ? usdCentsRounded(metrics.data.mrr_cents) : undefined,
                   },
                   {
                     label: 'ARR',
-                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data ? usdCentsRounded(metrics.data.arr_cents) : undefined,
                   },
                   {
@@ -175,7 +173,6 @@ export function OverviewTab() {
                     // line — which would make this one tile a line taller than
                     // its three neighbours.
                     label: 'Collected, all time',
-                    hint: USD_NORMALISED_SHORT,
                     value: metrics.data
                       ? usdCentsRounded(metrics.data.total_revenue_cents)
                       : undefined,
@@ -194,24 +191,29 @@ export function OverviewTab() {
         )}
       </Section>
 
+      {/* `RankedBars` caps its row at `--container-pair` on purpose, so a
+          full-width card left 440px of empty surface to the right of every
+          figure. The measure belongs to the content. */}
       <Section title="Subscription mix" description="Every subscription row, by status.">
-        <Card>
-          {metrics.loading && !metrics.data ? (
-            <CardBody>
-              <LoadingBars rows={5} />
-            </CardBody>
-          ) : !counts ? (
-            <EmptyState
-              compact
-              title="No subscription counts"
-              description="The revenue endpoint returned no status breakdown — unusual on a platform with any customers at all."
-            />
-          ) : (
-            <CardBody>
-              <RankedBars label="Subscriptions by status" items={mix} />
-            </CardBody>
-          )}
-        </Card>
+        <Measure width="reading">
+          <Card>
+            {metrics.loading && !metrics.data ? (
+              <CardBody>
+                <LoadingBars rows={5} />
+              </CardBody>
+            ) : !counts ? (
+              <EmptyState
+                compact
+                title="No subscription counts"
+                description="The revenue endpoint returned no status breakdown — unusual on a platform with any customers at all."
+              />
+            ) : (
+              <CardBody>
+                <RankedBars label="Subscriptions by status" items={mix} />
+              </CardBody>
+            )}
+          </Card>
+        </Measure>
       </Section>
 
       <Section

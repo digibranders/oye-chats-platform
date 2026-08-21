@@ -11,6 +11,7 @@ import {
   Dialog,
   EmptyState,
   Field,
+  Grid,
   Input,
   LoadingRows,
   PropertyGrid,
@@ -284,10 +285,11 @@ export function BillingIdentitySection({
               autoComplete="address-line2"
             />
           </Field>
-          {/* Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
-              body is 472px, so `Grid cols={2}` would stack a city and a postal
-              code into two full-width rows. See the round-two report. */}
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* `pairs`, not `cols={2}`: the card ramp's 2-up step is `@3xl/page`
+              (768) and this dialog's body is 472px, so `cols={2}` would stack a
+              city and a postal code into two full-width rows. A city and a
+              postal code are exactly what `pairs` is for. */}
+          <Grid cols="pairs">
             <Field label="City">
               <Input
                 value={form.city}
@@ -317,7 +319,7 @@ export function BillingIdentitySection({
                 autoComplete="postal-code"
               />
             </Field>
-          </div>
+          </Grid>
 
           {save.isError ? (
             <Alert tone="danger" live>

@@ -14,6 +14,7 @@ import {
   LockedState,
   Meter,
   Switch,
+  Well,
   buttonClass,
   formatNumber,
 } from '../../../../ui';
@@ -211,7 +212,7 @@ export function WebsiteFlow({
         />
 
         {budget ? (
-          <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
+          <Well>
             <FigureList>
               <FigureRow
                 label="Pages found"
@@ -239,7 +240,7 @@ export function WebsiteFlow({
                 tone={preflight?.blocked ? 'warning' : 'neutral'}
               />
             </FigureList>
-          </div>
+          </Well>
         ) : null}
 
         {hasPageList && !crawlRunning ? (

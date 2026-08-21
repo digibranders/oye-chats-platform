@@ -11,6 +11,7 @@ import {
   Input,
   LoadingRows,
   LockedState,
+  Measure,
   SaveBar,
   Section,
   Select,
@@ -169,225 +170,231 @@ export function RuntimeScreen() {
       ?.label ?? fallbackProviderId;
 
   return (
-    <Stack>
-      <Section title="Models" description="LiteLLM routes to the primary and falls back on failure.">
-        <Card>
-          <CardBody>
-            <Grid cols={2}>
-              <Field
-                label="Primary model"
-                error={shown.primary_model}
-                hint="Answers every chat message."
-              >
-                <Select
-                  options={models}
-                  value={draft.primary_model}
-                  onChange={(event) => update({ primary_model: event.target.value })}
-                />
-              </Field>
-              <Field
-                label="Fallback model"
-                error={shown.fallback_model}
-                hint="Used when the primary errors."
-              >
-                <Select
-                  options={fallbackModels}
-                  value={draft.fallback_model}
-                  onChange={(event) => update({ fallback_model: event.target.value })}
-                />
-              </Field>
-              <Field label="Gate model" error={shown.gate_model} hint="Relevance gate and enrichment.">
-                <Select
-                  options={gateModels}
-                  value={draft.gate_model}
-                  onChange={(event) => update({ gate_model: event.target.value })}
-                />
-              </Field>
-            </Grid>
-          </CardBody>
-          {draft.primary_model === draft.fallback_model ? (
-            <CardBody className="border-t border-border">
-              <Alert tone="warning" title="Primary and fallback are the same model">
-                A provider outage would take both routes down together.
-              </Alert>
+    <Measure width="reading">
+      {/* The measure belongs to the content, not to the page. The section used
+          to set `Page width="default"` for this route alone, which narrowed the
+          `h1` and the tab row with it: crossing from a record tab to this one
+          shortened the tab row's hairline from 1,192px to 896 and back. */}
+      <Stack>
+        <Section title="Models" description="LiteLLM routes to the primary and falls back on failure.">
+          <Card>
+            <CardBody>
+              <Grid cols={2}>
+                <Field
+                  label="Primary model"
+                  error={shown.primary_model}
+                  hint="Answers every chat message."
+                >
+                  <Select
+                    options={models}
+                    value={draft.primary_model}
+                    onChange={(event) => update({ primary_model: event.target.value })}
+                  />
+                </Field>
+                <Field
+                  label="Fallback model"
+                  error={shown.fallback_model}
+                  hint="Used when the primary errors."
+                >
+                  <Select
+                    options={fallbackModels}
+                    value={draft.fallback_model}
+                    onChange={(event) => update({ fallback_model: event.target.value })}
+                  />
+                </Field>
+                <Field label="Gate model" error={shown.gate_model} hint="Relevance gate and enrichment.">
+                  <Select
+                    options={gateModels}
+                    value={draft.gate_model}
+                    onChange={(event) => update({ gate_model: event.target.value })}
+                  />
+                </Field>
+              </Grid>
             </CardBody>
-          ) : null}
-        </Card>
-      </Section>
-
-      <Section
-        title="Retrieval"
-        description="Chunking is applied at ingestion, so a change here affects documents indexed after it, not the corpus already stored."
-      >
-        <Card>
-          <CardBody>
-            <Grid cols={2}>
-            <Field label="Chunk size" error={shown.chunk_size} hint="200 to 8,000 characters.">
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.chunk_size}
-                onChange={(event) => update({ chunk_size: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Chunk overlap"
-              error={shown.chunk_overlap}
-              hint="0 to 2,000, and always below the chunk size."
-            >
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.chunk_overlap}
-                onChange={(event) => update({ chunk_overlap: event.target.value })}
-              />
-            </Field>
-            <Field label="Rerank top N" error={shown.rerank_top_n} hint="1 to 20 chunks kept after reranking.">
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.rerank_top_n}
-                onChange={(event) => update({ rerank_top_n: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Relevance threshold"
-              error={shown.relevance_threshold}
-              hint="0 to 1. Higher discards more retrieved context."
-            >
-              <Input
-                className="figure"
-                inputMode="decimal"
-                value={draft.relevance_threshold}
-                onChange={(event) => update({ relevance_threshold: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Embedding concurrency"
-              error={shown.embed_concurrency}
-              hint="1 to 64 parallel calls."
-            >
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.embed_concurrency}
-                onChange={(event) => update({ embed_concurrency: event.target.value })}
-              />
-            </Field>
-            </Grid>
-          </CardBody>
-        </Card>
-      </Section>
-
-      <Section title="Crawler" description="The fallback provider is always the other one; it is not separately settable.">
-        <Card>
-          <CardBody>
-            <Grid cols={2}>
-            <Field label="Primary provider" hint={activeProviderNote}>
-              <Select
-                options={crawlProviders}
-                value={draft.crawl_provider_primary}
-                onChange={(event) => update({ crawl_provider_primary: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Jina concurrency"
-              error={shown.jina_fetch_concurrency}
-              hint="1 to 50 parallel reader fetches."
-            >
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.jina_fetch_concurrency}
-                onChange={(event) => update({ jina_fetch_concurrency: event.target.value })}
-              />
-            </Field>
-            <Field
-              label="Spider concurrency"
-              error={shown.spider_fetch_concurrency}
-              hint="1 to 50 parallel scraper fetches."
-            >
-              <Input
-                className="figure"
-                inputMode="numeric"
-                value={draft.spider_fetch_concurrency}
-                onChange={(event) => update({ spider_fetch_concurrency: event.target.value })}
-              />
-            </Field>
-            </Grid>
-          </CardBody>
-          <CardBody className="border-t border-border">
-            <p className="text-xs text-text-secondary">
-              Fallback provider:{' '}
-              <span className="text-text-primary">{fallbackProviderLabel}</span>
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
-
-      <Section
-        title="Support impersonation"
-        description="The runtime half of the kill switch. The environment variable is a floor this cannot lift."
-      >
-        <Card>
-          <CardBody>
-            <Switch
-              label="Impersonation enabled"
-              description={
-                config.data.impersonation.locked_by_env
-                  ? 'Refused by IMPERSONATION_ENABLED in the environment. The switch cannot turn it back on from here — that needs a deploy.'
-                  : 'Lets a super-admin act as a customer for support. Turning it off ends the ability to start new sessions immediately.'
-              }
-              checked={draft.impersonation_enabled}
-              disabled={config.data.impersonation.locked_by_env}
-              onCheckedChange={(checked) => update({ impersonation_enabled: checked })}
-            />
-            {config.data.impersonation.locked_by_env ? (
-              <Badge tone="neutral" className="mt-3">
-                Locked by the environment
-              </Badge>
+            {draft.primary_model === draft.fallback_model ? (
+              <CardBody className="border-t border-border">
+                <Alert tone="warning" title="Primary and fallback are the same model">
+                  A provider outage would take both routes down together.
+                </Alert>
+              </CardBody>
             ) : null}
-          </CardBody>
-        </Card>
-      </Section>
+          </Card>
+        </Section>
 
-      <SaveBar
-        dirty={changedKeys.length > 0}
-        summary={<span className="figure">{changedKeys.join(', ')}</span>}
-        saveError={saveError}
-        blockedReason={firstError}
-        saveLabel="Review and apply"
-        onSave={attemptSave}
-        onDiscard={() => {
-          setDraft(draftFromConfig(config.data as ModelConfig));
-          setShowErrors(false);
-          setSaveError(null);
-        }}
-        guard="the runtime configuration"
-      />
+        <Section
+          title="Retrieval"
+          description="Chunking is applied at ingestion, so a change here affects documents indexed after it, not the corpus already stored."
+        >
+          <Card>
+            <CardBody>
+              <Grid cols={2}>
+              <Field label="Chunk size" error={shown.chunk_size} hint="200 to 8,000 characters.">
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.chunk_size}
+                  onChange={(event) => update({ chunk_size: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Chunk overlap"
+                error={shown.chunk_overlap}
+                hint="0 to 2,000, and always below the chunk size."
+              >
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.chunk_overlap}
+                  onChange={(event) => update({ chunk_overlap: event.target.value })}
+                />
+              </Field>
+              <Field label="Rerank top N" error={shown.rerank_top_n} hint="1 to 20 chunks kept after reranking.">
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.rerank_top_n}
+                  onChange={(event) => update({ rerank_top_n: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Relevance threshold"
+                error={shown.relevance_threshold}
+                hint="0 to 1. Higher discards more retrieved context."
+              >
+                <Input
+                  className="figure"
+                  inputMode="decimal"
+                  value={draft.relevance_threshold}
+                  onChange={(event) => update({ relevance_threshold: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Embedding concurrency"
+                error={shown.embed_concurrency}
+                hint="1 to 64 parallel calls."
+              >
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.embed_concurrency}
+                  onChange={(event) => update({ embed_concurrency: event.target.value })}
+                />
+              </Field>
+              </Grid>
+            </CardBody>
+          </Card>
+        </Section>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="Change the live runtime?"
-        confirmLabel="Apply now"
-        onConfirm={commit}
-        description={
-          <div className="space-y-2">
-            <p>
-              These values are read by the next request. Nothing is queued, staged or reversible except by
-              changing them back.
-            </p>
-            <ul className="figure list-disc space-y-0.5 pl-4 text-xs">
-              {changedKeys.map((key) => (
-                <li key={key}>
-                  {key}: {String(payload[key])}
-                </li>
-              ))}
-            </ul>
-          </div>
-        }
-      />
-    </Stack>
+        <Section title="Crawler" description="The fallback provider is always the other one; it is not separately settable.">
+          <Card>
+            <CardBody>
+              <Grid cols={2}>
+              <Field label="Primary provider" hint={activeProviderNote}>
+                <Select
+                  options={crawlProviders}
+                  value={draft.crawl_provider_primary}
+                  onChange={(event) => update({ crawl_provider_primary: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Jina concurrency"
+                error={shown.jina_fetch_concurrency}
+                hint="1 to 50 parallel reader fetches."
+              >
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.jina_fetch_concurrency}
+                  onChange={(event) => update({ jina_fetch_concurrency: event.target.value })}
+                />
+              </Field>
+              <Field
+                label="Spider concurrency"
+                error={shown.spider_fetch_concurrency}
+                hint="1 to 50 parallel scraper fetches."
+              >
+                <Input
+                  className="figure"
+                  inputMode="numeric"
+                  value={draft.spider_fetch_concurrency}
+                  onChange={(event) => update({ spider_fetch_concurrency: event.target.value })}
+                />
+              </Field>
+              </Grid>
+            </CardBody>
+            <CardBody className="border-t border-border">
+              <p className="text-xs text-text-secondary">
+                Fallback provider:{' '}
+                <span className="text-text-primary">{fallbackProviderLabel}</span>
+              </p>
+            </CardBody>
+          </Card>
+        </Section>
+
+        <Section
+          title="Support impersonation"
+          description="The runtime half of the kill switch. The environment variable is a floor this cannot lift."
+        >
+          <Card>
+            <CardBody>
+              <Switch
+                label="Impersonation enabled"
+                description={
+                  config.data.impersonation.locked_by_env
+                    ? 'Refused by IMPERSONATION_ENABLED in the environment. The switch cannot turn it back on from here — that needs a deploy.'
+                    : 'Lets a super-admin act as a customer for support. Turning it off ends the ability to start new sessions immediately.'
+                }
+                checked={draft.impersonation_enabled}
+                disabled={config.data.impersonation.locked_by_env}
+                onCheckedChange={(checked) => update({ impersonation_enabled: checked })}
+              />
+              {config.data.impersonation.locked_by_env ? (
+                <Badge tone="neutral" className="mt-3">
+                  Locked by the environment
+                </Badge>
+              ) : null}
+            </CardBody>
+          </Card>
+        </Section>
+
+        <SaveBar
+          dirty={changedKeys.length > 0}
+          summary={<span className="figure">{changedKeys.join(', ')}</span>}
+          saveError={saveError}
+          blockedReason={firstError}
+          saveLabel="Review and apply"
+          onSave={attemptSave}
+          onDiscard={() => {
+            setDraft(draftFromConfig(config.data as ModelConfig));
+            setShowErrors(false);
+            setSaveError(null);
+          }}
+          guard="the runtime configuration"
+        />
+
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          title="Change the live runtime?"
+          confirmLabel="Apply now"
+          onConfirm={commit}
+          description={
+            <div className="space-y-2">
+              <p>
+                These values are read by the next request. Nothing is queued, staged or reversible except by
+                changing them back.
+              </p>
+              <ul className="figure list-disc space-y-0.5 pl-4 text-xs">
+                {changedKeys.map((key) => (
+                  <li key={key}>
+                    {key}: {String(payload[key])}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          }
+        />
+      </Stack>
+    </Measure>
   );
 }

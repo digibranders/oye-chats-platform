@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Progress, formatNumber } from '../../../ui';
+import { Alert, Progress, Well, formatNumber } from '../../../ui';
 import { fetchIngestStatus } from './knowledge-api';
 import { ingestProgress } from './knowledge-model';
 
@@ -105,7 +105,7 @@ export function IngestionProgress({
       : null;
 
   return (
-    <div className="rounded-md border border-border bg-surface-sunken px-4 py-3">
+    <Well>
       {/* The label is shown, which is `Progress`'s default. This is the one
           place on the page where something is happening that the customer
           cannot otherwise see, and naming it in the open — with the percentage
@@ -129,7 +129,7 @@ export function IngestionProgress({
           This usually takes a minute. You can leave this page — it carries on in the background.
         </p>
       ) : null}
-    </div>
+    </Well>
   );
 }
 

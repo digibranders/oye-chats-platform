@@ -162,7 +162,7 @@ function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutco
             </CardSection>
           ) : null}
 
-          <CardSection className="flex flex-wrap gap-2 bg-surface-sunken">
+          <CardSection tone="sunken" className="flex flex-wrap gap-2">
             <Link to={agentPath(agentId, 'experience')} className={buttonClass('secondary', 'sm')}>
               Email recipients
             </Link>

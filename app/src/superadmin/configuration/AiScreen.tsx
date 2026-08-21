@@ -26,7 +26,7 @@ import {
 } from '../../ui';
 import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
 import { SeriesTooltip } from '../SeriesTooltip';
-import { dayTick } from '../chartTicks';
+import { dayTick, tickInterval } from '../chartTicks';
 import { usePlatformList, usePlatformResource } from '../usePlatform';
 import { PAGE_SIZE } from '../recordListState';
 import type { LangfuseSummary, LlmCostRow, LlmUsageRow, SafetyNetMetrics } from './types';
@@ -240,7 +240,12 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={daily} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={dayTick}
+                    interval={tickInterval(daily.length)}
+                    {...CHART_AXIS}
+                  />
                   <YAxis {...CHART_AXIS} width={48} />
                   {/* The app's tooltip. Recharts' default is an unthemed white
                       panel that stays white on the dark theme. */}
@@ -324,6 +329,7 @@ export function AiScreen({ days, by, onDaysChange, onByChange }: AiScreenProps) 
           rows={usage.items}
           rowKey={(row) => `${row.date}:${row.model}`}
           rowLabel={(row) => `${row.model} on ${row.date}`}
+          rowNoun="day"
           loading={usage.loading && usage.items.length === 0}
           error={usage.error}
           onRetry={usage.reload}

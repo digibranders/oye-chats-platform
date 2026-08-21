@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Card, CardBody, CardHeader, Measure, Page, PageHeader, buttonClass } from '../../ui';
+import { Card, CardBody, CardHeader, Grid, Measure, Page, PageHeader, buttonClass } from '../../ui';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { WORKSPACE_NAV, navForRole, type NavItem } from '../../shell/nav';
 
@@ -49,11 +49,19 @@ export function NotFoundPage({ nav, home = '/' }: NotFoundPageProps) {
         <Card>
           <CardHeader title="Try one of these instead" titleAs="h2" />
           <CardBody>
-            {/* Bled back to the header's column: the rows carried their own
-                `px-3` inside a `px-cell` card, so every label sat twelve pixels
-                right of the title above it and the hover rectangle floated in the
-                middle of the card. */}
-            <ul className="-mx-2 grid gap-0.5 sm:grid-cols-2">
+            {/* `cols="pairs"`, not `sm:grid-cols-2`: this list is inside a
+                `Measure`, and `sm:` asks the window how wide it is when the
+                only box that knows is the 672px column the card is in.
+                `-mx-2` bleeds the rows back to the header's column — they carry
+                their own `px-2` inside a `px-cell` card, so without it every
+                label sat eight pixels right of the title above it and the hover
+                rectangle floated in the middle of the card. */}
+            <Grid
+              as="ul"
+              cols="pairs"
+              label="Where to go instead"
+              className="-mx-2 gap-0.5"
+            >
               {items.map((item) => (
                 <li key={item.to}>
                   <Link
@@ -70,7 +78,7 @@ export function NotFoundPage({ nav, home = '/' }: NotFoundPageProps) {
                   </Link>
                 </li>
               ))}
-            </ul>
+            </Grid>
           </CardBody>
         </Card>
       </Measure>

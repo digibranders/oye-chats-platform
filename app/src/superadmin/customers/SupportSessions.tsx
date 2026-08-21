@@ -9,6 +9,7 @@ import {
   CardHeader,
   ConfirmDialog,
   EmptyState,
+  Well,
   formatDateTime,
   toast,
 } from '../../ui';
@@ -113,7 +114,6 @@ export function SupportSessionsPanel({ clientId }: { clientId?: number }) {
     <Card>
       <CardHeader
         titleAs="h3"
-        eyebrow="Impersonation"
         title="Support sessions"
         description="Minted in this browser tab."
         actions={
@@ -143,53 +143,52 @@ export function SupportSessionsPanel({ clientId }: { clientId?: number }) {
               const state = sessionState(session, now);
               const left = minutesRemaining(session, now);
               return (
-                <li
-                  key={session.tokenId}
-                  className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-text-primary">
-                      {session.clientName}
+                <li key={session.tokenId}>
+                  <Well className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-text-primary">
+                        {session.clientName}
+                      </p>
+                      <p className="truncate text-xs text-text-secondary">
+                        {session.clientEmail} · token{' '}
+                        <span className="figure">#{session.tokenId}</span> · minted{' '}
+                        <span className="figure">{formatDateTime(session.mintedAt)}</span>
+                      </p>
+                    </div>
+                    <Badge tone={STATE_TONE[state]} dot={state === 'open'}>
+                      {STATE_LABEL[state]}
+                    </Badge>
+                    <p className="figure text-xs text-text-tertiary">
+                      {state === 'revoked'
+                        ? `Revoked ${formatDateTime(session.revokedAt)}`
+                        : left === null
+                          ? '—'
+                          : state === 'expired'
+                            ? 'Expired'
+                            : `${left} min left`}
                     </p>
-                    <p className="truncate text-xs text-text-secondary">
-                      {session.clientEmail} · token{' '}
-                      <span className="figure">#{session.tokenId}</span> · minted{' '}
-                      <span className="figure">{formatDateTime(session.mintedAt)}</span>
-                    </p>
-                  </div>
-                  <Badge tone={STATE_TONE[state]} dot={state === 'open'}>
-                    {STATE_LABEL[state]}
-                  </Badge>
-                  <p className="figure text-xs text-text-tertiary">
-                    {state === 'revoked'
-                      ? `Revoked ${formatDateTime(session.revokedAt)}`
-                      : left === null
-                        ? '—'
-                        : state === 'expired'
-                          ? 'Expired'
-                          : `${left} min left`}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    {state === 'ready' ? (
-                      <Button size="sm" variant="accent" onClick={() => handOff(session)}>
-                        <ExternalLink aria-hidden className="h-3.5 w-3.5" />
-                        Open support session
-                      </Button>
-                    ) : null}
-                    {isLive(session, now) ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setError(null);
-                          setPendingRevoke(session);
-                        }}
-                      >
-                        <ShieldOff aria-hidden />
-                        Revoke
-                      </Button>
-                    ) : null}
-                  </div>
+                    <div className="flex items-center gap-2">
+                      {state === 'ready' ? (
+                        <Button size="sm" variant="accent" onClick={() => handOff(session)}>
+                          <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+                          Open support session
+                        </Button>
+                      ) : null}
+                      {isLive(session, now) ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setError(null);
+                            setPendingRevoke(session);
+                          }}
+                        >
+                          <ShieldOff aria-hidden />
+                          Revoke
+                        </Button>
+                      ) : null}
+                    </div>
+                  </Well>
                 </li>
               );
             })}

@@ -12,6 +12,7 @@ import {
   Select,
   Stack,
   Toolbar,
+  Well,
   formatDate,
   formatNumber,
   toast,
@@ -439,7 +440,7 @@ function OverrideDrawer({
           />
         </Field>
 
-        <div className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
+        <Well>
           <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
             What will be sent
           </p>
@@ -454,7 +455,7 @@ function OverrideDrawer({
               ))}
             </ul>
           )}
-        </div>
+        </Well>
       </div>
     </Drawer>
   );

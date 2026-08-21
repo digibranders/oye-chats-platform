@@ -109,8 +109,7 @@ export function AffiliatePage() {
     {
       key: 'code',
       header: 'Code',
-      pinned: true,
-      width: '14rem',
+      width: '11rem',
       sortable: (a, b) => a.code.localeCompare(b.code),
       render: (row) => (
         <div className="min-w-0">
@@ -122,6 +121,7 @@ export function AffiliatePage() {
     {
       key: 'status',
       header: 'Status',
+      width: '7rem',
       render: (row) =>
         row.active ? (
           <Badge tone="success" dot>
@@ -139,6 +139,7 @@ export function AffiliatePage() {
       key: 'split',
       header: 'Split',
       secondary: true,
+      width: '9.5rem',
       render: (row) => (
         <span className="text-xs text-text-secondary">
           <span className="figure text-text-primary">{formatPct(row.affiliateCommissionPct)}</span>{' '}
@@ -152,6 +153,7 @@ export function AffiliatePage() {
       key: 'clicks',
       header: 'Clicks',
       type: 'number',
+      width: '5.5rem',
       sortable: (a, b) => a.clicks - b.clicks,
       render: (row) => formatNumber(row.clicks),
     },
@@ -159,6 +161,7 @@ export function AffiliatePage() {
       key: 'signups',
       header: 'Signups',
       type: 'number',
+      width: '6rem',
       sortable: (a, b) => a.signups - b.signups,
       render: (row) => formatNumber(row.signups),
     },
@@ -169,6 +172,7 @@ export function AffiliatePage() {
       key: 'conversion',
       header: 'Conversion',
       type: 'number',
+      width: '7rem',
       sortable: (a, b) => a.conversionPct - b.conversionPct,
       render: (row) => formatPct(row.conversionPct),
     },
@@ -178,7 +182,6 @@ export function AffiliatePage() {
       // sixteen times.
       key: 'link',
       header: 'Share link',
-      width: '20rem',
       render: (row) => (
         <CopyField
           compact
@@ -259,6 +262,15 @@ export function AffiliatePage() {
         ) : null}
 
         <DataTable
+          // `fit`. Eight columns at their natural widths came to 1,033px inside
+          // the settings content column, which is 902 — so the share link was
+          // sliced through mid-URL at the card's right edge and the row menu,
+          // the only way to edit or pause a code, was off the card entirely,
+          // behind a scrollbar the card never drew. Every column but the link
+          // declares the width it must not give up; the link is the one that
+          // gives, and it truncates its own URL and keeps its copy button,
+          // which is the part of it anybody uses.
+          fit
           caption="Your referral codes and how each one has performed"
           columns={columns}
           rows={codes}

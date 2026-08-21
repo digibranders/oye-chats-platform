@@ -175,6 +175,8 @@ export function AuditScreen() {
           rows={pageRows}
           rowKey={(entry) => String(entry.id)}
           rowLabel={(entry) => `${entry.action} by ${entry.actor_name ?? 'unknown'}`}
+          rowNoun="entry"
+          rowNounPlural="entries"
           loading={audit.loading && audit.items.length === 0}
           error={audit.error}
           onRetry={audit.reload}

@@ -5,6 +5,8 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
+  CardBody,
   Dialog,
   EmptyState,
   Field,
@@ -154,7 +156,7 @@ function CreateAccountDialog({
             placeholder="ops@acme.com"
           />
         </Field>
-        <Field label="Website" hint="Optional. Used as the default crawl target.">
+        <Field label="Website" optional hint="Used as the default crawl target.">
           <Input value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="acme.com" />
         </Field>
       </div>
@@ -272,27 +274,36 @@ function AccountsTab() {
 
   return (
     <Stack>
-      <StatRow
-        label="Platform totals"
-        period="Right now"
-        loading={list.loading}
-        items={[
-          { label: 'Accounts', value: formatNumber(list.items.length), period: 'All time' },
-          {
-            label: 'Suspended',
-            value: formatNumber(suspended),
-            tone: suspended > 0 ? 'warning' : 'neutral',
-          },
-          {
-            // A currency is a unit, not a window. See the note on
-            // `revenue/OverviewTab`'s strip.
-            label: 'Monthly recurring',
-            value: usdCentsRounded(totalMrr),
-            hint: USD_NORMALISED_SHORT,
-          },
-          { label: 'Showing', value: formatNumber(paged.total), period: 'After this filter' },
-        ]}
-      />
+      {/* Carded, like every other strip in this console. It was the one bare
+          `StatRow` on the page ground: its hairlines had nothing to meet, so
+          four tiles read as three floating rules over a caption. */}
+      <Card>
+        <CardBody flush>
+          <StatRow
+            columns={3}
+            label="Platform totals"
+            period="Right now"
+            loading={list.loading}
+            items={[
+              { label: 'Accounts', value: formatNumber(list.items.length) },
+              {
+                label: 'Suspended',
+                value: formatNumber(suspended),
+                tone: suspended > 0 ? 'warning' : 'neutral',
+              },
+              {
+                // A currency is a unit, not a window. See the note on
+                // `revenue/OverviewTab`'s strip.
+                label: 'Monthly recurring',
+                value: usdCentsRounded(totalMrr),
+                hint: USD_NORMALISED_SHORT,
+              },
+              // "Showing / After this filter" was a fourth tile printing exactly
+              // what the table's own count summary prints under it.
+            ]}
+          />
+        </CardBody>
+      </Card>
 
       <Toolbar sticky>
         <div className="w-72 max-w-full">

@@ -14,6 +14,7 @@ import {
   SegmentedControl,
   Textarea,
   Tooltip,
+  Well,
   buttonClass,
 } from '../../../ui';
 import { useEntitlements } from '../../../hooks/useEntitlements';
@@ -50,25 +51,24 @@ const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
  * default, and `Input` paints a placeholder in `--color-text-disabled`. Nine
  * fields, no way to tell which you had customised without clicking into each.
  *
- * The rule is stated once on the card now, and the state is marked on the
- * control. It sits in `Input`'s trailing slot because `Field` has no slot beside
- * its label — reported as a `src/ui` gap.
+ * The rule is stated once on the card now, and the state is marked beside the
+ * field's label, in `Field`'s trailing slot.
+ *
+ * It used to live in `Input`'s, which is *inside* the field — and a conditional
+ * affix there changes the input's element tree, so React remounted the element
+ * on the first keystroke and took the caret with it. The workaround was to
+ * render the badge always and set `invisible` on it, which reserved a hole for
+ * something that is usually not there. `Field trailing` is outside the control,
+ * so the badge can simply not be rendered when it does not apply.
  *
  * Every field on this tab is the card's own width, and none of them carries a
  * width class. Five of the nine used to be `max-w-sm` with no rule behind which
  * — one right edge at 384 and another at 638, alternating down a single column.
- * Worse, a width on `Input` lands on the `<input>` while the trailing slot is
- * positioned against the wrapper, which is still full width: the badge below
- * detached from its own field and floated 250px to its right. A width on a
- * control here goes on the `Field`, never on the control.
  */
 function defaultMark(value: string) {
-  // Always rendered, hidden rather than removed: `Input` returns a bare
-  // `<input>` when it has no affix and a wrapped one when it does, so a
-  // conditional slot remounts the element on the first keystroke and takes the
-  // caret with it.
+  if (value.trim().length > 0) return undefined;
   return (
-    <Badge tone="neutral" size="sm" className={value.trim().length === 0 ? undefined : 'invisible'}>
+    <Badge tone="neutral" size="sm">
       Default
     </Badge>
   );
@@ -166,13 +166,16 @@ export function MessagesSection({
               onChange={(event) => onChange({ displayName: event.target.value })}
             />
           </Field>
-          <Field label="Launcher text" hint="Beside the closed launcher.">
+          <Field
+            label="Launcher text"
+            hint="Beside the closed launcher."
+            trailing={defaultMark(draft.launcherName)}
+          >
             <Input
               value={draft.launcherName}
               maxLength={LIMITS.launcherName}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.launcherName}
-              trailing={defaultMark(draft.launcherName)}
               onChange={(event) => onChange({ launcherName: event.target.value })}
             />
           </Field>
@@ -186,33 +189,30 @@ export function MessagesSection({
           title="The first thing a visitor reads"
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Greeting">
+          <Field label="Greeting" trailing={defaultMark(draft.welcomeGreeting)}>
             <Input
               value={draft.welcomeGreeting}
               maxLength={LIMITS.welcomeGreeting}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.welcomeGreeting}
-              trailing={defaultMark(draft.welcomeGreeting)}
               onChange={(event) => onChange({ welcomeGreeting: event.target.value })}
             />
           </Field>
-          <Field label="Subtitle">
+          <Field label="Subtitle" trailing={defaultMark(draft.welcomeSubtitle)}>
             <Input
               value={draft.welcomeSubtitle}
               maxLength={LIMITS.welcomeSubtitle}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.welcomeSubtitle}
-              trailing={defaultMark(draft.welcomeSubtitle)}
               onChange={(event) => onChange({ welcomeSubtitle: event.target.value })}
             />
           </Field>
-          <Field label="Message box placeholder">
+          <Field label="Message box placeholder" trailing={defaultMark(draft.inputPlaceholder)}>
             <Input
               value={draft.inputPlaceholder}
               maxLength={LIMITS.inputPlaceholder}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.inputPlaceholder}
-              trailing={defaultMark(draft.inputPlaceholder)}
               onChange={(event) => onChange({ inputPlaceholder: event.target.value })}
             />
           </Field>
@@ -237,13 +237,9 @@ export function MessagesSection({
         />
         <CardBody className="flex flex-col gap-4">
           {quickActions.length === 0 ? (
-            // `-mx-cell`: the `CardBody` has already drawn the 20px gutter, and
-            // a state draws its own so it lands on the card title's left edge
-            // when seated flush. Without it this line sat 20px inside every
-            // label and control around it.
             <EmptyState
               size="inline"
-              className="-mx-cell"
+              flush
               title="No starter questions yet"
             />
           ) : (
@@ -342,7 +338,7 @@ export function MessagesSection({
 
           {suggestions !== null && !suggesting ? (
             unusedSuggestions.length > 0 ? (
-              <div className="flex flex-col gap-2 rounded-md bg-surface-sunken px-3 py-3">
+              <Well className="flex flex-col gap-2">
                 <p className="text-xs text-text-secondary">
                   Questions your chatbot can already answer from what it has read. Add the ones that
                   fit — you can reword them afterwards.
@@ -362,7 +358,7 @@ export function MessagesSection({
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Well>
             ) : (
               <p className="text-xs text-text-secondary" role="status">
                 {suggestions.length === 0
@@ -382,13 +378,12 @@ export function MessagesSection({
           description="Leave a field empty for our wording."
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Greeting bubble">
+          <Field label="Greeting bubble" trailing={defaultMark(draft.greetingMessage)}>
             <Input
               value={draft.greetingMessage}
               maxLength={LIMITS.greetingMessage}
               disabled={readOnly}
               placeholder={PLACEHOLDERS.greetingMessage}
-              trailing={defaultMark(draft.greetingMessage)}
               onChange={(event) => onChange({ greetingMessage: event.target.value })}
             />
           </Field>
@@ -406,46 +401,51 @@ export function MessagesSection({
 
           {liveChatIncluded ? (
             <>
-              <Field label="Live chat button">
+              <Field label="Live chat button" trailing={defaultMark(draft.liveChatLabel)}>
                 <Input
                   value={draft.liveChatLabel}
                   maxLength={LIMITS.liveChatLabel}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.liveChatLabel}
-                  trailing={defaultMark(draft.liveChatLabel)}
                   onChange={(event) => onChange({ liveChatLabel: event.target.value })}
                 />
               </Field>
-              <Field label="Rating prompt" hint="Asked once a live conversation ends.">
+              <Field
+                label="Rating prompt"
+                hint="Asked once a live conversation ends."
+                trailing={defaultMark(draft.ratingPrompt)}
+              >
                 <Input
                   value={draft.ratingPrompt}
                   maxLength={LIMITS.ratingPrompt}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.ratingPrompt}
-                  trailing={defaultMark(draft.ratingPrompt)}
                   onChange={(event) => onChange({ ratingPrompt: event.target.value })}
                 />
               </Field>
-              <Field label="End-chat button" hint="Hands the conversation back to the chatbot.">
+              <Field
+                label="End-chat button"
+                hint="Hands the conversation back to the chatbot."
+                trailing={defaultMark(draft.endChatLabel)}
+              >
                 <Input
                   value={draft.endChatLabel}
                   maxLength={LIMITS.endChatLabel}
                   disabled={readOnly}
                   placeholder={PLACEHOLDERS.endChatLabel}
-                  trailing={defaultMark(draft.endChatLabel)}
                   onChange={(event) => onChange({ endChatLabel: event.target.value })}
                 />
               </Field>
             </>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-surface-sunken px-3 py-2.5">
+            <Well className="flex flex-wrap items-center justify-between gap-3">
               <p className="min-w-0 text-prose text-text-secondary">
                 Three more lines appear with live chat.
               </p>
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
                 Compare plans
               </Link>
-            </div>
+            </Well>
           )}
         </CardBody>
       </Card>

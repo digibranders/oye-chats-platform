@@ -156,16 +156,20 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
 
         {editing ? (
           <div className="space-y-4">
-            <Field label="Name" hint="What you will recognise it by in the list.">
+            <Field label="Name" required hint="What you will recognise it by in the list.">
               <Input
                 value={draft.title}
                 onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
                 placeholder="Pricing question"
               />
             </Field>
+            {/* The one skippable field of the three, so it is the one that
+                carries a marker — and it carries it beside the label rather
+                than as the first word of its hint. See DESIGN.md rule 4. */}
             <Field
               label="Shortcut"
-              hint="Optional. Typing /pricing in the message box finds it instantly."
+              optional
+              hint="Typing /pricing in the message box finds it instantly."
             >
               <Input
                 value={draft.shortcut}
@@ -174,7 +178,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
                 placeholder="pricing"
               />
             </Field>
-            <Field label="Message">
+            <Field label="Message" required>
               <Textarea
                 rows={6}
                 value={draft.content}

@@ -44,7 +44,11 @@ export type StateSize = 'page' | 'panel' | 'inline';
 export type StateAlign = 'center' | 'start';
 
 interface StateGeometry {
-  root: string;
+  /**
+   * Vertical padding only. Horizontal is `px-cell`, applied separately by
+   * `StateBody` so `flush` can drop it alone — see the note there.
+   */
+  rootY: string;
   disc: string;
   glyph: string;
   title: string;
@@ -55,7 +59,7 @@ interface StateGeometry {
 
 const GEOMETRY: Record<StateSize, StateGeometry> = {
   page: {
-    root: 'px-cell py-16',
+    rootY: 'py-16',
     disc: 'mb-4 h-12 w-12 rounded-md',
     glyph: 'h-icon-lg w-icon-lg',
     title: 'text-lg font-semibold',
@@ -64,7 +68,7 @@ const GEOMETRY: Record<StateSize, StateGeometry> = {
     gap: 'mt-5',
   },
   panel: {
-    root: 'px-cell py-10',
+    rootY: 'py-10',
     // 16px glyph in a 32px disc — the 2:1 ratio `Avatar` and `Button icon-sm`
     // already use. The old 18px glyph (`h-4.5`) was not on the 4-base scale at
     // all, and a 36px chip at `rounded-md` is proportionally rounder than the
@@ -77,7 +81,7 @@ const GEOMETRY: Record<StateSize, StateGeometry> = {
     gap: 'mt-4',
   },
   inline: {
-    root: 'px-cell py-6',
+    rootY: 'py-6',
     // Unused: an inline state draws no disc. A 32px chip beside two lines of
     // type inside a table row is decoration, and decoration is what makes an
     // empty table read as a poster.
@@ -158,10 +162,21 @@ function StateBody({
   return (
     <div
       className={cn(
-        geometry.root,
-        // `flush` drops only the horizontal gutter. The vertical one is the
-        // state's own breathing room and belongs to it either way.
-        flush && 'px-0',
+        geometry.rootY,
+        // Subtractive, like `CardBody flush`, and for the same reason:
+        // `px-cell` is a custom spacing token `tailwind-merge` does not
+        // recognise as a padding utility, so an additive `flush && 'px-0'`
+        // appended after `px-cell` left both classes in the string with no
+        // guaranteed winner — `tailwind-merge` cannot dedupe two utilities it
+        // does not know share a CSS property, so it kept both, and standard
+        // utility ordering happened to keep `px-cell` live regardless of
+        // `flush`. Every `flush` call site measured the same 20px inset as an
+        // unflushed one. Applying `px-cell` only when NOT flush needs no merge
+        // to resolve, so it cannot lose that way again — the vertical padding
+        // stays unconditional in `rootY` because `flush` drops only the
+        // horizontal gutter; the vertical one is the state's own breathing
+        // room and belongs to it either way.
+        !flush && 'px-cell',
         centred ? 'text-center' : 'text-left',
       )}
     >

@@ -293,6 +293,7 @@ export function CouponsScreen() {
           rows={pageRows}
           rowKey={(coupon) => String(coupon.id)}
           rowLabel={(coupon) => coupon.code}
+          rowNoun="coupon"
           loading={coupons.loading && coupons.items.length === 0}
           error={coupons.error}
           onRetry={coupons.reload}
@@ -391,6 +392,7 @@ export function CouponsScreen() {
 
           <Field
             label="Maximum redemptions"
+            optional
             error={shown.max_redemptions}
             hint="Blank for uncapped."
           >

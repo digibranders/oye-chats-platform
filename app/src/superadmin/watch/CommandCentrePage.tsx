@@ -7,7 +7,6 @@ import {
   Card,
   CardBody,
   ChartFrame,
-  CodeBlock,
   DataTable,
   EmptyState,
   LoadingRows,
@@ -16,6 +15,7 @@ import {
   Stack,
   Section,
   formatCompact,
+  formatDateTime,
   formatDuration,
   formatNumber,
   seriesColor,
@@ -24,7 +24,14 @@ import {
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
 import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
 import { SeriesTooltip } from '../SeriesTooltip';
-import { dayTick } from '../chartTicks';
+import { dayTick, tickInterval } from '../chartTicks';
+import {
+  errorCellText,
+  errorFieldKeys,
+  errorFieldLabel,
+  errorLevelTone,
+  isIsoInstant,
+} from './errorTable';
 import { PlatformPage } from '../PlatformPage';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { USD_NORMALISED_SHORT, usdCentsRounded } from '../money';
@@ -138,6 +145,34 @@ export function CommandCentrePage() {
         value: metric === 'revenue' ? point.value / 100 : point.value,
       })),
     [series.items, metric],
+  );
+
+  // The error list has no schema — see `errorTable`. Its columns are whatever
+  // keys the payload actually carries, so nothing is invented and nothing the
+  // server sent is dropped.
+  const errorColumns = useMemo<readonly Column<Record<string, unknown>>[]>(
+    () =>
+      errorFieldKeys(errors.items).map((key) => ({
+        key,
+        header: errorFieldLabel(key),
+        rowHeader: key === 'title' || key === 'message',
+        align: typeof errors.items[0]?.[key] === 'number' ? ('right' as const) : undefined,
+        render: (row: Record<string, unknown>) => {
+          const value = row[key];
+          if (key === 'level') {
+            const text = errorCellText(value);
+            return text ? (
+              <Badge tone={errorLevelTone(value)} dot>
+                {text}
+              </Badge>
+            ) : null;
+          }
+          if (isIsoInstant(value)) return formatDateTime(value);
+          const text = errorCellText(value);
+          return typeof value === 'number' ? <span className="figure">{text}</span> : text;
+        },
+      })),
+    [errors.items],
   );
 
   // A chart is a picture; the summary is how it reads to anyone not looking at
@@ -267,6 +302,10 @@ export function CommandCentrePage() {
                 rows={queues.items}
                 rowKey={(row) => row.queue_name}
                 rowNoun="queue"
+                // ARQ's queues are a fixed fact of the worker's settings, not a
+                // measurement: "4 queues" under a table that can never have a
+                // fifth is a number the reader discards.
+                countSummary={false}
                 loading={queues.loading && queues.items.length === 0}
                 empty={
                   <EmptyState
@@ -280,17 +319,23 @@ export function CommandCentrePage() {
           </Card>
         </Section>
 
-        <Section title="The month">
+        <Section title="The numbers">
           <Card>
             <CardBody flush>
               <StatRow
                 columns={4}
-                label="This month"
-                period="This month"
+                label="Platform totals"
+                // The strip's window is the one most of its tiles cover. The
+                // three that genuinely cover another state it themselves — the
+                // section used to be titled "The month" over five all-time
+                // figures, which is a window stated three times and contradicted
+                // by five of the eight numbers under it.
+                period="All time"
                 loading={centre.loading || stats.loading}
                 items={[
                   {
-                    label: 'Revenue this month',
+                    label: 'Revenue',
+                    period: 'This month',
                     size: 'lg',
                     value: centre.data
                       ? usdCentsRounded(centre.data.revenue_current_month_cents)
@@ -316,7 +361,8 @@ export function CommandCentrePage() {
                         : undefined,
                   },
                   {
-                    label: 'Revenue this year',
+                    label: 'Revenue, year to date',
+                    period: 'This year',
                     size: 'lg',
                     value: centre.data
                       ? usdCentsRounded(centre.data.growth_current_year_cents)
@@ -324,7 +370,8 @@ export function CommandCentrePage() {
                     hint: USD_NORMALISED_SHORT,
                   },
                   {
-                    label: 'Signups this month',
+                    label: 'Signups',
+                    period: 'This month',
                     value: centre.data
                       ? formatNumber(centre.data.signups_current_month)
                       : undefined,
@@ -335,29 +382,24 @@ export function CommandCentrePage() {
                   {
                     label: 'Accounts',
                     value: stats.data ? formatNumber(stats.data.total_clients) : undefined,
-                    period: 'All time',
                   },
                   {
                     label: 'Conversations',
                     value: centre.data ? formatCompact(centre.data.chats_total) : undefined,
-                    period: 'All time',
                   },
                   {
                     label: 'Handed to a person',
                     value: centre.data ? formatCompact(centre.data.operator_transfers) : undefined,
-                    period: 'All time',
                   },
                   {
                     label: 'Qualified leads',
                     value: centre.data
                       ? formatCompact(centre.data.bant_qualified_leads)
                       : undefined,
-                    period: 'All time',
                   },
                   {
                     label: 'Meetings booked',
                     value: centre.data ? formatNumber(centre.data.booked_meetings) : undefined,
-                    period: 'All time',
                   },
                 ]}
               />
@@ -397,7 +439,12 @@ export function CommandCentrePage() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={CHART_MARGIN}>
                 <CartesianGrid {...CHART_GRID} />
-                <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={dayTick}
+                  interval={tickInterval(chartData.length)}
+                  {...CHART_AXIS}
+                />
                 <YAxis {...CHART_AXIS} tickFormatter={(value: number) => formatCompact(value)} width={48} />
                 {/* The app's tooltip, not Recharts' default: the default is an
                     unthemed white box with a browser font that ignores the dark
@@ -443,8 +490,23 @@ export function CommandCentrePage() {
                 description="The Sentry DSN is write-only, so this endpoint returns an empty list by design. Read errors in Sentry itself."
               />
             ) : (
-              <CardBody>
-                <CodeBlock label="errors.json" code={JSON.stringify(errors.items, null, 2)} />
+              <CardBody flush>
+                {/* A table over whatever keys the payload carries, not
+                    `JSON.stringify(items, null, 2)` in a `CodeBlock` — which is
+                    what this was, and on a twelve-issue payload it printed
+                    1,800px of pretty-printed JSON onto the first screen of the
+                    console. This endpoint is the one list here with no schema,
+                    so the columns are derived rather than guessed. */}
+                <DataTable
+                  seated
+                  caption="Error issues reported by Sentry"
+                  columns={errorColumns}
+                  rows={errors.items}
+                  rowKey={(row) => String(row.id ?? row.shortId ?? JSON.stringify(row))}
+                  rowNoun="issue"
+                  loading={errors.loading && errors.items.length === 0}
+                  empty={<EmptyState size="inline" title="No errors" />}
+                />
               </CardBody>
             )}
           </Card>

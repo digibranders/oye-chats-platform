@@ -9,6 +9,7 @@ import {
   EmptyState,
   buttonClass,
   formatNumber,
+  formatRelative,
   type Column,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
@@ -34,14 +35,15 @@ export function KnowledgeGapsPanel({
   range: ResolvedRange;
 }) {
   const { questions, loading, error, refetch } = useUnansweredQuestions(botId, range.days);
+  const now = new Date();
 
-  // Two columns, not three. This panel is one half of a two-up `Grid`, so its
-  // card is about 550px; `Question` plus a 9rem count plus an 11rem "Last
-  // asked" made the table 641px wide inside it, and `DataTable`'s own
-  // `overflow-auto` quietly clipped the last column at the card's right edge.
-  // `Column.secondary` is `hidden md:table-cell` — a *viewport* query — so it
-  // stayed visible in a 550px container on a 1440px screen. The window is
-  // already stated in the header, and the timestamp is still in the CSV.
+  // `Column.secondary` is a container query now, so "Last asked" is back: this
+  // panel is one half of a two-up `Grid` and its card is about 550px, which is
+  // under the 768px step, so the column drops itself there and the table stays
+  // inside the card. It returns when the panel is given the room — a narrow
+  // window, or a future single-column arrangement. `fit` is what keeps the two
+  // remaining columns honest at 550: the default lets the table be wider than
+  // its box behind a scroll affordance under 44px rows that nobody finds.
   const columns: readonly Column<UnansweredQuestion>[] = [
     {
       key: 'question',
@@ -56,6 +58,18 @@ export function KnowledgeGapsPanel({
       width: '9rem',
       render: (row) => <span className="figure">{formatNumber(row.count)}</span>,
       sortable: (a, b) => a.count - b.count,
+    },
+    {
+      key: 'last_asked',
+      header: 'Last asked',
+      align: 'right',
+      width: '11rem',
+      secondary: true,
+      render: (row) => (
+        <span className="text-text-secondary">{formatRelative(row.last_asked, now)}</span>
+      ),
+      sortable: (a, b) =>
+        new Date(a.last_asked ?? 0).getTime() - new Date(b.last_asked ?? 0).getTime(),
     },
   ];
 
@@ -97,6 +111,7 @@ export function KnowledgeGapsPanel({
       <CardBody flush>
         <DataTable
           seated
+          fit
           caption="Questions the chatbot could not answer in the selected period"
           columns={columns}
           rows={questions}

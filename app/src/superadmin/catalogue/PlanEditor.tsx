@@ -15,6 +15,7 @@ import {
   SettingRow,
   Switch,
   Textarea,
+  Well,
   formatNumber,
   toast,
 } from '../../ui';
@@ -106,7 +107,7 @@ function LimitControl({
   onChange: (next: LimitDraft) => void;
 }) {
   return (
-    <div className="rounded-md border border-border bg-surface-sunken px-3 py-2.5">
+    <Well>
       {/* The switch sits outside the Field on purpose: every control inside one
           is handed the same id, so a second one would duplicate it and the
           label would name whichever rendered last. */}
@@ -147,7 +148,7 @@ function LimitControl({
           />
         </div>
       ) : null}
-    </div>
+    </Well>
   );
 }
 
@@ -303,7 +304,14 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
         {/* `Measure` re-declares `@container/page`, so every `Grid` below asks how
             wide the *drawer* is. Without it they query the page behind the
             overlay and a three-up grid renders three 230px columns in a 728px
-            panel — which is what `lg:grid-cols-3` was doing here. */}
+            panel — which is what `lg:grid-cols-3` was doing here.
+
+            Which then produced the opposite fault, and a worse one: the card
+            ramp's first step is 48rem and the drawer's body is ~44, so *every*
+            grid here collapsed and the editor rendered thirty full-width fields
+            one per row — 4,710px of scroll inside an 787px panel. `pairs` is the
+            step written for this exact box: two short fields on one line from
+            24rem of container. */}
         <Measure width="full" className="flex flex-col gap-6">
           {resultWarnings.length > 0 ? (
             <Alert tone="warning" live title="Saved, with warnings">
@@ -326,7 +334,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
           ) : null}
 
           <Section title="Identity" description="How the plan is named, ordered and listed.">
-            <Grid cols={2}>
+            <Grid cols="pairs">
               <Field label="Name" required error={shown.name} hint="Shown on the pricing page and the invoice.">
                 <Input value={draft.name} onChange={(event) => update({ name: event.target.value })} />
               </Field>
@@ -347,7 +355,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
                   onChange={(event) => update({ slug: event.target.value })}
                 />
               </Field>
-              <Field label="Description" className="@3xl/page:col-span-2" hint="One line, under the plan name.">
+              <Field label="Description" className="@sm/page:col-span-2" hint="One line, under the plan name.">
                 <Textarea
                   rows={2}
                   value={draft.description}
@@ -398,7 +406,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
             title="Entitlements — limits"
             description="Numeric caps. plan_entitlements_service reads these directly; an unknown key resolves to zero, which is why a limit is never simply deleted."
           >
-            <Grid cols={3} align="start">
+            <Grid cols="pairs" align="start">
               {LIMIT_FIELDS.map((field) => (
                 <LimitControl
                   key={field.key}
@@ -477,7 +485,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
             title="Commercials"
             description="Plans are INR-primary: the *_cents columns are paise and are what Razorpay debits. The USD columns are the international rail."
           >
-            <Grid cols={2} align="start">
+            <Grid cols="pairs" align="start">
               <MoneyField
                 label="Monthly price (INR paise)"
                 hint="Charged monthly."
@@ -618,7 +626,7 @@ export function PlanEditor({ open, plan, plans, onOpenChange, onSaved }: PlanEdi
           </Section>
 
           <Section title="Marketing" description="Copy rendered on the public pricing card.">
-            <Grid cols={2}>
+            <Grid cols="pairs">
               <Field label="Tagline" hint="One sentence under the plan name.">
                 <Input value={draft.tagline} onChange={(event) => update({ tagline: event.target.value })} />
               </Field>

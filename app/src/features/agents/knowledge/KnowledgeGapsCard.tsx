@@ -101,6 +101,12 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
         <CardBody flush>
           <DataTable
             seated
+            // `fit`: this card is the `main` half of a `Columns` split, so it is
+            // about 720px at 1440 and 560 at 1280. The default lets the table be
+            // wider than its box and scroll, which clips "Last asked" at the
+            // card's edge; `fit` ellipsises the question instead, which is what
+            // the `truncate` in its own `render` was already asking for.
+            fit
             columns={columns}
             rows={section.data}
             rowKey={(row) => row.question}

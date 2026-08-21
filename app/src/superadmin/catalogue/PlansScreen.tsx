@@ -170,7 +170,10 @@ export function PlansScreen() {
       header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (plan) =>
-        plan.active_subscriptions > 0 ? (
+        // A delisted plan was still offered "Delist": an action whose confirm
+        // described an effect the row already has. Relisting is an edit, so it
+        // belongs in the editor the row opens, not in a second row action.
+        !plan.is_active ? null : plan.active_subscriptions > 0 ? (
           // A disabled control that does not say why is a dead end: every row on
           // a healthy platform has subscribers, so this is the state an operator
           // meets first.
@@ -242,6 +245,7 @@ export function PlansScreen() {
           rows={rows}
           rowKey={(plan) => String(plan.id)}
           rowLabel={(plan) => plan.name}
+          rowNoun="plan"
           loading={plans.loading && rows.length === 0}
           error={plans.error}
           onRetry={plans.reload}

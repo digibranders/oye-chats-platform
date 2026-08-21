@@ -11,7 +11,6 @@ import {
   Input,
   RankedBars,
   SearchField,
-  Section,
   Stack,
   StatRow,
   Toolbar,
@@ -22,7 +21,7 @@ import {
 } from '../../ui';
 import { CHART_AXIS, CHART_CURSOR, CHART_GRID, CHART_MARGIN } from '../../ui/charts/theme';
 import { SeriesTooltip } from '../SeriesTooltip';
-import { dayTick } from '../chartTicks';
+import { dayTick, tickInterval } from '../chartTicks';
 import { usePlatformList, usePlatformResource, useUrlState } from '../usePlatform';
 import { RecordList } from '../RecordList';
 import { byDate, byText, includesText, usePagedRows } from '../recordListState';
@@ -60,7 +59,16 @@ export function VisitorsTab() {
 
   return (
     <Stack>
+      {/* One card: the totals, then the series they summarise. The strip was a
+          card of its own with two tiles across the full page width — a 12px
+          label and an 18px figure in a 568px cell — and the chart below it was
+          the only panel in this console rendered straight onto the page ground
+          with no surface under it. The AI cost screen already reads this way. */}
       <Card>
+        <CardHeader
+          title="Page views"
+          description="Trailing 14 days, page views only — the endpoint fixes both."
+        />
         <CardBody flush>
           <StatRow
             columns={2}
@@ -81,49 +89,50 @@ export function VisitorsTab() {
             ]}
           />
         </CardBody>
+        <CardBody>
+          <ChartFrame
+            summary={chartSummary}
+            loading={record.loading}
+            error={record.error}
+            onRetry={record.reload}
+            empty={daily.length === 0}
+            emptyTitle="No page views in the last 14 days"
+            emptyDescription="Either no widget is embedded anywhere, or no visitor reached a page carrying one."
+            height={220}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={daily} margin={CHART_MARGIN}>
+                <CartesianGrid {...CHART_GRID} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={dayTick}
+                  interval={tickInterval(daily.length)}
+                  {...CHART_AXIS}
+                />
+                <YAxis {...CHART_AXIS} tickFormatter={(value: number) => formatNumber(value)} width={48} />
+                {/* The app's tooltip. Recharts' default is an unthemed white panel
+                    in a browser font, and it stays white on the dark theme. */}
+                <RechartsTooltip
+                  cursor={CHART_CURSOR}
+                  content={<SeriesTooltip name="Page views" format={(value) => formatNumber(value)} />}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke={seriesColor(0)}
+                  fill={seriesColor(0)}
+                  fillOpacity={0.12}
+                  strokeWidth={2}
+                  // Off, like the customer console's activity chart: a
+                  // left-to-right redraw on every refetch is a console that never
+                  // settles.
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </CardBody>
       </Card>
-
-      <Section
-        title="Page views"
-        description="Trailing 14 days, page views only — the endpoint fixes both."
-      >
-        <ChartFrame
-          summary={chartSummary}
-          loading={record.loading}
-          error={record.error}
-          onRetry={record.reload}
-          empty={daily.length === 0}
-          emptyTitle="No page views in the last 14 days"
-          emptyDescription="Either no widget is embedded anywhere, or no visitor reached a page carrying one."
-          height={220}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={daily} margin={CHART_MARGIN}>
-              <CartesianGrid {...CHART_GRID} />
-              <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={24} {...CHART_AXIS} />
-              <YAxis {...CHART_AXIS} tickFormatter={(value: number) => formatNumber(value)} width={48} />
-              {/* The app's tooltip. Recharts' default is an unthemed white panel
-                  in a browser font, and it stays white on the dark theme. */}
-              <RechartsTooltip
-                cursor={CHART_CURSOR}
-                content={<SeriesTooltip name="Page views" format={(value) => formatNumber(value)} />}
-              />
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke={seriesColor(0)}
-                fill={seriesColor(0)}
-                fillOpacity={0.12}
-                strokeWidth={2}
-                // Off, like the customer console's activity chart: a
-                // left-to-right redraw on every refetch is a console that never
-                // settles.
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartFrame>
-      </Section>
 
       {/* `stretch`, not `start`: these are four panels of the same kind, and
           `start` left the first row ending 100px apart and the second row

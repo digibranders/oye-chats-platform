@@ -166,14 +166,12 @@ function BehaviourContent({
     <Page>
       <PageHeader title={TITLE} eyebrow={agentName} />
 
-      {/* A form measure, not the page's full width.
-          `SettingRow` caps its pair at `--container-pair` (640) because past
-          that the eye stops binding a label to its control — but the card around
-          it was still 1,128px at 1440 and 1,600 at 1920, so every switch on this
-          page sat mid-card with 480px of empty white to its right and the
-          hairline running on past it. The cap belongs to the *content*, so the
-          card takes it too: 672 holds the widest pair with the card's own gutter
-          either side, and the page keeps its left edge. */}
+      {/* No `Measure` around the groups: `SettingGroup` caps itself at
+          `--container-form` (672) now, so wrapping it was the compensation this
+          page was written before the primitive learned it. The measure is kept
+          for the two children that are *not* groups — the timing disclosure's
+          card and the floating save bar — because neither has a measure of its
+          own and a 1,128px save bar under a 672px form is two right edges. */}
       <Measure width="form">
         <Stack>
           <SettingGroup title="Answering">

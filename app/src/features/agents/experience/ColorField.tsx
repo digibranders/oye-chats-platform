@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react';
-import { Badge, Button, ColorInput, Field } from '../../../ui';
+import { Badge, Button, ColorInput, Field, Well } from '../../../ui';
 import {
   TEXT_CONTRAST_MIN,
   checkContrast,
@@ -95,25 +95,28 @@ export function ColorField({
           aria-label={label}
         />
 
-        {/* One well, one radius: `rounded-md` is DESIGN.md §4's inner panel, and
-            this used to be the only `rounded-sm` well in the feature. */}
-        <ul className="flex flex-col gap-1.5 rounded-md bg-surface-sunken px-3 py-2.5">
-          {checks.map((check) => (
-            <li key={check.label} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <span className="min-w-0 text-xs text-text-secondary">{check.label}</span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span className="figure text-xs text-text-primary">{formatRatio(check.ratio)}</span>
-                {check.verdict === 'pass' ? (
-                  <Badge tone="success">Readable</Badge>
-                ) : check.verdict === 'fail' ? (
-                  <Badge tone="danger">Below {check.min}:1</Badge>
-                ) : (
-                  <Badge tone="neutral">Not a colour</Badge>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {/* The `Well` the comment here used to describe by hand. It was the
+            seventh copy of `rounded-md … px-3 py-2.5` in `features/`, at the
+            only `rounded-sm` radius among them. */}
+        <Well>
+          <ul className="flex flex-col gap-1.5">
+            {checks.map((check) => (
+              <li key={check.label} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="min-w-0 text-xs text-text-secondary">{check.label}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="figure text-xs text-text-primary">{formatRatio(check.ratio)}</span>
+                  {check.verdict === 'pass' ? (
+                    <Badge tone="success">Readable</Badge>
+                  ) : check.verdict === 'fail' ? (
+                    <Badge tone="danger">Below {check.min}:1</Badge>
+                  ) : (
+                    <Badge tone="neutral">Not a colour</Badge>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Well>
 
         {failing.length > 0 ? (
           <p className="flex flex-wrap items-center gap-2 text-xs text-danger">

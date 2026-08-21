@@ -8,6 +8,7 @@ import {
   Dialog,
   EmptyState,
   ErrorState,
+  Grid,
   LoadingRows,
   Spinner,
   cn,
@@ -261,9 +262,10 @@ export function TopupDialog({
             description="This is usually temporary. If it persists, contact support and we will arrange a top-up manually."
           />
         ) : (
-          // Not `Grid`: its 2-up step is `@3xl/page` (768) and this dialog's
-          // body is 632px. See the round-two report.
-          <ul className="grid gap-3 sm:grid-cols-2">
+          // `pairs`, not `cols={2}`: the card ramp's 2-up step is `@3xl/page`
+          // (768) and this dialog's body is 632px, so `cols={2}` would render
+          // one pack a row. `pairs` asks the panel rather than the viewport.
+          <Grid as="ul" cols="pairs" label="Credit packs">
             {(packs.data ?? []).map((pack, index) => {
               const amountInr = chargeInr(pack);
               const usdMajor = Number(pack.usd ?? pack.display_amount ?? 0);
@@ -321,7 +323,7 @@ export function TopupDialog({
                 </li>
               );
             })}
-          </ul>
+          </Grid>
         )}
       </div>
     </Dialog>

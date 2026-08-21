@@ -18,3 +18,19 @@ export function dayTick(value: string): string {
   const parsed = new Date(`${value}T00:00:00`);
   return Number.isNaN(parsed.getTime()) ? value : TICK.format(parsed);
 }
+
+/**
+ * Every nth label, so a daily axis labels evenly.
+ *
+ * Recharts' own `minTickGap` drops colliding labels by walking the axis from one
+ * end, which on a 30-point series at 1440 produced eight consecutive days and
+ * then every second day — an axis whose spacing changes halfway across it.
+ * `interval` is deterministic: it takes every (n+1)th tick whatever the width,
+ * so the same series labels the same way on every screen.
+ *
+ * Recharts counts an interval, not a label count, hence the `- 1`.
+ */
+export function tickInterval(count: number, target = 8): number {
+  if (!Number.isFinite(count) || count <= target) return 0;
+  return Math.max(0, Math.ceil(count / target) - 1);
+}

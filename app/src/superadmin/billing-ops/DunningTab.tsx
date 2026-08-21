@@ -20,7 +20,7 @@ import {
 import { usePlatformResource } from '../usePlatform';
 import { FORBIDDEN_TITLE, forbiddenDescription } from '../forbidden';
 import { PAGE_SIZE } from '../recordListState';
-import { docMoneyWithCode } from '../money';
+import { docMoney, docMoneyWithCode } from '../money';
 import { atRiskByCurrency, cadenceSummary, sortByUrgency, urgencyLabel, urgencyTone } from './dunning';
 import type { DunningItem, DunningResponse } from './types';
 
@@ -116,7 +116,9 @@ export function DunningTab() {
         </Tooltip>
       ),
       align: 'right',
-      width: '11rem',
+      // No width: "no INR price on this plan" is the widest thing this column
+      // ever holds and 11rem ellipsised it. The table is auto-layout anyway
+      // wherever a column declines a width.
       render: (row) => (
         <div>
           <p className="figure text-sm text-text-primary">
@@ -203,7 +205,10 @@ export function DunningTab() {
                   ? [{ label: 'At risk', value: undefined, hint: 'Nothing failing' }]
                   : totals.map((total) => ({
                       label: `At risk (${total.currency})`,
-                      value: docMoneyWithCode(total.minor, total.currency),
+                      // The label carries the code, so the value does not:
+                      // `docMoneyWithCode` printed "₹39,855.00 INR" under a tile
+                      // already headed "At risk (INR)".
+                      value: docMoney(total.minor, total.currency),
                       // Per currency: the API's own total adds paise to cents.
                       hint: "One month's plan price",
                     }))),

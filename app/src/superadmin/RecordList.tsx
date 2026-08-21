@@ -26,8 +26,6 @@ export interface RecordListProps<T> {
   onRowClick?: (row: T) => void;
   /** Seated inside a `Card`, so the table drops its own surface. */
   seated?: boolean;
-  /** Offsets the sticky column heads under a sticky toolbar. */
-  stickyOffset?: string;
   /** A totals row, aligned with the columns it totals. */
   footer?: ReactNode;
   /**
@@ -82,7 +80,6 @@ export function RecordList<T>({
   empty,
   onRowClick,
   seated = false,
-  stickyOffset,
   footer,
   loaded,
   cap,
@@ -128,7 +125,6 @@ export function RecordList<T>({
         onRetry={onRetry}
         empty={empty}
         seated={seated}
-        stickyOffset={stickyOffset}
         footer={footer}
         forbidden={
           forbidden ? { title: FORBIDDEN_TITLE, description: forbiddenDescription(what) } : null

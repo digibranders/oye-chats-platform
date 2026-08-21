@@ -58,7 +58,7 @@ function ThresholdsSectionInner({
           ))}
         </Grid>
       </CardBody>
-      <CardSection className="bg-surface-sunken">
+      <CardSection tone="sunken">
         <Eyebrow>What that produces</Eyebrow>
         <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
           {bands.map((band) => {
