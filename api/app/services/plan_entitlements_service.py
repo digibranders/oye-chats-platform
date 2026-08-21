@@ -74,7 +74,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
-from app.db.models import Bot, Plan
+from app.db.models import Bot, Client, Plan
 from app.services.plan_service import (
     get_account_subscription,
     get_client_subscription,
@@ -838,6 +838,17 @@ def _compute(
     # `operators`/`bots`, because there is no purchasable add-on for either.
     limits["max_crawl_pages"] = (plan.limits or {}).get("max_crawl_pages", UNLIMITED)
     limits["max_crawl_depth"] = (plan.limits or {}).get("max_crawl_depth", UNLIMITED)
+
+    # `bots` is the plan's included count; `Client.extra_bot_seats` is what
+    # was purchased on top of it (POST /subscription/bot-seats, mirroring how
+    # `operators` above adds `subscription.operator_quantity`). Unlimited
+    # (`UNLIMITED`) stays unlimited regardless of what was purchased — there
+    # is nothing to add extra seats on top of.
+    bots_limit = limits.get("bots")
+    if isinstance(bots_limit, int) and bots_limit != UNLIMITED:
+        client_row = db_session.get(Client, client_id)
+        extra_seats = int(getattr(client_row, "extra_bot_seats", 0) or 0) if client_row is not None else 0
+        limits["bots"] = bots_limit + extra_seats
 
     result = PlanEntitlements(
         client_id=client_id,
