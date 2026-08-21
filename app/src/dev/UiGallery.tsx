@@ -159,6 +159,7 @@ import {
   validateEmail,
   validateUrl,
   WorkingDots,
+  ZoomPanCanvas,
   formatBytes,
   formatCompact,
   formatDate,
@@ -2362,6 +2363,27 @@ function DataPanel() {
           </CardBody>
         </Card>
         </Stack>
+      </Section>
+
+      <Section
+        title="Zoom and pan canvas"
+        description="A pannable, zoomable SVG viewport with keyboard navigation (arrow keys pan, +/- zoom, 0 resets) and accessible toolbar controls."
+      >
+        <Card>
+          <CardHeader title="Interactive diagram viewport" titleAs="h3" description="Click and drag to pan, scroll wheel or +/- keys to zoom." />
+          <CardBody>
+            <ZoomPanCanvas label="Demo diagram" viewBoxWidth={800} viewBoxHeight={300}>
+              <rect x={100} y={100} width={120} height={60} rx={8} fill="var(--color-surface)" stroke="var(--color-border-strong)" strokeWidth={1.5} />
+              <text x={160} y={135} textAnchor="middle" fill="var(--color-text)" fontSize={13} fontFamily="sans-serif">Node A</text>
+              <circle cx={400} cy={130} r={40} fill="var(--color-surface)" stroke="var(--color-border-strong)" strokeWidth={1.5} />
+              <text x={400} y={135} textAnchor="middle" fill="var(--color-text)" fontSize={13} fontFamily="sans-serif">Node B</text>
+              <rect x={580} y={100} width={120} height={60} rx={8} fill="var(--color-surface)" stroke="var(--color-border-strong)" strokeWidth={1.5} />
+              <text x={640} y={135} textAnchor="middle" fill="var(--color-text)" fontSize={13} fontFamily="sans-serif">Node C</text>
+              <path d="M 220 130 C 290 130, 310 130, 360 130" fill="none" stroke="var(--color-accent)" strokeWidth={2} />
+              <path d="M 440 130 C 490 130, 510 130, 580 130" fill="none" stroke="var(--color-accent)" strokeWidth={2} />
+            </ZoomPanCanvas>
+          </CardBody>
+        </Card>
       </Section>
 
       <Section

@@ -161,6 +161,8 @@ export type {
   SortState,
   SortDirection,
 } from './data/DataTable';
+export { ZoomPanCanvas } from './data/ZoomPanCanvas';
+export type { ZoomPanCanvasProps } from './data/ZoomPanCanvas';
 export {
   EmptyState,
   ErrorState,
