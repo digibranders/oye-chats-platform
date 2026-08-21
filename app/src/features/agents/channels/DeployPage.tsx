@@ -36,7 +36,7 @@ type HelpTab = 'platform' | 'troubleshoot';
 function DeploySkeleton() {
   return (
     <Columns
-      asideWidth="sm"
+      asideWidth="md"
       aside={
         <Stack>
           <Card>
@@ -249,7 +249,7 @@ export function DeployPage() {
 
       <Stack>
         <Columns
-          asideWidth="sm"
+          asideWidth="md"
           stickyAside
           asideLabel="Install status"
           main={

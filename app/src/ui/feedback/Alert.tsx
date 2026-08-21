@@ -98,6 +98,18 @@ export function Alert({
   className,
 }: AlertProps) {
   const Icon = TONE_ICON[tone];
+  const actionNode = action ? (
+    <div
+      className={cn(
+        'shrink-0',
+        tone !== 'neutral' &&
+          '[&_button]:border-current [&_button]:bg-transparent [&_button]:text-current [&_button]:hover:bg-surface',
+      )}
+    >
+      {action}
+    </div>
+  ) : null;
+
   return (
     <div
       data-tone={tone}
@@ -115,23 +127,21 @@ export function Alert({
         {icon ?? <Icon aria-hidden className="h-icon-md w-icon-md" />}
       </span>
       <div className="min-w-0 flex-1 text-prose">
-        {title ? <p className="font-medium">{title}</p> : null}
-        <div className={cn(title && 'mt-0.5')}>{children}</div>
+        {title ? (
+          <>
+            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+              <p className="font-medium">{title}</p>
+              {actionNode}
+            </div>
+            <div className="mt-1">{children}</div>
+          </>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <div className="min-w-0 flex-1">{children}</div>
+            {actionNode}
+          </div>
+        )}
       </div>
-      {action ? (
-        // A one-line alert centres its action against the line; a titled one
-        // pins it to the title, because the block's optical centre is lower.
-        <div
-          className={cn(
-            'shrink-0',
-            title ? 'self-start' : 'self-center',
-            tone !== 'neutral' &&
-              '[&_button]:border-current [&_button]:bg-transparent [&_button]:text-current [&_button]:hover:bg-surface',
-          )}
-        >
-          {action}
-        </div>
-      ) : null}
     </div>
   );
 }
