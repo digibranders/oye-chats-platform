@@ -36,6 +36,7 @@ from app.api.document_routes import router as document_router
 from app.api.invite_routes import me_router as invite_me_router
 from app.api.invite_routes import router as invite_router
 from app.api.lead_routes import router as lead_router
+from app.api.live_chat_audit_routes import router as live_chat_audit_router
 from app.api.notification_routes import router as notification_router
 from app.api.notification_routes import ws_router as notification_ws_router
 from app.api.oauth_routes import router as oauth_router
@@ -183,6 +184,7 @@ app.include_router(superadmin_router)
 app.include_router(public_bot_router)
 app.include_router(bot_router)
 app.include_router(chat_router)
+app.include_router(live_chat_audit_router)
 app.include_router(document_router)
 app.include_router(analytics_router)
 app.include_router(unsubscribe_router)

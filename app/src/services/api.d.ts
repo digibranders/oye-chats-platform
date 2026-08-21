@@ -301,6 +301,14 @@ export function getRatingsSummary(botId?: number): Promise<Record<string, unknow
 export function getResolutionSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getFeedbackData(botId?: number): Promise<FeedbackItem[]>;
 
+export interface SessionAuditEntry {
+  action: string;
+  operator_id: number | null;
+  details: Record<string, unknown> | null;
+  created_at: string | null;
+}
+export function getSessionAuditTrail(sessionId: string): Promise<{ entries: SessionAuditEntry[] }>;
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 /** One agent's activity in the reporting window. Agents with no activity at
  *  all are omitted by the backend, so a row always has a non-zero metric. */

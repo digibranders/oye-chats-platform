@@ -959,6 +959,16 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
+export const getSessionAuditTrail = async (sessionId) => {
+    try {
+        const response = await api.get(`/chat/sessions/${sessionId}/audit`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching session audit trail:', error);
+        throw buildApiError(error, 'Failed to load session audit trail');
+    }
+};
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 // Account-wide, never scoped to the shell's agent switcher: the whole point is
 // one row per agent side by side, so an agency can show each of its own clients

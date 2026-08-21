@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
+import { useQuery } from '@tanstack/react-query';
 import { Star } from 'lucide-react';
 import {
   Alert,
   Badge,
   Button,
+  Disclosure,
   Drawer,
   ErrorState,
   Field,
@@ -23,6 +25,7 @@ import {
   formatTime,
   type PropertyItem,
 } from '../../ui';
+import { getSessionAuditTrail } from '../../services/api';
 import type { Lead } from '../../types/domain';
 import { LeadJourney } from './LeadInsights';
 import { asRecord, asText, engagementBand, truncate } from './leadSource';
@@ -324,6 +327,54 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
   );
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  handoff_requested: 'Requested a person',
+  accepted: 'Operator joined',
+  closed: 'Closed',
+  transferred: 'Transferred',
+  timeout: 'Timed out',
+  visitor_cancelled: 'Visitor left the queue',
+};
+
+function humanizeAction(action: string): string {
+  return ACTION_LABELS[action] ?? action.replace(/_/g, ' ');
+}
+
+function LeadAuditTrail({ sessionId }: { sessionId: string }) {
+  const { data } = useQuery({
+    queryKey: ['lead-audit', sessionId],
+    queryFn: () => getSessionAuditTrail(sessionId),
+  });
+
+  const entries = data?.entries ?? [];
+  if (entries.length === 0) return null;
+
+  return (
+    <LeadSection title="Activity">
+      <Disclosure summary="Activity" regionLabel="Activity">
+        <ol>
+          {entries.map((entry, index) => {
+            const label = humanizeAction(entry.action);
+            return (
+              <li
+                key={`${entry.action}-${entry.created_at ?? index}`}
+                aria-label={label}
+                className="flex items-start gap-2 border-t border-border py-1.5 text-xs first:border-t-0"
+              >
+                <span className="figure shrink-0 text-text-tertiary">
+                  {entry.created_at ? formatRelative(entry.created_at) : '—'}
+                </span>
+                <span className="text-text-tertiary">—</span>
+                <span className="min-w-0 flex-1 text-text-primary">{label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </Disclosure>
+    </LeadSection>
+  );
+}
+
 export function LeadDrawer({
   sessionId,
   tab,
@@ -396,13 +447,7 @@ export function LeadDrawer({
               <PropertyGrid density="compact" items={properties} />
             </LeadSection>
 
-            {hasIntelligence(detail) ? (
-              <LeadQualification
-                lead={detail}
-                onOverride={data.overrideDimension}
-                saving={data.overriding}
-              />
-            ) : null}
+            {hasIntelligence(detail) ? <LeadQualification lead={detail} /> : null}
 
             <LeadJourney lead={detail} />
 
@@ -452,6 +497,8 @@ export function LeadDrawer({
                 </ul>
               </>
             )}
+
+            <LeadAuditTrail sessionId={detail.session_id} />
           </TabPanel>
         </Tabs>
       ) : null}

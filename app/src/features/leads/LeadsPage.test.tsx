@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   exportLeadsCsv: vi.fn(),
   overrideLeadQualification: vi.fn(),
   sendLeadFollowUp: vi.fn(),
+  getSessionAuditTrail: vi.fn(),
 }));
 
 vi.mock('../../services/api', () => api);
@@ -124,6 +125,7 @@ beforeEach(() => {
   api.getSessionDetails.mockResolvedValue({ visitor_rating: 5 });
   api.markLeadViewed.mockResolvedValue(undefined);
   api.markAllLeadsViewed.mockResolvedValue(undefined);
+  api.getSessionAuditTrail.mockResolvedValue({ entries: [] });
 });
 
 describe('LeadsPage', () => {
@@ -186,6 +188,26 @@ describe('LeadsPage', () => {
     await waitFor(() =>
       expect(screen.getByTestId('search')).not.toHaveTextContent('tab=conversation'),
     );
+  });
+
+  it('shows the session’s state transitions in order', async () => {
+    api.getSessionAuditTrail.mockResolvedValue({
+      entries: [
+        { action: 'handoff_requested', operator_id: null, details: null, created_at: '2026-08-20T10:00:00Z' },
+        { action: 'accepted', operator_id: 7, details: null, created_at: '2026-08-20T10:01:00Z' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage('/leads?lead=s1');
+
+    await user.click(await screen.findByRole('tab', { name: /conversation/i }));
+    await user.click(await screen.findByRole('button', { name: /activity/i }));
+
+    const entries = await screen.findAllByRole('listitem', { name: /requested a person|operator joined/i });
+    expect(entries.map((entry) => entry.textContent)).toEqual([
+      expect.stringContaining('Requested a person'),
+      expect.stringContaining('Operator joined'),
+    ]);
   });
 
   it('confirms before clearing every unread mark', async () => {
