@@ -106,8 +106,12 @@ describe('the rail', () => {
     const offenders = SHELL_FILES.filter(
       ({ name, source }) =>
         // The impersonation bar is paper on purpose: it is a canvas-side banner,
-        // not rail chrome.
-        !name.includes('ImpersonationBanner') && paperStatus.test(source),
+        // not rail chrome. The feedback dialog is the same case — it renders in
+        // a `Dialog` on the paper canvas, not on the rail; it lives under
+        // `shell/` only because its launcher tab is shell chrome.
+        !name.includes('ImpersonationBanner') &&
+        !name.includes('FeedbackModal') &&
+        paperStatus.test(source),
     ).map((f) => f.name);
     expect(offenders).toEqual([]);
   });
