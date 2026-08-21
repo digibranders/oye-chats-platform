@@ -70,7 +70,7 @@ bug structurally harder.
 
 | Today | Becomes | Why |
 |---|---|---|
-| `/journey`, a top-level scratch item | a tab inside **Analytics** | It is analytics, and it shipped as an admitted "temporary extra" |
+| `/journey`, a top-level scratch item | a tab inside **Analytics** | It is analytics, and it shipped as an admitted "temporary extra". The 2,011-line flow diagram it rendered went with it — its nodes were unlabelled `foreignObject` divs with an `onClick` and no `role`/`tabIndex`, so its one interaction (filter by clicking a node) was mouse-only. Replaced with the same underlying facts as ordinary, keyboard-reachable columns; the pan/zoom canvas and expand modal did not come back. See `JourneyFlow.tsx`. |
 | Workspace: 8 rail tabs, each opening its own second-level strip | **Settings**, one home with a secondary column | Three nav levels, none in the URL. Also merges the two settings homes |
 | Billing buried inside that | **its own destination**, plus a credit meter in the rail footer | Running out of credits stops the chatbot answering customers. That is an outage, not a preference |
 | Agent "Channels" (plural, one channel) | **Deploy** | A verb the user acts on |
@@ -194,36 +194,63 @@ entries are closed.
 
 | # | What | Where |
 |---|---|---|
-| B7 | `export const httpClient = api` sat above the `axios.create` that defines `api` — a temporal dead zone reference that threw on module evaluation and took down every screen in the app | `services/api.js` |
-| B8 | A checkbox with a visible label had no accessible name outside a `Field`; `Progress` labelled the Track rather than the element carrying `role="progressbar"`; every `CodeBlock` copy button was named "Copy" | `src/ui` |
-| B9 | `normalize_domain_input` strips a leading `www.` before storing but `extract_hostname` does not strip it from the browser's `Origin`, so an allow-list of `acme.com` blocks the customer's own `www.acme.com` homepage | backend · surfaced on Deploy |
+| B7 ✅ | `export const httpClient = api` sat above the `axios.create` that defines `api` — a temporal dead zone reference that threw on module evaluation and took down every screen in the app | `services/api.js`. Closed: the export now sits after `axios.create`. |
+| B8 ✅ | A checkbox with a visible label had no accessible name outside a `Field`; `Progress` labelled the Track rather than the element carrying `role="progressbar"`; every `CodeBlock` copy button was named "Copy" | `src/ui`. Closed: verified in `Progress.tsx` — `role="progressbar"` sits on the element it belongs to, with a comment naming the earlier defect. |
+| B9 ✅ | `normalize_domain_input` strips a leading `www.` before storing but `extract_hostname` does not strip it from the browser's `Origin`, so an allow-list of `acme.com` blocks the customer's own `www.acme.com` homepage | backend · surfaced on Deploy. Closed: fixed at the comparison, not at extraction — `is_origin_allowed` now admits an entry's `www.` host explicitly, so a stored `acme.com` matches an incoming `www.acme.com` Origin. |
 | B10 ✅ | `widget_installed_at` is stamped once and never refreshed, and the origin the widget was seen on is read and discarded — so there is no "last seen", only a first-seen date | backend · surfaced on Deploy. Closed: `widget_last_seen_at` / `widget_last_origin` now ship on `BotResponse` (≤2 writes/bot/hour) and Deploy renders both — the origin explicitly as a browser-reported diagnostic, and an empty reading explicitly as "not recorded", never as an outage |
 
-### Orphan endpoints — no client function at all
-`GET/PUT /operators/me/notification-preferences` (per-event push + quiet hours) →
-Settings ▸ Notifications · `PATCH /operators/session/{id}/qualification`
-(operator BANT override) → Inbox and Leads · `GET /ingest/status/{job_id}`
-(upload progress) → Knowledge.
+### Orphan endpoints — closed
+Every endpoint this section used to list with no client function now has one and
+a mounted consumer, verified against the running code rather than assumed:
+`GET/PUT /operators/me/notification-preferences` (per-event push + quiet hours)
+→ Settings ▸ Notifications (`notificationPreferences.ts`) · `PATCH
+/operators/session/{id}/qualification` (operator BANT override) → Leads ▸
+`LeadQualification.tsx` · `GET /ingest/status/{job_id}` (upload progress) →
+Knowledge (`knowledge-api.ts`).
 
-### Dead client functions needing a consumer
-`getVisitorsData` (a whole Visitors surface) · `previewBrandTone` ·
-`takeoverBotSession` ("take over from bot") · `removeSelfAsOperator` (an owner
-can join a workspace but never leave) · `acceptAffiliateInvite` (a *new* user
-with an affiliate invite has no signup path).
+### Dead client functions — closed
+`getVisitorsData` → a real, routed **Visitors** tab on Analytics
+(`VisitorsTab.tsx`), one of five — Overview, Conversations, Journey, Visitors,
+Feedback — all real paths under `/analytics/*` · `previewBrandTone` /
+`takeoverBotSession` → Agent ▸ Experience (`experience-api.ts`) and Workspace ▸
+Team (`MembersPage.tsx`) · `removeSelfAsOperator` → `MembersPage.tsx` · `acceptAffiliateInvite`
+→ `AffiliateInvite.tsx`, which closes the line directly in its own comment.
 
 ### Unsurfaced capability
-Analytics date range (`?days=` is supported and never passed — **every figure in
-the product is currently all-time**) · knowledge-gap window · Visitors list ·
-demo share/open funnel · server-side lead filtering and pagination (200-row
-client cap today) · live credit costs from `/credits/balance` (hard-coded in the
-UI while super-admins can override them) · bot-scoped credit history ·
-`knowledge_characters` quota · crawl limits · `api_access` and `online_support`
-plan flags · branding text/URL editor · operator profile edit · notification-centre
-unread filter · per-conversation rating and resolution · seed-question re-editing ·
-per-lead visitor journey · meeting bookings · **live-chat audit trail** (written on
-every transition, read by nothing) · queue analytics · chat-history pagination in
-the lead transcript · dunning state · per-invoice GST breakdown · plan overage rate
-and trial days · `max_bots` / `extra_bot_seats`.
+
+**Closed, verified against code.** Analytics date range — `?days=` is now
+threaded as `range` through every one of the five Analytics tabs, not just
+fetched and dropped · knowledge-gap window — `KnowledgeGapsCard` takes a
+7d/30d/90d/All control and passes it to the endpoint · Visitors list — see
+above · demo share/open funnel → `AgentActionsMenu.tsx` / `overview-data.ts` ·
+bot-scoped credit history — Usage renders "Credit history for {bot name}" per
+pool, not only the workspace total · `knowledge_characters` quota →
+`KnowledgePage.tsx` · `api_access` / `online_support` plan flags →
+`ApiKeysPage.tsx` / `ContactSection.tsx` · branding text/URL editor →
+`BrandingSection.tsx` · notification-centre unread filter — the All/Unread tabs
+on the notification panel · per-conversation rating and resolution → wired
+through `liveChatProtocol.ts` / `visitorProfile.ts` / `inboxQueries.ts` ·
+meeting bookings → `MeetingsPanel.tsx` · dunning state → `DunningBanner.tsx`
+(customer side) and a full `DunningTab.tsx` (super-admin) · per-invoice GST
+breakdown → `InvoicesSection.tsx` · plan overage rate and trial days →
+`billingModel.ts` / `planPricing.ts` and the super-admin catalogue.
+
+**Still open**, unchanged from before this pass: server-side lead filtering
+and pagination (200-row client cap today) · live credit costs from
+`/credits/balance` (hard-coded in the UI while super-admins can override
+them) · crawl limits (nothing in `KnowledgePage`/`Deploy` surfaces them) ·
+operator profile edit · seed-question re-editing · per-lead visitor journey
+(distinct from the aggregate Journey tab) · **live-chat audit trail** (written
+on every transition, read by nothing) · queue analytics · chat-history
+pagination in the lead transcript · `max_bots` / `extra_bot_seats`.
+
+**The product-feedback launcher was found missing, and fixed, in this pass.**
+Not a backend-capability gap — `getMyFeedback`, `submitPlatformFeedback` and
+`uploadFeedbackAttachment` were already live in `services/api.js`, untouched by
+the rebuild — but the right-edge "Feedback" tab and its dialog never got a
+`src/ui`-based home the way search and notifications did, and this ledger
+never named it. It does now, so the next read of this file does not have to
+rediscover it: `FeedbackLauncher.tsx`, mounted in `AppShell`.
 
 **Closed since the API caught up.** Five entries left that list because the
 backend stopped blocking them, and each now has exactly one owner surface:
