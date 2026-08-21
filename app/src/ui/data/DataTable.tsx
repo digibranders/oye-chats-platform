@@ -669,14 +669,19 @@ export function DataTable<T>({
             ) : state === 'error' ? (
               <tr>
                 {/* The cell carries no row hairline: it is a state, not a row,
-                    and the inset shadow would double the container's own edge. */}
-                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                    and the inset shadow would double the container's own edge.
+                    `px-[var(--cell-x)]` is written here rather than left to the
+                    state's own gutter: `flush` on the state below drops that
+                    gutter on the assumption the cell supplies one, and this
+                    cell — unlike an ordinary data cell — carried none, so the
+                    state's copy sat flush against the table's own edge. */}
+                <td colSpan={colSpan} className="px-[var(--cell-x)]" style={{ boxShadow: 'none' }}>
                   <ErrorState flush size="inline" description={error ?? undefined} onRetry={onRetry} />
                 </td>
               </tr>
             ) : state === 'forbidden' && forbidden ? (
               <tr>
-                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                <td colSpan={colSpan} className="px-[var(--cell-x)]" style={{ boxShadow: 'none' }}>
                   <LockedState
                     flush
                     size="inline"
@@ -688,11 +693,13 @@ export function DataTable<T>({
               </tr>
             ) : state === 'empty' ? (
               <tr>
-                <td colSpan={colSpan} style={{ boxShadow: 'none' }}>
+                <td colSpan={colSpan} className="px-[var(--cell-x)]" style={{ boxShadow: 'none' }}>
                   {isValidElement<{ size?: string; flush?: boolean }>(empty) ? (
-                    // The table owns the geometry of its own body. `flush` too:
-                    // the cell already carries `--cell-x`, so a state drawing
-                    // its own gutter sits 20px inside every other cell's text.
+                    // `flush` on the cloned state assumes this cell supplies
+                    // the horizontal gutter, so the cell has to actually carry
+                    // `px-[var(--cell-x)]` — an ordinary data `<td>` does, this
+                    // one did not, and the state's copy sat flush against the
+                    // table's own edge as a result.
                     cloneElement(empty, { size: 'inline', flush: true })
                   ) : (
                     empty ?? (
