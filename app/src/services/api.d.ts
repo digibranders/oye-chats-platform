@@ -309,6 +309,14 @@ export interface SessionAuditEntry {
 }
 export function getSessionAuditTrail(sessionId: string): Promise<{ entries: SessionAuditEntry[] }>;
 
+export interface QueueSummary {
+  current_depth: number;
+  avg_wait_seconds: number | null;
+  resolved_count: number;
+  abandoned_count: number;
+}
+export function getQueueSummary(botId?: number, days?: number): Promise<QueueSummary>;
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 /** One agent's activity in the reporting window. Agents with no activity at
  *  all are omitted by the backend, so a row always has a non-zero metric. */

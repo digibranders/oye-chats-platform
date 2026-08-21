@@ -18,6 +18,7 @@ from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
     get_message_activity,
+    get_queue_summary,
     get_ratings_summary,
     get_resolution_summary,
     get_top_questions,
@@ -320,6 +321,25 @@ def get_resolution_summary_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch resolution summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load resolution summary.") from e
+
+
+@router.get("/queue-summary")
+def get_queue_summary_endpoint(
+    bot_id: RowId | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Retrieve live-chat queue depth and historical wait-time / abandonment."""
+    try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
+        since = datetime.now(UTC) - timedelta(days=days)
+        with get_session() as session:
+            return get_queue_summary(session, client_id=auth["client_id"], bot_id=bot_id, since=since)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch queue summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load queue summary.") from e
 
 
 @router.get("/feedback")

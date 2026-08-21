@@ -969,6 +969,21 @@ export const getSessionAuditTrail = async (sessionId) => {
     }
 };
 
+export const getQueueSummary = async (botId, days = 30) => {
+    try {
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        if (days) params.set('days', String(days));
+        const qs = params.toString();
+        const url = qs ? `/analytics/queue-summary?${qs}` : '/analytics/queue-summary';
+        const response = await api.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching queue summary:', error);
+        throw buildApiError(error, 'Failed to load queue summary');
+    }
+};
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 // Account-wide, never scoped to the shell's agent switcher: the whole point is
 // one row per agent side by side, so an agency can show each of its own clients
