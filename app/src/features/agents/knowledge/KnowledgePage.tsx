@@ -493,60 +493,57 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
             not a 600px scroll each way. */}
         <Columns
           asideWidth="md"
-          asideLabel="Add knowledge"
+          asideLabel="Knowledge management"
           main={
-            <Card>
-              <CardHeader size="sm" title="Sources" titleAs="h2" />
-              <CardBody flush>
-                <SourcesTable
-                  sources={sources}
-                  loading={knowledge.sources.loading}
-                  error={knowledge.sources.error}
-                  onRetry={knowledge.sources.retry}
-                  canUseDelta={canUseDeltaRecrawl(planSlug)}
-                  busySource={recrawl?.loading ? recrawl.sourceName : null}
-                  crawlRunning={crawlRunning}
-                  crawlingDomain={crawlingDomain}
-                  query={sourceQuery}
-                  onQueryChange={(next) => setParam('q', next)}
-                  kind={sourceKind}
-                  onKindChange={(next) => setParam('kind', next === 'all' ? null : next)}
-                  onViewPages={(source) => setDrawerSource(source.name)}
-                  onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
-                  onDelete={removeSource}
-                />
-              </CardBody>
-            </Card>
-          }
-          aside={
-            <AddKnowledgePanel
-              agentId={agent.id}
-              agentName={agent.name ?? 'this chatbot'}
-              agentWebsite={agent.website ?? null}
-              sources={sources}
-              documentAllowance={documentAllowance}
-              pageAllowance={pageAllowance}
-              characterAllowance={characterAllowance}
-              planName={planName}
-              planLoading={planLoading}
-              empty={summary.total === 0}
-              onChanged={refreshEverything}
-            />
-          }
-        />
+            <Stack>
+              <Card>
+                <CardHeader size="sm" title="Sources" titleAs="h2" />
+                <CardBody flush>
+                  <SourcesTable
+                    sources={sources}
+                    loading={knowledge.sources.loading}
+                    error={knowledge.sources.error}
+                    onRetry={knowledge.sources.retry}
+                    canUseDelta={canUseDeltaRecrawl(planSlug)}
+                    busySource={recrawl?.loading ? recrawl.sourceName : null}
+                    crawlRunning={crawlRunning}
+                    crawlingDomain={crawlingDomain}
+                    query={sourceQuery}
+                    onQueryChange={(next) => setParam('q', next)}
+                    kind={sourceKind}
+                    onKindChange={(next) => setParam('kind', next === 'all' ? null : next)}
+                    onViewPages={(source) => setDrawerSource(source.name)}
+                    onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
+                    onDelete={removeSource}
+                  />
+                </CardBody>
+              </Card>
 
-        <Columns
-          asideWidth="md"
-          asideLabel="Weekly retrain"
-          main={
-            <KnowledgeGapsCard
-              section={knowledge.gaps}
-              window={gapWindow}
-              onWindowChange={setGapWindow}
-            />
+              <KnowledgeGapsCard
+                section={knowledge.gaps}
+                window={gapWindow}
+                onWindowChange={setGapWindow}
+              />
+            </Stack>
           }
           aside={
-            <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+            <Stack>
+              <AddKnowledgePanel
+                agentId={agent.id}
+                agentName={agent.name ?? 'this chatbot'}
+                agentWebsite={agent.website ?? null}
+                sources={sources}
+                documentAllowance={documentAllowance}
+                pageAllowance={pageAllowance}
+                characterAllowance={characterAllowance}
+                planName={planName}
+                planLoading={planLoading}
+                empty={summary.total === 0}
+                onChanged={refreshEverything}
+              />
+
+              <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+            </Stack>
           }
         />
       </Stack>
