@@ -5,6 +5,7 @@ import type { JourneyPreChatSequencesResponse } from '../../services/api';
 import { JourneyDiagram } from './JourneyDiagram';
 
 const sequences: JourneyPreChatSequencesResponse = {
+  period: '2026-08',
   total_sessions: 10,
   sessions_with_pre_chat: 8,
   sequences: [
