@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_current_depth_counts_only_fresh_waiting_sessions(db):
-    from app.db.models import Bot, ChatAuditLog, ChatSession, Client
+    from app.db.models import Bot, ChatSession, Client
     from app.db.repository import get_queue_summary
 
     client = Client(name="Queue Co", email="queue@test.example", api_key="key-queue")
