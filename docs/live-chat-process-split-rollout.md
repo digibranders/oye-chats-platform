@@ -2,7 +2,11 @@
 
 **Companion to:** [`live-chat-process-split-plan.md`](live-chat-process-split-plan.md)
 **Applies to:** phases 0–5, which are merged and shipped dark
-**Status:** ready to execute once the soak passes
+**Status:** EXECUTED in production 2026-08-20 13:19-13:22 UTC. Topology is now
+2 API workers on :8000 plus 1 WebSocket worker on :8001, backplane on, verified
+by a published probe reaching all 3 subscribers. Two workers rather than the
+rig's four: see the reasoning in `api/systemd/oyechats-api.service`. The steps
+below remain the procedure of record, including rollback.
 
 ---
 
@@ -65,14 +69,34 @@ each other. Do these in order and verify each.
 
 ### 1. Enable the backplane on the API, still one worker
 
+**Do not hand-edit `api/.env`.** `deploy-api.yml` rewrites that file in full on
+every deploy, so an entry added on the box survives exactly until the next one.
+The revert would be silent and badly timed: by then the API is running four
+workers, and the backplane is what carries a frame from the worker that produced
+it to the process holding the socket. Losing it means a visitor and their
+operator stop seeing each other — the exact bug this split exists to prevent —
+days after the deploy that caused it, with nothing in that deploy's diff to
+point at.
+
+Set the repo variable instead, which the workflow reads (defaulting to false):
+
 ```
-# in /opt/oyechats/platform/api/.env
-WS_BACKPLANE_ENABLED=true
+gh variable set WS_BACKPLANE_ENABLED --body true
 ```
+
+Then apply it. Either re-run the deploy, or set it on the box for now and let
+the next deploy carry it:
+
 ```
+grep -q '^WS_BACKPLANE_ENABLED=' /opt/oyechats/platform/api/.env \
+  && sudo sed -i 's/^WS_BACKPLANE_ENABLED=.*/WS_BACKPLANE_ENABLED=true/' /opt/oyechats/platform/api/.env \
+  || echo 'WS_BACKPLANE_ENABLED=true' | sudo tee -a /opt/oyechats/platform/api/.env
 sudo systemctl restart oyechats-api
 journalctl -u oyechats-api -n 50 | grep ws_backplane   # expect "subscriber listening"
 ```
+
+The box edit alone is not enough — set the repo variable too, or the next deploy
+takes it away.
 
 Nothing about routing has changed yet — the API still serves sockets itself and
 is still one worker. This step only proves the subscriber starts cleanly against
