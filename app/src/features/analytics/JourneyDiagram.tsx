@@ -10,7 +10,7 @@ import {
   cn,
 } from '../../ui';
 import type { JourneyPreChatSequencesResponse } from '../../services/api';
-import type { FilterableOutcome } from './journeyModel';
+import { isFilterableOutcome, type FilterableOutcome } from './journeyModel';
 import {
   buildTrie,
   circleEntry,
@@ -78,10 +78,10 @@ function FlowCard({
           />
         )}
         <div className="min-w-0 max-w-full text-center">
-          <p className="truncate text-[10px] font-medium leading-tight text-text-secondary">
+          <p className="truncate text-2xs font-medium leading-tight text-text-secondary">
             {node.label}
           </p>
-          <p className="tabular-nums text-[11px] font-semibold leading-tight text-text-primary">
+          <p className="tabular-nums text-2xs font-semibold leading-tight text-text-primary">
             {node.sessions.toLocaleString()}
           </p>
         </div>
@@ -105,11 +105,11 @@ function FlowCard({
         />
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] font-medium text-text-secondary">{node.label}</p>
-        <p className="tabular-nums text-[13px] font-semibold leading-tight text-text-primary">
+        <p className="truncate text-xs font-medium text-text-secondary">{node.label}</p>
+        <p className="tabular-nums text-sm font-semibold leading-tight text-text-primary">
           {node.sessions.toLocaleString()}
           {subtitle && (
-            <span className="ml-1 text-[10px] font-normal uppercase tracking-wide text-text-tertiary">
+            <span className="ml-1 text-2xs font-normal uppercase tracking-wide text-text-tertiary">
               {subtitle}
             </span>
           )}
@@ -148,10 +148,9 @@ export function JourneyDiagram({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  const rawSequences = sequences?.sequences ?? [];
-
   const { preViz, postViz, effVBH, centerY, preAllSessions, postAllSessions, postOrphans } =
     useMemo(() => {
+      const rawSequences = sequences?.sequences ?? [];
       const preInputs = rawSequences.map((s) => ({ paths: s.sequence, sessions: s.sessions }));
       const preRoot = buildTrie(preInputs);
       pruneToMaxLeaves(preRoot, 25);
@@ -187,10 +186,13 @@ export function JourneyDiagram({
         postAllSessions: postSessions,
         postOrphans: orphans,
       };
-    }, [rawSequences]);
+    }, [sequences]);
 
   const handleNodeSelect = (node: TrieVizNode) => {
     setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
+    if (node.startPage && isFilterableOutcome(node.startPage) && onSelectOutcome) {
+      onSelectOutcome(selectedOutcome === node.startPage ? null : node.startPage);
+    }
   };
 
   const renderSvgContent = () => (
@@ -290,7 +292,7 @@ export function JourneyDiagram({
           <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-white/15">
             <Bot aria-hidden className="h-6 w-6" strokeWidth={1.75} />
           </div>
-          <p className="text-[11px] font-medium leading-tight opacity-90">{centerLabel}</p>
+          <p className="text-2xs font-medium leading-tight opacity-90">{centerLabel}</p>
           <p className="tabular-nums text-base font-semibold leading-tight">
             {centerValue.toLocaleString()}
           </p>

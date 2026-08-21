@@ -84,7 +84,6 @@ export function ZoomPanCanvas({
     };
     svg.addEventListener('wheel', handler, { passive: false });
     return () => svg.removeEventListener('wheel', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transform.scale]);
 
   const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {

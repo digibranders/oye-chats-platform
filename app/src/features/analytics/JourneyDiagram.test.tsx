@@ -1,21 +1,22 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import type { JourneyPreChatSequencesResponse } from '../../services/api';
 import { JourneyDiagram } from './JourneyDiagram';
 
-const sequences = {
+const sequences: JourneyPreChatSequencesResponse = {
   total_sessions: 10,
   sessions_with_pre_chat: 8,
   sequences: [
     { sequence: ['/pricing'], post_sequence: ['/docs'], post_sessions: 3, sessions: 5 },
     { sequence: ['/pricing', '/contact'], post_sequence: [], post_sessions: 0, sessions: 3 },
   ],
-} as const;
+};
 
 function renderDiagram(onSelectOutcome = vi.fn()) {
   return render(
     <JourneyDiagram
-      sequences={sequences as any}
+      sequences={sequences}
       centerLabel="Opened Chatbot"
       centerValue={10}
       selectedOutcome={null}

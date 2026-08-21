@@ -102,6 +102,7 @@ export function Alert({
     <div
       className={cn(
         'shrink-0',
+        !title && 'self-center',
         tone !== 'neutral' &&
           '[&_button]:border-current [&_button]:bg-transparent [&_button]:text-current [&_button]:hover:bg-surface',
       )}
@@ -128,13 +129,20 @@ export function Alert({
       </span>
       <div className="min-w-0 flex-1 text-prose">
         {title ? (
-          <>
-            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+          actionNode ? (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+                <p className="font-medium">{title}</p>
+                {actionNode}
+              </div>
+              <div className="mt-1">{children}</div>
+            </>
+          ) : (
+            <>
               <p className="font-medium">{title}</p>
-              {actionNode}
-            </div>
-            <div className="mt-1">{children}</div>
-          </>
+              <div className="mt-0.5">{children}</div>
+            </>
+          )
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
             <div className="min-w-0 flex-1">{children}</div>

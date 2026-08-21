@@ -86,7 +86,7 @@ export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcom
           </g>
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+          <p className="text-2xs font-medium uppercase tracking-wider text-text-tertiary">
             Total
           </p>
           <p className="tabular-nums text-lg font-semibold text-text-primary">
