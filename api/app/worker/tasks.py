@@ -1085,10 +1085,10 @@ async def task_send_email(
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    """Send a raw HTML email via Brevo. Returns True on success."""
+    """Send a raw HTML email via the configured provider (Brevo or SES). Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_brevo_email, redact_email
+    from app.services.email_service import _send_raw_email, redact_email
 
     # PRIVACY, the recipient can be a visitor (the chat follow-up in
     # lead_routes, the offline-message reply), and Sentry's LoggingIntegration
@@ -1100,13 +1100,13 @@ async def task_send_email(
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: _send_brevo_email(
+        lambda: _send_raw_email(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         ),
     )
 
     if not result:
-        # Brevo failed (usually transient). ARQ only retries on Retry, a plain
+        # Send failed (usually transient). ARQ only retries on Retry, a plain
         # raise is marked permanently failed, silently dropping the email
         # (audit F13). Defer with backoff; max_tries (3) bounds the attempts.
         from arq.worker import Retry
