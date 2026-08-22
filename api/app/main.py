@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ import time
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -553,6 +554,36 @@ def _gather_health() -> tuple[dict, bool, bool]:
     return payload, ready_to_serve, fully_ok
 
 
+# The detailed health payload is attacker recon when served anonymously: it
+# leaks the stack (Postgres + Redis + ARQ worker), the app version (for CVE
+# matching), the DB pool internals, the chat-gate concurrency ceiling (useful
+# for planning a DoS), and business state (invoicing_active). External uptime
+# monitors, the Nginx upstream check, and deploy gates only ever consume the
+# HTTP status *code*, never the body, so the public response is reduced to the
+# bare status label. The full payload is disclosed only to a caller presenting
+# HEALTH_DETAIL_TOKEN via the X-Health-Token header (e.g. an internal ops curl).
+# When the env var is unset the endpoints are minimal for everyone — secure by
+# default, so a missing token can never silently re-expose the detail.
+HEALTH_DETAIL_TOKEN = os.getenv("HEALTH_DETAIL_TOKEN") or None
+
+
+def _health_detail_authorized(request: Request) -> bool:
+    """True only when a valid X-Health-Token is presented (constant-time)."""
+    if not HEALTH_DETAIL_TOKEN:
+        return False
+    supplied = request.headers.get("X-Health-Token")
+    if not supplied:
+        return False
+    return hmac.compare_digest(supplied, HEALTH_DETAIL_TOKEN)
+
+
+def _public_health_body(payload: dict, request: Request) -> dict:
+    """Full detail for an authorized caller; otherwise just the status label."""
+    if _health_detail_authorized(request):
+        return payload
+    return {"status": payload["status"]}
+
+
 @app.head("/health", tags=["system"], include_in_schema=False)
 def health_check_head():
     from fastapi.responses import Response
@@ -562,7 +593,7 @@ def health_check_head():
 
 
 @app.get("/health", tags=["system"])
-def health_check():
+def health_check(request: Request):
     """Readiness check for user-facing traffic.
 
     Returns **200** when the API can serve user requests (DB + Redis
@@ -574,13 +605,18 @@ def health_check():
     user-visible downtime that wasn't there.
 
     Used by deploy scripts, Nginx upstream checks, and external uptime
-    monitors. For comprehensive checks (worker included), use
-    ``/health/full``.
+    monitors. The body is the bare status label unless the caller presents
+    a valid ``X-Health-Token`` (see :data:`HEALTH_DETAIL_TOKEN`), which
+    unlocks the full subsystem payload. For comprehensive checks (worker
+    included), use ``/health/full``.
     """
     from fastapi.responses import JSONResponse
 
     payload, ready_to_serve, _ = _gather_health()
-    return JSONResponse(status_code=200 if ready_to_serve else 503, content=payload)
+    return JSONResponse(
+        status_code=200 if ready_to_serve else 503,
+        content=_public_health_body(payload, request),
+    )
 
 
 @app.head("/health/full", tags=["system"], include_in_schema=False)
@@ -592,7 +628,7 @@ def health_check_full_head():
 
 
 @app.get("/health/full", tags=["system"])
-def health_check_full():
+def health_check_full(request: Request):
     """Comprehensive health check including the worker.
 
     Returns **200** only when DB + Redis + worker are all green. Returns
@@ -600,11 +636,18 @@ def health_check_full():
     heartbeat. Use this for alerting that should page on partial
     degradation; use ``/health`` for deploy gates and load-balancer
     probes that must not flap on transient worker hiccups.
+
+    As with ``/health``, the detailed body is gated behind a valid
+    ``X-Health-Token``; anonymous callers get only the status label while
+    the response *code* still reflects full subsystem health.
     """
     from fastapi.responses import JSONResponse
 
     payload, _, fully_ok = _gather_health()
-    return JSONResponse(status_code=200 if fully_ok else 503, content=payload)
+    return JSONResponse(
+        status_code=200 if fully_ok else 503,
+        content=_public_health_body(payload, request),
+    )
 
 
 @app.head("/health/live", tags=["system"], include_in_schema=False)
