@@ -174,22 +174,28 @@ def sentry_enabled(dsn: str | None, app_env: str, force_enable: bool = False) ->
 SENTRY_ENABLED = sentry_enabled(SENTRY_DSN, APP_ENV, _SENTRY_FORCE_ENABLE)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Email Notifications (Brevo / Sendinblue, or AWS SES over SMTP)
+# Email Notifications (Brevo / Sendinblue, or AWS SES via the HTTPS API)
 # ─────────────────────────────────────────────────────────────────────────────
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChats")
 EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
 
-# Transport selection: "brevo" (default, legacy HTTP API) or "ses" (AWS SES SMTP).
-# Migration is per-environment: flip EMAIL_PROVIDER in .env to cut an environment
-# over without touching any sender or template — see email_service._send_raw_email.
+# Transport selection: "brevo" (default, HTTP API) or "ses" (AWS SES HTTP API via
+# boto3). Deliberately NOT SMTP: DigitalOcean (and most hosts) block outbound
+# SMTP ports 25/465/587 by default, which silently breaks a working SES-over-SMTP
+# integration the moment it's deployed there — discovered the hard way on
+# 2026-08-22. The SES HTTPS API rides port 443, same as Brevo, so it's immune to
+# that class of host-level port blocking. Migration is per-environment: flip
+# EMAIL_PROVIDER in .env to cut an environment over without touching any sender
+# or template — see email_service._send_raw_email.
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "brevo").strip().lower()
-SES_SMTP_HOST = os.getenv("SES_SMTP_HOST", "email-smtp.ap-south-1.amazonaws.com")
-SES_SMTP_PORT = int(os.getenv("SES_SMTP_PORT", "587"))
-SES_SMTP_USERNAME = os.getenv("SES_SMTP_USERNAME")
-SES_SMTP_PASSWORD = os.getenv("SES_SMTP_PASSWORD")
+SES_AWS_REGION = os.getenv("SES_AWS_REGION", "ap-south-1")
+SES_AWS_ACCESS_KEY_ID = os.getenv("SES_AWS_ACCESS_KEY_ID")
+SES_AWS_SECRET_ACCESS_KEY = os.getenv("SES_AWS_SECRET_ACCESS_KEY")
 
-EMAIL_ENABLED = bool(SES_SMTP_USERNAME and SES_SMTP_PASSWORD) if EMAIL_PROVIDER == "ses" else bool(BREVO_API_KEY)
+EMAIL_ENABLED = (
+    bool(SES_AWS_ACCESS_KEY_ID and SES_AWS_SECRET_ACCESS_KEY) if EMAIL_PROVIDER == "ses" else bool(BREVO_API_KEY)
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand & public URLs (used by email templates and any other branded surface)

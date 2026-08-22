@@ -1,5 +1,6 @@
-"""Email notification service. Transport is Brevo (HTTP API) or AWS SES (SMTP),
-selected per-environment by ``EMAIL_PROVIDER`` — see ``_send_raw_email``.
+"""Email notification service. Transport is Brevo (HTTP API) or AWS SES (HTTP
+API via boto3), selected per-environment by ``EMAIL_PROVIDER`` — see
+``_send_raw_email``.
 
 Every email is rendered from the shared design system in ``email_design`` (monochrome +
 single-indigo-accent, dark-mode hardened for Outlook). All 19 senders build raw HTML in
@@ -14,7 +15,6 @@ import contextlib
 import json
 import logging
 import re
-import smtplib
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -22,6 +22,9 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import (
     APP_URL,
@@ -31,10 +34,9 @@ from app.config import (
     EMAIL_FROM_ADDRESS,
     EMAIL_FROM_NAME,
     EMAIL_PROVIDER,
-    SES_SMTP_HOST,
-    SES_SMTP_PASSWORD,
-    SES_SMTP_PORT,
-    SES_SMTP_USERNAME,
+    SES_AWS_ACCESS_KEY_ID,
+    SES_AWS_REGION,
+    SES_AWS_SECRET_ACCESS_KEY,
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
@@ -245,17 +247,20 @@ def _send_brevo_template(
         return False
 
 
-# ── AWS SES transport (SMTP) ─────────────────────────────────────────────────
+# ── AWS SES transport (HTTPS API via boto3) ──────────────────────────────────
+# Not SMTP: DigitalOcean (and most hosts) block outbound ports 25/465/587 by
+# default, which broke a working SES-over-SMTP integration the moment it hit
+# production (2026-08-22). The API rides port 443, same as Brevo — see the
+# EMAIL_PROVIDER comment in config.py.
 
 
-def _extract_smtp_error(exc: Exception) -> str:
-    """Extract a human-readable reason from an SES SMTP failure."""
-    if isinstance(exc, smtplib.SMTPResponseException):
-        return f"SMTP {exc.smtp_code} {exc.smtp_error!r}"
-    if isinstance(exc, smtplib.SMTPException):
+def _extract_ses_error(exc: Exception) -> str:
+    """Extract a human-readable reason from an SES API failure."""
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        return f"SES {error.get('Code', 'Unknown')}: {error.get('Message', str(exc))}"
+    if isinstance(exc, BotoCoreError):
         return f"{type(exc).__name__}: {exc}"
-    if isinstance(exc, OSError):
-        return f"network error: {exc}"
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -268,17 +273,20 @@ def _send_ses_email(
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    """Send an email via AWS SES over SMTP using raw HTML. Returns True on success.
+    """Send an email via the AWS SES HTTPS API (``send_raw_email``). Returns True on success.
 
     Same signature and return contract as ``_send_brevo_email`` so callers (and
     ``_send_raw_email`` below) don't need to know which transport is active.
     ``attachments`` stays in the Brevo shape (``{"content": <base64>, "name": <filename>}``)
     since that's what every existing sender already builds; only this function
-    knows it needs to become a MIME part instead of a JSON field.
+    knows it needs to become a MIME part instead of a JSON field. The message is
+    built as a standard MIME document and handed to SES as raw bytes — SES parses
+    it itself, so this is the same message shape a raw SMTP send would have used,
+    just delivered over HTTPS instead of an SMTP socket.
     """
     if not EMAIL_ENABLED:
         logger.warning(
-            "Email skipped. EMAIL_ENABLED=False (no SES SMTP credentials) | to=%s subject=%s",
+            "Email skipped. EMAIL_ENABLED=False (no SES API credentials) | to=%s subject=%s",
             redact_email(to_email),
             subject,
         )
@@ -300,14 +308,17 @@ def _send_ses_email(
         msg.attach(part)
 
     try:
-        with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SES_SMTP_USERNAME, SES_SMTP_PASSWORD)
-            server.sendmail(EMAIL_FROM_ADDRESS, [to_email], msg.as_string())
+        client = boto3.client(
+            "ses",
+            region_name=SES_AWS_REGION,
+            aws_access_key_id=SES_AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=SES_AWS_SECRET_ACCESS_KEY,
+        )
+        client.send_raw_email(Source=EMAIL_FROM_ADDRESS, Destinations=[to_email], RawMessage={"Data": msg.as_bytes()})
         logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | provider=ses")
         return True
     except Exception as e:
-        reason = _extract_smtp_error(e)
+        reason = _extract_ses_error(e)
         logger.warning("SES email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
         return False
