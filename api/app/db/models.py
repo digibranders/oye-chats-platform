@@ -446,6 +446,18 @@ class Bot(Base):
         server_default='{"file_sharing": false, "post_chat_rating": true, "show_branding": true, "queue_position": false, "typing_preview": true, "email_transcript": false}',
     )
 
+    # Multilingual configuration. Controls supported locales, auto-detection, and translation
+    language_config = Column(
+        JSONB,
+        nullable=False,
+        server_default=(
+            '{"enabled": false, "default_locale": "en-IN", '
+            '"supported_locales": ["en-IN"], "auto_detect": true, '
+            '"allow_visitor_language_switch": false, '
+            '"operator_translation_enabled": false}'
+        ),
+    )
+
     # Widget messages. All customizable user-facing strings (welcome, chat input, error messages, etc.)
     widget_messages = Column(
         JSONB,
