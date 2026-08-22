@@ -2,7 +2,11 @@
 
 **Companion to:** [`live-chat-process-split-plan.md`](live-chat-process-split-plan.md)
 **Applies to:** phases 0–5, which are merged and shipped dark
-**Status:** ready to execute once the soak passes
+**Status:** EXECUTED in production 2026-08-20 13:19-13:22 UTC. Topology is now
+2 API workers on :8000 plus 1 WebSocket worker on :8001, backplane on, verified
+by a published probe reaching all 3 subscribers. Two workers rather than the
+rig's four: see the reasoning in `api/systemd/oyechats-api.service`. The steps
+below remain the procedure of record, including rollback.
 
 ---
 

@@ -174,12 +174,22 @@ def sentry_enabled(dsn: str | None, app_env: str, force_enable: bool = False) ->
 SENTRY_ENABLED = sentry_enabled(SENTRY_DSN, APP_ENV, _SENTRY_FORCE_ENABLE)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Email Notifications (Brevo / Sendinblue)
+# Email Notifications (Brevo / Sendinblue, or AWS SES over SMTP)
 # ─────────────────────────────────────────────────────────────────────────────
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChats")
 EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
-EMAIL_ENABLED = bool(BREVO_API_KEY)
+
+# Transport selection: "brevo" (default, legacy HTTP API) or "ses" (AWS SES SMTP).
+# Migration is per-environment: flip EMAIL_PROVIDER in .env to cut an environment
+# over without touching any sender or template — see email_service._send_raw_email.
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "brevo").strip().lower()
+SES_SMTP_HOST = os.getenv("SES_SMTP_HOST", "email-smtp.ap-south-1.amazonaws.com")
+SES_SMTP_PORT = int(os.getenv("SES_SMTP_PORT", "587"))
+SES_SMTP_USERNAME = os.getenv("SES_SMTP_USERNAME")
+SES_SMTP_PASSWORD = os.getenv("SES_SMTP_PASSWORD")
+
+EMAIL_ENABLED = bool(SES_SMTP_USERNAME and SES_SMTP_PASSWORD) if EMAIL_PROVIDER == "ses" else bool(BREVO_API_KEY)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand & public URLs (used by email templates and any other branded surface)
@@ -217,9 +227,9 @@ BRAND_TAGLINE_HEADER = os.getenv("BRAND_TAGLINE_HEADER", "AI-Powered Customer Co
 BRAND_TAGLINE_FOOTER = os.getenv("BRAND_TAGLINE_FOOTER", "AI Customer Support, on every site")
 
 if EMAIL_ENABLED:
-    logger.info("Email notifications enabled (Brevo)")
+    logger.info("Email notifications enabled (provider=%s)", EMAIL_PROVIDER)
 else:
-    logger.info("Email notifications disabled (no BREVO_API_KEY)")
+    logger.info("Email notifications disabled (no credentials configured for provider=%s)", EMAIL_PROVIDER)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Web Push (VAPID). Operator notifications when their dashboard tab is closed
