@@ -217,10 +217,12 @@ def _build_public_url(key: str) -> str:
     endpoint matches that provider's pattern. Dead code on R2 but kept so
     older buckets keep working if `R2_ENDPOINT` still points at Backblaze.
 
-    Last-resort fallback returns the S3-style path URL; it only loads if
-    the bucket has been made publicly readable via that endpoint, which on
-    R2 it never is, so callers should treat that fallback as broken and
-    configure `R2_PUBLIC_BASE_URL`.
+    Last-resort fallback used to return the S3-style path URL, but on R2
+    that endpoint is never publicly readable, so it only ever produced a
+    dead link (`InvalidArgument` / `Authorization` on any anonymous GET).
+    We now raise instead of handing back a URL that is guaranteed not to
+    work, so a missing `R2_PUBLIC_BASE_URL` fails fast at upload time
+    rather than silently shipping a broken invoice/asset link.
     """
     if R2_PUBLIC_BASE_URL:
         return f"{R2_PUBLIC_BASE_URL}/{key}"
@@ -236,7 +238,18 @@ def _build_public_url(key: str) -> str:
         cluster_id = match.group(1)
         return f"https://f{cluster_id}.backblazeb2.com/file/{R2_BUCKET_NAME}/{key}"
 
-    return f"https://{R2_ENDPOINT}/{R2_BUCKET_NAME}/{key}"
+    logger.error(
+        "R2_PUBLIC_BASE_URL is not configured; refusing to build a public URL "
+        "for key=%s from the private R2 API endpoint (%s), which rejects "
+        "anonymous reads with InvalidArgument/Authorization.",
+        key,
+        R2_ENDPOINT,
+    )
+    raise RuntimeError(
+        "R2_PUBLIC_BASE_URL is not configured. The raw R2 API endpoint is "
+        "private and cannot serve public URLs — set R2_PUBLIC_BASE_URL to "
+        "the bucket's custom domain (e.g. https://cdn.oyechats.com)."
+    )
 
 
 def get_signed_url(key: str, expires_in: int = 3600) -> str:
