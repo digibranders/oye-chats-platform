@@ -1065,6 +1065,23 @@ class Operator(Base):
     max_concurrent_chats = Column(Integer, default=5, server_default="5", nullable=False)
     notification_preferences = Column(JSONB, nullable=True)
 
+    # ── Multilingual (Phase 4) ──
+    # The language this operator works in. Live chat translates incoming
+    # visitor messages INTO this locale and outgoing replies FROM it. NULL
+    # means "not set": no translation is performed on this operator's behalf.
+    # A personal working preference, so it is self-editable (see
+    # ``PATCH /operators/{id}``), unlike ``supported_languages`` below.
+    preferred_locale = Column(String(32), nullable=True)
+    # Languages this operator can handle unaided. Phase 5's language-aware
+    # routing filters candidates on this; Phase 4 only stores it so that
+    # filter has data to read. A team-management field, not self-editable.
+    supported_languages = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sqlalchemy.text("'[]'::jsonb"),
+    )
+
     # Linked-identity fields. Populated when an operator was created via an
     # invite the invitee accepted while authenticated as a Client.
     # ``linked_client_id`` points at that underlying Client identity, so the
@@ -1253,6 +1270,23 @@ class ChatMessage(Base):
     # and card-less answers stay valid.
     media_card = Column(JSONB, nullable=True)
     media_secondary = Column(JSONB, nullable=True)
+
+    # ── Multilingual (Phase 4) ──
+    # The language ``content`` is written IN. NULL for every pre-Phase-4 row and
+    # for every message on a bot without multilingual enabled.
+    source_language = Column(String(16), nullable=True)
+    # Derived translations, keyed by TARGET language code. ``content`` above is
+    # the canonical original and is NEVER modified after insert; this column is
+    # the only place a translation is stored. Shape:
+    #   {"en": {"content": "...", "provider": "litellm",
+    #           "model": "gemini/gemini-2.5-flash",
+    #           "status": "ok" | "failed",
+    #           "created_at": "2026-08-24T10:15:00Z"}}
+    # Keyed by language (not a single column) so a chat transferred to an
+    # operator working in a different language can add a key without touching
+    # the ones already there.
+    translations = Column(JSONB, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
@@ -2040,7 +2074,8 @@ class CreditLedger(Base):
     # binds the params as typed VARCHAR and Postgres rejects the enum insert
     # with DatatypeMismatch; the page TX then rolls back and every retry hits
     # the same boundary. Single-row inserts only ever worked via implicit cast.
-    # Values mirror the live enum (c1d2e3f4a5b6 + d9e3c1b7a4f2 migrations).
+    # Values mirror the live enum (c1d2e3f4a5b6 + d9e3c1b7a4f2 + f5a1c2b3d4e6 +
+    # d1b4f7a2c9e6 migrations).
     # Prod schema is alembic-managed (the type already exists there); the
     # default create_type=True only matters for metadata.create_all in the
     # throwaway-Postgres test fixtures, which need the type created with the
@@ -2058,6 +2093,11 @@ class CreditLedger(Base):
             "document_upload",
             "email_verification",
             "company_name",
+            # Operator live-chat translation (Phase 4). Without this label the
+            # ledger insert fails with InvalidTextRepresentation, and because
+            # ``charge_for_translation`` swallows every exception to protect
+            # message delivery, translation would silently never run.
+            "translation",
             name="credit_reason",
         ).with_variant(String(), "sqlite"),
         nullable=False,

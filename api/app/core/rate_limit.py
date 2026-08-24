@@ -57,6 +57,25 @@ def key_from_api_key(request: Request) -> str:
     return request.headers.get("x-api-key", get_remote_address(request))
 
 
+def key_from_operator_credential(request: Request) -> str:
+    """Rate-limit key for routes that accept EITHER operator or client auth.
+
+    The inbox is reachable two ways: a team member presents ``X-Operator-Key``,
+    a workspace owner presents ``X-API-Key`` (see
+    ``get_current_client_or_operator``). ``key_from_api_key`` reads only the
+    latter, so every operator-key caller would fall through to its default and
+    share one bucket keyed on IP, letting one operator throttle their whole
+    team from behind a shared office NAT. Prefer the operator key, fall back to
+    the client key, then the address.
+    """
+    return (
+        request.headers.get("x-operator-key")
+        or request.headers.get("x-agent-key")
+        or request.headers.get("x-api-key")
+        or get_remote_address(request)
+    )
+
+
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[],

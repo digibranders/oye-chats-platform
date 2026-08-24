@@ -234,6 +234,7 @@ def add_chat_message(
     media_card: dict | None = None,
     media_secondary: list | None = None,
     is_unanswered: bool = False,
+    source_language: str | None = None,
 ):
     """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
 
@@ -241,6 +242,13 @@ def add_chat_message(
     so the widget can re-render video/document cards on refresh. See
     ``ChatMessage.media_card`` for the shape. Both stay ``None`` for user
     turns and for bot answers that don't emit a card.
+
+    ``source_language`` records the language ``content`` is written IN (Phase
+    4). It is set only for live-chat turns on a bot with multilingual enabled
+    and stays ``None`` everywhere else. This function is the ONLY writer of
+    ``ChatMessage``, and ``content`` is written here exactly once: translations
+    never come back through this path, they land in ``ChatMessage.translations``
+    so the original stays canonical and immutable.
     """
     ensure_chat_session(session, session_id, client_id=client_id, bot_id=bot_id, location=location, device=device)
     new_message = ChatMessage(
@@ -250,6 +258,7 @@ def add_chat_message(
         media_card=media_card,
         media_secondary=media_secondary,
         is_unanswered=is_unanswered,
+        source_language=source_language,
     )
     session.add(new_message)
     session.flush()
