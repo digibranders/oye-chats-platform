@@ -37,6 +37,7 @@ from app.api.document_routes import router as document_router
 from app.api.invite_routes import me_router as invite_me_router
 from app.api.invite_routes import router as invite_router
 from app.api.lead_routes import router as lead_router
+from app.api.locale_routes import router as locale_router
 from app.api.notification_routes import router as notification_router
 from app.api.notification_routes import ws_router as notification_ws_router
 from app.api.oauth_routes import router as oauth_router
@@ -188,6 +189,7 @@ app.include_router(document_router)
 app.include_router(analytics_router)
 app.include_router(unsubscribe_router)
 app.include_router(lead_router)
+app.include_router(locale_router)
 app.include_router(operator_router)
 app.include_router(push_router)
 app.include_router(activation_router)

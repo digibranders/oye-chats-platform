@@ -107,6 +107,32 @@ KNOWN_LOCALES: dict[str, LocaleInfo] = {
     "ur-PK": LocaleInfo(code="ur", locale="ur-PK", name="Urdu (Pakistan)", native_name="اردو", direction="rtl"),
 }
 
+
+def _derive_base_language_names() -> dict[str, str]:
+    """English name per base language code, derived from ``KNOWN_LOCALES``.
+
+    Catalogue names carry a region qualifier ("English (India)", "Chinese
+    (Simplified)") because they name a *locale*. A base language code names the
+    language alone, and that is what a detected ``source_language`` or a
+    conversation badge carries, so the qualifier is dropped. The first
+    catalogue entry for a base code wins, matching the base-language fallback
+    ``language_display_name`` already uses.
+
+    Derived rather than hand-maintained so there is exactly one place a locale
+    is ever added.
+    """
+    names: dict[str, str] = {}
+    for info in KNOWN_LOCALES.values():
+        if info.code not in names:
+            names[info.code] = info.name.split(" (", 1)[0]
+    return names
+
+
+# Base-language display names. Built once at import: ``KNOWN_LOCALES`` is a
+# module constant, so this can never go stale relative to it.
+LANGUAGE_NAMES: dict[str, str] = _derive_base_language_names()
+
+
 _LOCALE_SPLIT_REGEX = re.compile(r"[-_]")
 
 

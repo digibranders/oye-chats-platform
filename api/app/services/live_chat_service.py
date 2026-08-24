@@ -146,6 +146,13 @@ class ConnectionManager:
         self._operator_departments: dict[int, int | None] = {}
         # operator_id → operator name (cached on connect for roster broadcasts)
         self._operator_names: dict[int, str] = {}
+        # operator_id → preferred_locale (cached on connect, DISPLAY ONLY).
+        # Never gates a translation decision: this dict is per-process, and
+        # with WS_BACKPLANE_ENABLED the worker holding a visitor socket
+        # routinely does not hold the operator's, so a translation that keyed
+        # off it would silently not happen for cross-process pairs.
+        # ``translation_service.resolve_incoming_target`` reads the DB instead.
+        self._operator_locales: dict[int, str | None] = {}
         # operator_id → client_id (cached on connect so disconnect cleanup
         # can address the right Redis presence bucket without a DB lookup
         # . Important because the cleanup runs after the operator row may
@@ -420,6 +427,7 @@ class ConnectionManager:
         is_online: bool = True,
         client_id: int | None = None,
         subprotocol: str | None = None,
+        preferred_locale: str | None = None,
     ):
         self._ensure_background_tasks()
         # Cancel any pending grace-period timeout. Operator is back before it expired.
@@ -446,6 +454,7 @@ class ConnectionManager:
         self.operator_connections[operator_id] = ws
         self._operator_departments[operator_id] = department_id
         self._operator_names[operator_id] = operator_name
+        self._operator_locales[operator_id] = preferred_locale
         if client_id is not None:
             self._operator_client_ids[operator_id] = client_id
             # Mark in Redis presence, the state resolver and routing service
@@ -621,6 +630,7 @@ class ConnectionManager:
 
                 self._operator_departments.pop(operator_id, None)
                 self._operator_names.pop(operator_id, None)
+                self._operator_locales.pop(operator_id, None)
                 self._operator_message_queue.pop(operator_id, None)  # Discard stale queue
 
                 # Persist offline status and reassign this operator's live sessions
@@ -1255,7 +1265,13 @@ class ConnectionManager:
 
     # ── Message routing ──
 
-    async def route_visitor_message(self, session_id: str, content: str, db_id: int | None = None) -> bool:
+    async def route_visitor_message(
+        self,
+        session_id: str,
+        content: str,
+        db_id: int | None = None,
+        source_language: str | None = None,
+    ) -> bool:
         """Route a message from visitor to their assigned operator.
 
         If the operator is in the grace period (WS dropped, waiting for reconnect),
@@ -1279,6 +1295,11 @@ class ConnectionManager:
             "content": content,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if source_language:
+            # Lets the console label the bubble and decide whether to show a
+            # translation toggle, without waiting for the separate
+            # ``message_translation`` frame that follows out of band.
+            msg["source_language"] = source_language
         if db_id is not None:
             # Keyed as "id" to match what the operator dashboard reads
             # (LiveChat.jsx: `dbId: data.id || null`). The operator uses
@@ -1301,18 +1322,59 @@ class ConnectionManager:
             logger.debug(f"Queued message for operator {operator_id} (in grace period)")
         return False
 
-    async def route_operator_message(self, session_id: str, content: str, operator_name: str):
-        """Route a message from operator to visitor."""
-        await self._send_to_visitor(
-            session_id,
-            {
-                "type": "message",
-                "role": "operator",
-                "content": content,
-                "operator_name": operator_name,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-        )
+    async def route_operator_message(
+        self,
+        session_id: str,
+        content: str,
+        operator_name: str,
+        *,
+        delivered_content: str | None = None,
+        translated_from: str | None = None,
+        message_id: int | None = None,
+    ):
+        """Route a message from operator to visitor.
+
+        ``delivered_content`` is what the visitor SEES: the translation when
+        one succeeded, otherwise ``content`` (the operator's own words). The
+        caller has already persisted both, the original in
+        ``ChatMessage.content`` and the translation in
+        ``ChatMessage.translations``, so the widget's reconnect path renders
+        the identical string from ``GET /chat/history``.
+
+        ``translated_from`` is absent when nothing was translated, which is how
+        the widget distinguishes "delivered in your language" from "delivered
+        in the operator's language because translation was unavailable".
+
+        ``message_id`` was previously never sent. The widget already reads it
+        (``dbId: typeof data.message_id === 'number' ? ...``), so populating it
+        also closes a pre-existing gap in the visitor's read-receipt chain.
+        """
+        payload = {
+            "type": "message",
+            "role": "operator",
+            "content": delivered_content if delivered_content is not None else content,
+            "operator_name": operator_name,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        if translated_from:
+            payload["translated_from"] = translated_from
+        if message_id is not None:
+            payload["message_id"] = message_id
+        await self._send_to_visitor(session_id, payload)
+
+    async def send_translation_to_operator(self, session_id: str, payload: dict) -> None:
+        """Push a ``message_translation`` frame to the session's operator.
+
+        Routed through ``_send_to_operator``, so the Redis backplane carries it
+        to whichever worker holds the socket, exactly like every other operator
+        frame. Best-effort by design: this frame is a convenience, the
+        translation is already persisted and will be picked up from
+        ``GET /chat/history`` if the socket missed it.
+        """
+        operator_id = self.assignments.get(session_id)
+        if not operator_id:
+            return
+        await self._send_to_operator(operator_id, payload)
 
     # ── File routing ──
 

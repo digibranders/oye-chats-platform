@@ -2055,6 +2055,27 @@ def submit_feedback_endpoint(
         raise HTTPException(status_code=500, detail="Failed to save feedback.") from e
 
 
+def _public_translations(raw: dict | None) -> dict | None:
+    """Strip internal fields from a ``ChatMessage.translations`` blob.
+
+    ``provider`` / ``model`` / ``created_at`` are stored for audit and cost
+    attribution, not for rendering, and the widget serves this endpoint to
+    anyone holding the (public) bot key. Only what a client actually draws
+    leaves the server.
+    """
+    if not isinstance(raw, dict):
+        return None
+    public = {}
+    for lang, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        trimmed = {"status": entry.get("status", "ok")}
+        if isinstance(entry.get("content"), str):
+            trimmed["content"] = entry["content"]
+        public[lang] = trimmed
+    return public or None
+
+
 @router.get("/chat/history/{session_id}")
 @limiter.limit("60/minute", key_func=key_from_bot_key)
 def get_history_endpoint(
@@ -2184,6 +2205,13 @@ def get_history_endpoint(
                     # from history the same way it does from a live stream.
                     "media_card": getattr(m, "media_card", None),
                     "media_secondary": getattr(m, "media_secondary", None),
+                    # Phase 4. Both clients rebuild their thread from THIS
+                    # endpoint on every reconnect, so a translation that lived
+                    # only on the wire vanished on refresh and left the visitor
+                    # looking at a half-translated conversation. ``content``
+                    # above is always the canonical original; these are derived.
+                    "source_language": getattr(m, "source_language", None),
+                    "translations": _public_translations(getattr(m, "translations", None)),
                 }
                 for m in all_history
             ]

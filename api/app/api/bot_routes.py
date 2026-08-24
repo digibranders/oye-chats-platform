@@ -2473,6 +2473,23 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             if "language_config" in update_data and update_data["language_config"] is not None:
                 current_lang = dict(bot.language_config or {})
                 current_lang.update(update_data.pop("language_config"))
+                # Operator translation (Phase 4) depends on the multilingual
+                # feature being on: the session language it translates to and
+                # from is written only by the language resolver, which returns
+                # early when ``enabled`` is false. Validate the MERGED result,
+                # not the request body, because this is a partial update: a
+                # call sending only ``{"enabled": false}`` would otherwise
+                # leave a stale ``operator_translation_enabled: true`` behind
+                # and produce a bot that thinks translation is on with no
+                # language to translate.
+                if current_lang.get("operator_translation_enabled") and not current_lang.get("enabled"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "operator_translation_enabled requires language_config.enabled to be true. "
+                            "Enable multilingual for this bot first."
+                        ),
+                    )
                 bot.language_config = current_lang
 
             # Merge widget_messages. Partial updates must not wipe existing messages
