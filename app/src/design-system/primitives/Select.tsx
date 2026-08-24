@@ -80,7 +80,11 @@ export function Select({
   const q = query.trim().toLowerCase();
   const visible =
     searchable && q
-      ? options.filter((opt) => (opt.search || opt.label.toLowerCase()).includes(q))
+      // Both sides are lowercased. Lowercasing only the fallback meant a
+      // caller-supplied `search` was compared case-sensitively against an
+      // already-lowercased query, so "arab" missed "Arabic (Saudi Arabia)" -
+      // searching by a name's first letter matched nothing at all.
+      ? options.filter((opt) => (opt.search || opt.label).toLowerCase().includes(q))
       : options;
 
   const selectedIndex = options.findIndex((opt) => opt.value === value);
