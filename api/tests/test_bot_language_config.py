@@ -240,3 +240,93 @@ def test_update_bot_merges_language_config(monkeypatch):
     assert bot.language_config["auto_detect"] is True
     # Updated keys
     assert bot.language_config["supported_locales"] == ["en-IN", "hi-IN", "fr-FR"]
+
+
+# ── Phase 5B: the shape the admin Language card actually sends ───────────────
+
+
+def _language_bot(language_config):
+    return SimpleNamespace(
+        id=5,
+        client_id=1,
+        bot_key="bot-xyz",
+        name="Bot",
+        feature_flags={},
+        language_config=language_config,
+        widget_messages={},
+        widget_config={},
+        bant_config=None,
+        manual_field_overrides=[],
+    )
+
+
+def _patch_language(monkeypatch, bot, payload):
+    session = MagicMock()
+    session.execute.return_value = _ExecuteResult(bot)
+    monkeypatch.setattr(bot_routes, "get_session", lambda: _SessionContext(session))
+    with patch("app.api.bot_routes.cache_delete") as cache_delete:
+        tc = TestClient(_build_app(auth_override=_client_auth()))
+        response = tc.patch("/bots/5", json={"language_config": payload})
+    return response, cache_delete
+
+
+# What `languagePatch()` in app/src/features/agents/experience/botConfig.ts emits.
+CARD_PAYLOAD = {
+    "enabled": True,
+    "supported_locales": ["en-IN", "hi-IN"],
+    "default_locale": "en-IN",
+    "auto_detect": True,
+    "allow_visitor_language_switch": True,
+    "operator_translation_enabled": True,
+}
+
+
+def test_language_card_payload_persists_every_key(monkeypatch):
+    """The admin card sends all six keys at once, so nothing stale survives."""
+    bot = _language_bot({"enabled": False, "default_locale": "hi-IN"})
+    response, _ = _patch_language(monkeypatch, bot, CARD_PAYLOAD)
+
+    assert response.status_code == 200, response.text
+    assert bot.language_config == CARD_PAYLOAD
+
+
+def test_language_card_payload_leaves_unrelated_keys_alone(monkeypatch):
+    """The merge is shallow, so a key this UI does not own is not collateral."""
+    bot = _language_bot({"enabled": False, "some_future_key": "keep me"})
+    _patch_language(monkeypatch, bot, CARD_PAYLOAD)
+
+    assert bot.language_config["some_future_key"] == "keep me"
+
+
+def test_saving_the_language_card_invalidates_the_widget_cache(monkeypatch):
+    """Without this, a customer's change waits out the 10-minute config TTL."""
+    bot = _language_bot({"enabled": False})
+    _, cache_delete = _patch_language(monkeypatch, bot, CARD_PAYLOAD)
+
+    assert cache_delete.call_count == 1
+
+
+def test_operator_translation_without_multilingual_is_still_rejected(monkeypatch):
+    """The 422 the admin card is built to make unreachable.
+
+    Asserted from the route's side as well, because the UI guard is only a
+    convenience: an API client can still send this pair, and the server has to
+    keep refusing it.
+    """
+    bot = _language_bot({"enabled": False})
+    response, _ = _patch_language(monkeypatch, bot, {"enabled": False, "operator_translation_enabled": True})
+
+    assert response.status_code == 422
+    assert bot.language_config == {"enabled": False}
+
+
+def test_turning_multilingual_off_from_the_card_clears_operator_translation(monkeypatch):
+    """The card sends both keys together, so the merge cannot strand the flag."""
+    bot = _language_bot({"enabled": True, "operator_translation_enabled": True})
+    response, _ = _patch_language(
+        monkeypatch, bot, {**CARD_PAYLOAD, "enabled": False, "operator_translation_enabled": False}
+    )
+
+    assert response.status_code == 200, response.text
+    assert bot.language_config["enabled"] is False
+    assert bot.language_config["operator_translation_enabled"] is False

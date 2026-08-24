@@ -75,6 +75,32 @@ export interface WidgetCopy {
   endChatLabel: string;
 }
 
+// ── Language (Phase 5B) ───────────────────────────────────────────────────
+/**
+ * The bot's visitor-facing language configuration: which languages the chatbot
+ * speaks, which one it falls back to, and how a visitor's language is chosen.
+ *
+ * Stored in the `Bot.language_config` JSONB column and read directly by
+ * Phases 1 to 4 - the widget's language selector, the AI's answer language and
+ * the operator translation pipeline all gate on these keys. Nothing here
+ * describes what language an OPERATOR reads chat in; that is
+ * `Operator.preferred_locale`, set by each operator in Support -> Live chat.
+ */
+export interface LanguageConfig {
+  /** Master switch. Everything else is inert while this is false. */
+  enabled: boolean;
+  /** BCP-47 tags the bot will hold a conversation in. */
+  supportedLocales: string[];
+  /** Used when a visitor's language cannot be determined. Always in the list above. */
+  defaultLocale: string;
+  /** Infer the visitor's language from their browser, page and first message. */
+  autoDetect: boolean;
+  /** Show the language selector in the widget. Meaningless below two locales. */
+  allowVisitorSwitch: boolean;
+  /** Translate live chat between visitors and operators. Requires `enabled`. */
+  operatorTranslation: boolean;
+}
+
 /** The full editable model, split into the independently-saved slices. */
 export interface BotConfigDraft {
   liveChat: LiveChatConfig;
@@ -82,10 +108,21 @@ export interface BotConfigDraft {
   services: ServiceEntry[];
   answerLinks: SmartLink[];
   copy: WidgetCopy;
+  language: LanguageConfig;
 }
 
 /** The slices, each with its own dirty-tracking + save. */
-export type SliceKey = 'liveChat' | 'leadForm' | 'services' | 'answerLinks' | 'copy';
+export type SliceKey = 'liveChat' | 'leadForm' | 'services' | 'answerLinks' | 'copy' | 'language';
+
+/** Save state for one slice. Each card owns exactly one. */
+export interface SliceStatus {
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+}
+
+/** The resting state of a slice: nothing in flight, nothing to report. */
+export const IDLE: SliceStatus = { saving: false, error: null, saved: false };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
@@ -103,6 +140,23 @@ export const HANDOFF_DELAY_OPTIONS: readonly { value: number; label: string }[] 
   { value: 5, label: 'After 5 seconds' },
   { value: 10, label: 'After 10 seconds' },
 ];
+
+/**
+ * The locale a bot falls back to before anyone configures one. Matches the
+ * documented default on `Bot.language_config` (see `db/models.py`), so a bot
+ * nobody has touched reads the same here as it does server-side.
+ */
+export const DEFAULT_LOCALE = 'en-IN';
+
+/** A brand-new, untouched language configuration. */
+export const LANGUAGE_DEFAULTS: LanguageConfig = {
+  enabled: false,
+  supportedLocales: [DEFAULT_LOCALE],
+  defaultLocale: DEFAULT_LOCALE,
+  autoDetect: true,
+  allowVisitorSwitch: false,
+  operatorTranslation: false,
+};
 
 export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 20 } as const;
 export const MAX_QUEUE = { min: 1, max: 100, default: 10 } as const;
@@ -218,6 +272,52 @@ export function draftFromBot(raw: Record<string, unknown>): BotConfigDraft {
       ratingPrompt: asString(widgetMessages.rating_prompt),
       endChatLabel: asString(widgetMessages.end_chat_label),
     },
+    language: languageFromBot(raw.language_config),
+  };
+}
+
+/** Drop blanks and repeats, preserving first-seen order. */
+function dedupe(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/**
+ * Parse the stored `language_config` into the editable draft.
+ *
+ * Loss-tolerant, and deliberately NOT normalised: a legacy bot whose stored
+ * default sits outside its supported list must load exactly as stored, so the
+ * card can show the problem and the user's first save is what repairs it.
+ * Normalisation belongs on the way out - see {@link normalizeLanguageConfig}.
+ */
+export function languageFromBot(value: unknown): LanguageConfig {
+  const raw = asRecord(value);
+  const supported = Array.isArray(raw.supported_locales)
+    ? raw.supported_locales.filter(
+        (item): item is string => typeof item === 'string' && item.trim().length > 0,
+      )
+    : [];
+  return {
+    enabled: asBoolean(raw.enabled, LANGUAGE_DEFAULTS.enabled),
+    supportedLocales: supported.length > 0 ? dedupe(supported) : [...LANGUAGE_DEFAULTS.supportedLocales],
+    defaultLocale:
+      asString(raw.default_locale, LANGUAGE_DEFAULTS.defaultLocale) || LANGUAGE_DEFAULTS.defaultLocale,
+    autoDetect: asBoolean(raw.auto_detect, LANGUAGE_DEFAULTS.autoDetect),
+    allowVisitorSwitch: asBoolean(
+      raw.allow_visitor_language_switch,
+      LANGUAGE_DEFAULTS.allowVisitorSwitch,
+    ),
+    operatorTranslation: asBoolean(
+      raw.operator_translation_enabled,
+      LANGUAGE_DEFAULTS.operatorTranslation,
+    ),
   };
 }
 
@@ -299,6 +399,51 @@ export function servicesPatch(services: ServiceEntry[]): Record<string, unknown>
 
 export function answerLinksPatch(links: SmartLink[]): Record<string, unknown> {
   return { answer_links: normalizeSmartLinkEntries(links) };
+}
+
+/**
+ * Enforce the invariants the server also enforces, so the committed baseline
+ * matches exactly what was persisted and the customer never meets a 422:
+ *
+ * - the default locale is always one of the supported locales;
+ * - the supported list is never empty;
+ * - a visitor language switcher needs two languages to switch between;
+ * - operator translation cannot outlive the multilingual toggle it depends on
+ *   (`bot_routes.py` returns 422 for exactly that pair).
+ */
+export function normalizeLanguageConfig(config: LanguageConfig): LanguageConfig {
+  const supportedLocales = dedupe(config.supportedLocales);
+  if (supportedLocales.length === 0) {
+    supportedLocales.push(config.defaultLocale.trim() || DEFAULT_LOCALE);
+  }
+  const defaultLocale = supportedLocales.includes(config.defaultLocale)
+    ? config.defaultLocale
+    : supportedLocales[0];
+  return {
+    enabled: config.enabled,
+    supportedLocales,
+    defaultLocale,
+    autoDetect: config.autoDetect,
+    allowVisitorSwitch: config.allowVisitorSwitch && supportedLocales.length >= 2,
+    operatorTranslation: config.operatorTranslation && config.enabled,
+  };
+}
+
+export function languagePatch(config: LanguageConfig): Record<string, unknown> {
+  const c = normalizeLanguageConfig(config);
+  // `language_config` is shallow-merged server-side. All six keys go together
+  // so the stored object stays internally consistent, rather than leaving a
+  // stale key behind that the merge would faithfully preserve.
+  return {
+    language_config: {
+      enabled: c.enabled,
+      supported_locales: c.supportedLocales,
+      default_locale: c.defaultLocale,
+      auto_detect: c.autoDetect,
+      allow_visitor_language_switch: c.allowVisitorSwitch,
+      operator_translation_enabled: c.operatorTranslation,
+    },
+  };
 }
 
 export function copyPatch(copy: WidgetCopy): Record<string, unknown> {

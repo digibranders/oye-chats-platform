@@ -24,12 +24,13 @@ import { BotConfigSection } from './BotConfigSection';
 import { ExperiencePreview } from './ExperiencePreview';
 import { WebsitePreviewPanel } from './WebsitePreviewPanel';
 
-type SectionKey = 'branding' | 'messages' | 'personality' | 'liveChatLeads' | 'servicesCopy';
+type SectionKey = 'branding' | 'messages' | 'personality' | 'language' | 'liveChatLeads' | 'servicesCopy';
 
 const SECTION_TABS: TabItem[] = [
   { key: 'branding', label: 'Branding' },
   { key: 'messages', label: 'Messages' },
   { key: 'personality', label: 'Personality' },
+  { key: 'language', label: 'Language' },
   { key: 'liveChatLeads', label: 'Live chat & leads' },
   { key: 'servicesCopy', label: 'Services & copy' },
 ];
@@ -259,6 +260,7 @@ export function ExperiencePage(): ReactElement {
                   onServerApply={applyServerValues}
                 />
               )}
+              {activeSection === 'language' && <BotConfigSection variant="language" />}
               {activeSection === 'liveChatLeads' && <BotConfigSection variant="handoff" />}
               {activeSection === 'servicesCopy' && <BotConfigSection variant="content" />}
             </div>

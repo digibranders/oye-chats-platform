@@ -1,5 +1,5 @@
-import { type ReactElement, type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { AlertCircle, Check, Lock, Plus, Trash2 } from 'lucide-react';
+import { type ReactElement, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { AlertCircle, Lock, Plus, Trash2 } from 'lucide-react';
 import {
   Button,
   EmptyState,
@@ -12,6 +12,8 @@ import {
   Textarea,
   cn,
 } from '../../../design-system';
+import { Card, SaveFooter, TextField, Toggle, ToggleRow } from './configCards';
+import { LanguageCard } from './LanguageCard';
 import { useAgent } from '../../../context/AgentContext';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
@@ -22,10 +24,12 @@ import {
   type LiveChatConfig,
   type ServiceEntry,
   type SliceKey,
+  type SliceStatus,
   type SmartLink,
   type WidgetCopy,
   COPY_PLACEHOLDERS,
   HANDOFF_DELAY_OPTIONS,
+  IDLE,
   LEAD_FIELD_LABELS,
   LEAD_FIELD_ORDER,
   LIVE_CHAT_PLACEHOLDERS,
@@ -35,8 +39,10 @@ import {
   copyPatch,
   draftFromBot,
   isHttpUrl,
+  languagePatch,
   leadFormPatch,
   liveChatPatch,
+  normalizeLanguageConfig,
   normalizeLiveChat,
   normalizeServiceEntries,
   normalizeSmartLinkEntries,
@@ -45,15 +51,7 @@ import {
 } from './botConfig';
 
 /** Which cluster of config cards this instance renders. */
-export type BotConfigVariant = 'handoff' | 'content';
-
-interface SliceStatus {
-  saving: boolean;
-  error: string | null;
-  saved: boolean;
-}
-
-const IDLE: SliceStatus = { saving: false, error: null, saved: false };
+export type BotConfigVariant = 'handoff' | 'content' | 'language';
 
 const INITIAL_STATUS: Record<SliceKey, SliceStatus> = {
   liveChat: IDLE,
@@ -61,6 +59,7 @@ const INITIAL_STATUS: Record<SliceKey, SliceStatus> = {
   services: IDLE,
   answerLinks: IDLE,
   copy: IDLE,
+  language: IDLE,
 };
 
 export interface BotConfigSectionProps {
@@ -70,8 +69,9 @@ export interface BotConfigSectionProps {
 /**
  * BotConfigSection - the Experience surfaces backed directly by the `Bot`
  * record rather than the shared appearance draft: live-chat handoff and the
- * pre-chat lead form (`variant="handoff"`), or the services answer-scope and
- * the remaining widget copy (`variant="content"`).
+ * pre-chat lead form (`variant="handoff"`), the services answer-scope and the
+ * remaining widget copy (`variant="content"`), or the bot's visitor-facing
+ * language configuration (`variant="language"`).
  *
  * It loads the bot once via `getBot`, edits locally, and persists each card's
  * slice independently via `updateBot` - so a change to the lead form never
@@ -234,6 +234,24 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
     );
   }
 
+  if (variant === 'language') {
+    return (
+      <div className="space-y-8">
+        <LanguageCard
+          value={draft.language}
+          baseline={baseline.language}
+          onChange={(updater) => patchSlice('language', updater)}
+          dirty={!sliceEqual(draft.language, baseline.language)}
+          status={status.language}
+          onSave={() => {
+            const value = normalizeLanguageConfig(draft.language);
+            void runSave('language', () => languagePatch(value), (prev) => ({ ...prev, language: value }));
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <ServicesCard
@@ -271,159 +289,6 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
           void runSave('copy', () => copyPatch(value), (prev) => ({ ...prev, copy: value }));
         }}
       />
-    </div>
-  );
-}
-
-// ── Shared card scaffolding ───────────────────────────────────────────────────
-
-function Card({ children }: { children: ReactNode }): ReactElement {
-  return (
-    <div className="space-y-5 rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5">
-      {children}
-    </div>
-  );
-}
-
-function SaveFooter({
-  dirty,
-  status,
-  onSave,
-  label,
-}: {
-  dirty: boolean;
-  status: SliceStatus;
-  onSave: () => void;
-  label: string;
-}): ReactElement {
-  return (
-    <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-border)] pt-4">
-      <p role="status" aria-live="polite" className="min-w-0 truncate text-[12px]">
-        {status.error ? (
-          <span className="text-[var(--ds-danger)]">{status.error}</span>
-        ) : status.saving ? (
-          <span className="text-[var(--ds-text-muted)]">Saving…</span>
-        ) : status.saved && !dirty ? (
-          <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
-            <Check size={13} aria-hidden="true" /> Saved
-          </span>
-        ) : dirty ? (
-          <span className="text-[var(--ds-text-muted)]">Unsaved changes</span>
-        ) : (
-          <span className="text-[var(--ds-text-subtle)]">Up to date</span>
-        )}
-      </p>
-      <Button size="sm" onClick={onSave} disabled={!dirty || status.saving}>
-        {status.saving ? 'Saving…' : label}
-      </Button>
-    </div>
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-  disabled = false,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
-        'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-        checked ? 'bg-[var(--ds-accent)]' : 'bg-[var(--ds-border)]',
-        disabled && 'cursor-not-allowed opacity-50',
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-          checked ? 'translate-x-4' : 'translate-x-0.5',
-        )}
-      />
-    </button>
-  );
-}
-
-function ToggleRow({
-  title,
-  description,
-  checked,
-  onChange,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}): ReactElement {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3">
-      <div className="min-w-0">
-        <p className="text-[13px] font-medium text-[var(--ds-text)]">{title}</p>
-        <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">{description}</p>
-      </div>
-      <Toggle checked={checked} onChange={onChange} label={title} />
-    </div>
-  );
-}
-
-function TextField({
-  label,
-  hint,
-  value,
-  onChange,
-  placeholder,
-  maxLength,
-  disabled,
-}: {
-  label: string;
-  hint?: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  maxLength?: number;
-  disabled?: boolean;
-}): ReactElement {
-  const id = useId();
-  const hintId = useId();
-  return (
-    <div className="space-y-1.5">
-      <label
-        htmlFor={id}
-        className={cn(
-          'flex items-center gap-1.5 text-[13px] font-medium',
-          disabled ? 'text-[var(--ds-text-subtle)]' : 'text-[var(--ds-text)]',
-        )}
-      >
-        {disabled && <Lock size={11} strokeWidth={1.75} aria-hidden="true" />}
-        {label}
-      </label>
-      <Input
-        id={id}
-        value={value}
-        maxLength={maxLength}
-        placeholder={placeholder}
-        disabled={disabled}
-        aria-describedby={hint ? hintId : undefined}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      {hint && (
-        <p id={hintId} className="text-[11px] text-[var(--ds-text-subtle)]">
-          {hint}
-        </p>
-      )}
     </div>
   );
 }
