@@ -306,6 +306,12 @@ export function getChatHistory(
 ): Promise<ChatMessage[]>;
 export function getQualificationFunnel(botId: number, period?: string): Promise<Record<string, unknown>>;
 
+// ── Language analytics (Phase 5C) ────────────────────────────────────────────
+export function getLanguageBreakdown(
+  botId: number,
+  period?: '7d' | '30d' | '90d' | 'all',
+): Promise<Record<string, unknown>>;
+
 // ── Locale catalogue (Phase 5A) ──────────────────────────────────────────────
 export function getLocales(): Promise<{
   locales: Array<{

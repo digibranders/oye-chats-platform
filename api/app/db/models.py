@@ -882,6 +882,17 @@ class ChatSession(Base):
             "bot_id",
             created_at.desc(),
         ),
+        # NO language-specific index here, deliberately. The Phase 5C language
+        # breakdown groups by ``language_code`` within one bot over a window,
+        # and a ``(bot_id, language_code, created_at DESC)`` index was measured
+        # against it on 120k sessions across 60 bots: Postgres never chose it,
+        # because ``language_code`` in the middle blocks ``created_at`` from
+        # being used as a range condition. A reordered
+        # ``(bot_id, created_at DESC, language_code)`` variant WAS chosen but
+        # ran no faster (0.76ms vs 0.72ms, same buffer count) because the plan
+        # is a bitmap heap scan either way. The index above already serves the
+        # query; a third index would only add write cost to a hot,
+        # append-heavy table.
     )
 
 

@@ -340,13 +340,18 @@ already produces.
 | File | Change |
 |---|---|
 | `api/app/api/analytics_routes.py` — existing `@router.get` endpoints (`/dashboard` 137, `/ratings-summary` 291, `/resolution-summary` 308) | Add a `/language-breakdown` endpoint following the same shape. |
-| `api/app/db/models.py` — `ChatSession` indexes | Add `ix_chat_sessions_bot_language_created`. |
-| `app/src/features/agents/analytics/` — `LeadsBreakdown.tsx`, `SatisfactionBreakdown.tsx`, `analytics.types.ts`, `useAgentAnalytics.ts`, `chartTheme.tsx` | Add a `LanguageBreakdown.tsx` following the existing breakdown pattern. |
+| `api/app/db/models.py` — `ChatSession` indexes | **No change.** See Database changes below. |
+| `app/src/features/analytics/` — `AnalyticsPage.tsx`, `LeadJourneyFunnel.tsx`, `SatisfactionBreakdown.tsx`, `analytics-types.ts`, `useWorkspaceAnalytics.ts`, `chart-theme.ts` | Add a `LanguageBreakdown.tsx` and a Languages tab, following the existing bot-scoped panel pattern. |
+
+**Not `features/agents/analytics/`.** That directory is unrouted:
+`routes.tsx` redirects `/agents/:id/analytics` to overview and nothing imports
+`AgentAnalyticsPage`. The reachable analytics experience is the workspace
+Analytics page, scoped to an agent by the shell's bot switcher. Building into
+the unrouted page would ship a feature no customer could open.
 
 ## New files/components
 
-- `app/src/features/agents/analytics/LanguageBreakdown.tsx`
-- `api/alembic/versions/<rev>_chat_session_language_index.py`
+- `app/src/features/analytics/LanguageBreakdown.tsx`
 
 ## Metrics — only what the data supports
 
@@ -416,16 +421,27 @@ A `LanguageBreakdown` card on the agent Analytics page, following
 
 ## Database changes
 
-```python
-Index(
-    "ix_chat_sessions_bot_language_created",
-    "bot_id", "language_code", created_at.desc(),
-)
-```
+**None.** A `(bot_id, language_code, created_at DESC)` index was proposed here,
+built, and then measured against the real query on 120,000 sessions spread over
+60 bots. Postgres never chose it: `language_code` sitting between the two
+columns the query actually filters on stops `created_at` being used as a range
+condition, so the planner preferred the existing
+`ix_chat_sessions_bot_id_created` every time.
 
-Idempotent-guard migration using `sa.inspect(op.get_bind()).get_indexes(TABLE)`,
-same template as the Phase 1/2/4 column guards. Pure performance index, no
-application dependency.
+A reordered `(bot_id, created_at DESC, language_code)` variant *was* chosen, and
+ran no faster: 0.76ms against 0.72ms with no new index, on the same buffer
+count, because the plan is a bitmap heap scan either way and a bitmap scan can
+never be index-only.
+
+| Index | Plan chosen | Buffers | Time |
+|---|---|---|---|
+| `(bot_id, language_code, created_at)` | existing `ix_chat_sessions_bot_id_created` | 1336 | 0.72ms |
+| `(bot_id, created_at, language_code)` | itself | 1332 + 3 read | 0.76ms |
+| none | existing `ix_chat_sessions_bot_id_created` | 1336 | 0.73ms |
+
+The index was therefore withdrawn rather than shipped as write overhead on a
+hot, append-heavy table for no read benefit. The reasoning is recorded in
+`ChatSession.__table_args__` so it is not proposed a third time.
 
 ## Tests
 
@@ -433,8 +449,9 @@ application dependency.
 2. Sessions with `language_code IS NULL` (multilingual off) are grouped as
    "Not detected" rather than dropped, so totals reconcile with the dashboard.
 3. Tenant isolation: the endpoint never returns another workspace's sessions.
-4. Migration upgrade → downgrade → upgrade in one process.
-5. `EXPLAIN ANALYZE` confirms the new index is used.
+4. `EXPLAIN ANALYZE` confirms the breakdown is served by an index scan on
+   `ix_chat_sessions_bot_id_created`, not a sequential scan, at realistic
+   multi-bot selectivity.
 
 ## Acceptance criteria
 
@@ -442,11 +459,14 @@ application dependency.
       language.
 - [ ] Translation usage and cost are visible.
 - [ ] NULL-language sessions reconcile against total conversation count.
-- [ ] The breakdown query uses the new index.
+- [ ] The language breakdown query is served efficiently by the existing
+      `bot_id` / `created_at` indexing strategy.
 
 ## Rollback considerations
 
-The index drops cleanly. The endpoint and component are additive.
+Entirely additive: one read-only endpoint, one component, one tab. No schema
+change and no migration, so there is nothing to roll back on the database
+side.
 
 ---
 

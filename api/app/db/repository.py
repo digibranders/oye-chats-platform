@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Float, case, cast, desc, func, insert, select, text
+from sqlalchemy import Float, case, cast, desc, func, insert, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -12,6 +12,7 @@ from app.db.models import (
     ChatMessage,
     ChatSession,
     Client,
+    CreditLedger,
     Document,
     Event,
     LeadInfo,
@@ -1076,6 +1077,94 @@ def get_resolution_summary(session, client_id: int = None, bot_id: int = None):
         "total": total,
         "rate": rate,
     }
+
+
+def get_language_breakdown(session, client_id: int = None, bot_id: int = None, since=None):
+    """Group a bot's conversations by the language they were held in (Phase 5C).
+
+    Returns one row per distinct ``language_code`` with the conversation total,
+    how many the AI resolved, and how many reached live chat.
+
+    Sessions with a NULL ``language_code`` are returned as a real row rather
+    than dropped. That is the normal state for every session recorded before
+    multilingual was switched on, and for every bot that has it off, so
+    dropping them would make this breakdown silently disagree with the
+    conversation count on the dashboard. The caller labels the row.
+
+    ``visitor_resolved`` is a post-chat answer that most visitors never give,
+    so ``resolved`` counts only explicit yes answers and is always a subset of
+    ``total``. It is not ``total - unresolved``.
+
+    Served by the existing ``ix_chat_sessions_bot_id_created``. A dedicated
+    language index was measured and rejected; see ``ChatSession.__table_args__``.
+    """
+    sf = _session_owner_filter(bot_id, client_id)
+
+    stmt = (
+        select(
+            ChatSession.language_code,
+            func.count(ChatSession.id).label("total"),
+            func.count(case((ChatSession.visitor_resolved.is_(True), 1))).label("resolved"),
+            # A conversation counts as live chat once it has left bot mode,
+            # whatever it did afterwards: 'closed' is where a finished live
+            # chat ends up, so keying on the CURRENT status alone would
+            # under-report every completed handoff. ``assigned_operator_id``
+            # is the durable record that an operator was involved.
+            func.count(
+                case(
+                    (
+                        or_(
+                            ChatSession.assigned_operator_id.isnot(None),
+                            ChatSession.status.in_(("waiting", "live")),
+                        ),
+                        1,
+                    )
+                )
+            ).label("live_chat"),
+        )
+        .where(sf)
+        .group_by(ChatSession.language_code)
+        .order_by(desc("total"))
+    )
+    if since is not None:
+        stmt = stmt.where(ChatSession.created_at >= since)
+
+    return [
+        {
+            "language_code": row.language_code,
+            "total": int(row.total or 0),
+            "resolved": int(row.resolved or 0),
+            "live_chat": int(row.live_chat or 0),
+        }
+        for row in session.execute(stmt).all()
+    ]
+
+
+def get_translation_credit_spend(session, client_id: int, bot_id: int = None, since=None) -> int:
+    """Credits spent on translation, from the ledger (Phase 5C).
+
+    DURABLE, unlike the rolling Redis counters that report translation
+    activity. This is the billing record and it does not expire, so it is the
+    only honest source for "what has translation cost me".
+
+    Reads ``attributed_bot_id``, which ``charge_for_translation`` always sets
+    to the bot even when the deduction itself lands in the pooled client scope.
+    ``bot_id`` on the ledger is the BALANCE scope and is NULL for pooled
+    accounts, so grouping cost by it would report zero for most workspaces.
+
+    Deductions are stored as negative deltas; the return value is a positive
+    number of credits spent.
+    """
+    stmt = select(func.coalesce(func.sum(-CreditLedger.delta), 0)).where(
+        CreditLedger.client_id == client_id,
+        CreditLedger.reason == "translation",
+        CreditLedger.delta < 0,
+    )
+    if bot_id is not None:
+        stmt = stmt.where(CreditLedger.attributed_bot_id == bot_id)
+    if since is not None:
+        stmt = stmt.where(CreditLedger.created_at >= since)
+    return int(session.execute(stmt).scalar_one() or 0)
 
 
 def get_top_questions(session, client_id: int = None, limit: int = 5, bot_id: int = None):

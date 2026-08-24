@@ -917,6 +917,28 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
+/**
+ * Conversations broken down by the language they were held in (Phase 5C).
+ *
+ * Two different kinds of number come back and must not be conflated:
+ * `conversations` and `cost` are durable Postgres reads over `period`, while
+ * `translation` is a rolling 24-hour window from expiring Redis counters.
+ *
+ * @param {number} botId
+ * @param {'7d'|'30d'|'90d'|'all'} [period]
+ */
+export const getLanguageBreakdown = async (botId, period = '30d') => {
+    try {
+        const response = await api.get('/analytics/language-breakdown', {
+            params: { bot_id: botId, period },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching language breakdown:', error);
+        throw buildApiError(error, 'Failed to load language breakdown');
+    }
+};
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 // Account-wide, never scoped to the shell's agent switcher: the whole point is
 // one row per agent side by side, so an agency can show each of its own clients
