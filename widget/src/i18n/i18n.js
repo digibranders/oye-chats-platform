@@ -145,6 +145,31 @@ export function t(key, params = {}) {
     return out;
 }
 
+/**
+ * Localize a PRESET qualification-CTA option label for display.
+ *
+ * `label` is the canonical English text the backend rubric is configured with
+ * (see `Bot.bant_config` / `qualification_service.PRESET_FRAMEWORKS`). It is
+ * looked up VERBATIM against the active dictionary's `ctaOptions` map:
+ *   - exact match  -> the localized display string
+ *   - no match     -> `label` unchanged
+ * "No match" covers three cases by construction, with no special-casing
+ * needed: English/disabled (no non-English dictionary loaded), an
+ * unsupported/not-yet-loaded locale, and a customer's own custom option
+ * label, which is never a key in the preset table.
+ *
+ * DISPLAY ONLY. The component must still send the original `label` back to
+ * the backend when the visitor taps the chip; `_score_cta_answer` matches it
+ * verbatim against the bot's configured rubric. Localizing the value actually
+ * sent would silently break that deterministic scoring.
+ */
+export function localizeCtaOption(label, locale = _currentLocale) {
+    if (!label || typeof label !== 'string') return label;
+    const dict = dictionaryFor(locale);
+    const localized = dict?.ctaOptions?.[label];
+    return typeof localized === 'string' ? localized : label;
+}
+
 export const __resetForTests = () => {
     _currentLocale = DEFAULT_LOCALE;
     _listeners.clear();

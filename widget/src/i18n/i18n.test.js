@@ -9,6 +9,7 @@ import {
     setLocale,
     onLocaleChange,
     preloadDictionary,
+    localizeCtaOption,
     t,
     __resetForTests as resetI18n,
 } from './i18n.js';
@@ -395,4 +396,90 @@ test('widget-controller: setLocale updates state and emits one canonical event',
     assert.equal(ctrl.getLocale(), 'hi-IN');
 
     resetController();
+});
+
+// ── CTA option localization (Phase 3 gap fix) ───────────────────────────────
+//
+// QualificationCTA sends the value returned by cta.options verbatim as the
+// chat message so the backend's _score_cta_answer can exact-match it against
+// the bot's configured rubric. localizeCtaOption() must therefore be a pure
+// DISPLAY transform: it must never be the value handed to onSelect. These
+// tests exercise the lookup function itself; QualificationCTA's render output
+// (that onClick still fires with the original label) is asserted in the
+// widget's component-level test below.
+
+test('localizeCtaOption: Hindi session renders preset options in Hindi', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+
+    assert.equal(localizeCtaOption('No budget yet'), 'अभी कोई बजट नहीं');
+    assert.equal(localizeCtaOption('Under $1K/mo'), '$1K/माह से कम');
+    assert.equal(localizeCtaOption('Decision maker'), 'निर्णय लेने वाले');
+    resetI18n();
+});
+
+test('localizeCtaOption: English session renders options unchanged', () => {
+    resetI18n();
+    // No dictionary loaded for en-IN (the default) — this is the production
+    // "English visitor" case.
+    assert.equal(getLocale(), 'en-IN');
+    assert.equal(localizeCtaOption('No budget yet'), 'No budget yet');
+    assert.equal(localizeCtaOption('Decision maker'), 'Decision maker');
+});
+
+test('localizeCtaOption: custom customer-authored labels are preserved unchanged', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+
+    // A label the customer typed into their own bant_config, not one of the
+    // platform preset strings. Must never be silently altered.
+    const custom = "Ready to buy this quarter, budget's already signed off";
+    assert.equal(localizeCtaOption(custom), custom);
+
+    // Also true for a label that merely resembles a preset one but isn't
+    // byte-for-byte identical (case/whitespace differences are NOT matched;
+    // the backend rubric match is exact too, so the lookup must be exact).
+    assert.equal(localizeCtaOption('no budget yet'), 'no budget yet');
+    assert.equal(localizeCtaOption('No budget yet '), 'No budget yet ');
+    resetI18n();
+});
+
+test('localizeCtaOption: unsupported/not-yet-loaded locale falls back safely', () => {
+    resetI18n();
+    // fr-FR has no dictionary loader at all (Phase 2 pilot pair is en/hi).
+    setLocale('fr-FR');
+    assert.equal(localizeCtaOption('No budget yet'), 'No budget yet');
+
+    // hi-IN selected but not yet loaded (async fetch still in flight) must
+    // also fail open to the original label, never throw or return blank.
+    resetI18n();
+    setLocale('hi-IN'); // synchronous; dictionary load is NOT awaited here
+    assert.equal(localizeCtaOption('No budget yet'), 'No budget yet');
+    resetI18n();
+});
+
+test('localizeCtaOption: every preset label the backend rubric ships has a Hindi entry', async () => {
+    // Guards against the Hindi table silently drifting out of sync with
+    // qualification_service.PRESET_FRAMEWORKS as the backend rubric evolves.
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+
+    const hiModule = await import('./locales/hi.js');
+    const table = hiModule.default.ctaOptions;
+    const keys = Object.keys(table);
+    assert.ok(keys.length >= 90, `expected the full preset table, got ${keys.length} entries`);
+    for (const key of keys) {
+        assert.equal(localizeCtaOption(key), table[key]);
+        assert.notEqual(table[key], key, `"${key}" has an identity (untranslated) entry`);
+    }
+    resetI18n();
+});
+
+test('localizeCtaOption: non-string / empty input passes through', () => {
+    assert.equal(localizeCtaOption(''), '');
+    assert.equal(localizeCtaOption(null), null);
+    assert.equal(localizeCtaOption(undefined), undefined);
 });

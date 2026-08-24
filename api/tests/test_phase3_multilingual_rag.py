@@ -6,10 +6,12 @@ isolation, the LLM-bypassing English paths (route_intent skip, refusal/pivot
 localization), first-turn detection with locking rules, canonical-English BANT
 extraction, and both pipelines honouring the language parameter.
 
-Retrieval-behaviour assertions that need a live pgvector corpus (Hindi query
-retrieves an English chunk, cross-lingual distance) are covered by the unit-level
-threshold wiring here and flagged in the plan for a fixture-corpus integration
-test; they are not runnable in this unit suite without a seeded database.
+Retrieval-behaviour assertions that need a real pgvector corpus (Hindi query
+retrieves an English chunk, cross-lingual distance, keyword-arm degradation)
+have their own real-database integration suite:
+tests/test_cross_lingual_retrieval.py. This file covers only the wiring
+(threshold constant, kwarg forwarding) that is testable without a database;
+see that file for the unmocked pgvector assertions.
 """
 
 from types import SimpleNamespace

@@ -83,10 +83,16 @@ Two calibration items the original plan treated as free:
   contributes near-zero hits and hybrid search silently degenerates to
   vector-only (RRF loses half its signal). **Decision for V1: keep `'english'`.**
   Postgres ships no Hindi dictionary, and `'simple'` would drop English stemming
-  for the majority of traffic. Code-switched queries ("मुझे pricing चाहिए") still
-  match the embedded English term, so the degradation is partial. **Required:
-  log keyword-arm hit counts by language** so the real impact is measured, not
-  assumed. This is a documented, deliberate degradation, not a defect.
+  for the majority of traffic. **Corrected against a real Postgres integration
+  test** (`tests/test_cross_lingual_retrieval.py`, added during Phase 3
+  implementation): a code-switched query ("मुझे pricing चाहिए") does **not**
+  get partial credit on its embedded English term. `plainto_tsquery` ANDs
+  together every extracted lexeme, including the untranslated Devanagari
+  words, so the match fails whenever any of them is absent from the
+  document's tsvector, which it always will be for an English-only knowledge
+  base. The degradation is effectively total for any multi-word non-English
+  query, not partial, and log keyword-arm hit counts by language confirm this
+  in production. This is a documented, deliberate degradation, not a defect.
 - **The vector distance threshold was tuned on English.**
   `search_similar_documents` (`repository.py:795`) defaults `max_distance=0.78`,
   chosen against an English corpus where on-topic queries cluster at cosine
@@ -350,10 +356,19 @@ chat_routes.py: chat_stream_endpoint / chat_endpoint
 - Same question, two session languages, two distinct keys.
 - Disabled bot: key format unchanged (no mass invalidation on deploy).
 
-**Retrieval**
-- Cross-lingual vector retrieval returns the expected English chunk for a Hindi
-  query (small fixture corpus; validates the whole strategy).
-- Keyword arm returns 0 for pure Devanagari, greater than 0 for code-switched.
+**Retrieval** — implemented as a real (unmocked) pgvector integration test,
+`tests/test_cross_lingual_retrieval.py`, using the existing `pg_engine`/`db`
+throwaway-Postgres fixture pattern:
+- Cross-lingual vector retrieval returns the expected English chunk for a
+  Hindi-equivalent query at a synthetic, precisely-known cosine distance,
+  rejected under the English-tuned default (0.78) and admitted under
+  `CROSS_LINGUAL_MAX_DISTANCE` (0.85), through both `search_similar_documents`
+  directly and `rag_service._vector_search` (the real pipeline call).
+- Keyword arm returns 0 for pure Devanagari, **and 0 for code-switched too**
+  (corrected: `plainto_tsquery` ANDs every extracted lexeme, so an embedded
+  English token gets no partial credit when non-English filler words
+  surround it; the one exception is a query that is ONLY the English token,
+  which is really the pure-English case, not genuine code-switching).
 - A known cross-lingual pair is not filtered at the configured `max_distance`.
 
 **LLM-bypassing paths**

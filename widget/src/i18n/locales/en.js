@@ -4,6 +4,13 @@ export default {
     name: 'English',
     native_name: 'English',
     direction: 'ltr',
+    // Preset BANT/MEDDIC/CHAMP/GPCTBA+C&I qualification-CTA option labels
+    // (see api/app/services/qualification_service.py PRESET_FRAMEWORKS), keyed
+    // by their own canonical English text. Intentionally empty: English IS the
+    // canonical text these labels are configured in, so there is nothing to
+    // look up. See i18n.js's localizeCtaOption() and locales/hi.js for the
+    // populated, non-trivial case.
+    ctaOptions: {},
     messages: {
         welcome: {
             good_morning: 'Good morning',

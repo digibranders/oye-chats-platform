@@ -7355,9 +7355,16 @@ async def rag_pipeline_stream(
                 _gather_ms = (_t.perf_counter() - _ret_start) * 1000
 
                 # Phase 3: measure the English-only keyword arm's real
-                # contribution by conversation language (the arm uses the
-                # 'english' text-search config, so non-English queries hit it
-                # only on code-switched Latin tokens). Enabled bots only.
+                # contribution by conversation language. The arm uses the
+                # 'english' text-search config and plainto_tsquery, which ANDs
+                # together every lexeme it extracts, including untranslated
+                # non-Latin words, so ANY non-English query (pure-script or
+                # code-switched alike) contributes near-zero hits against an
+                # English-only knowledge base: verified in
+                # tests/test_cross_lingual_retrieval.py, which found the
+                # degradation is NOT "partial for code-switching" as an
+                # earlier version of this comment assumed, it is effectively
+                # total. Enabled bots only.
                 if language is not None:
                     logger.info(
                         "[retrieval] keyword_arm_by_language lang=%s bot=%s keyword_hits=%d vector_hits=%d",
