@@ -20,6 +20,8 @@ import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
 import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCode } from '../i18n/i18n.js';
+import { displayTextFor } from '../lib/liveChatTranslation.js';
+import { isInvalidTransition, nextChatMode } from '../lib/chatModeMachine.js';
 import { formatHeaderDateTime } from '../i18n/formatters.js';
 
 // Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
@@ -55,16 +57,9 @@ const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === s
 // a handoff submission while the resolver re-checks for operator availability.
 // From there it either rolls forward to `waiting` (operator found) or
 // `unavailable` (timeout. Show the compact message-only form).
-const _VALID_TRANSITIONS = {
-    // ``bot → live`` covers the operator-initiated connect-request consent
-    // flow: operator clicks Connect in the dashboard, the visitor accepts the
-    // popup, and the session promotes to live chat without ever queueing.
-    bot: ['waiting', 'unavailable', 'connecting', 'live'],
-    connecting: ['waiting', 'unavailable', 'bot'],
-    waiting: ['live', 'bot', 'unavailable'],
-    live: ['bot', 'unavailable'],
-    unavailable: ['bot'],
-};
+// The chat-mode state machine lives in lib/chatModeMachine.js so it can be
+// unit-tested. It was a private const here, which is why a missing transition
+// went unnoticed: exercising it needed a real browser and a timing race.
 
 // Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
 // e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
@@ -280,10 +275,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [chatMode, setChatModeRaw] = useState('bot');
     const setChatMode = useCallback((next) => {
         setChatModeRaw(prev => {
-            const allowed = _VALID_TRANSITIONS[prev];
-            if (allowed && allowed.includes(next)) return next;
-            console.warn(`[OyeChats] Invalid chatMode transition: ${prev} → ${next}`);
-            return prev;
+            if (isInvalidTransition(prev, next)) {
+                console.warn(`[OyeChats] Invalid chatMode transition: ${prev} → ${next}`);
+                return prev;
+            }
+            return nextChatMode(prev, next);
         });
     }, []);
     const [operatorName, setOperatorName] = useState(null);
@@ -673,7 +669,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     if (history && history.length > 0) {
                         const mapped = history.map(m => ({
                             id: m.id,
-                            text: m.content,
+                            // Prefer the persisted translation for this visitor's
+                            // language (Phase 4). An operator reply is stored in
+                            // the OPERATOR's language, so reading `content` here
+                            // put the English original in the bot-history list
+                            // while LiveChatMode restored the Hindi translation
+                            // into the live list, and the visitor saw the same
+                            // reply twice in two languages. Same helper as the
+                            // live path so both lists always agree.
+                            text: displayTextFor(m, getLocale()),
                             sender: m.role === 'user' ? 'user' : 'bot',
                             timestamp: m.timestamp,
                             feedback: typeof m.feedback === 'number' ? m.feedback : null,
@@ -1052,7 +1056,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (earlier && earlier.length > 0) {
                 const mapped = earlier.map(m => ({
                     id: m.id,
-                    text: m.content,
+                    // Same rule as the initial history load above: paging back
+                    // through a translated conversation must not switch language
+                    // partway up the thread.
+                    text: displayTextFor(m, getLocale()),
                     sender: m.role === 'user' ? 'user' : 'bot',
                     timestamp: m.timestamp,
                     feedback: null,

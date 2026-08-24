@@ -3,6 +3,8 @@ import { X } from 'lucide-react';
 import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
 import { sanitizeColor } from '../services/sanitize';
+import { displayTextFor } from '../lib/liveChatTranslation';
+import { getLocale } from '../i18n/i18n';
 
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -168,6 +170,11 @@ const LiveChatMode = ({
                             // messages were sent into a dead socket. Without this,
                             // those messages live in the DB but never reach the UI.
                             historyLoadedRef.current = true;
+                            // The visitor's own language, which is what the
+                            // server resolved for this session in Phase 2 (the
+                            // widget is what reported it). Used to pick the
+                            // right persisted translation below.
+                            const sessionLanguage = getLocale();
                             getChatHistory(sessionId)
                                 .then(history => {
                                     if (!history || history.length === 0) return;
@@ -231,7 +238,16 @@ const LiveChatMode = ({
                                                     content_type: imageExts.includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain'),
                                                 };
                                             }
-                                            return { ...base, text: m.content };
+                                            // Prefer the persisted translation
+                                            // for this visitor's language. The
+                                            // operator's reply is stored in
+                                            // THEIR language (that row is the
+                                            // canonical original), so rendering
+                                            // `content` here would flip the
+                                            // thread back to English on every
+                                            // reconnect. See
+                                            // lib/liveChatTranslation.js.
+                                            return { ...base, text: displayTextFor(m, sessionLanguage) };
                                         });
                                     onLiveMessagesChange?.(prev => {
                                         if (!Array.isArray(prev) || prev.length === 0) return restored;
