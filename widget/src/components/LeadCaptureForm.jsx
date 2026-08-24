@@ -3,13 +3,14 @@ import { User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import { sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
+import { t } from '../i18n/i18n.js';
 
-const FIELD_CONFIG = {
-    name: { label: 'Your Name', icon: User, type: 'text', placeholder: 'John Doe' },
-    email: { label: 'Email Address', icon: Mail, type: 'email', placeholder: 'john@company.com' },
-    phone: { label: 'Phone Number', icon: Phone, type: 'tel', placeholder: '+1 (555) 000-0000' },
-    company: { label: 'Company', icon: Building2, type: 'text', placeholder: 'Acme Inc.' },
-};
+const getFieldConfig = () => ({
+    name: { label: t('lead.name_label') || 'Your Name', icon: User, type: 'text', placeholder: t('lead.name_placeholder') || 'John Doe' },
+    email: { label: t('lead.email_label') || 'Email Address', icon: Mail, type: 'email', placeholder: t('lead.email_placeholder') || 'john@company.com' },
+    phone: { label: t('lead.phone_label') || 'Phone Number', icon: Phone, type: 'tel', placeholder: t('lead.phone_placeholder') || '+1 (555) 000-0000' },
+    company: { label: t('lead.company_label') || 'Company', icon: Building2, type: 'text', placeholder: t('lead.company_placeholder') || 'Acme Inc.' },
+});
 
 // Inline pre-chat lead form. Renders WITHIN the chat window's messages area,
 // the parent ChatWindow already supplies the header (bot avatar, name, close
@@ -64,9 +65,10 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
 
     const validate = () => {
         const newErrors = {};
+        const fieldConfigMap = getFieldConfig();
         for (const f of fields) {
             if (f.required && !formData[f.field]?.trim()) {
-                newErrors[f.field] = `${FIELD_CONFIG[f.field]?.label || f.field} is required`;
+                newErrors[f.field] = `${fieldConfigMap[f.field]?.label || f.field} is required`;
             }
             if (f.field === 'email' && formData.email?.trim()) {
                 if (!looksLikeEmail(formData.email.trim())) {
@@ -137,15 +139,16 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 </div>
 
                 <h2 className="text-center text-[#16202C] text-lg font-bold mb-1">
-                    Before we start
+                    {settings?.lead_form_title || t('lead.title') || 'Before we start'}
                 </h2>
                 <p className="text-center text-gray-500 text-sm mb-5">
-                    Please share your details so we can assist you better.
+                    {settings?.lead_form_subtitle || t('lead.subtitle') || 'Please share your details so we can assist you better.'}
                 </p>
 
                 <form onSubmit={handleSubmit} className="space-y-3">
                     {fields.map((f, i) => {
-                        const config = FIELD_CONFIG[f.field];
+                        const fieldConfigMap = getFieldConfig();
+                        const config = fieldConfigMap[f.field];
                         if (!config) return null;
                         const Icon = config.icon;
                         return (
@@ -193,7 +196,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         ) : (
                             <>
-                                Start Chat
+                                {t('lead.submit') || 'Start Chat'}
                                 <ArrowRight className="w-4 h-4" />
                             </>
                         )}

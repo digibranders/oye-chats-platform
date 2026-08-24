@@ -74,12 +74,17 @@ def ensure_chat_session(
     bot_id: int = None,
     location: str = None,
     device: str = None,
+    language_code: str = None,
+    locale: str = None,
+    language_source: str = None,
+    language_confidence: float = None,
+    language_locked: bool = None,
 ) -> ChatSession:
     """Get-or-create a chat session, returning the row.
 
     * Looks up by primary key only. ``id`` uniquely identifies a session.
     * If the row exists and belongs to ``bot_id``, updates ``last_active_at``
-      (plus optional ``location`` / ``device``) and returns it.
+      (plus optional ``location`` / ``device`` / initial language) and returns it.
     * If the row exists but ``bot_id`` doesn't match, raises
       ``SessionOwnershipError`` (handled as HTTP 404 at the API layer).
     * If no row exists, INSERTs and returns. ``IntegrityError`` from a
@@ -95,6 +100,11 @@ def ensure_chat_session(
                 bot_id=bot_id,
                 location=location,
                 device=device,
+                language_code=language_code,
+                locale=locale,
+                language_source=language_source,
+                language_confidence=language_confidence,
+                language_locked=language_locked if language_locked is not None else False,
             )
             session.add(chat_session)
             session.flush()
@@ -117,6 +127,44 @@ def ensure_chat_session(
         chat_session.location = location
     if device and not chat_session.device:
         chat_session.device = device
+    if not getattr(chat_session, "language_locked", False):
+        if language_code and not getattr(chat_session, "language_code", None):
+            chat_session.language_code = language_code
+        if locale and not getattr(chat_session, "locale", None):
+            chat_session.locale = locale
+        if language_source and not getattr(chat_session, "language_source", None):
+            chat_session.language_source = language_source
+        if language_confidence is not None and getattr(chat_session, "language_confidence", None) is None:
+            chat_session.language_confidence = language_confidence
+        if language_locked is not None:
+            chat_session.language_locked = language_locked
+    session.flush()
+    return chat_session
+
+
+def update_chat_session_language(
+    session,
+    session_id: str,
+    bot_id: int,
+    *,
+    language_code: str,
+    locale: str,
+    language_source: str = "explicit",
+    language_confidence: float = 1.0,
+    language_locked: bool = True,
+) -> ChatSession:
+    """Explicitly update and lock the language on a chat session."""
+    chat_session = _get_session_for_bot(session, session_id, bot_id)
+    if chat_session is None:
+        raise SessionOwnershipError(session_id, bot_id, None)
+
+    chat_session.language_code = language_code
+    chat_session.locale = locale
+    chat_session.language_source = language_source
+    chat_session.language_confidence = language_confidence
+    chat_session.language_locked = language_locked
+    chat_session.language_changed_at = func.now()
+    chat_session.last_active_at = func.now()
     session.flush()
     return chat_session
 

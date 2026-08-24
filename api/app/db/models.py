@@ -846,6 +846,14 @@ class ChatSession(Base):
     # (see migration d4e5f6a7b8c9) to keep sidebar polling cheap.
     lead_viewed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Multilingual state (Phase 2). Resolved language context for this session
+    language_code = Column(String(16), nullable=True)
+    locale = Column(String(32), nullable=True)
+    language_source = Column(String(32), nullable=True)
+    language_confidence = Column(Float, nullable=True)
+    language_locked = Column(Boolean, default=False, server_default="false", nullable=False)
+    language_changed_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # No `onupdate=func.now()` here on purpose: that fires on ANY UPDATE to
     # this row (e.g. marking a lead viewed, editing notes/tags), not just

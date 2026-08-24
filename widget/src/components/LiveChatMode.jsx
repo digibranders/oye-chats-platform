@@ -4,7 +4,7 @@ import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
 import { sanitizeColor } from '../services/sanitize';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 /**
  * Headless WebSocket provider for live chat.

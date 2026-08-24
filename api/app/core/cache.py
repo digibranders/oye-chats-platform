@@ -139,8 +139,18 @@ def bot_config_key(bot_key: str) -> str:
     return f"{PREFIX}bot:{bot_key}"
 
 
-def qa_response_key(bot_id: int, question_hash: str) -> str:
-    """Cache key for a cached QA response."""
+def qa_response_key(bot_id: int, question_hash: str, lang: str | None = None) -> str:
+    """Cache key for a cached QA response.
+
+    ``lang`` partitions the cache by conversation language for multilingual bots
+    so a Hindi question can never be served an English cached answer that hashed
+    to the same question bucket. It is passed ONLY when multilingual is enabled
+    for the bot; when it is ``None`` (every bot with the feature off) the key is
+    byte-identical to the pre-multilingual format, so existing entries keep
+    hitting and no bot takes a mass cache miss on deploy.
+    """
+    if lang:
+        return f"{PREFIX}qa:{bot_id}:{lang}:{question_hash}"
     return f"{PREFIX}qa:{bot_id}:{question_hash}"
 
 

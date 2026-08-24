@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import Launcher from './Launcher';
 import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/api';
-import { readSessionId, writeSessionId, resolveShareDomain } from '../services/storage-keys';
+import { readSessionId, writeSessionId, resolveShareDomain, readLocalePreference } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
+import { resolveClientLocale, getHtmlLang, getBrowserLanguages } from '../i18n/localeResolver.js';
+import { setLocale as setI18nLocale } from '../i18n/i18n.js';
+import ErrorBoundary from './ErrorBoundary';
+import { lazyWithRetry } from '../services/lazyWithRetry';
 
 // Lazy-loaded. Chat window ships in its own chunk, only fetched on first widget open.
 // This is the largest component (~1900 LOC plus react-markdown), so deferring it
 // keeps the initial FAB chunk small (Core Web Vitals win for the host site).
-const ChatWindow = lazy(() => import('./ChatWindow'));
+const ChatWindow = lazyWithRetry(() => import('./ChatWindow'));
 
 /** Ref used to pass a pre-typed message from the greeting bubble into the chat window. */
 const usePendingMessage = () => {
@@ -41,12 +45,42 @@ const ChatWidget = () => {
   // Pending message from greeting bubble → auto-sent on chat open
   const pendingMessageRef = usePendingMessage();
 
+  // How the active locale was arrived at. ChatWindow forwards this to the
+  // backend as `language_source`, so an explicit choice is recorded (and
+  // locked) as explicit rather than mislabelled as browser detection.
+  const localeResolutionRef = useRef(null);
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
         const fetchedSettings = await getChatbotSettings();
         if (fetchedSettings) {
           setSettings(fetchedSettings);
+          const langCfg = fetchedSettings?.language_config || {};
+          const ctrl = getController();
+          const stored = readLocalePreference();
+          // A stored locale the visitor picked by hand stays authoritative on
+          // their next visit; an auto-resolved one only breaks a tie below the
+          // page and browser languages.
+          const storedExplicit = stored?.source === 'explicit' ? stored.locale : null;
+          const resolved = resolveClientLocale({
+            explicit: storedExplicit,
+            site: ctrl.getRuntimeConfig()?.locale || null,
+            htmlLang: getHtmlLang(),
+            browser: getBrowserLanguages(),
+            persisted: storedExplicit ? null : stored?.locale || null,
+            supportedLocales: langCfg.supported_locales,
+            defaultLocale: langCfg.default_locale || 'en-IN',
+            // Absent config means multilingual was never enabled for this bot.
+            // Matches the backend's `.get("enabled", False)`; treating a
+            // missing key as enabled made the two sides disagree.
+            enabled: langCfg.enabled === true,
+          });
+          if (resolved && resolved.locale) {
+            setI18nLocale(resolved.locale);
+            ctrl.reportActiveLocale(resolved.locale);
+            localeResolutionRef.current = resolved;
+          }
         }
       } catch (error) {
         console.error("Failed to load settings in widget:", error);
@@ -304,14 +338,17 @@ const ChatWidget = () => {
   return (
     <>
       {isVisible && (
-        <Suspense fallback={null}>
-          <ChatWindow
-            onClose={closeChat}
-            initialSettings={settings}
-            isAnimating={isAnimating}
-            initialMessage={pendingMessageRef}
-          />
-        </Suspense>
+        <ErrorBoundary label="ChatWindow" fallback={(retry) => <div className="fixed bottom-6 right-6 z-[9999] p-4 bg-white rounded-lg shadow-lg border text-sm text-red-600 flex flex-col gap-2"><span>Chat failed to load.</span><button onClick={retry} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-xs font-semibold text-gray-800">Retry</button></div>}>
+          <Suspense fallback={null}>
+            <ChatWindow
+              onClose={closeChat}
+              initialSettings={settings}
+              isAnimating={isAnimating}
+              initialMessage={pendingMessageRef}
+              initialLocaleSource={localeResolutionRef.current?.source || null}
+            />
+          </Suspense>
+        </ErrorBoundary>
       )}
       {/* Launcher fades out while chat is open. LiveChat/Intercom pattern.
           Kept in DOM (not unmounted) so it can fade back in after the close animation. */}

@@ -22,6 +22,7 @@ export default defineConfig({
   },
   base: widgetBase,
   build: {
+    modulePreload: { polyfill: false },
     outDir: 'dist/app',
     emptyOutDir: true,
     sourcemap: !!process.env.VITE_SOURCEMAP,
@@ -53,11 +54,22 @@ export default defineConfig({
           ) {
             return 'vendor'
           }
+          // lucide-react is deliberately NOT pinned to vendor. Rollup
+          // tree-shakes and splits the icons per importing chunk, so the eager
+          // FAB carries only the four icons Launcher uses. Forcing the package
+          // into vendor merged every lazy component's icons into the payload
+          // that loads on page view.
           // Core services — used by both the FAB (eager) and chat (lazy).
           // Co-locating with vendor keeps the chat chunk truly chat-only,
           // so it only loads on first widget open.
           if (id.includes('/widget-controller') || id.includes('/services/api') || id.includes('/services/sanitize') || id.includes('/services/sentinelStripper')) {
             return 'vendor'
+          }
+          // Translation dictionaries other than English are loaded on demand by
+          // i18n.js. Keep them in their own chunks so a visitor on a
+          // single-language bot never downloads a language they cannot select.
+          if (id.includes('/i18n/locales/')) {
+            return null
           }
           // Sentry is heavy and only loaded on first error or when OYECHATS_DEBUG=true.
           if (id.includes('node_modules/@sentry/')) {

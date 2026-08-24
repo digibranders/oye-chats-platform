@@ -2,13 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { Bot, ChevronDown, X, ArrowUp } from 'lucide-react';
 import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
 import PremiumOrb from './PremiumOrb';
+import { t } from '../i18n/i18n.js';
 
 const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
-    const launcherName = settings?.launcher_name || "Have Questions?";
+    const launcherName = settings?.launcher_name || t('launcher.have_questions') || "Have Questions?";
     const launcherLogo = sanitizeImageUrl(settings?.launcher_logo);
     const avatarType = settings?.avatar_type || 'upload';
     const primaryColor = sanitizeColor(settings?.primary_color);
-    const botName = settings?.bot_name || 'AI Assistant';
+    const botName = settings?.bot_name || t('launcher.ai_assistant') || 'AI Assistant';
     const [isScrolling, setIsScrolling] = useState(false);
     const scrollTimer = useRef(null);
 

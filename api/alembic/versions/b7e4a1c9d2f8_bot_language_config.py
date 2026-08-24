@@ -45,10 +45,10 @@ def upgrade() -> None:
                 postgresql.JSONB(),
                 nullable=False,
                 server_default=sa.text(
-                    "'{\"enabled\": false, \"default_locale\": \"en-IN\", "
-                    "\"supported_locales\": [\"en-IN\"], \"auto_detect\": true, "
-                    "\"allow_visitor_language_switch\": false, "
-                    "\"operator_translation_enabled\": false}'::jsonb"
+                    '\'{"enabled": false, "default_locale": "en-IN", '
+                    '"supported_locales": ["en-IN"], "auto_detect": true, '
+                    '"allow_visitor_language_switch": false, '
+                    '"operator_translation_enabled": false}\'::jsonb'
                 ),
             ),
         )

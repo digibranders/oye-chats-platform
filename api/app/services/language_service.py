@@ -42,32 +42,66 @@ RTL_LANGUAGES: frozenset[str] = frozenset({"ar", "he", "fa", "ur"})
 
 # Standard locale catalog with metadata
 KNOWN_LOCALES: dict[str, LocaleInfo] = {
-    "en-IN": LocaleInfo(code="en", locale="en-IN", name="English (India)", native_name="English (India)", direction="ltr"),
-    "en-US": LocaleInfo(code="en", locale="en-US", name="English (United States)", native_name="English (US)", direction="ltr"),
-    "en-GB": LocaleInfo(code="en", locale="en-GB", name="English (United Kingdom)", native_name="English (UK)", direction="ltr"),
+    "en-IN": LocaleInfo(
+        code="en", locale="en-IN", name="English (India)", native_name="English (India)", direction="ltr"
+    ),
+    "en-US": LocaleInfo(
+        code="en", locale="en-US", name="English (United States)", native_name="English (US)", direction="ltr"
+    ),
+    "en-GB": LocaleInfo(
+        code="en", locale="en-GB", name="English (United Kingdom)", native_name="English (UK)", direction="ltr"
+    ),
     "hi-IN": LocaleInfo(code="hi", locale="hi-IN", name="Hindi (India)", native_name="हिन्दी", direction="ltr"),
-    "es-ES": LocaleInfo(code="es", locale="es-ES", name="Spanish (Spain)", native_name="Español (España)", direction="ltr"),
-    "es-MX": LocaleInfo(code="es", locale="es-MX", name="Spanish (Mexico)", native_name="Español (México)", direction="ltr"),
-    "fr-FR": LocaleInfo(code="fr", locale="fr-FR", name="French (France)", native_name="Français (France)", direction="ltr"),
-    "fr-CA": LocaleInfo(code="fr", locale="fr-CA", name="French (Canada)", native_name="Français (Canada)", direction="ltr"),
+    "es-ES": LocaleInfo(
+        code="es", locale="es-ES", name="Spanish (Spain)", native_name="Español (España)", direction="ltr"
+    ),
+    "es-MX": LocaleInfo(
+        code="es", locale="es-MX", name="Spanish (Mexico)", native_name="Español (México)", direction="ltr"
+    ),
+    "fr-FR": LocaleInfo(
+        code="fr", locale="fr-FR", name="French (France)", native_name="Français (France)", direction="ltr"
+    ),
+    "fr-CA": LocaleInfo(
+        code="fr", locale="fr-CA", name="French (Canada)", native_name="Français (Canada)", direction="ltr"
+    ),
     "de-DE": LocaleInfo(code="de", locale="de-DE", name="German (Germany)", native_name="Deutsch", direction="ltr"),
-    "pt-BR": LocaleInfo(code="pt", locale="pt-BR", name="Portuguese (Brazil)", native_name="Português (Brasil)", direction="ltr"),
-    "pt-PT": LocaleInfo(code="pt", locale="pt-PT", name="Portuguese (Portugal)", native_name="Português (Portugal)", direction="ltr"),
+    "pt-BR": LocaleInfo(
+        code="pt", locale="pt-BR", name="Portuguese (Brazil)", native_name="Português (Brasil)", direction="ltr"
+    ),
+    "pt-PT": LocaleInfo(
+        code="pt", locale="pt-PT", name="Portuguese (Portugal)", native_name="Português (Portugal)", direction="ltr"
+    ),
     "it-IT": LocaleInfo(code="it", locale="it-IT", name="Italian (Italy)", native_name="Italiano", direction="ltr"),
-    "nl-NL": LocaleInfo(code="nl", locale="nl-NL", name="Dutch (Netherlands)", native_name="Nederlands", direction="ltr"),
+    "nl-NL": LocaleInfo(
+        code="nl", locale="nl-NL", name="Dutch (Netherlands)", native_name="Nederlands", direction="ltr"
+    ),
     "ja-JP": LocaleInfo(code="ja", locale="ja-JP", name="Japanese (Japan)", native_name="日本語", direction="ltr"),
     "ko-KR": LocaleInfo(code="ko", locale="ko-KR", name="Korean (South Korea)", native_name="한국어", direction="ltr"),
-    "zh-CN": LocaleInfo(code="zh", locale="zh-CN", name="Chinese (Simplified)", native_name="简体中文", direction="ltr"),
-    "zh-TW": LocaleInfo(code="zh", locale="zh-TW", name="Chinese (Traditional)", native_name="繁體中文", direction="ltr"),
-    "ar-SA": LocaleInfo(code="ar", locale="ar-SA", name="Arabic (Saudi Arabia)", native_name="العربية", direction="rtl"),
-    "ar-AE": LocaleInfo(code="ar", locale="ar-AE", name="Arabic (UAE)", native_name="العربية (الإمارات)", direction="rtl"),
+    "zh-CN": LocaleInfo(
+        code="zh", locale="zh-CN", name="Chinese (Simplified)", native_name="简体中文", direction="ltr"
+    ),
+    "zh-TW": LocaleInfo(
+        code="zh", locale="zh-TW", name="Chinese (Traditional)", native_name="繁體中文", direction="ltr"
+    ),
+    "ar-SA": LocaleInfo(
+        code="ar", locale="ar-SA", name="Arabic (Saudi Arabia)", native_name="العربية", direction="rtl"
+    ),
+    "ar-AE": LocaleInfo(
+        code="ar", locale="ar-AE", name="Arabic (UAE)", native_name="العربية (الإمارات)", direction="rtl"
+    ),
     "tr-TR": LocaleInfo(code="tr", locale="tr-TR", name="Turkish (Turkey)", native_name="Türkçe", direction="ltr"),
-    "id-ID": LocaleInfo(code="id", locale="id-ID", name="Indonesian (Indonesia)", native_name="Bahasa Indonesia", direction="ltr"),
-    "vi-VN": LocaleInfo(code="vi", locale="vi-VN", name="Vietnamese (Vietnam)", native_name="Tiếng Việt", direction="ltr"),
+    "id-ID": LocaleInfo(
+        code="id", locale="id-ID", name="Indonesian (Indonesia)", native_name="Bahasa Indonesia", direction="ltr"
+    ),
+    "vi-VN": LocaleInfo(
+        code="vi", locale="vi-VN", name="Vietnamese (Vietnam)", native_name="Tiếng Việt", direction="ltr"
+    ),
     "th-TH": LocaleInfo(code="th", locale="th-TH", name="Thai (Thailand)", native_name="ไทย", direction="ltr"),
     "pl-PL": LocaleInfo(code="pl", locale="pl-PL", name="Polish (Poland)", native_name="Polski", direction="ltr"),
     "ru-RU": LocaleInfo(code="ru", locale="ru-RU", name="Russian (Russia)", native_name="Русский", direction="ltr"),
-    "uk-UA": LocaleInfo(code="uk", locale="uk-UA", name="Ukrainian (Ukraine)", native_name="Українська", direction="ltr"),
+    "uk-UA": LocaleInfo(
+        code="uk", locale="uk-UA", name="Ukrainian (Ukraine)", native_name="Українська", direction="ltr"
+    ),
     "he-IL": LocaleInfo(code="he", locale="he-IL", name="Hebrew (Israel)", native_name="עברית", direction="rtl"),
     "fa-IR": LocaleInfo(code="fa", locale="fa-IR", name="Persian (Iran)", native_name="فارسی", direction="rtl"),
     "ur-PK": LocaleInfo(code="ur", locale="ur-PK", name="Urdu (Pakistan)", native_name="اردو", direction="rtl"),
@@ -272,10 +306,97 @@ def resolve_initial_locale(
     )
 
 
-def detect_message_language(text: str) -> tuple[str | None, float]:
-    """Stub message-level language detection for Phase 1.
+def language_display_name(locale: str | None) -> str | None:
+    """English display name for a locale, resolved server-side from the catalog.
 
-    Returns (detected_language_code, confidence).
-    Real heuristic/classifier implementation lands in Phase 3.
+    Used to build the conversation-language prompt directive. The name comes
+    from ``KNOWN_LOCALES`` (or a base-language match), never from
+    request-supplied text, so a visitor cannot inject prompt content through the
+    ``locale`` field. Returns None when the locale is not recognised.
     """
-    return (None, 0.0)
+    norm = normalize_locale(locale)
+    if not norm:
+        return None
+    info = KNOWN_LOCALES.get(norm)
+    if info:
+        return info.name
+    # Base-language fallback: 'hi-XX' -> the first 'hi-*' catalogue entry's name.
+    base = language_from_locale(norm)
+    if base:
+        for meta in KNOWN_LOCALES.values():
+            if meta.code == base:
+                return meta.name
+    return None
+
+
+# Unicode script ranges that map cleanly to a single base language for the
+# supported catalogue. Detection is deliberately script-based and
+# dependency-free: it reliably separates non-Latin scripts (the high-value
+# case, e.g. a Devanagari or Arabic first message with no locale headers) from
+# each other, and returns low confidence for Latin text, which it cannot
+# disambiguate (English vs French vs Spanish share the Latin script). Latin
+# languages are expected to resolve through the explicit / site / html_lang /
+# browser tiers instead. This is a first-turn best-effort tier, not a general
+# language classifier.
+_SCRIPT_RANGES: tuple[tuple[int, int, str], ...] = (
+    (0x0900, 0x097F, "hi"),  # Devanagari (Hindi, Marathi)
+    (0x0600, 0x06FF, "ar"),  # Arabic
+    (0x0750, 0x077F, "ar"),  # Arabic Supplement
+    (0x0590, 0x05FF, "he"),  # Hebrew
+    (0x0400, 0x04FF, "ru"),  # Cyrillic (Russian, Ukrainian)
+    (0x0E00, 0x0E7F, "th"),  # Thai
+    (0xAC00, 0xD7AF, "ko"),  # Hangul syllables
+    (0x1100, 0x11FF, "ko"),  # Hangul Jamo
+    (0x3040, 0x309F, "ja"),  # Hiragana
+    (0x30A0, 0x30FF, "ja"),  # Katakana
+    (0x4E00, 0x9FFF, "zh"),  # CJK Unified (shared Han; mapped to zh here)
+)
+
+
+def _script_language(codepoint: int) -> str | None:
+    for start, end, lang in _SCRIPT_RANGES:
+        if start <= codepoint <= end:
+            return lang
+    return None
+
+
+def detect_message_language(text: str) -> tuple[str | None, float]:
+    """Best-effort message-level language detection by Unicode script.
+
+    Returns ``(base_language_code, confidence)`` where confidence is the share
+    of script-bearing letters that belong to the dominant non-Latin script.
+    Returns ``(None, 0.0)`` for empty, too-short, or Latin-dominant text, so the
+    caller falls through to its own default rather than guessing a Latin
+    language it cannot actually distinguish.
+
+    This runs only on the first turn of an unresolved session (see
+    ``_resolve_visitor_language_and_update_session``); it never overrides a
+    locked or already-resolved session language.
+    """
+    if not text or not isinstance(text, str):
+        return (None, 0.0)
+
+    counts: dict[str, int] = {}
+    latin = 0
+    scripted = 0
+    for ch in text:
+        if not ch.isalpha():
+            continue
+        cp = ord(ch)
+        # Basic + Latin-1 + Latin Extended ranges.
+        if cp < 0x0250 or (0x1E00 <= cp <= 0x1EFF):
+            latin += 1
+            continue
+        lang = _script_language(cp)
+        if lang:
+            counts[lang] = counts.get(lang, 0) + 1
+            scripted += 1
+
+    # Require a minimal amount of non-Latin signal before committing.
+    if scripted < 2:
+        return (None, 0.0)
+
+    dominant = max(counts, key=counts.get)
+    total_letters = scripted + latin
+    confidence = counts[dominant] / total_letters if total_letters else 0.0
+    return (dominant, round(confidence, 4))

@@ -1212,6 +1212,108 @@ def _is_known_refusal(text: str, company_name: str) -> bool:
     return False
 
 
+# ── Phase 3: multilingual helpers ───────────────────────────────────────────
+#
+# `language` throughout the pipeline is a `LanguageContext | None`. It is None
+# exactly when multilingual is disabled for the bot (the Phase 2 resolver
+# returns None in that case), so `language is None` is the single gate that
+# keeps every path below byte-identical to pre-Phase-3 behaviour. When it is not
+# None the bot has opted in and `language.language` is the base code ('en',
+# 'hi', ...) and `language.locale` the BCP-47 tag.
+
+# Cross-lingual vector retrieval threshold. Cross-language embedding pairs sit
+# at systematically lower cosine similarity (higher distance) than same-language
+# pairs, so the English-tuned default (0.78 in search_similar_documents) would
+# over-filter valid non-English-to-English matches. A modest relaxation for
+# non-English sessions keeps recall without admitting English-side noise (which
+# still competes on its own same-language distances). English sessions and
+# disabled bots pass None and keep the untouched default.
+CROSS_LINGUAL_MAX_DISTANCE = 0.85
+
+# Localized canned strings for the paths that bypass the LLM entirely and would
+# otherwise emit English into a non-English conversation. Only languages with an
+# entry are localized; everything else (including English) falls through to the
+# existing English text, byte-for-byte. `{cn}` is the (optionally bolded)
+# company name. Phase 3 ships the en/hi pilot pair; add languages here, never a
+# translation service.
+_CANNED_I18N: dict[str, dict[str, str]] = {
+    "hi": {
+        "no_info_pivot": (
+            "{cn} के लिए यह विशेष जानकारी अभी मेरे पास उपलब्ध नहीं है। क्या मैं आपको हमारी टीम से जोड़ दूँ ताकि वे सीधे आपकी मदद कर सकें?"
+        ),
+        "off_topic_refusal": ("मैं केवल {cn} से जुड़े सवालों में आपकी मदद कर सकता/सकती हूँ। {cn} के बारे में आप क्या जानना चाहेंगे?"),
+        "browsing_ack": ("कोई जल्दी नहीं। जब भी आप {cn} के बारे में कुछ जानना चाहें, मैं यहीं हूँ।"),
+    },
+}
+
+
+def _lang_base(language) -> str | None:
+    """Base language code from a LanguageContext, or None when disabled."""
+    return getattr(language, "language", None) if language is not None else None
+
+
+def _lang_is_non_english(language) -> bool:
+    """True only for an enabled bot whose conversation language is not English."""
+    base = _lang_base(language)
+    return bool(base) and base != "en"
+
+
+def _cache_lang_segment(language) -> str | None:
+    """Language segment for the QA cache key: the base code for an enabled bot,
+    None for a disabled bot (which keeps the legacy key format)."""
+    return _lang_base(language)
+
+
+def _canned_localized(kind: str, company_name: str | None, language) -> str | None:
+    """Localized canned string for one of the LLM-bypassing paths, or None to
+    signal "use the existing English text". Returns None for English/disabled
+    and for any language without a table entry, so those paths are unchanged."""
+    base = _lang_base(language)
+    table = _CANNED_I18N.get(base or "")
+    if not table or kind not in table:
+        return None
+    cn = f"**{company_name}**" if company_name else "हमारी टीम"
+    return table[kind].format(cn=cn)
+
+
+def _language_directive(language) -> str:
+    """Structured CONVERSATION LANGUAGE block for the system prompt.
+
+    Empty string for a disabled bot (language is None), so the assembled prompt
+    is byte-identical to pre-Phase-3. For an enabled bot it names the language
+    (resolved server-side from KNOWN_LOCALES, never from request text) and
+    explicitly supersedes response_style.py Section 10's per-message mirroring,
+    which would otherwise contradict a locked conversation language on a
+    code-switched message.
+    """
+    if language is None:
+        return ""
+    from app.services.language_service import language_display_name
+
+    locale = getattr(language, "locale", None) or "en-IN"
+    name = language_display_name(locale) or "the visitor's selected language"
+    return f"""═══════════════════════════════════════════════════════
+CONVERSATION LANGUAGE
+═══════════════════════════════════════════════════════
+Language: {name}
+Locale: {locale}
+
+- Write your ENTIRE reply in {name}.
+- The REFERENCE INFORMATION may be written in another language. Use it as source material and answer natively in {name}. Do not translate it sentence by sentence, and do not mention which language it was written in.
+- Keep product names, plan names, company names, URLs, and email addresses exactly as written in the source, do not transliterate or translate them.
+- Use number, date, and currency formatting appropriate to {locale}.
+- This OVERRIDES any instruction to mirror the visitor's message language. Reply in {name} even if the visitor writes a message in another language, UNLESS the visitor explicitly asks you to switch languages."""
+
+
+def _stream_metadata(session_id: str, sources: list, language=None) -> str:
+    """Build a streaming ``METADATA:`` frame. Adds ``locale`` only for an
+    enabled bot, so a disabled bot's frame stays byte-identical."""
+    payload = {"session_id": session_id, "sources": sources}
+    if language is not None:
+        payload["locale"] = getattr(language, "locale", None)
+    return f"METADATA:{json.dumps(payload)}\n"
+
+
 def _off_topic_refusal(
     company_name: str | None,
     recent_bot_messages: list[str] | None = None,
@@ -1798,13 +1900,25 @@ BANTExtractionResult = QualificationExtractionResult
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _vector_search(cid: int | None, bid: int | None, query_embedding: list, k: int = 15) -> list:
-    """Run vector similarity search in its own DB session (thread-safe)."""
+def _vector_search(
+    cid: int | None,
+    bid: int | None,
+    query_embedding: list,
+    k: int = 15,
+    max_distance: float | None = None,
+) -> list:
+    """Run vector similarity search in its own DB session (thread-safe).
+
+    ``max_distance`` is forwarded only when provided, so the default path stays
+    byte-identical to ``search_similar_documents``'s own English-tuned default.
+    Phase 3 passes a relaxed value for non-English sessions (see
+    ``CROSS_LINGUAL_MAX_DISTANCE``)."""
     import time as _t
 
     _start = _t.perf_counter()
+    _extra = {} if max_distance is None else {"max_distance": max_distance}
     with get_session() as s:
-        results = search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid)
+        results = search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid, **_extra)
     logger.info(
         "[retrieval] vector_search bot=%s k=%d hits=%d elapsed_ms=%.1f",
         bid,
@@ -2389,6 +2503,7 @@ CORE PRINCIPLES (apply to EVERY dimension):
 4. NEVER INFER. If you cannot quote the exact user span that proves the signal, do not extract it. The "extracted_value" field must directly summarise the quoted span, not your interpretation of what the user might have meant.
 5. Only extract signals from the USER's messages, never from the bot's responses.
 6. Only extract NEW signals from the LATEST exchange. Do not re-extract existing data.
+7. LANGUAGE: The conversation may be in any language. Read and understand it in whatever language it is written. Your JSON output structure MUST remain in canonical English exactly as defined by the rubric: all dimension keys, field names, and enum/tier values stay in English and are never translated. Only a free-text ``extracted_value`` may quote the user's own words in their original language.
 
 ═══════════════════════════════════════════════════════
 DIMENSION-SPECIFIC GUIDANCE
@@ -3706,6 +3821,9 @@ def build_hybrid_prompt(
     # anything other than "IN" (including None) falls through to USD. See spec
     # docs/superpowers/specs/2026-08-13-region-aware-pricing-design.md.
     visitor_country: str | None = None,
+    # Phase 3: resolved conversation language (LanguageContext) or None when
+    # multilingual is disabled for the bot. None keeps the prompt byte-identical.
+    language=None,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -4920,6 +5038,14 @@ SMART LINKS (MANDATORY. You MUST hyperlink these keywords):
 
     response_style_block = get_response_style_block()
 
+    # Phase 3: conversation-language directive. Empty string when multilingual is
+    # disabled (language is None), so the assembled prompt is byte-identical to
+    # pre-Phase-3. When present it is spliced immediately before the static,
+    # prompt-cached response_style_block so the cached prefix is preserved. It
+    # includes a trailing newline separator only when non-empty.
+    _lang_directive = _language_directive(language)
+    language_directive = f"{_lang_directive}\n\n" if _lang_directive else ""
+
     # Region-aware pricing. ``visitor_country`` is Cloudflare's CF-IPCountry for
     # the visitor's request; anything that isn't India (including None from a
     # missing header, local dev, or a direct-to-origin call) resolves to USD,
@@ -5050,7 +5176,7 @@ RULES:
 {handoff_section}
 {meeting_section}
 {media_cards_section}
-{response_style_block}
+{language_directive}{response_style_block}
 """
 
     # AR-27: the qualification (BANT) state, retrieved context, conversation
@@ -5813,6 +5939,7 @@ def rag_pipeline(
     bot_id: int = None,
     cta_dimension: str | None = None,
     visitor_country: str | None = None,
+    language=None,
 ):
     """
     Orchestrate the RAG flow with Chat Memory.
@@ -5923,7 +6050,12 @@ def rag_pipeline(
             # the boilerplate refusal. Broken first impression for the
             # visitor). Returns None for everything else, which falls
             # through to the normal RAG pipeline below.
-            _intent = None if _affirmed_handoff else route_intent(question, _company_name)
+            # Phase 3: skip the deterministic English canned-intent path for
+            # non-English sessions so the LLM handles greetings/acks natively in
+            # the conversation language. English and disabled bots are unchanged.
+            _intent = (
+                None if (_affirmed_handoff or _lang_is_non_english(language)) else route_intent(question, _company_name)
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -5994,7 +6126,7 @@ def rag_pipeline(
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
-            _cache_key = qa_response_key(bid, _q_hash) if bid else None
+            _cache_key = qa_response_key(bid, _q_hash, _cache_lang_segment(language)) if bid else None
             if _cache_key and not _affirmed_handoff:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
@@ -6083,9 +6215,17 @@ def rag_pipeline(
                 # symmetric with non-list queries. Bump back to 20-30 if
                 # customers with long entity lists report under-reporting.
                 _retrieval_k = 15
+                # Phase 3: relax the vector distance ceiling for non-English
+                # sessions; English / disabled keep the tuned default.
+                _xling_extra = {"max_distance": CROSS_LINGUAL_MAX_DISTANCE} if _lang_is_non_english(language) else {}
                 vector_results = (
                     search_similar_documents(
-                        session, client_id=cid, query_embedding=query_embedding, k=_retrieval_k, bot_id=bid
+                        session,
+                        client_id=cid,
+                        query_embedding=query_embedding,
+                        k=_retrieval_k,
+                        bot_id=bid,
+                        **_xling_extra,
                     )
                     if query_embedding is not None
                     else []
@@ -6103,7 +6243,7 @@ def rag_pipeline(
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
                     final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
-                if RERANK_ENABLED:
+                if RERANK_ENABLED and not _lang_is_non_english(language):
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
@@ -6190,7 +6330,9 @@ def rag_pipeline(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _no_info_pivot(_company_name)
+                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
+                        _company_name
+                    )
                     _bot_msg = add_chat_message(
                         session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
@@ -6211,7 +6353,8 @@ def rag_pipeline(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _refusal_or_browsing_ack(question, _company_name, _recent_bot),
+                    "answer": _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(question, _company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -6236,7 +6379,9 @@ def rag_pipeline(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _no_info_pivot(_company_name)
+                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
+                        _company_name
+                    )
                     _bot_msg = add_chat_message(
                         session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
@@ -6255,7 +6400,8 @@ def rag_pipeline(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _refusal_or_browsing_ack(question, _company_name, _recent_bot),
+                    "answer": _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(question, _company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -6358,6 +6504,7 @@ def rag_pipeline(
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
+                language=language,
             )
 
             # temperature=0.3: low enough that "what services do you offer"
@@ -6833,6 +6980,7 @@ async def rag_pipeline_stream(
     bot_id: int = None,
     cta_dimension: str | None = None,
     visitor_country: str | None = None,
+    language=None,
 ):
     """
     Streaming version of the Hybrid RAG flow.
@@ -6946,7 +7094,7 @@ async def rag_pipeline_stream(
                 session, session_id, bid, cid, question, company_name=_company_name
             )
             if _ask_msg is not None:
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _stream_metadata(session_id, [], language)
                 yield _ask_msg
                 _name_bot_msg = add_chat_message(
                     session, session_id, client_id=cid, role="bot", content=_ask_msg, bot_id=bid
@@ -6973,7 +7121,12 @@ async def rag_pipeline_stream(
             # Mirrors the non-stream path: greetings/acks/identity questions
             # short-circuit before retrieval so visitors don't hit the relevance
             # gate's boilerplate refusal as a first impression.
-            _intent = None if _affirmed_handoff else route_intent(question, _company_name)
+            # Phase 3: skip the deterministic English canned-intent path for
+            # non-English sessions so the LLM handles greetings/acks natively in
+            # the conversation language. English and disabled bots are unchanged.
+            _intent = (
+                None if (_affirmed_handoff or _lang_is_non_english(language)) else route_intent(question, _company_name)
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -6983,7 +7136,7 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _intent_answer = _maybe_append_name_ask(_intent.answer, session, session_id, bid, cid, question)
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _stream_metadata(session_id, [], language)
                 yield _intent_answer
                 _bot_msg = add_chat_message(
                     session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
@@ -7003,7 +7156,7 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _refusal = _off_topic_refusal(_company_name)
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
                     session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
@@ -7025,7 +7178,7 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _refusal = _off_topic_refusal(_company_name)
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
                     session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
@@ -7038,7 +7191,7 @@ async def rag_pipeline_stream(
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
-            _cache_key = qa_response_key(bid, _q_hash) if bid else None
+            _cache_key = qa_response_key(bid, _q_hash, _cache_lang_segment(language)) if bid else None
             if _cache_key and not _affirmed_handoff:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
@@ -7072,7 +7225,7 @@ async def rag_pipeline_stream(
                             cached_qa["answer"], session, session_id, bid, cid, question
                         )
                         cached_sources = cached_qa.get("sources", [])
-                        yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
+                        yield _stream_metadata(session_id, cached_sources, language)
                         yield cached_answer
                         bot_msg = add_chat_message(
                             session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid
@@ -7186,9 +7339,13 @@ async def rag_pipeline_stream(
                 import time as _t
 
                 _ret_start = _t.perf_counter()
+                # Phase 3: relax the vector distance ceiling for non-English
+                # sessions (cross-lingual pairs sit at higher cosine distance).
+                # English / disabled pass None and keep the tuned default.
+                _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _lang_is_non_english(language) else None
                 if query_embedding is not None:
                     vector_results, keyword_results = await asyncio.gather(
-                        asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
+                        asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k, _xling_max_distance),
                         asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
                     )
                 else:
@@ -7196,6 +7353,19 @@ async def rag_pipeline_stream(
                     vector_results = []
                     keyword_results = await asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k)
                 _gather_ms = (_t.perf_counter() - _ret_start) * 1000
+
+                # Phase 3: measure the English-only keyword arm's real
+                # contribution by conversation language (the arm uses the
+                # 'english' text-search config, so non-English queries hit it
+                # only on code-switched Latin tokens). Enabled bots only.
+                if language is not None:
+                    logger.info(
+                        "[retrieval] keyword_arm_by_language lang=%s bot=%s keyword_hits=%d vector_hits=%d",
+                        _lang_base(language),
+                        bid,
+                        len(keyword_results),
+                        len(vector_results),
+                    )
 
                 _fuse_start = _t.perf_counter()
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
@@ -7207,7 +7377,7 @@ async def rag_pipeline_stream(
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
                 _rerank_ms = 0.0
-                if RERANK_ENABLED:
+                if RERANK_ENABLED and not _lang_is_non_english(language):
                     _rerank_start = _t.perf_counter()
                     # Forward ``_retrieval_k`` so list/count questions keep their
                     # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
@@ -7291,8 +7461,10 @@ async def rag_pipeline_stream(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _no_info_pivot(_company_name)
-                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
+                        _company_name
+                    )
+                    yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
                         session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
@@ -7312,8 +7484,10 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _refusal_or_browsing_ack(question, _company_name, _recent_bot)
+                yield _stream_metadata(session_id, [], language)
+                yield _canned_localized("off_topic_refusal", _company_name, language) or _refusal_or_browsing_ack(
+                    question, _company_name, _recent_bot
+                )
                 return
 
             # ── Empty-context short-circuit (streaming path) ─────────────────
@@ -7329,8 +7503,10 @@ async def rag_pipeline_stream(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _no_info_pivot(_company_name)
-                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
+                        _company_name
+                    )
+                    yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
                         session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
@@ -7349,11 +7525,13 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _refusal_or_browsing_ack(question, _company_name, _recent_bot)
+                yield _stream_metadata(session_id, [], language)
+                yield _canned_localized("off_topic_refusal", _company_name, language) or _refusal_or_browsing_ack(
+                    question, _company_name, _recent_bot
+                )
                 return
 
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
+            yield _stream_metadata(session_id, sources, language)
 
             # Build context with company identity injection
             context_text = _build_reference_context(final_results, _company_name)
@@ -7438,6 +7616,7 @@ async def rag_pipeline_stream(
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
+                language=language,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 

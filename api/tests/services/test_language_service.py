@@ -294,3 +294,83 @@ def test_language_context_schema():
             confidence=1.5,  # > 1.0
             direction="ltr",
         )
+
+
+# ── Cross-implementation parity ─────────────────────────────────────────────
+
+
+def _shared_normalization_fixtures() -> list[tuple[str, str | None]]:
+    """Read NORMALIZATION_FIXTURES out of the widget's locale catalog.
+
+    The widget ships its own BCP-47 parser (it has to: locale resolution starts
+    in the browser, before any request is made). Two independent parsers for one
+    contract is how `zh-Hans-CN` ended up normalizing to `zh-HANS` on the client
+    while the server produced `zh-Hans-CN`. Rather than duplicate the case table
+    in two languages, both suites assert against the same literal list.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    catalog = Path(__file__).resolve().parents[3] / "widget" / "src" / "i18n" / "localeCatalog.js"
+    if not catalog.exists():  # pragma: no cover - widget absent from a slim checkout
+        pytest.skip("widget/src/i18n/localeCatalog.js not present")
+
+    source = catalog.read_text(encoding="utf-8")
+    match = re.search(r"NORMALIZATION_FIXTURES = \[(.*?)\n\];", source, re.DOTALL)
+    assert match, "NORMALIZATION_FIXTURES not found in localeCatalog.js"
+
+    cases: list[tuple[str, str | None]] = []
+    for row in re.finditer(r"\[([^\]]*)\]", match.group(1)):
+        # Parse each row as a literal rather than splitting on commas: one of
+        # the fixture inputs is an Accept-Language string that contains a comma
+        # of its own ('en-US,en;q=0.9'), which a naive split cuts in half.
+        # JS single-quoted arrays are valid Python literals once `null` -> None.
+        literal = re.sub(r"\bnull\b", "None", f"[{row.group(1)}]")
+        pair = ast.literal_eval(literal)
+        assert len(pair) == 2, f"malformed fixture row: {literal}"
+        cases.append((pair[0], pair[1]))
+    assert cases, "no fixture rows parsed"
+    return cases
+
+
+def test_normalize_locale_matches_widget_fixtures():
+    """The Python and JavaScript normalizers must agree on every shared case."""
+    for raw, expected in _shared_normalization_fixtures():
+        assert ls.normalize_locale(raw) == expected, f"normalize_locale({raw!r})"
+
+
+def test_normalize_locale_preserves_script_subtag():
+    assert ls.normalize_locale("zh-Hans-CN") == "zh-Hans-CN"
+    assert ls.normalize_locale("zh_hant_tw") == "zh-Hant-TW"
+
+
+# ── Phase 3: message detection + display names ───────────────────────────────
+
+
+def test_detect_message_language_scripts():
+    assert ls.detect_message_language("नमस्ते मुझे मदद चाहिए")[0] == "hi"
+    assert ls.detect_message_language("مرحبا أحتاج المساعدة")[0] == "ar"
+    assert ls.detect_message_language("привет мне нужна помощь")[0] == "ru"
+    assert ls.detect_message_language("こんにちは")[0] == "ja"
+    # Latin cannot be disambiguated by script -> no detection.
+    assert ls.detect_message_language("Hello there") == (None, 0.0)
+    assert ls.detect_message_language("") == (None, 0.0)
+    assert ls.detect_message_language("hi") == (None, 0.0)
+
+
+def test_detect_message_language_confidence_is_script_share():
+    _, conf = ls.detect_message_language("नमस्ते")
+    assert conf >= 0.85
+    _, conf_mixed = ls.detect_message_language("मुझे pricing चाहिए")
+    assert conf_mixed < 0.85  # code-switched
+
+
+def test_language_display_name():
+    assert ls.language_display_name("hi-IN") == "Hindi (India)"
+    assert ls.language_display_name("ar-SA") == "Arabic (Saudi Arabia)"
+    # Base-language fallback for an unknown region.
+    assert ls.language_display_name("hi-XX") == "Hindi (India)"
+    # Unknown language -> None (caller supplies a safe generic phrase).
+    assert ls.language_display_name("xx-YY") is None
+    assert ls.language_display_name(None) is None

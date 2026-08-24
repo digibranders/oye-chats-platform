@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Globe } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, changeSessionLanguage } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
-import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
+import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured, writeLocale } from '../services/storage-keys';
 import { setSmartLinkUrls, setSmartLinkSession } from '../services/smartLinks';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
@@ -19,6 +19,8 @@ import QualifiedLeadCard from './QualifiedLeadCard';
 import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
+import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCode } from '../i18n/i18n.js';
+import { formatHeaderDateTime } from '../i18n/formatters.js';
 
 // Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean. lazyWithRetry + the ErrorBoundary wrapping each
@@ -28,10 +30,22 @@ const LeadCaptureForm = lazyWithRetry(() => import('./LeadCaptureForm'));
 const HandoffForm = lazyWithRetry(() => import('./HandoffForm'));
 const LiveChatMode = lazyWithRetry(() => import('./LiveChatMode'));
 const MeetingBooking = lazyWithRetry(() => import('./MeetingBooking'));
+const LanguageSelector = lazyWithRetry(() => import('./LanguageSelector'));
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+// Stable identifiers for system dividers. Several effects add and later remove
+// the "connecting" divider; they used to find it by comparing `m.text` against
+// an English string literal, which silently stopped matching the moment that
+// copy was translated. Match on `systemId` instead, so the identity of a system
+// message is independent of the language it is rendered in.
+const SYSTEM_MSG = {
+    CONNECTING: 'connecting',
+};
+
+const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === systemId;
 
 // Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
@@ -122,7 +136,7 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
                 </div>
                 <div className="flex flex-col leading-tight">
                     <span className="text-[12px] font-semibold text-[#16202C]">
-                        {name || 'Our team'}
+                        {name || t('system.our_team') || 'Our team'}
                         {department ? (
                             <span className="font-normal text-gray-500"> · {department}</span>
                         ) : null}
@@ -157,7 +171,7 @@ const DateSeparator = ({ date }) => {
     );
 };
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage, initialLocaleSource = null }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
@@ -199,6 +213,49 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => readSessionId());
+    const [currentLocale, setCurrentLocale] = useState(() => getLocale());
+    const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+    // How the active locale was chosen. Sent to the backend on every turn as
+    // `language_source`; 'explicit' is what makes the backend lock the session
+    // language against later re-detection.
+    const [localeSource, setLocaleSource] = useState(initialLocaleSource || 'default');
+
+    useEffect(() => {
+        return onLocaleChange(({ locale }) => setCurrentLocale(locale));
+    }, []);
+
+    const handleSelectLocale = useCallback(async (newLocale) => {
+        // Apply optimistically so the UI switches immediately, then reconcile
+        // with whatever the backend says is authoritative. The backend may
+        // narrow the tag (fr-CA against a bot that supports only fr-FR), and
+        // rendering a locale the session does not actually hold would leave the
+        // widget and the conversation disagreeing.
+        setI18nLocale(newLocale);
+        setCurrentLocale(newLocale);
+        setLocaleSource('explicit');
+        writeLocale(newLocale, 'explicit');
+        getController().setLocale(newLocale);
+        getController().reportActiveLocale(newLocale);
+
+        if (!sessionId) {
+            // No session yet: the choice is still authoritative. It rides the
+            // first /chat/stream call as language_source='explicit', which is
+            // what locks it when the session row is created.
+            return;
+        }
+        try {
+            const result = await changeSessionLanguage(sessionId, newLocale);
+            const effective = result?.locale;
+            if (effective && effective !== newLocale) {
+                setI18nLocale(effective);
+                setCurrentLocale(effective);
+                writeLocale(effective, 'explicit');
+                getController().reportActiveLocale(effective);
+            }
+        } catch (err) {
+            console.warn('[OyeChats] Session language update failed (non-fatal):', err);
+        }
+    }, [sessionId]);
 
     // Smart links: register the bot's smart-link destinations and bind the
     // click registry to the active conversation. Once the visitor clicks a
@@ -765,7 +822,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (operatorName && !prevOperatorNameRef.current) {
             setMessages(prev => [
-                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...')),
+                ...prev.filter(m => !isSystemMessage(m, SYSTEM_MSG.CONNECTING)),
                 {
                     id: `sys-joined-${Date.now()}`,
                     type: 'operator_joined',
@@ -784,10 +841,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // duplicates intent that no longer matches the state.
     useEffect(() => {
         if (chatMode !== 'unavailable') return;
-        setMessages(prev => prev.some(
-            m => m.type === 'system' && m.text === 'Connecting you with our team...'
-        )
-            ? prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...'))
+        setMessages(prev => prev.some(m => isSystemMessage(m, SYSTEM_MSG.CONNECTING))
+            ? prev.filter(m => !isSystemMessage(m, SYSTEM_MSG.CONNECTING))
             : prev);
     }, [chatMode]);
 
@@ -930,9 +985,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     //             the copy. Clients found "you can leave a message
     //             instead" too pushy in the waiting state)
     const getWaitingMessage = () => {
-        if (waitingSeconds >= 23) return 'Taking a bit longer than usual. Hang tight';
-        if (waitingSeconds >= 12) return 'Still connecting. Our team will be right with you';
-        return settings.waiting_message || 'Please wait a moment';
+        if (waitingSeconds >= 23) return t('system.waiting_longer') || 'Taking a bit longer than usual. Hang tight';
+        if (waitingSeconds >= 12) return t('system.waiting_still_connecting') || 'Still connecting. Our team will be right with you';
+        return settings.waiting_message || t('system.waiting_default') || 'Please wait a moment';
     };
 
     // ── Welcome exit ─────────────────────────────────────────────────────────────
@@ -1114,6 +1169,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             await sendMessageStream(userMsg.text, sessionId, {
                 ctaDimension,
+                locale: currentLocale,
+                language: getLanguageCode(currentLocale),
+                languageSource: localeSource,
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
@@ -1464,7 +1522,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connecting-${Date.now()}`,
                         type: 'system',
-                        text: 'Connecting you with our team...',
+                        systemId: SYSTEM_MSG.CONNECTING,
+                        text: t('system.connecting_team') || 'Connecting you with our team...',
                         timestamp: new Date().toISOString(),
                     },
                 ]);
@@ -1504,7 +1563,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-connecting-${Date.now()}`,
                     type: 'system',
-                    text: 'Connecting you with our team...',
+                    systemId: SYSTEM_MSG.CONNECTING,
+                    text: t('system.connecting_team') || 'Connecting you with our team...',
                     timestamp: new Date().toISOString(),
                 }
             ]);
@@ -1517,7 +1577,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-handoff-err-${Date.now()}`,
                     type: 'system',
-                    text: 'Unable to connect with our team right now. Please try again.',
+                    text: t('system.handoff_failed') || 'Unable to connect with our team right now. Please try again.',
                     timestamp: new Date().toISOString(),
                 },
             ]);
@@ -1731,7 +1791,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {
                 id: `sys-connecting-${Date.now()}`,
                 type: 'system',
-                text: 'Connecting you with our team...',
+                systemId: SYSTEM_MSG.CONNECTING,
+                text: t('system.connecting_team') || 'Connecting you with our team...',
                 timestamp: new Date().toISOString(),
             },
         ]);
@@ -2032,13 +2093,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
             return (
                 <span className="text-[11px] font-medium text-amber-600 tracking-wide">
-                    Reconnecting...
+                    {t('header.reconnecting') || 'Reconnecting...'}
                 </span>
             );
         }
         return (
             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {formatHeaderDateTime(now, currentLocale)}
             </span>
         );
     };
@@ -2213,7 +2274,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {(() => {
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
                     const showLeaveMessageOption = !settings.live_chat_enabled && chatMode === 'bot';
-                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption;
+                    // Only worth showing when there is genuinely something to
+                    // switch between. A bot with one supported locale (or none
+                    // configured) opened a menu with a single, inert option.
+                    const showLanguageOption = settings.language_config?.enabled === true
+                        && settings.language_config?.allow_visitor_language_switch !== false
+                        && (settings.language_config?.supported_locales?.length || 0) > 1;
+                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption || showLanguageOption;
                     return (
                         <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
                             {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
@@ -2244,6 +2311,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                             {showHeaderMenu && hasMenuOptions && (
                                 <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
+                                    {showLanguageOption && (
+                                        <button
+                                            onClick={() => {
+                                                setShowHeaderMenu(false);
+                                                setShowLanguageSelector(true);
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                        >
+                                            <Globe className="w-4 h-4 text-gray-400" />
+                                            {t('header.change_language') || 'Language'}
+                                        </button>
+                                    )}
                                     {showTranscriptOption && (
                                         <button
                                             onClick={handleSendTranscript}
@@ -2639,10 +2718,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     className="w-9 h-9 rounded-full flex items-center justify-center"
                                     style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
                                 >
-                                    <Headphones
+                                    <svg
                                         className="w-4 h-4"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
                                         style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
-                                    />
+                                    >
+                                        <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+                                    </svg>
                                 </div>
                                 <span
                                     className="absolute inset-0 rounded-full animate-ping"
@@ -3291,6 +3378,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onExpire={handleConnectRequestExpire}
                     primaryColor={settings.primary_color}
                 />
+            )}
+
+            {/* Language Selection Modal */}
+            {showLanguageSelector && (
+                <ErrorBoundary label="LanguageSelector" fallback={null}>
+                    <Suspense fallback={null}>
+                        <LanguageSelector
+                            isOpen={showLanguageSelector}
+                            onClose={() => setShowLanguageSelector(false)}
+                            supportedLocales={settings?.language_config?.supported_locales || ['en-IN']}
+                            activeLocale={currentLocale}
+                            onSelectLocale={handleSelectLocale}
+                        />
+                    </Suspense>
+                </ErrorBoundary>
             )}
         </div>
     );
