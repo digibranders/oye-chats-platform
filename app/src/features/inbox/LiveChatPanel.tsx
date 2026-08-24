@@ -26,6 +26,7 @@ import {
   getQualifiedBotSessions,
   resolveOperatorChat,
   sendConnectRequest,
+  translateForSession,
   uploadOperatorChatFile,
 } from '../../services/api';
 import { type CannedResponse } from '../../types/domain';
@@ -33,6 +34,7 @@ import { type OperatorStatusState } from './useOperatorStatus';
 import { useOperatorSocket } from './useOperatorSocket';
 import { ConversationView } from './ConversationView';
 import { SessionDetailsPanel } from './SessionDetailsPanel';
+import { OperatorLanguagePicker } from './OperatorLanguagePicker';
 import { TransferDialog } from './TransferDialog';
 import type { ConnectionStatus, OperatorMessage, QualifiedSession, RosterOperator } from './liveChatProtocol';
 import { clockTime, initials, maxVisitorDbId, parseHistoryMessage, relativeTime } from './liveChatHelpers';
@@ -211,8 +213,11 @@ function previewRoleLabel(role: OperatorMessage['role']): string {
 export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactElement {
   const { isOnline, unavailable, saving, loading, error: availabilityError, toggle } = operator;
   const enabled = isOnline && !unavailable;
+  // Having an operator profile is not the same as being online: the working
+  // language is readable either way.
+  const isOperator = !unavailable;
 
-  const socket = useOperatorSocket({ enabled });
+  const socket = useOperatorSocket({ enabled, isOperator });
   const {
     status,
     operatorId,
@@ -228,6 +233,9 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
     connectResolutions,
     hasMoreBySession,
     lastError,
+    operatorLanguage,
+    operatorAvailableLocales,
+    setOperatorLanguage,
     sendMessage,
     sendFile,
     sendTyping,
@@ -578,14 +586,21 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           {addSelfError && <p className="text-[12px] text-[var(--ds-danger)]">{addSelfError}</p>}
         </div>
       ) : (
-        <div className="flex items-center gap-3">
-          {enabled && status !== 'connected' && <ConnectionPill status={status} />}
-          <StatusBadge tone={isOnline ? 'success' : 'neutral'} dot>
-            {isOnline ? 'Online' : 'Offline'}
-          </StatusBadge>
-          <Button variant="outline" size="sm" onClick={() => void toggle()} disabled={saving}>
-            {saving ? 'Saving…' : isOnline ? 'Go offline' : 'Go online'}
-          </Button>
+        <div className="flex items-center gap-4">
+          <OperatorLanguagePicker
+            value={operatorLanguage}
+            availableLocales={operatorAvailableLocales}
+            onChange={setOperatorLanguage}
+          />
+          <div className="flex items-center gap-3">
+            {enabled && status !== 'connected' && <ConnectionPill status={status} />}
+            <StatusBadge tone={isOnline ? 'success' : 'neutral'} dot>
+              {isOnline ? 'Online' : 'Offline'}
+            </StatusBadge>
+            <Button variant="outline" size="sm" onClick={() => void toggle()} disabled={saving}>
+              {saving ? 'Saving…' : isOnline ? 'Go offline' : 'Go online'}
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -831,6 +846,20 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               onClose={() => void handleClose()}
               onResolve={() => void handleResolve()}
               onTransfer={() => setTransferOpen(true)}
+              operatorLanguage={operatorLanguage}
+              onRetryTranslation={async (messageId) => {
+                // Bounded, operator-initiated backfill: one message, on
+                // demand. Never an eager sweep of the transcript, which is
+                // what a transfer between differently-configured operators
+                // would otherwise trigger at the worst possible moment.
+                const target = selectedChat.session_id;
+                const source = (messagesBySession[target] ?? []).find((m) => m.dbId === messageId);
+                if (!source) return;
+                await translateForSession(target, source.content, messageId);
+                // The result is persisted server-side; refresh this thread so
+                // the bubble picks it up through the same path a reload uses.
+                await loadHistory(target);
+              }}
               onUploadFile={async (file) => {
                 const res = await uploadOperatorChatFile(file, selectedChat.session_id);
                 sendFile(selectedChat.session_id, res);

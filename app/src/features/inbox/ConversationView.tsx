@@ -30,7 +30,8 @@ import { Button, DayDivider, StatusBadge, cn } from '../../design-system';
 import { formatDayLabel, isNewDay } from '../../lib/messageDay';
 import type { CannedResponse } from '../../types/domain';
 import type { ActiveChat, OperatorMessage, VisitorPresence } from './liveChatProtocol';
-import { clockTime, initials, isSafeFileUrl } from './liveChatHelpers';
+import { clockTime, initials, isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
+import { TranslationToggle } from './TranslationToggle';
 
 /** Maximum number of canned-response suggestions shown in the slash menu. */
 const MAX_CANNED_SUGGESTIONS = 8;
@@ -111,17 +112,28 @@ export interface ConversationViewProps {
   onTransfer: () => void;
   /** Parent uploads the file and broadcasts it to the visitor. May throw. */
   onUploadFile: (file: File) => Promise<void>;
+  /** The reading operator's working language. Null renders originals only. */
+  operatorLanguage?: string | null;
+  /** Backfill a missing translation for one persisted message. */
+  onRetryTranslation?: (messageId: number) => Promise<void> | void;
 }
 
 /** One message bubble. Renders visitor/operator/bot/system + image/file attachments. */
 function MessageBubble({
   message,
   onOpenImage,
+  operatorLanguage,
+  onRetryTranslation,
 }: {
   message: OperatorMessage;
   onOpenImage: (url: string, alt: string) => void;
+  /** The reading operator's working language; null disables translation. */
+  operatorLanguage?: string | null;
+  /** Backfill a missing translation for this message. */
+  onRetryTranslation?: (messageId: number) => Promise<void> | void;
 }): ReactElement {
   const { role } = message;
+  const [showOriginal, setShowOriginal] = useState(false);
 
   if (role === 'system') {
     return (
@@ -145,9 +157,21 @@ function MessageBubble({
   const isImage = Boolean(message.contentType?.startsWith('image/') && safeFileUrl);
   const altText = message.filename ?? 'Shared image';
 
+  const display = resolveDisplay(message, operatorLanguage, showOriginal);
+  const missingTranslation = !showOriginal && translationMissing(message, operatorLanguage);
+  // Retry is offered only for a persisted message: without a DB id there is
+  // nothing for the backfill endpoint to write the result onto.
+  const retryHandler =
+    missingTranslation && onRetryTranslation && message.dbId != null
+      ? () => onRetryTranslation(message.dbId as number)
+      : undefined;
+
   return (
     <div className={cn('flex flex-col gap-0.5', align)}>
-      <div className={cn('max-w-[78%] rounded-[var(--ds-radius-lg)] px-3.5 py-2 text-[14px] leading-relaxed', bubble)}>
+      <div
+        className={cn('max-w-[78%] rounded-[var(--ds-radius-lg)] px-3.5 py-2 text-[14px] leading-relaxed', bubble)}
+        dir={display.direction}
+      >
         {isImage && safeFileUrl ? (
           <button
             type="button"
@@ -166,15 +190,36 @@ function MessageBubble({
           >
             {message.filename ?? 'Attachment'}
           </a>
+        ) : display.isTranslated ? (
+          // PLAIN TEXT, NOT MARKDOWN, and deliberately so. This string is model
+          // output derived from text a visitor wrote, rendered to an operator
+          // who holds more privilege than they do. `react-markdown` blocks raw
+          // HTML and `javascript:` URLs, so the risk is not XSS - it is that a
+          // link the visitor authored and the model laundered would become a
+          // clickable anchor in the operator's inbox. The original below keeps
+          // its Markdown rendering, because there the operator can see it is
+          // the visitor's raw words.
+          <div className="break-words whitespace-pre-wrap">{display.text}</div>
         ) : (
           <div className="[&>p]:my-0 [&>p]:empty:hidden break-words whitespace-pre-wrap">
-            <Markdown>{message.content}</Markdown>
+            <Markdown>{display.text}</Markdown>
           </div>
         )}
       </div>
-      {message.timestamp && (
-        <span className="px-1 text-[11px] text-[var(--ds-text-subtle)]">{clockTime(message.timestamp)}</span>
-      )}
+      <div className="flex items-center gap-2 px-1">
+        {message.timestamp && (
+          <span className="text-[11px] text-[var(--ds-text-subtle)]">{clockTime(message.timestamp)}</span>
+        )}
+        {!safeFileUrl && (
+          <TranslationToggle
+            isTranslated={display.isTranslated}
+            showOriginal={showOriginal}
+            sourceLanguage={message.sourceLanguage}
+            onToggle={() => setShowOriginal((v) => !v)}
+            onRetry={retryHandler}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -210,6 +255,8 @@ export function ConversationView({
   onResolve,
   onTransfer,
   onUploadFile,
+  operatorLanguage,
+  onRetryTranslation,
 }: ConversationViewProps): ReactElement {
   const [draft, setDraft] = useState('');
   const [menuDismissed, setMenuDismissed] = useState(false);
@@ -504,7 +551,12 @@ export function ConversationView({
             return (
               <Fragment key={m.key}>
                 {showDivider && <DayDivider label={formatDayLabel(m.timestamp)} />}
-                <MessageBubble message={m} onOpenImage={openImage} />
+                <MessageBubble
+                  message={m}
+                  onOpenImage={openImage}
+                  operatorLanguage={operatorLanguage}
+                  onRetryTranslation={onRetryTranslation}
+                />
               </Fragment>
             );
           })

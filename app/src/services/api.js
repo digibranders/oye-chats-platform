@@ -1123,6 +1123,68 @@ export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) =
 };
 
 /**
+ * Reads the platform's locale catalogue: every locale a bot can be configured
+ * with, plus the base-language names a conversation is labelled by.
+ *
+ * Deploy-static, so callers fetch it once per session (see
+ * `hooks/useLocaleCatalog`) rather than per screen.
+ *
+ * @returns {Promise<{locales: Array<{code: string, locale: string, name: string, native_name: string, direction: 'ltr'|'rtl'}>, languages: Record<string, string>}>}
+ */
+export const getLocales = async () => {
+    const response = await api.get('/locales');
+    return response.data;
+};
+
+/**
+ * Reads the caller's own live-chat working language.
+ * @returns {Promise<{preferred_locale: string|null, supported_languages: string[]}>}
+ */
+export const getMyLanguage = async () => {
+    const response = await api.get('/operators/me/language');
+    return response.data;
+};
+
+/**
+ * Sets the caller's OWN live-chat working language. Pass null/'' to clear it,
+ * which turns translation off for this operator.
+ * @param {string|null} preferredLocale - BCP-47 tag, e.g. 'en-IN'
+ * @returns {Promise<{preferred_locale: string|null}>}
+ */
+export const setMyLanguage = async (preferredLocale) => {
+    try {
+        const response = await api.put('/operators/me/language', { preferred_locale: preferredLocale ?? '' });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save your language preference');
+    }
+};
+
+/**
+ * Translates text in the context of a conversation the caller owns.
+ *
+ * The target language is derived server-side: passing `messageId` backfills an
+ * existing message into the reader's language, omitting it previews an
+ * outgoing reply in the visitor's. There is deliberately no way to ask for an
+ * arbitrary target.
+ *
+ * @param {string} sessionId - must belong to the caller's workspace
+ * @param {string} text
+ * @param {number} [messageId] - persist the result onto this message
+ * @returns {Promise<{translated: string, target_locale: string, cached: boolean, status: string}>}
+ */
+export const translateForSession = async (sessionId, text, messageId) => {
+    try {
+        const body = { session_id: sessionId, text };
+        if (messageId != null) body.message_id = messageId;
+        const response = await api.post('/operators/translate', body);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Translation is unavailable right now');
+    }
+};
+
+/**
  * Fetches all feedback data for the admin dashboard.
  * @returns {Promise<Array>} Array of feedback objects
  */
