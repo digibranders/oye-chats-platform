@@ -300,3 +300,65 @@ class TestBantExtractionCanonicalEnglish:
         assert "canonical English" in prompt
         # The instruction must forbid translating the structural keys/enums.
         assert "dimension keys" in prompt
+
+
+# ── Cross-lingual gating (the Hindi off-topic refusal) ───────────────────────
+
+
+class TestNonEnglishIsNotRefusedAsOffTopic:
+    """A Hindi visitor asking an ordinary question must not be refused.
+
+    Observed live: "what kind of organization is this" was answered, while the
+    SAME question in Hindi got "मैं केवल OyeChats से जुड़े सवालों में आपकी मदद कर
+    सकता/सकती हूँ" - the off-topic refusal. Two stacked English-only components
+    caused it, and each is pinned below.
+    """
+
+    def test_relevance_gate_is_bypassed_for_non_english(self):
+        """The gate is an English-tuned judge and inverts across languages.
+
+        Measured on a real bot with one fixed chunk set: the English question
+        scored 0.70 four times out of four, the Hindi one 0.00 four times out
+        of four. Adding a cross-lingual instruction to the judge prompt did not
+        move it, so the gate is skipped entirely - the same treatment
+        ``route_intent`` and the FlashRank reranker already get.
+        """
+        import inspect
+
+        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+            src = inspect.getsource(fn)
+            # The streaming path hands `check_relevance` to `asyncio.to_thread`
+            # as a reference, so match the NAME rather than a call paren.
+            call = src.index("check_relevance,") if "check_relevance," in src else src.index("check_relevance(")
+            # Anchored on the call site, not on a comment, so rewording a
+            # comment can neither break this nor let a regression slip through.
+            preceding = src[max(0, call - 2000) : call]
+            assert "_lang_is_non_english(language)" in preceding, (
+                f"{fn.__name__} must not run the English-tuned relevance gate on a non-English conversation"
+            )
+
+    def test_on_scope_check_is_not_english_only(self):
+        # `_ON_SCOPE_HINTS_RE` cannot match a non-Latin script, so its False was
+        # "unknown", not "off-scope" - and that False routed the visitor to the
+        # harsh refusal instead of the graceful pivot.
+        assert rs._question_looks_on_scope("what is your pricing", "OyeChats") is True
+        assert rs._question_looks_on_scope("आपकी कीमत क्या है", "OyeChats") is True
+        assert rs._question_looks_on_scope("क्या आप बताएंगे कि आप किस प्रकार की संस्था हैं", "OyeChats") is True
+        assert rs._question_looks_on_scope("مرحبا ما هي أسعاركم", "OyeChats") is True
+
+    def test_english_off_topic_is_still_refused(self):
+        # The fix must not turn the refusal off for English, which is the only
+        # language the hint regex can actually judge.
+        assert rs._question_looks_on_scope("what is the capital of france", "OyeChats") is False
+        assert rs._question_looks_on_scope("tell me a joke", "OyeChats") is False
+        assert rs._question_looks_on_scope("", "OyeChats") is False
+
+    def test_company_name_still_wins_in_any_script(self):
+        # A question naming the company is on-scope whatever surrounds it.
+        assert rs._question_looks_on_scope("OyeChats के बारे में बताइए", "OyeChats") is True
+
+    def test_gate_prompt_still_documents_the_cross_lingual_case(self):
+        from app.services.relevance_gate import _build_gate_prompt
+
+        prompt = _build_gate_prompt("आपकी कीमत क्या है", [])
+        assert "DIFFERENT languages" in prompt

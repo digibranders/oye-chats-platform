@@ -1243,6 +1243,12 @@ _CANNED_I18N: dict[str, dict[str, str]] = {
         ),
         "off_topic_refusal": ("मैं केवल {cn} से जुड़े सवालों में आपकी मदद कर सकता/सकती हूँ। {cn} के बारे में आप क्या जानना चाहेंगे?"),
         "browsing_ack": ("कोई जल्दी नहीं। जब भी आप {cn} के बारे में कुछ जानना चाहें, मैं यहीं हूँ।"),
+        # Visitor-name capture. Two wordings, matching the two English ones:
+        # the full turn-1 request and the short question appended to an early
+        # reply. Both bypass the LLM entirely, so without these a Hindi visitor
+        # is greeted in English on the bot's very first turn.
+        "name_request": ("नमस्ते! आपकी मदद करने से पहले, क्या मैं आपका नाम जान सकता/सकती हूँ ताकि आपको सही तरीके से संबोधित कर सकूँ?"),
+        "name_ask": "मैं आपको किस नाम से संबोधित करूँ?",
     },
 }
 
@@ -1390,10 +1396,28 @@ _ON_SCOPE_HINTS_RE = re.compile(
 )
 
 
+def _has_latin_words(text: str) -> bool:
+    """True when ``text`` contains a run of Latin letters long enough for the
+    English hint regex to have a chance of matching."""
+    return bool(re.search(r"[A-Za-z]{2,}", text or ""))
+
+
 def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
     """Return True if ``question`` looks like an on-scope question that just
     happens to lack matching context. Triggers the no-info pivot instead of
     the off-topic refusal.
+
+    ``_ON_SCOPE_HINTS_RE`` is English-only, so for a question written in a
+    non-Latin script it cannot match ANYTHING and this returned False every
+    time - sending every such visitor down the harsh off-topic refusal instead
+    of the graceful "I don't have that detail, want the team?" pivot. Proven:
+    "what is your pricing" returned True, "आपकी कीमत क्या है" returned False.
+
+    So when there is no Latin text for the regex to work with, we say "yes,
+    assume on-scope" rather than "no". The two branches have very different
+    costs: the pivot offers a human to someone we could not answer, while the
+    refusal tells a customer their question was out of bounds. Guessing wrong
+    towards the pivot is cheap; guessing wrong towards the refusal is not.
     """
     if not question:
         return False
@@ -1402,7 +1426,11 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
         first_word = company_name.split()[0]
         if first_word and re.search(rf"\b{re.escape(first_word)}\b", question, re.IGNORECASE):
             return True
-    return bool(_ON_SCOPE_HINTS_RE.search(question))
+    if _ON_SCOPE_HINTS_RE.search(question):
+        return True
+    # No Latin words at all: the regex above was never able to speak for this
+    # question, so its False is "unknown", not "off-scope". Fail soft.
+    return not _has_latin_words(question)
 
 
 def _no_info_pivot(company_name: str | None) -> str:
@@ -2994,11 +3022,32 @@ _NAME_ASK_SIGNATURES = (
 # Back-compat alias: some call sites still reference the primary phrase directly.
 _NAME_ASK_MARKER = _NAME_ASK_SIGNATURES[0]
 
+# Localized signatures, one distinctive fragment per wording in _CANNED_I18N.
+# These MUST be kept in step with the "name_request" / "name_ask" strings there:
+# the warning above applies with full force to the translated wordings too, and
+# a Hindi visitor would otherwise be asked their name on every single turn while
+# their real question is deferred forever.
+#
+# Matching is deliberately LANGUAGE-AGNOSTIC (every signature is tried, whatever
+# the current conversation language). A session's language can change mid-chat
+# (Phase 2 allows an explicit switch), so the name request sitting in history may
+# well be in a different language from the turn being processed. Checking all of
+# them costs a few substring scans and removes that whole class of bug.
+_NAME_ASK_SIGNATURES_I18N = (
+    "क्या मैं आपका नाम जान सकता",
+    "आपको किस नाम से संबोधित",
+)
+
 
 def _is_name_ask_message(content: str) -> bool:
-    """True when a message is (or contains) one of the bot's name requests."""
+    """True when a message is (or contains) one of the bot's name requests,
+    in ANY language the bot can ask in."""
     low = (content or "").lower()
-    return any(sig in low for sig in _NAME_ASK_SIGNATURES)
+    if any(sig in low for sig in _NAME_ASK_SIGNATURES):
+        return True
+    # Devanagari has no case, so the lowercased copy is unchanged and safe to
+    # scan directly.
+    return any(sig in low for sig in _NAME_ASK_SIGNATURES_I18N)
 
 
 # Replies to the name ask that are refusals / placeholders, not real names.
@@ -3383,6 +3432,22 @@ def resolve_visitor_name(session, session_id: str, bot_id, client_id, question: 
 _NAME_ASK_TEXT = "What name should I use to address you?"
 
 
+def _name_ask_text(language=None) -> str:
+    """The short name question, in the conversation language.
+
+    Falls back to the English constant for a disabled bot, for English, and for
+    any enabled language we have no translation for, so every existing caller
+    keeps its current behaviour byte-for-byte.
+    """
+    return _canned_localized("name_ask", None, language) or _NAME_ASK_TEXT
+
+
+def _name_request_message(language=None) -> str:
+    """The full turn-1 name request, in the conversation language. Same
+    fallback rule as :func:`_name_ask_text`."""
+    return _canned_localized("name_request", None, language) or _NAME_REQUEST_MESSAGE
+
+
 def _should_ask_visitor_name(visitor_name: str | None, history: list) -> bool:
     """True when the bot should append the name question THIS turn: only on its
     first reply of the session, and only when the name isn't known yet. We append
@@ -3407,6 +3472,7 @@ def _maybe_append_name_ask(
     client_id,
     question: str,
     history: list | None = None,
+    language=None,
 ) -> str:
     """Append the name question to an EARLY-RETURN reply (the intent-router
     greeting/ack handler and the QA cache), so those paths greet-and-ask too.
@@ -3422,7 +3488,7 @@ def _maybe_append_name_ask(
             else get_chat_history(session, session_id, client_id=client_id, limit=5, bot_id=bot_id)
         )
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
-            return (text.rstrip() if text else "") + f"\n\n{_NAME_ASK_TEXT}"
+            return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
         logger.warning("name-ask append failed for session %s", session_id, exc_info=True)
     return text
@@ -3699,7 +3765,7 @@ def _recover_deferred_question(history: list) -> str | None:
     return None
 
 
-def resolve_name_flow(session, session_id, bot_id, client_id, question, company_name=None):
+def resolve_name_flow(session, session_id, bot_id, client_id, question, company_name=None, language=None):
     """Two-step name capture gate. Returns ``(ask_message, effective_question, visitor_name, just_named)``:
 
     - ``ask_message`` set   → TURN 1: emit it and STOP; the real answer is deferred.
@@ -3747,7 +3813,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             # name and defer. Requires a real bot so anonymous/preview paths skip.
             first_reply = not any(_msg_role(m) in ("bot", "assistant", "operator") for m in history)
             if first_reply and bot_id is not None:
-                return (_NAME_REQUEST_MESSAGE, None, None, False)
+                return (_name_request_message(language), None, None, False)
             return (None, None, None, False)
 
         # We asked previously and still have no stored name → this turn may BE it.
@@ -6004,6 +6070,13 @@ def rag_pipeline(
                 location=location,
                 device=device,
                 bot_id=bid,
+                # Stamp the conversation language on the visitor's own turns
+                # even in bot mode. Nothing here translates them, but an
+                # operator who later picks the chat up inherits this whole
+                # transcript as context, and a row with no source_language is
+                # untranslatable forever. ``_lang_base`` is None for a bot with
+                # multilingual off, which keeps those rows byte-identical.
+                source_language=_lang_base(language),
             )
             session.commit()
 
@@ -6012,7 +6085,7 @@ def rag_pipeline(
             # request and defers the real answer; once they reply with a name we
             # answer their original question, addressed by name.
             _ask_msg, _deferred_q, _flow_name, _just_named = resolve_name_flow(
-                session, session_id, bid, cid, question, company_name=_company_name
+                session, session_id, bid, cid, question, company_name=_company_name, language=language
             )
             if _ask_msg is not None:
                 _name_bot_msg = add_chat_message(
@@ -6064,7 +6137,9 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
-                _intent_answer = _maybe_append_name_ask(_intent.answer, session, session_id, bid, cid, question)
+                _intent_answer = _maybe_append_name_ask(
+                    _intent.answer, session, session_id, bid, cid, question, language=language
+                )
                 _bot_msg = add_chat_message(
                     session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
                 )
@@ -6150,7 +6225,7 @@ def rag_pipeline(
                     else:
                         logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
                         _cached_answer = _maybe_append_name_ask(
-                            cached_qa["answer"], session, session_id, bid, cid, question
+                            cached_qa["answer"], session, session_id, bid, cid, question, language=language
                         )
                         bot_msg = add_chat_message(
                             session, session_id, client_id=cid, role="bot", content=_cached_answer, bot_id=bid
@@ -6247,14 +6322,34 @@ def rag_pipeline(
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
+            # BYPASSED for a non-English conversation, for the same reason
+            # ``route_intent`` and the FlashRank reranker above are: it is an
+            # English-tuned judge, and asking it to score a Hindi question
+            # against an English knowledge base does not degrade gracefully, it
+            # inverts. Measured on a real bot with an identical chunk set:
+            # "what kind of organization is this" scored 0.70 four times out of
+            # four, the SAME question in Hindi scored 0.00 four times out of
+            # four. So an ordinary on-topic question became an off-topic
+            # refusal for every non-English visitor. Instructing the judge that
+            # a language mismatch is expected (see ``_build_gate_prompt``) was
+            # tried first and did NOT move the score.
+            #
+            # Treating a non-English turn as relevant is the safe direction:
+            # the gate exists to add precision, is off by default, and the
+            # downstream generation prompt still refuses to answer from
+            # unrelated context. Wrongly refusing a paying customer's question
+            # is far more costly than occasionally answering a loose one.
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
-            _is_relevant, _gate_score = check_relevance(
-                question,
-                final_results,
-                bot_id=bid,
-                client_id=cid,
-                threshold=_bot_threshold,
-            )
+            if _lang_is_non_english(language):
+                _is_relevant, _gate_score = True, 1.0
+            else:
+                _is_relevant, _gate_score = check_relevance(
+                    question,
+                    final_results,
+                    bot_id=bid,
+                    client_id=cid,
+                    threshold=_bot_threshold,
+                )
             # ``cta_dimension`` set → the visitor tapped a qualification chip
             # (budget/authority/timeline/need answer), NOT a KB question. Skip
             # the off-topic gate entirely: judging "$1K-5K/mo" against KB chunks
@@ -6709,7 +6804,7 @@ def rag_pipeline(
             # streaming path: append the question when the visitor's name isn't
             # known yet so it reliably shows and is persisted.
             if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(answer):
-                answer = answer.rstrip() + f"\n\n{_NAME_ASK_TEXT}"
+                answer = answer.rstrip() + f"\n\n{_name_ask_text(language)}"
 
             # Deterministic qualification follow-up on media-card turns. The media
             # template pressures the model into a bare "one sentence + card" reply,
@@ -7083,6 +7178,13 @@ async def rag_pipeline_stream(
                 location=location,
                 device=device,
                 bot_id=bid,
+                # Stamp the conversation language on the visitor's own turns
+                # even in bot mode. Nothing here translates them, but an
+                # operator who later picks the chat up inherits this whole
+                # transcript as context, and a row with no source_language is
+                # untranslatable forever. ``_lang_base`` is None for a bot with
+                # multilingual off, which keeps those rows byte-identical.
+                source_language=_lang_base(language),
             )
             session.commit()
 
@@ -7091,7 +7193,7 @@ async def rag_pipeline_stream(
             # answer; the following turn (their name) answers the original
             # question, addressed by name. Mirrors the non-stream path.
             _ask_msg, _deferred_q, _flow_name, _just_named = resolve_name_flow(
-                session, session_id, bid, cid, question, company_name=_company_name
+                session, session_id, bid, cid, question, company_name=_company_name, language=language
             )
             if _ask_msg is not None:
                 yield _stream_metadata(session_id, [], language)
@@ -7135,7 +7237,9 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
-                _intent_answer = _maybe_append_name_ask(_intent.answer, session, session_id, bid, cid, question)
+                _intent_answer = _maybe_append_name_ask(
+                    _intent.answer, session, session_id, bid, cid, question, language=language
+                )
                 yield _stream_metadata(session_id, [], language)
                 yield _intent_answer
                 _bot_msg = add_chat_message(
@@ -7222,7 +7326,7 @@ async def rag_pipeline_stream(
                     else:
                         logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
                         cached_answer = _maybe_append_name_ask(
-                            cached_qa["answer"], session, session_id, bid, cid, question
+                            cached_qa["answer"], session, session_id, bid, cid, question, language=language
                         )
                         cached_sources = cached_qa.get("sources", [])
                         yield _stream_metadata(session_id, cached_sources, language)
@@ -7408,10 +7512,30 @@ async def rag_pipeline_stream(
             sources = [doc.document_name for doc in final_results]
 
             # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
+            # BYPASSED for a non-English conversation, for the same reason
+            # ``route_intent`` and the FlashRank reranker above are: it is an
+            # English-tuned judge, and asking it to score a Hindi question
+            # against an English knowledge base does not degrade gracefully, it
+            # inverts. Measured on a real bot with an identical chunk set:
+            # "what kind of organization is this" scored 0.70 four times out of
+            # four, the SAME question in Hindi scored 0.00 four times out of
+            # four. So an ordinary on-topic question became an off-topic
+            # refusal for every non-English visitor. Instructing the judge that
+            # a language mismatch is expected (see ``_build_gate_prompt``) was
+            # tried first and did NOT move the score.
+            #
+            # Treating a non-English turn as relevant is the safe direction:
+            # the gate exists to add precision, is off by default, and the
+            # downstream generation prompt still refuses to answer from
+            # unrelated context. Wrongly refusing a paying customer's question
+            # is far more costly than occasionally answering a loose one.
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
-            _is_relevant, _gate_score = await asyncio.to_thread(
-                check_relevance, question, final_results, bid, cid, _bot_threshold
-            )
+            if _lang_is_non_english(language):
+                _is_relevant, _gate_score = True, 1.0
+            else:
+                _is_relevant, _gate_score = await asyncio.to_thread(
+                    check_relevance, question, final_results, bid, cid, _bot_threshold
+                )
             # Qualification-chip answer, or a free-typed answer to the bot's own
             # question → bypass the off-topic gate; see the non-streaming path
             # for the full rationale.
@@ -7944,7 +8068,7 @@ async def rag_pipeline_stream(
             # Streamed live AND folded into full_answer so the saved transcript
             # matches what the visitor saw.
             if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(full_answer):
-                _name_ask_chunk = f"\n\n{_NAME_ASK_TEXT}"
+                _name_ask_chunk = f"\n\n{_name_ask_text(language)}"
                 full_answer = full_answer.rstrip() + _name_ask_chunk
                 yield _name_ask_chunk
 
