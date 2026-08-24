@@ -71,6 +71,9 @@ export default {
             message_placeholder: 'Briefly describe what you need help with...',
             submit: 'Request Operator',
             cancel: 'Back to bot',
+            email_placeholder: 'Email address *',
+            name_placeholder: 'Your name *',
+            invalid_email: 'Please enter a valid email address.',
         },
         system: {
             connecting_team: 'Connecting you with our team...',

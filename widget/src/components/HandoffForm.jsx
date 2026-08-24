@@ -49,7 +49,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
         if (!email || email === lastCheckedEmailRef.current) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
-            setEmailError('Please enter a valid email address.');
+            setEmailError(t('handoff.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
@@ -64,7 +64,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 setEmailError('');
             } else {
                 setEmailCheckState('invalid');
-                setEmailError(result.reason || 'Please enter a valid email address.');
+                setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
             }
             return result;
         });
@@ -79,7 +79,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
             const email = formData.email.trim();
             if (!looksLikeEmail(email)) {
                 setEmailCheckState('invalid');
-                setEmailError('Please enter a valid email address.');
+                setEmailError(t('handoff.invalid_email') || 'Please enter a valid email address.');
                 return;
             }
 
@@ -97,7 +97,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 const result = await checkEmailWithServer(email);
                 if (!result.valid) {
                     setEmailCheckState('invalid');
-                    setEmailError(result.reason || 'Please enter a valid email address.');
+                    setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
                     return;
                 }
                 setEmailCheckState('valid');
@@ -147,7 +147,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                                 <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                                 <input
                                     type="email"
-                                    placeholder="Email address *"
+                                    placeholder={t('handoff.email_placeholder') || 'Email address *'}
                                     value={formData.email}
                                     onChange={(e) => {
                                         setFormData(prev => ({ ...prev, email: e.target.value }));
@@ -174,7 +174,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                         <User className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                         <input
                             type="text"
-                            placeholder="Your name *"
+                            placeholder={t('handoff.name_placeholder') || 'Your name *'}
                             value={formData.name}
                             onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                             className="flex-1 bg-transparent outline-none text-[13px] text-[#16202C] placeholder:text-gray-400"

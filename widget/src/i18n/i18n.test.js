@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
     normalizeLocale,
@@ -482,4 +483,163 @@ test('localizeCtaOption: non-string / empty input passes through', () => {
     assert.equal(localizeCtaOption(''), '');
     assert.equal(localizeCtaOption(null), null);
     assert.equal(localizeCtaOption(undefined), undefined);
+});
+
+// ── Public setLocale() actually reaches the widget ───────────────────────────
+//
+// The controller half of this was already covered (it normalises, stores and
+// emits). What was NOT covered is that anything CONSUMES the action, and that
+// is precisely where the bug lived: `OyeChats.setLocale('hi-IN')` updated the
+// controller's bookkeeping and fired `localeChanged` while the widget carried
+// on rendering English, because ChatWidget's action switch had no `setLocale`
+// case and fell through to `default: break`.
+//
+// ChatWidget needs React and a DOM, so these pin the contract on both sides of
+// the seam: the controller must DISPATCH the action, and applying it the way
+// ChatWidget does must produce a real locale switch that survives a reload.
+
+test('public API: setLocale dispatches an action a subscriber can act on', () => {
+    resetController();
+    const ctrl = getController();
+    const actions = [];
+    ctrl.onAction((a) => actions.push(a));
+
+    ctrl.setLocale('hi_in');
+
+    const localeActions = actions.filter((a) => a.type === 'setLocale');
+    assert.equal(localeActions.length, 1, 'exactly one setLocale action per call');
+    // Normalised at the boundary, so the consumer never sees a raw tag.
+    assert.equal(localeActions[0].locale, 'hi-IN');
+    assert.equal(localeActions[0].source, 'site');
+});
+
+test('public API: a setLocale before any subscriber is queued, not dropped', () => {
+    // Pre-mount behaviour must not regress: a host page calling setLocale in
+    // the same tick as the script tag must still take effect once the widget
+    // mounts and subscribes.
+    resetController();
+    const ctrl = getController();
+    ctrl.setLocale('hi-IN');
+
+    const actions = [];
+    ctrl.onAction((a) => actions.push(a));
+    assert.ok(
+        actions.some((a) => a.type === 'setLocale' && a.locale === 'hi-IN'),
+        'a setLocale dispatched before mount must be replayed to the first subscriber',
+    );
+});
+
+test('public API: applying the action switches locale, direction and storage', async () => {
+    const store = new Map();
+    globalThis.localStorage = {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, v),
+        removeItem: (k) => store.delete(k),
+    };
+    resetI18n();
+    resetController();
+    const ctrl = getController();
+
+    const directions = [];
+    const unsubscribe = onLocaleChange(({ direction }) => directions.push(direction));
+
+    // What ChatWidget's `setLocale` case does with the action.
+    ctrl.onAction((action) => {
+        if (action.type !== 'setLocale') return;
+        setLocale(action.locale);
+        writeLocale(action.locale, 'site', 'bot-123');
+        ctrl.reportActiveLocale(action.locale);
+    });
+
+    ctrl.setLocale('hi-IN');
+    assert.equal(getLocale(), 'hi-IN', 'the widget locale must actually change');
+    assert.equal(ctrl.getLocale(), 'hi-IN');
+    // Persisted under 'site', which is what outranks <html lang> on reload.
+    assert.deepEqual(readLocalePreference('bot-123'), { locale: 'hi-IN', source: 'site' });
+
+    // RTL drives the shadow host's `dir`, which app-entry syncs off this bus.
+    ctrl.setLocale('ar-SA');
+    assert.equal(getLocale(), 'ar-SA');
+    assert.equal(getDirection(), 'rtl');
+    assert.ok(directions.includes('rtl'), 'an RTL switch must notify direction subscribers');
+
+    unsubscribe();
+    resetI18n();
+    delete globalThis.localStorage;
+});
+
+test('public API: an unsupported locale is not applied', () => {
+    // The narrowing ChatWidget performs: `resolveClientLocale` falls back to
+    // the bot's default for a locale it does not offer, and applying that
+    // fallback would silently flip the visitor's language. Only a request that
+    // survives narrowing in the SAME base language may be applied.
+    const supported = ['en-IN', 'hi-IN'];
+    const survives = (requested) => {
+        const resolved = resolveClientLocale({
+            explicit: requested,
+            site: null,
+            htmlLang: null,
+            browser: [],
+            persisted: null,
+            supportedLocales: supported,
+            defaultLocale: 'en-IN',
+            enabled: true,
+        });
+        return Boolean(
+            resolved?.locale && getLanguageCode(resolved.locale) === getLanguageCode(requested),
+        );
+    };
+
+    assert.equal(survives('hi-IN'), true);
+    assert.equal(survives('en-IN'), true);
+    // Offered in a different region only - narrowing keeps the language.
+    assert.equal(survives('hi'), true);
+    // Not offered at all - must NOT be applied.
+    assert.equal(survives('ja-JP'), false);
+    assert.equal(survives('de-DE'), false);
+});
+
+// ── HandoffForm strings ──────────────────────────────────────────────────────
+
+test('handoff form strings are localized and fall back safely', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+
+    for (const key of ['handoff.email_placeholder', 'handoff.name_placeholder', 'handoff.invalid_email']) {
+        const value = t(key);
+        assert.ok(value, `${key} must resolve in Hindi`);
+        assert.ok(/[ऀ-ॿ]/.test(value), `${key} must actually be Devanagari, got ${value}`);
+    }
+
+    // English has no runtime dictionary by design (every call site carries an
+    // inline default), so t() returns null and the `|| 'Email address *'`
+    // fallback in the component is what renders.
+    setLocale('en-IN');
+    assert.equal(t('handoff.email_placeholder'), null);
+    resetI18n();
+});
+
+test('ChatWidget actually consumes the setLocale action', () => {
+    // The tests above prove the CONTRACT (controller dispatches, applying it
+    // works). They cannot prove ChatWidget holds up its end, because rendering
+    // it needs React and a DOM - and "nobody handles the action" is exactly
+    // how the bug shipped. This asserts the consumer exists, so deleting the
+    // case fails here rather than silently in production.
+    const src = readFileSync(new URL('../components/ChatWidget.jsx', import.meta.url), 'utf8');
+    const switchStart = src.indexOf('ctrl.onAction(');
+    assert.ok(switchStart > 0, 'ChatWidget must subscribe to controller actions');
+    const handler = src.slice(switchStart, switchStart + 2000);
+    assert.match(handler, /case 'setLocale':/, 'ChatWidget must handle the setLocale action');
+    assert.match(handler, /applyExternalLocale\(action\.locale\)/);
+});
+
+test('HandoffForm renders no hardcoded English placeholders', () => {
+    const src = readFileSync(new URL('../components/HandoffForm.jsx', import.meta.url), 'utf8');
+    // A bare placeholder="..." is untranslatable; every one must go through t().
+    const bare = [...src.matchAll(/placeholder="([^"]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(bare, [], `hardcoded placeholders left in HandoffForm: ${bare.join(', ')}`);
+    assert.match(src, /t\('handoff\.email_placeholder'\)/);
+    assert.match(src, /t\('handoff\.name_placeholder'\)/);
+    assert.match(src, /t\('handoff\.invalid_email'\)/);
 });

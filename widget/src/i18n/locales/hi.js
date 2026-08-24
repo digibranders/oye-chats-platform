@@ -173,6 +173,9 @@ export default {
             message_placeholder: 'संक्षेप में बताएं कि आपको किस प्रकार की सहायता चाहिए...',
             submit: 'ऑपरेटर का अनुरोध करें',
             cancel: 'वापस बॉट पर जाएं',
+            email_placeholder: 'ईमेल पता *',
+            name_placeholder: 'आपका नाम *',
+            invalid_email: 'कृपया एक मान्य ईमेल पता दर्ज करें।',
         },
         system: {
             connecting_team: 'हम आपको अपनी टीम से जोड़ रहे हैं...',
