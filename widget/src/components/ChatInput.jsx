@@ -11,6 +11,7 @@ import {
 } from '../lib/slashCommands';
 import { getSlashHintSeenKey } from '../services/storage-keys';
 import { t } from '../i18n/i18n.js';
+import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import {
     buildBrandingHref,
     resolveBrandingText,
@@ -107,7 +108,11 @@ const ChatInput = ({
     }, [settings?.branding_text, settings?.branding_url]);
 
     const messages = settings?.widget_messages || {};
-    const inputPlaceholder = messages.input_placeholder || placeholder || t('input.placeholder') || 'Write a message...';
+    const inputPlaceholder =
+        authoredCopy(messages.input_placeholder, SEEDED.input_placeholder)
+        || placeholder
+        || t('input.placeholder')
+        || SEEDED.input_placeholder;
 
     const isWaiting = chatMode === 'waiting';
     const isLive = chatMode === 'live';

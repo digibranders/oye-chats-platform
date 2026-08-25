@@ -20,6 +20,7 @@ import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
 import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCode } from '../i18n/i18n.js';
+import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import { displayTextFor } from '../lib/liveChatTranslation.js';
 import { isInvalidTransition, nextChatMode } from '../lib/chatModeMachine.js';
 import { formatHeaderDateTime } from '../i18n/formatters.js';
@@ -1004,7 +1005,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const getWaitingMessage = () => {
         if (waitingSeconds >= 23) return t('system.waiting_longer') || 'Taking a bit longer than usual. Hang tight';
         if (waitingSeconds >= 12) return t('system.waiting_still_connecting') || 'Still connecting. Our team will be right with you';
-        return settings.waiting_message || t('system.waiting_default') || 'Please wait a moment';
+        // Same three cases as the welcome screen: authored wins verbatim, the
+        // backend's seeded wording gets translated, and a genuinely empty field
+        // falls back to the widget's own shorter line.
+        if (settings.waiting_message?.trim()) {
+            return (
+                authoredCopy(settings.waiting_message, SEEDED.waiting_message)
+                || t('presets.waiting_message')
+                || SEEDED.waiting_message
+            );
+        }
+        return t('system.waiting_default') || 'Please wait a moment';
     };
 
     // ── Welcome exit ─────────────────────────────────────────────────────────────
@@ -3088,9 +3099,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {surveyStep === 2 && (
                             <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
                                 <p className="text-[12px] text-gray-500 mb-3">
-                                    {settings?.widget_messages?.rating_prompt
-                                        || t('survey.rating_prompt')
-                                        || 'How would you rate this experience?'}
+                                    {settings?.widget_messages?.rating_prompt?.trim()
+                                        ? authoredCopy(
+                                            settings.widget_messages.rating_prompt,
+                                            SEEDED.rating_prompt,
+                                        )
+                                            || t('presets.rating_prompt')
+                                            || SEEDED.rating_prompt
+                                        : t('survey.rating_prompt')
+                                            || 'How would you rate this experience?'}
                                 </p>
                                 <div
                                     className="flex justify-center gap-2 mb-3"
