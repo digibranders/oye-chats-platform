@@ -116,11 +116,13 @@ cd widget && npm ci && npm run build
 bash scripts/r2-put.sh \
   "<R2_BUCKET>/app/manifest.json" dist/app/manifest.json \
   --content-type=application/json \
-  --cache-control='public, max-age=0, must-revalidate'
+  --cache-control='no-cache, must-revalidate, s-maxage=300'   # same header the deploy sets
 
 # 3. Purge the manifest and the loader. The loader hard-codes the manifest URL,
 #    so a stale loader is harmless, but purging both keeps the flip atomic.
 #    (Cloudflare cache purge for /app/manifest.json and /oyechats-widget.js)
+#    The purge is not optional: s-maxage=300 lets Cloudflare keep serving the
+#    manifest you just replaced for up to five more minutes without it.
 ```
 
 Clients pick up the change on their next page load. No deploy, no CI cycle.

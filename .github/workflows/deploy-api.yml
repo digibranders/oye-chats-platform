@@ -420,9 +420,18 @@ jobs:
             # open sockets: visitors and operators reconnect (the widget has
             # backoff and re-fetches history), but doing it before the API is
             # healthy would reconnect them into a half-deployed backend.
-            if systemctl list-unit-files oyechats-ws.service >/dev/null 2>&1 \
-               && systemctl is-enabled oyechats-ws >/dev/null 2>&1; then
+            # `systemctl cat` is the existence test: it fails only when no unit
+            # file exists. `is-enabled` was wrong here -- a unit that is
+            # installed and running but never `systemctl enable`d reports
+            # "disabled" and would be skipped, which is the exact silent-skip
+            # this block exists to end. The else branch is deliberate: a skip
+            # has to be visible in the deploy log, not inferred from its
+            # absence.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
               systemctl restart oyechats-ws
+              echo "restarted oyechats-ws"
+            else
+              echo "oyechats-ws.service not installed on this host; skipping"
             fi
 
             # Reload Nginx if config exists (Phase 1 scalability: reverse proxy)
@@ -480,9 +489,18 @@ jobs:
             systemctl restart oyechats-api
             # Same reasoning as the forward path: a rollback that leaves the
             # WebSocket process on the rolled-back-FROM code is not a rollback.
-            if systemctl list-unit-files oyechats-ws.service >/dev/null 2>&1 \
-               && systemctl is-enabled oyechats-ws >/dev/null 2>&1; then
+            # `systemctl cat` is the existence test: it fails only when no unit
+            # file exists. `is-enabled` was wrong here -- a unit that is
+            # installed and running but never `systemctl enable`d reports
+            # "disabled" and would be skipped, which is the exact silent-skip
+            # this block exists to end. The else branch is deliberate: a skip
+            # has to be visible in the deploy log, not inferred from its
+            # absence.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
               systemctl restart oyechats-ws
+              echo "restarted oyechats-ws"
+            else
+              echo "oyechats-ws.service not installed on this host; skipping"
             fi
             sleep 15
             for i in 1 2 3 4 5 6; do

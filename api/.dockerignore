@@ -1,0 +1,32 @@
+# Build context exclusions for api/Dockerfile.
+#
+# The Dockerfile builds a clean dependency layer with `uv sync --frozen` and
+# then runs `COPY . .`. Without this file that copy overwrites the freshly
+# built /app/.venv with the developer's macOS virtualenv (absolute host
+# shebangs, so every console script in the image is broken) and bakes api/.env
+# with its real provider keys into the image. Neither belongs in an image.
+
+# Local virtualenv: 740MB of host-specific binaries that shadow the built one.
+.venv/
+venv/
+
+# Secrets. The runtime gets its configuration from the environment.
+.env
+.env.*
+!.env.example
+
+# Build and test noise that only inflates the context.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.egg-info/
+
+# VCS and editor state.
+.git/
+.gitignore
+.DS_Store
