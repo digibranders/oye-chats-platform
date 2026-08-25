@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Moon, Sun } from 'lucide-react';
 import { cn, useTheme } from '../design-system';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * ThemeToggle - animated light ⇄ dark switch (ported from the pre-redesign
@@ -11,15 +12,19 @@ import { cn, useTheme } from '../design-system';
  */
 export function ThemeToggle() {
   const { resolvedTheme, toggle } = useTheme();
+  const { t } = useTranslation();
   const isDark = resolvedTheme === 'dark';
+  const label = isDark
+    ? t('shell.theme.switchToLight') || 'Switch to light theme'
+    : t('shell.theme.switchToDark') || 'Switch to dark theme';
 
   return (
     <button
       type="button"
       role="switch"
       aria-checked={isDark}
-      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-label={label}
+      title={label}
       onClick={toggle}
       className={cn(
         'relative inline-flex h-7 w-[52px] shrink-0 items-center rounded-full p-1 transition-colors duration-300',

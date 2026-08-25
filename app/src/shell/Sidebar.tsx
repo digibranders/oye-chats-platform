@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react';
 import { OyeChatsMark } from './OyeChatsMark';
 import { PRIMARY_NAV, SECONDARY_NAV, navForRole, type NavItem } from './nav.config';
 import { cn } from '../design-system';
+import { useTranslation } from '../i18n/useTranslation';
 import { useEntitlements } from '../hooks/useEntitlements';
 import { useSelectedBotPlan } from '../hooks/useSelectedBotPlan';
 import { usePromoFreePeriod } from '../hooks/usePromoFreePeriod';
@@ -57,12 +58,16 @@ interface NavLinkItemProps {
  *  markup, active-state styling, and collapsed behavior can never drift. */
 function NavLinkItem({ item, showLabels, onNavigate }: NavLinkItemProps): ReactElement {
   const Icon = item.icon;
+  const { t } = useTranslation();
+  // PRIMARY_NAV is a module constant, so `item.label` is English frozen at
+  // import. Resolve through the dictionary on every render and fall back to it.
+  const label = t(item.labelKey) || item.label;
   return (
     <NavLink
       to={item.to}
       end={item.end}
       onClick={onNavigate}
-      title={!showLabels ? item.label : undefined}
+      title={!showLabels ? label : undefined}
       className={({ isActive }) =>
         cn(
           'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
@@ -88,9 +93,9 @@ function NavLinkItem({ item, showLabels, onNavigate }: NavLinkItemProps): ReactE
             )}
           />
           {showLabels ? (
-            <span className="truncate">{item.label}</span>
+            <span className="truncate">{label}</span>
           ) : (
-            <span className="sr-only">{item.label}</span>
+            <span className="sr-only">{label}</span>
           )}
         </>
       )}
@@ -116,7 +121,9 @@ interface LockedNavItemProps {
  */
 function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): ReactElement {
   const Icon = item.icon;
-  const lockedLabel = `${item.label} - upgrade to unlock`;
+  const { t } = useTranslation();
+  const label = t(item.labelKey) || item.label;
+  const lockedLabel = t('nav.lockedUpgrade', { label }) || `${label} - upgrade to unlock`;
   return (
     <button
       type="button"
@@ -143,7 +150,7 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
       </span>
       {showLabels ? (
         <>
-          <span className="flex-1 truncate text-left">{item.label}</span>
+          <span className="flex-1 truncate text-left">{label}</span>
           <Lock
             size={13}
             aria-hidden="true"

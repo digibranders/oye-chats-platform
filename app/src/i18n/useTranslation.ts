@@ -11,7 +11,7 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 
-import { getLanguage, getLocale, subscribeLocale, t as translate } from './i18n';
+import { getLanguage, getLocale, getSnapshotToken, subscribeLocale, t as translate } from './i18n';
 
 export interface Translation {
   /** Active BCP-47 tag: `en-IN`, `hi-IN`. */
@@ -24,19 +24,23 @@ export interface Translation {
 
 function getServerSnapshot(): string {
   // No localStorage during SSR/prerender; English is the canonical default.
-  return 'en-IN';
+  return 'en-IN#0';
 }
 
 export function useTranslation(): Translation {
-  const locale = useSyncExternalStore(subscribeLocale, getLocale, getServerSnapshot);
+  // Subscribe to the TOKEN, not the locale: the dictionary lands after the
+  // switch, and a locale-valued snapshot would be unchanged at that moment, so
+  // React would skip the render that actually shows the translated strings.
+  const token = useSyncExternalStore(subscribeLocale, getSnapshotToken, getServerSnapshot);
+  const locale = getLocale();
 
   // Re-created whenever the locale changes, so memoised children that close
   // over `t` are invalidated too. A stable identity here would leave
   // React.memo subtrees rendering the previous language.
   const t = useCallback(
     (key: string, params?: Record<string, unknown>) => translate(key, params),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity must follow the locale
-    [locale],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity must follow the store token
+    [token],
   );
 
   return { locale, language: getLanguage(), t };

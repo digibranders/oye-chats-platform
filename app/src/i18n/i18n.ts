@@ -64,6 +64,19 @@ const listeners = new Set<() => void>();
 
 let currentLocale: string = readStoredLocale();
 
+/**
+ * Snapshot token for `useSyncExternalStore`, changed on EVERY notification.
+ *
+ * It cannot just be the locale. A dictionary arrives asynchronously after the
+ * switch, and at that moment the locale is already what it will be, so a
+ * locale-valued snapshot is identical before and after the load and React
+ * correctly bails out of re-rendering. The result was a language switch that
+ * updated `document.lang` and localStorage while every translated string on
+ * screen stayed English until an unrelated render happened to flush it.
+ */
+let version = 0;
+let snapshotToken = `${currentLocale}#0`;
+
 function readStoredLocale(): string {
   if (typeof localStorage === 'undefined') return DEFAULT_UI_LOCALE;
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -89,12 +102,22 @@ export function getLocale(): string {
   return currentLocale;
 }
 
+/**
+ * Opaque token that changes on every locale change AND every dictionary
+ * arrival. React binding only; render from {@link getLocale} and {@link t}.
+ */
+export function getSnapshotToken(): string {
+  return snapshotToken;
+}
+
 /** Base language of the active locale: `hi-IN` -> `hi`. */
 export function getLanguage(): string {
   return baseLanguage(currentLocale) ?? 'en';
 }
 
 function notify(): void {
+  version += 1;
+  snapshotToken = `${currentLocale}#${version}`;
   for (const listener of listeners) {
     try {
       listener();
@@ -223,6 +246,8 @@ export function t(key: string, params?: Record<string, unknown>): string | null 
 /** Test-only reset. Not referenced by application code. */
 export function __resetI18nForTests(): void {
   currentLocale = DEFAULT_UI_LOCALE;
+  version = 0;
+  snapshotToken = `${DEFAULT_UI_LOCALE}#0`;
   listeners.clear();
   for (const lang of Object.keys(dictionaries)) delete dictionaries[lang];
 }

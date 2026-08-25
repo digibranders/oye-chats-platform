@@ -4,6 +4,7 @@ import { Building2, Check, ChevronsUpDown, Headphones } from 'lucide-react';
 import { cn, Popover } from '../design-system';
 import { useWorkspace } from '../context/WorkspaceContext';
 import type { Workspace } from '../types/domain';
+import { useTranslation } from '../i18n/useTranslation';
 
 /** Human-readable seat role for a workspace entry. */
 function roleLabel(ws: Workspace): string {
@@ -29,6 +30,7 @@ function WorkspaceGlyph({ ws, className }: { ws: Workspace; className?: string }
  * it only appears once there's an actual choice to make.
  */
 export function WorkspaceSwitcher() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const {
     workspaces,
@@ -69,7 +71,10 @@ export function WorkspaceSwitcher() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label={`Current workspace: ${currentName}. Switch workspace`}
+          aria-label={
+            t('shell.workspaceSwitcher.current', { name: currentName }) ||
+            `Current workspace: ${currentName}. Switch workspace`
+          }
           className="flex h-9 max-w-[42vw] items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] md:max-w-[220px]"
         >
           {current && (
@@ -83,7 +88,7 @@ export function WorkspaceSwitcher() {
       {(close) => (
         <div>
           <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Switch workspace
+            {t('shell.workspaceSwitcher.title') || 'Switch workspace'}
           </p>
           <div className="max-h-80 overflow-y-auto p-1">
             {workspaces.map((ws) => {
