@@ -1311,10 +1311,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     // billing terms. These messages are deliberately neutral.
                     const friendly =
                         err?.status === 402
-                            ? "We're temporarily over capacity for this chatbot. Please try again later or reach us by email."
+                            ? (t('system.error_over_capacity')
+                                || 'We’re temporarily over capacity for this chatbot. Please try again later or reach us by email.')
                             : err?.status === 503
-                            ? "We're briefly offline for maintenance. Please try again in a few minutes."
-                            : "I'm sorry, I couldn't generate a response. Please try again.";
+                            ? (t('system.error_maintenance')
+                                || 'We’re briefly offline for maintenance. Please try again in a few minutes.')
+                            : (t('system.error_generic')
+                                || 'I’m sorry, I couldn’t generate a response. Please try again.');
                     if (placeholderId !== null) {
                         setMessages(prev => prev.map(msg => {
                             if (msg.id !== placeholderId) return msg;
@@ -1375,7 +1378,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setIsTyping(false);
             setMessages(prev => [...prev, {
                 id: Date.now() + 2,
-                text: "I'm sorry, I couldn't generate a response. Please try again.",
+                text: t('system.error_generic')
+                    || 'I’m sorry, I couldn’t generate a response. Please try again.',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
@@ -1789,7 +1793,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 if (cancelled) return;
                 const action = res?.suggested_action;
                 if (action === 'route' || action === 'wait') {
-                    const opName = res?.online_operator_name || res?.operator_name || 'Someone from our team';
+                    const opName = res?.online_operator_name
+                        || res?.operator_name
+                        || t('system.someone_from_team')
+                        || 'Someone from our team';
                     setIncomingOperator(opName);
                     setLiveChatState(prev => ({
                         ...(prev || {}),
@@ -1989,7 +1996,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!email || email === offlineLastCheckedEmailRef.current) return;
         if (!offlineLooksLikeEmail(email)) {
             setOfflineEmailCheckState('invalid');
-            setOfflineEmailError('Please enter a valid email address.');
+            setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
@@ -2002,7 +2009,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 setOfflineEmailError('');
             } else {
                 setOfflineEmailCheckState('invalid');
-                setOfflineEmailError(result.reason || 'Please enter a valid email address.');
+                setOfflineEmailError(
+                    result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
+                );
             }
             return result;
         });
@@ -2022,7 +2031,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             const email = offlineForm.email.trim();
             if (!offlineLooksLikeEmail(email)) {
                 setOfflineEmailCheckState('invalid');
-                setOfflineEmailError('Please enter a valid email address.');
+                setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
                 return;
             }
             if (offlineEmailCheckState === 'checking' && offlineEmailCheckPromiseRef.current) {
@@ -2035,7 +2044,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 const result = await checkEmailWithServer(email);
                 if (!result.valid) {
                     setOfflineEmailCheckState('invalid');
-                    setOfflineEmailError(result.reason || 'Please enter a valid email address.');
+                    setOfflineEmailError(
+                    result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
+                );
                     return;
                 }
                 setOfflineEmailCheckState('valid');

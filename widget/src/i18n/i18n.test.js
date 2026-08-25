@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 import {
     normalizeLocale,
@@ -126,7 +126,7 @@ test('i18n: t() resolves and interpolates once a dictionary is loaded', async (t
     assert.equal(typeof t('header.close'), 'string');
     assert.ok(t('header.close').length > 0);
 
-    const interpolated = t('system.operator_joined', { name: 'Sarah' });
+    const interpolated = t('system.operator_joined_conversation', { name: 'Sarah' });
     assert.ok(interpolated.includes('Sarah'), interpolated);
 });
 
@@ -852,6 +852,24 @@ test('a missing key falls back rather than rendering the key path', async () => 
 const readComponent = (name) =>
     readFileSync(new URL(`../components/${name}`, import.meta.url), 'utf8');
 
+/** Every shipped source file, so key-usage checks cannot go stale. */
+const readSourceTree = () => {
+    const root = new URL('../', import.meta.url);
+    const out = [];
+    const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const child = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dir);
+            if (entry.isDirectory()) {
+                if (entry.name !== 'locales') walk(child);
+            } else if (/\.(jsx|js)$/.test(entry.name) && !entry.name.includes('.test.')) {
+                out.push(readFileSync(child, 'utf8'));
+            }
+        }
+    };
+    walk(root);
+    return out.join('\n');
+};
+
 // Components whose every visitor-visible attribute must route through t().
 // `alt=""` is exempt: an empty alt is the correct markup for a decorative image.
 const SWEPT_COMPONENTS = [
@@ -983,4 +1001,109 @@ test('every t() key used in a component exists in the English dictionary', async
         }
     }
     assert.deepEqual(missing, [], 't() keys with no dictionary entry');
+});
+
+// ── The guard that would have caught the second round of misses ──────────────
+//
+// The attribute guard above only sees `placeholder="..."` style markup. It is
+// blind to a sentence assigned to a variable, which is how four visitor-facing
+// strings survived the first sweep: the stream-error copy built into a
+// `friendly` const, and the offline form's email validation.
+//
+// The rule here is structural rather than positional: a sentence-shaped literal
+// must have a `t(` or a `textKey:` in the code immediately preceding it, which
+// is what the `t('key') || 'English'` and `textKey/text` idioms both produce.
+// Anything else has to earn a line in ALLOWED_BARE_STRINGS with a reason.
+
+const GUARDED_COMPONENTS = [...SWEPT_COMPONENTS, 'MessageBubble.jsx', 'WelcomeScreen.jsx', 'LanguageSelector.jsx'];
+
+const ALLOWED_BARE_STRINGS = new Map([
+    // Placeholder values for customer-authored settings. They are overwritten by
+    // the bot's real configuration before the visitor sees anything, and are
+    // shown unchanged in every language by design when they are not.
+    ['Your Chatbot Name', 'default value for settings.bot_name'],
+    ['Have Questions?', 'default value for settings.launcher_name'],
+    // Split on the literal {email} token so the address keeps its <strong> at
+    // whatever position the language puts it. The t() lookup sits at the top of
+    // the enclosing IIFE, further back than the guard's window reaches.
+    ['We’ll get back to you at {email} or give you a callback as soon as possible.', 'offline.sent_body_phone fallback'],
+    ['We’ll get back to you at {email} as soon as possible.', 'offline.sent_body fallback'],
+]);
+
+/** Remove comments so prose inside them is not mistaken for rendered copy. */
+const stripComments = (src) =>
+    src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((line) => line.replace(/(^|[^:'"`])\/\/.*$/, '$1'))
+        .join('\n');
+
+test('no visitor-facing sentence is built without going through t()', () => {
+    const offenders = [];
+    for (const name of GUARDED_COMPONENTS) {
+        const src = stripComments(readComponent(name));
+        for (const m of src.matchAll(/(['"])((?:(?!\1)[^\\\n]){8,})\1/g)) {
+            const text = m[2];
+            // Sentence-shaped: at least two words, starting like prose.
+            if (!/[A-Za-z]{2,}\s+[A-Za-z]/.test(text)) continue;
+            if (!/^[A-Z‘“I]/.test(text)) continue;
+            // Tailwind class strings and other machine tokens.
+            if (/^[a-z-]+(\s+[a-z0-9:[\]/.#()-]+)+$/.test(text)) continue;
+            if (/ {2}|className|rounded|flex|border|w-\d|h-\d/.test(text)) continue;
+            if (ALLOWED_BARE_STRINGS.has(text)) continue;
+            // The `t('key') || 'English'` and `textKey:`/`text:` idioms both put
+            // one of these immediately before the literal.
+            const preceding = src.slice(Math.max(0, m.index - 160), m.index);
+            if (/\bt\(\s*['"]/.test(preceding) || /textKey:/.test(preceding)) continue;
+            offenders.push(`${name}: ${JSON.stringify(text)}`);
+        }
+    }
+    assert.deepEqual(offenders, [], 'bare visitor-facing strings; localize them or allowlist with a reason');
+});
+
+test('the bare-string allowlist has no stale entries', () => {
+    // An allowlist that outlives its reason quietly re-opens the hole it was
+    // opened for, so every entry must still be present in the source.
+    const all = GUARDED_COMPONENTS.map((n) => readComponent(n)).join('\n');
+    for (const [text, reason] of ALLOWED_BARE_STRINGS) {
+        assert.ok(all.includes(text), `allowlisted string is gone, drop the entry (${reason}): ${text}`);
+    }
+});
+
+test('stream-error and offline-validation copy is localized', () => {
+    // Named explicitly because these are the four that the attribute guard and
+    // the first inventory both missed.
+    const src = readComponent('ChatWindow.jsx');
+    for (const key of ['system.error_over_capacity', 'system.error_maintenance',
+        'system.error_generic', 'offline.invalid_email', 'system.someone_from_team']) {
+        assert.match(src, new RegExp(`t\\('${key.replace('.', '\\.')}'`), `${key} must be used`);
+    }
+    assert.doesNotMatch(src, /setOfflineEmailError\('Please enter/);
+});
+
+test('every dictionary key is actually used by the widget', () => {
+    // This cleanup removed 19 keys that no component had referenced in months:
+    // copy for a handoff form that lost its department and message fields, an
+    // "Auto-detected" language badge replaced by a check icon, duplicate email
+    // and reconnecting strings. They cost every Hindi visitor bytes and gave
+    // reviewers false confidence that a surface was covered.
+    //
+    // The source list is WALKED, not hand-maintained: a fixed list is the same
+    // staleness bug one level up, and the first draft of this very test wrongly
+    // condemned three live keys by forgetting ChatWidget and TypingIndicator.
+    //
+    // Keys reached through a variable (`t(textKey)`, `t(cmd.descriptionKey)`)
+    // still appear as quoted literals where they are assigned, so a literal
+    // search suffices. Quoting exactly stops 'a.b' counting as a use of
+    // 'a.b_suffix'.
+    const all = readSourceTree();
+
+    return loadDicts().then(({ en }) => {
+        const unused = flattenKeys(en.messages).filter((k) => !all.includes(`'${k}'`));
+        assert.deepEqual(
+            unused,
+            [],
+            'dictionary keys no component references; delete them or wire them up',
+        );
+    });
 });

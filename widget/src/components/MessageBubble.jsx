@@ -91,7 +91,7 @@ const SafeLink = ({ href, children, ...props }) => {
                 href={href}
                 rel="noopener"
                 aria-label={t('message.open_service_aria') || 'Open service page'}
-                title="Open service page"
+                title={t('message.open_service_title') || 'Open service page'}
                 {...props}
                 className="inline-flex items-center justify-center align-middle ml-1 w-5 h-5 rounded-md bg-blue-50 text-blue-600 text-[12px] no-underline hover:bg-blue-100 transition-colors"
             >
