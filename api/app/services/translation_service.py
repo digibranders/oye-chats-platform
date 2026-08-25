@@ -13,9 +13,9 @@ THE THREE RULES THAT SHAPE THIS MODULE
    ``llm_service`` is synchronous ``litellm.completion``. Calling one from a
    WebSocket handler freezes *every* socket that worker holds, not just the
    conversation being translated. This module uses ``litellm.acompletion``
-   only, with ``timeout=2.0`` and ``num_retries=0``. The ``llm_service``
+   only, with ``timeout=4.0`` and ``num_retries=0``. The ``llm_service``
    defaults (60s, 3 retries) are tuned for answer generation and would turn a
-   2s budget into a minute of dead sockets.
+   4s budget into a minute of dead sockets.
 
 2. **Never raise into a delivery path.** ``translate()`` raises
    :class:`TranslationUnavailable` and nothing else. Callers catch it and send
@@ -83,14 +83,14 @@ logger = logging.getLogger(__name__)
 TRANSLATION_TIMEOUT_S = 4.0
 
 #: Budget for work nothing is waiting on: the post-handoff transcript backfill.
-#: The 2s ceiling above exists to protect the live SEND path, where an operator
+#: The 4s ceiling above exists to protect the live SEND path, where an operator
 #: is mid-conversation. Backfill runs detached after an accept, so a tight cap
 #: there buys nothing and just converts slow-but-fine translations into
 #: permanent "Translation unavailable" rows the operator has to retry by hand.
 #: Observed in a real handoff: a Hindi question failed at 2016ms.
 TRANSLATION_BACKFILL_TIMEOUT_S = 8.0
 
-#: ZERO. Retries are exactly what turn a 2s budget into a 30s stall on a
+#: ZERO. Retries are exactly what turn a 4s budget into a 30s stall on a
 #: degraded provider. LiteLLM's own ``fallbacks`` already covers primary ->
 #: fallback transparently; a second retry layer here would stack on top of it.
 TRANSLATION_NUM_RETRIES = 0
