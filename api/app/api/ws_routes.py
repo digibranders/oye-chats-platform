@@ -390,7 +390,14 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     db_id = persisted.id
 
                 delivered = await manager.route_visitor_message(
-                    session_id, content, db_id=db_id, source_language=source_language
+                    session_id,
+                    content,
+                    db_id=db_id,
+                    source_language=source_language,
+                    # Already read above. Lets the manager fall back to the
+                    # database for the assignment on a live chat without doing
+                    # so for the bot-only sessions that are the common case.
+                    session_status=cs_status,
                 )
 
                 # Operator alert ladder for the "visitor sent a message in an

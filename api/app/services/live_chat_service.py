@@ -260,9 +260,27 @@ class ConnectionManager:
         try:
             with get_session() as db:
                 live_sessions = db.execute(
-                    select(ChatSession.id, ChatSession.status).where(ChatSession.id.in_(session_ids))
+                    select(ChatSession.id, ChatSession.status, ChatSession.assigned_operator_id).where(
+                        ChatSession.id.in_(session_ids)
+                    )
                 ).all()
                 active_ids = {row.id for row in live_sessions if row.status in ("live", "waiting")}
+
+                # Correct a moved chat as well as dropping a dead one. The map
+                # is now populated from the database on a cache miss, and a
+                # transfer performed in another process updates only that
+                # process's copy, so without this a session would keep
+                # resolving to the operator who first accepted it.
+                for row in live_sessions:
+                    if row.id not in active_ids or not row.assigned_operator_id:
+                        continue
+                    if self.assignments.get(row.id) not in (None, row.assigned_operator_id):
+                        logger.info(
+                            f"Re-syncing assignment for {row.id}: "
+                            f"{self.assignments.get(row.id)} -> {row.assigned_operator_id}"
+                        )
+                        self.assignments[row.id] = row.assigned_operator_id
+
                 stale_ids = set(session_ids) - active_ids
                 for sid in stale_ids:
                     self.assignments.pop(sid, None)
@@ -1265,12 +1283,57 @@ class ConnectionManager:
 
     # ── Message routing ──
 
+    def _assigned_operator(self, session_id: str, *, consult_db: bool = False) -> int | None:
+        """The operator handling ``session_id``, from memory or from the database.
+
+        ``self.assignments`` is per-process memory, written by whichever worker
+        handled the accept. Once live chat moved onto its own service that
+        worker is never the one holding the visitor's socket: nginx routes
+        ``/ws/`` to oyechats-ws while every HTTP route, ``POST
+        /operators/accept`` included, lands on oyechats-api. So the accept
+        recorded the assignment in one process and the visitor's messages
+        arrived in another, which found an empty map and dropped every one of
+        them. Nothing logged it, because the caller only reports a failed route
+        while the session is still ``waiting``.
+
+        ``consult_db`` is opt-in and has to stay that way. A miss is the normal
+        state for the overwhelming majority of sessions, which are bot-only and
+        have no operator at all, so querying on every miss would put a database
+        round trip behind every keystroke on the platform. Pass True only when
+        the session is already known to be live, or when the frame is rare
+        enough that one indexed primary-key read does not matter.
+        """
+        operator_id = self.assignments.get(session_id)
+        if operator_id is not None or not consult_db:
+            return operator_id
+
+        try:
+            with get_session() as db:
+                row = db.execute(
+                    select(ChatSession.assigned_operator_id, ChatSession.status).where(ChatSession.id == session_id)
+                ).one_or_none()
+        except Exception:
+            # Delivery is best-effort. A database blip must not raise into a
+            # WebSocket handler and take the socket down with it.
+            logger.warning(f"Assignment lookup failed for session {session_id}", exc_info=True)
+            return None
+
+        if row is None or row.status != "live" or not row.assigned_operator_id:
+            return None
+
+        # Cache it. ``_cleanup_stale_entries`` re-syncs this map against the
+        # database on its periodic tick, so a chat later transferred to someone
+        # else does not keep resolving to the operator who first took it.
+        self.assignments[session_id] = row.assigned_operator_id
+        return row.assigned_operator_id
+
     async def route_visitor_message(
         self,
         session_id: str,
         content: str,
         db_id: int | None = None,
         source_language: str | None = None,
+        session_status: str | None = None,
     ) -> bool:
         """Route a message from visitor to their assigned operator.
 
@@ -1284,7 +1347,9 @@ class ConnectionManager:
         assigned or the operator is currently disconnected (queued for grace
         period). The caller uses this to drive the visitor-side ack tick state.
         """
-        operator_id = self.assignments.get(session_id)
+        # ``session_status`` comes from the caller's own read of the row, so
+        # the database is consulted only for a chat already known to be live.
+        operator_id = self._assigned_operator(session_id, consult_db=session_status == "live")
         if not operator_id:
             return False
 
@@ -1307,8 +1372,16 @@ class ConnectionManager:
             # which is what drives the visitor's green double-check.
             msg["id"] = db_id
 
-        if operator_id in self.operator_connections:
-            await self._send_to_operator(operator_id, msg)
+        # Deliver wherever the socket lives. The previous
+        # ``if operator_id in self.operator_connections`` guard here made the
+        # Redis backplane unreachable: ``_send_to_operator`` already prefers a
+        # local socket and falls back to publishing, so checking locality again
+        # first meant a socket held by another process was treated as no socket
+        # at all. ``deliver_to_operator`` is that same routing with the answer
+        # returned, which this method needs for its delivered/queued contract.
+        from app.services.ws_backplane import deliver_to_operator
+
+        if await deliver_to_operator(self, operator_id, msg):
             return True
         if operator_id in self._operator_disconnect_tasks:
             # Operator is in grace period. Queue for delivery on reconnect
@@ -1371,7 +1444,10 @@ class ConnectionManager:
         translation is already persisted and will be picked up from
         ``GET /chat/history`` if the socket missed it.
         """
-        operator_id = self.assignments.get(session_id)
+        # One frame per translated visitor message, so the database fallback is
+        # affordable here and load-bearing: this is the frame that carries a
+        # Hindi visitor's words to an English-reading operator.
+        operator_id = self._assigned_operator(session_id, consult_db=True)
         if not operator_id:
             return
         await self._send_to_operator(operator_id, payload)
@@ -1392,7 +1468,9 @@ class ConnectionManager:
         (delivered), ``False`` otherwise. Same semantics as
         :meth:`route_visitor_message`.
         """
-        operator_id = self.assignments.get(session_id)
+        # A file upload is rare enough that one indexed read on a cache miss
+        # costs nothing, and losing one is as bad as losing a message.
+        operator_id = self._assigned_operator(session_id, consult_db=True)
         if not operator_id:
             return False
 
@@ -1412,8 +1490,16 @@ class ConnectionManager:
             # which is what drives the visitor's green double-check.
             msg["id"] = db_id
 
-        if operator_id in self.operator_connections:
-            await self._send_to_operator(operator_id, msg)
+        # Deliver wherever the socket lives. The previous
+        # ``if operator_id in self.operator_connections`` guard here made the
+        # Redis backplane unreachable: ``_send_to_operator`` already prefers a
+        # local socket and falls back to publishing, so checking locality again
+        # first meant a socket held by another process was treated as no socket
+        # at all. ``deliver_to_operator`` is that same routing with the answer
+        # returned, which this method needs for its delivered/queued contract.
+        from app.services.ws_backplane import deliver_to_operator
+
+        if await deliver_to_operator(self, operator_id, msg):
             return True
         if operator_id in self._operator_disconnect_tasks:
             queue = self._operator_message_queue.setdefault(operator_id, [])
