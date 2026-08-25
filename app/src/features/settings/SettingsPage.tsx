@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactElement, type ReactNode, useEffect, useState } from 'react';
-import { AlertTriangle, Check, Mail, Pencil, UserRound, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Mail, Pencil, Trash2, Upload, UserRound, type LucideIcon } from 'lucide-react';
 import {
   Button,
   Card,
@@ -12,7 +12,7 @@ import {
   StatusBadge,
   useFeedback,
 } from '../../design-system';
-import { getCurrentUser, updateClientProfile } from '../../services/api';
+import { getCurrentUser, removeOperatorAvatar, updateClientProfile, uploadOperatorAvatar } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
 import { ChangeEmailCard, ChangePasswordCard } from './AccountSecuritySection';
 import { AccountSessionsSection } from './AccountSessionsSection';
@@ -84,6 +84,10 @@ export function SettingsPage(): ReactElement {
   const [nameError, setNameError] = useState('');
   const [savingName, setSavingName] = useState(false);
 
+  // Profile picture (operator-only, optional)
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+
   // Load / reload. No synchronous setState in the effect body - the first
   // setState always follows an await, so `loading` is a genuine derived phase.
   useEffect(() => {
@@ -152,6 +156,38 @@ export function SettingsPage(): ReactElement {
       setNameError(toMessage(error, 'Failed to update your name.'));
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const handleAvatarUpload = async (file: File): Promise<void> => {
+    setAvatarUploading(true);
+    setAvatarError('');
+    try {
+      const { avatar_url } = await uploadOperatorAvatar(file);
+      setPhase((current) =>
+        current.status === 'ready' ? { status: 'ready', user: { ...current.user, avatar_url } } : current,
+      );
+      notify({ tone: 'success', message: 'Your profile picture has been updated.' });
+    } catch (error) {
+      setAvatarError(toMessage(error, 'Failed to upload profile picture.'));
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleAvatarRemove = async (): Promise<void> => {
+    setAvatarUploading(true);
+    setAvatarError('');
+    try {
+      await removeOperatorAvatar();
+      setPhase((current) =>
+        current.status === 'ready' ? { status: 'ready', user: { ...current.user, avatar_url: null } } : current,
+      );
+      notify({ tone: 'success', message: 'Your profile picture has been removed.' });
+    } catch (error) {
+      setAvatarError(toMessage(error, 'Failed to remove profile picture.'));
+    } finally {
+      setAvatarUploading(false);
     }
   };
 
@@ -242,6 +278,69 @@ export function SettingsPage(): ReactElement {
                 <SettingRow icon={UserRound} label="Name" value={user.name} />
               )}
             </Card>
+
+            {user.kind === 'operator' && (
+              <Card className="p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <span
+                      aria-hidden="true"
+                      className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent-soft)] text-[16px] font-semibold text-[var(--ds-accent-text)]"
+                    >
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        user.name?.trim().charAt(0).toUpperCase() || '?'
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[14px] font-semibold text-[var(--ds-text)]">Profile picture</p>
+                      <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
+                        Optional - shown to teammates and to visitors in live chat. Without one, your
+                        initials are shown instead.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--ds-border)] px-3 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]">
+                      {avatarUploading ? (
+                        <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Upload size={14} aria-hidden="true" />
+                      )}
+                      {user.avatar_url ? 'Replace' : 'Upload image'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        disabled={avatarUploading}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = '';
+                          if (file) void handleAvatarUpload(file);
+                        }}
+                      />
+                    </label>
+                    {user.avatar_url && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={avatarUploading}
+                        onClick={() => void handleAvatarRemove()}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {avatarError && (
+                  <p role="alert" className="mt-3 text-[12px] text-[var(--ds-danger)]">
+                    {avatarError}
+                  </p>
+                )}
+              </Card>
+            )}
 
             {user.kind === 'operator' ? (
               <Card>

@@ -25,6 +25,7 @@ const LiveChatMode = ({
     setChatMode,
     setOperatorName,
     setOperatorDepartment,
+    setOperatorAvatar,
     onConnectionStatusChange,
     // Lifted state callbacks
     onLiveMessagesChange,   // (updaterFn | array) => void  (controls liveMessages in parent
@@ -162,6 +163,7 @@ const LiveChatMode = ({
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Our team');
                             setOperatorDepartment?.(data.operator_department || null);
+                            setOperatorAvatar?.(data.operator_avatar || null);
                             onConnectionStatusChange?.('connected');
                             // Always re-fetch history on (re)connect. Covers the
                             // window where the visitor's WS dropped and operator
@@ -256,6 +258,7 @@ const LiveChatMode = ({
                             // Don't wipe messages. Preserve conversation for rating survey.
                             // Messages are cleared in handleReturnToBot after rating is submitted.
                             setOperatorName(null);
+                            setOperatorAvatar?.(null);
                             onChatEnded?.();
                         } else if (data.status === 'unavailable') {
                             intentionalClose.current = true;

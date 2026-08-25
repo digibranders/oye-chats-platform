@@ -457,6 +457,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
                 kind="operator",
                 name=operator.name,
                 email=operator.email,
+                avatar_url=operator.avatar_url,
                 company_name=owner_client.company_name if owner_client else None,
                 website=owner_client.website if owner_client else None,
                 created_at=operator.created_at.isoformat() if operator.created_at else "",

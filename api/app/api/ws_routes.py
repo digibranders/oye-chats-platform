@@ -612,10 +612,14 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool] | None:
-    """Resolve operator_id, operator_name, client_id, department_id, is_online from an api_key or operator_key.
+def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool, str | None] | None:
+    """Resolve operator identity from an api_key or operator_key.
 
-    Returns (operator_id, operator_name, client_id, department_id, is_online) or None if auth fails.
+    Returns ``(operator_id, operator_name, client_id, department_id, is_online,
+    avatar_url)`` or ``None`` if auth fails. ``avatar_url`` is the operator's
+    uploaded photo (may be ``None``); it is threaded to the widget so the
+    live-chat "joined" pill and operator message bubbles show the real avatar
+    instead of initials.
     """
     with get_session() as session:
         if key_type == "operator_key":
@@ -624,7 +628,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
                 return None
             operator.is_online = True
             session.commit()
-            return operator.id, operator.name, operator.client_id, operator.department_id, True
+            return operator.id, operator.name, operator.client_id, operator.department_id, True, operator.avatar_url
 
         # Client api_key auth. Find or create the owner's operator record.
         # Use role='owner' to avoid matching sub-operators created for the same client.
@@ -666,7 +670,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
             operator.is_online = True
             session.commit()
 
-        return operator.id, operator.name, client.id, operator.department_id, operator.is_online
+        return operator.id, operator.name, client.id, operator.department_id, operator.is_online, operator.avatar_url
 
 
 @router.websocket("/ws/operator")
@@ -714,7 +718,7 @@ async def operator_websocket(
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    operator_id, operator_name, client_id, department_id, is_online = result
+    operator_id, operator_name, client_id, department_id, is_online, operator_avatar = result
 
     # ── Seat-limit enforcement: cap concurrent online operators per subscription ──
     # ``operator_quantity`` on Subscription is the customer's purchased seat count
@@ -756,6 +760,7 @@ async def operator_websocket(
         is_online=is_online,
         client_id=client_id,
         subprotocol=accepted_subprotocol,
+        operator_avatar=operator_avatar,
     )
 
     heartbeat_task = asyncio.create_task(_operator_presence_heartbeat(ws, operator_id, client_id))
@@ -826,7 +831,7 @@ async def operator_websocket(
                     add_chat_message(session, target_session, role="operator", content=content, bot_id=None)
                     session.commit()
 
-                await manager.route_operator_message(target_session, content, operator_name)
+                await manager.route_operator_message(target_session, content, operator_name, operator_avatar)
 
             elif msg_type == "file":
                 # File sharing. Operator sends a file URL. Rate-limited on the
@@ -855,7 +860,9 @@ async def operator_websocket(
                     add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
                     session.commit()
 
-                await manager.route_operator_file(target_session, file_url, filename, content_type_val, operator_name)
+                await manager.route_operator_file(
+                    target_session, file_url, filename, content_type_val, operator_name, operator_avatar
+                )
 
             elif msg_type == "typing":
                 target_session = frame.session_id

@@ -36,6 +36,7 @@ const AGENT_TABS: readonly AgentTab[] = [
   { path: 'knowledge', label: 'Knowledge' },
   { path: 'experience', label: 'Experience' },
   { path: 'channels', label: 'Channels' },
+  { path: 'quotation', label: 'Quotation', gateIntent: 'advanced_settings' },
   { path: 'advanced', label: 'Advanced', gateIntent: 'advanced_settings' },
 ];
 

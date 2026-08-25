@@ -2206,6 +2206,9 @@ async def respond_to_connect_request(
             live_manager.clear_connect_request(session_id)
             await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired", visitor_name=None)
             return {"ok": True, "result": "expired"}
+        # Capture the avatar while the session is open (the object is read again
+        # after the block, where a lazy-load would raise DetachedInstanceError).
+        operator_avatar = operator.avatar_url
 
         if not body.accepted:
             live_manager.clear_connect_request(session_id)
@@ -2262,7 +2265,7 @@ async def respond_to_connect_request(
     if department_id is not None:
         live_manager._session_departments[session_id] = department_id
 
-    accepted_ok = await live_manager.accept_chat(session_id, operator_id, operator_name)
+    accepted_ok = await live_manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted_ok:
         logger.warning(
             "DB accepted connect-request for %s → operator %s but manager rejected it. "
@@ -2283,5 +2286,6 @@ async def respond_to_connect_request(
         "ok": True,
         "result": "accepted",
         "operator_name": operator_name,
+        "operator_avatar": operator_avatar,
         "visitor_name": visitor_name,
     }

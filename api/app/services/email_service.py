@@ -756,6 +756,131 @@ def send_visitor_confirmation_email(
     )
 
 
+# ── Quotation emails ─────────────────────────────────────────────────────────
+
+_CURRENCY_SYMBOLS = {
+    "INR": "₹",
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "AUD": "A$",
+    "CAD": "C$",
+    "SGD": "S$",
+    "AED": "د.إ",
+}
+
+
+def _format_money(currency: str, value: object) -> str:
+    """Render a money amount with its currency symbol. Whole numbers drop the
+    decimals (₹200, not ₹200.00); fractional amounts keep two places."""
+    symbol = _CURRENCY_SYMBOLS.get((currency or "").upper(), f"{(currency or '').upper()} ")
+    try:
+        rounded = round(float(value), 2)
+    except (TypeError, ValueError):
+        rounded = 0.0
+    if rounded == int(rounded):
+        return f"{symbol}{int(rounded):,}"
+    return f"{symbol}{rounded:,.2f}"
+
+
+def send_quotation_visitor_email(
+    to_email: str,
+    company_name: str,
+    visitor_name: str | None,
+    service_names: list[str],
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Confirm to the visitor that their quote request was received.
+
+    Deliberately carries NO pricing: the widget never shows visitors prices, so
+    neither does this email. It just acknowledges the request and sets the
+    expectation that the team will follow up with the actual quote.
+    """
+    safe_company = esc(company_name) if company_name else esc(BRAND_NAME)
+    names = [esc(s) for s in (service_names or []) if s]
+    services_line = ", ".join(names) if names else "the services you selected"
+    inner = (
+        h1("Your quote request is in")
+        + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
+        + p(
+            f"Thanks for your interest in {strong(safe_company)}. We&rsquo;ve received your "
+            f"request for a quote on {strong(services_line)}."
+        )
+        + ed.alert("Our team is preparing your quotation and will be in touch by email shortly.", "success")
+        + p("You can reply directly to this email if you&rsquo;d like to add any details.")
+    )
+    send_email_async(
+        to_email,
+        f"Your quote request with {company_name or BRAND_NAME}",
+        shell(
+            subject=f"Your quote request with {company_name or BRAND_NAME}",
+            preheader=f"Thanks {visitor_name or 'there'}. We&rsquo;re preparing your quote.",
+            inner=inner,
+            visitor=True,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(company_name or BRAND_NAME),
+    )
+
+
+def send_quotation_client_email(
+    notification_email: str,
+    bot_name: str,
+    contact: dict | None,
+    currency: str,
+    line_items: list[dict],
+    total: object,
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Notify the client that a visitor completed a quote request.
+
+    Unlike the visitor email, this one carries the full itemised quote (line
+    items + quantities + subtotals + total) plus the visitor's contact info so
+    the client can follow up. ``reply_to`` should be the visitor's email so a
+    reply lands straight in their inbox.
+    """
+    safe_bot = esc(bot_name)
+    contact = contact or {}
+    quote_rows: list[tuple[str, str]] = []
+    for item in line_items or []:
+        qty = item.get("quantity")
+        label = esc(item.get("name") or "Service")
+        if qty:
+            label = f"{label} &times; {esc(qty)}"
+        quote_rows.append((label, _format_money(currency, item.get("subtotal", 0))))
+    quote_rows.append(("Total", strong(_format_money(currency, total))))
+
+    inner = (
+        h1("New quote request")
+        + p(f"A visitor on {strong(safe_bot)} just completed a quote request. Here&rsquo;s what they asked for.")
+        + ed.section_label("Quote")
+        + info_table(quote_rows, right=True)
+        + ed.section_label("Contact")
+        + info_table(
+            [
+                ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
+                ("Email", _mailto(contact.get("email"))),
+                ("Phone", esc(contact.get("phone"))),
+                ("Company", esc(contact.get("company"))),
+            ]
+        )
+        + button("View lead in dashboard", f"{APP_URL}/leads")
+    )
+    send_email_async(
+        notification_email,
+        f"New quote request from {bot_name}",
+        shell(
+            subject=f"New quote request from {bot_name}",
+            preheader=f"A visitor completed a quote request on {bot_name}.",
+            inner=inner,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
+    )
+
+
 # ── Affiliate emails ─────────────────────────────────────────────────────────
 
 

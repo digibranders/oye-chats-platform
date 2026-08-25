@@ -45,14 +45,16 @@ import { TopQuestionsList } from './TopQuestionsList';
 import { LeadJourneyFunnel } from './LeadJourneyFunnel';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
 import { FeedbackPanel } from '../feedback/FeedbackPanel';
+import { UnansweredQuestionsPanel } from './UnansweredQuestionsPanel';
 
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback';
+type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback' | 'uaq';
 
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'leads', label: 'Leads' },
   { key: 'satisfaction', label: 'Satisfaction' },
   { key: 'feedback', label: 'Feedback' },
+  { key: 'uaq', label: 'UAQ' },
 ];
 
 /** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
@@ -388,6 +390,19 @@ export function AnalyticsPage(): ReactElement {
               className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <FeedbackPanel agentId={selectedBot ? String(selectedBot.id) : undefined} />
+            </div>
+          )}
+
+          {/* UAQ (Unanswered Questions) */}
+          {tab === 'uaq' && (
+            <div
+              role="tabpanel"
+              id="tabpanel-uaq"
+              aria-labelledby="tab-uaq"
+              tabIndex={0}
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              <UnansweredQuestionsPanel botId={selectedBot?.id ?? null} />
             </div>
           )}
         </>

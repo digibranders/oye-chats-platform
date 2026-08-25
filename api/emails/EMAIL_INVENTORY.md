@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (26 distinct emails)
+## 2. Email Catalogue (28 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -287,6 +287,28 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Trigger | `chat_routes.py:1039` — visitor opt-in / requests transcript at session close |
 | Metered | No |
 
+#### D7. Quotation — visitor confirmation
+| | |
+|---|---|
+| Function | `send_quotation_visitor_email(to_email, company_name, visitor_name, service_names, reply_to)` |
+| Rendering | Raw HTML (visitor footer) |
+| Subject | `Your quote request with {company_name}` |
+| Audience | **Visitor** (auto-reply) |
+| Body | "We've received your request for a quote on {services}" — **no pricing** (the widget never shows visitors prices, so neither does this email) |
+| Trigger | `quotation_routes.py` — `POST /chat/quotation/accept` (visitor completes the quote flow) |
+| Metered | No |
+
+#### D8. Quotation — client notification
+| | |
+|---|---|
+| Function | `send_quotation_client_email(notification_email, bot_name, contact, currency, line_items, total, reply_to)` |
+| Rendering | Raw HTML (itemised quote table + contact) |
+| Subject | `New quote request from {bot_name}` |
+| Audience | **Client** (bot's configured notification recipients) |
+| Body | Itemised line items (name × qty → subtotal) + total + visitor contact; `reply_to` is the visitor's email |
+| Trigger | `quotation_routes.py` — `POST /chat/quotation/accept` (visitor completes the quote flow) |
+| Metered | No |
+
 ### E. Affiliate / Partners (raw HTML — free)
 
 #### E1. Affiliate welcome
@@ -341,7 +363,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **26 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (6), Affiliate (2), Team (1).
+- **28 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (8), Affiliate (2), Team (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).

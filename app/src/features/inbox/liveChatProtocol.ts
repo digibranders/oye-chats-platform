@@ -122,6 +122,23 @@ export interface SessionDetails {
     phone: string | null;
     company: string | null;
   } | null;
+  /** The quotation the visitor built with the bot before this handoff, if any. */
+  quotation: {
+    status: string;
+    currency: string;
+    line_items: Array<{
+      service_id: string;
+      name: string;
+      unit_label: string;
+      price_per_unit: number;
+      quantity: number;
+      subtotal: number;
+      answers: Array<{ question_id: string; question_text: string; answer: string }>;
+    }>;
+    total: number;
+    activated_at: string | null;
+    completed_at: string | null;
+  } | null;
 }
 
 // ── Inbound WS messages (discriminated union on `type`) ───────────────────────
