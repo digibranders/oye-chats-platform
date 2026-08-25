@@ -14,6 +14,7 @@ import {
 } from '../../../design-system';
 import { Card, SaveFooter, TextField, Toggle, ToggleRow } from './configCards';
 import { LanguageCard } from './LanguageCard';
+import { CustomCopyNotice } from './CustomCopyNotice';
 import { useAgent } from '../../../context/AgentContext';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
@@ -203,6 +204,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
       <div className="space-y-8">
         <FeatureGate feature="live_chat" intent="live_chat_appearance">
           <LiveChatCard
+            multilingual={draft.language.enabled}
             value={draft.liveChat}
             onChange={(updater) => patchSlice('liveChat', updater)}
             dirty={!sliceEqual(draft.liveChat, baseline.liveChat)}
@@ -280,6 +282,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
       />
 
       <WidgetCopyCard
+        multilingual={draft.language.enabled}
         value={draft.copy}
         onChange={(updater) => patchSlice('copy', updater)}
         dirty={!sliceEqual(draft.copy, baseline.copy)}
@@ -301,8 +304,10 @@ function LiveChatCard({
   dirty,
   status,
   onSave,
+  multilingual,
 }: {
   value: LiveChatConfig;
+  multilingual: boolean;
   onChange: (updater: (prev: LiveChatConfig) => LiveChatConfig) => void;
   dirty: boolean;
   status: SliceStatus;
@@ -333,6 +338,8 @@ function LiveChatCard({
 
         {value.enabled && (
           <>
+            <CustomCopyNotice multilingual={multilingual} />
+
             <TextField
               label="Waiting message"
               hint="Shown while the visitor waits for an operator to accept."
@@ -723,8 +730,10 @@ function WidgetCopyCard({
   dirty,
   status,
   onSave,
+  multilingual,
 }: {
   value: WidgetCopy;
+  multilingual: boolean;
   onChange: (updater: (prev: WidgetCopy) => WidgetCopy) => void;
   dirty: boolean;
   status: SliceStatus;
@@ -741,6 +750,7 @@ function WidgetCopyCard({
         title="More widget copy"
         description="The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts."
       />
+      <CustomCopyNotice multilingual={multilingual} />
       {!liveChatUnlocked && (
         <button
           type="button"

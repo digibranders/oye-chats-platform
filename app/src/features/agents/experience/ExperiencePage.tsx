@@ -62,6 +62,10 @@ export function ExperiencePage(): ReactElement {
   const [baseline, setBaseline] = useState<ExperienceDraft | null>(null);
   const [draft, setDraft] = useState<ExperienceDraft | null>(null);
   const [recommended, setRecommended] = useState<string[]>([]);
+  // Read-only, from the same payload as `recommended` and never part of the
+  // editable draft: it drives a notice, not a value the customer can save here.
+  // Language itself is configured on its own tab.
+  const [multilingual, setMultilingual] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -87,6 +91,7 @@ export function ExperiencePage(): ReactElement {
     setBaseline(null);
     setLoadError(null);
     setRecommended([]);
+    setMultilingual(false);
     setSaveError(null);
     setJustSaved(false);
     setUploadError(null);
@@ -99,6 +104,10 @@ export function ExperiencePage(): ReactElement {
         setBaseline(next);
         setDraft(next);
         setRecommended(asStringArray(raw.recommended_colors));
+        const langCfg = raw.language_config;
+        setMultilingual(
+          typeof langCfg === 'object' && langCfg !== null && (langCfg as Record<string, unknown>).enabled === true,
+        );
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -249,7 +258,7 @@ export function ExperiencePage(): ReactElement {
                 />
               )}
               {activeSection === 'messages' && (
-                <MessagesSection draft={draft} onChange={updateDraft} />
+                <MessagesSection draft={draft} onChange={updateDraft} multilingual={multilingual} />
               )}
               {activeSection === 'personality' && (
                 <PersonalitySection

@@ -4,6 +4,7 @@ import { SectionHeader, Select } from '../../../design-system';
 import { useLocaleCatalog } from '../../../hooks/useLocaleCatalog';
 import { type LanguageConfig, type SliceStatus, normalizeLanguageConfig } from './botConfig';
 import { Card, SaveFooter, ToggleRow } from './configCards';
+import { CustomCopyNotice } from './CustomCopyNotice';
 
 /**
  * LanguageCard - what languages the chatbot speaks to VISITORS.
@@ -194,6 +195,11 @@ export function LanguageCard({
               !off && singleLocale ? 'Add a second language to give visitors something to switch to.' : undefined
             }
           />
+
+          {/* Stated here as well as on the copy tabs, so a customer learns it at
+              the moment they turn multilingual on rather than discovering it
+              later from a visitor. */}
+          <CustomCopyNotice multilingual={value.enabled} />
 
           <ToggleRow
             title="Translate live chat for operators"
