@@ -100,7 +100,7 @@ export function UnansweredQuestionsPanel({
       try {
         const opts: { limit: number; days?: number } = { limit: LIMIT };
         if (range !== 'all') opts.days = Number(range);
-        const data = await getUnansweredQuestions(botId, opts);
+        const data = await getUnansweredQuestions(botId ?? undefined, opts);
         if (!cancelled && activeBotRef.current === botId) setGaps(data ?? []);
       } catch (err) {
         if (!cancelled && activeBotRef.current === botId) {

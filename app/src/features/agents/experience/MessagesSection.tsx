@@ -7,9 +7,12 @@ import {
 } from 'lucide-react';
 import { Button, Input, SectionHeader, cn } from '../../../design-system';
 import { type ExperienceDraft, type SuggestionsLayout, FIELD_LIMITS } from './types';
+import { CustomCopyNotice } from './CustomCopyNotice';
 
 export interface MessagesSectionProps {
   draft: ExperienceDraft;
+  /** True when the bot has multilingual on; shows the custom-copy notice. */
+  multilingual?: boolean;
   onChange: (patch: Partial<ExperienceDraft>) => void;
 }
 
@@ -62,7 +65,7 @@ function Field({
  * layout choice), and the input placeholder. Mirrors the fields the shipped
  * widget reads from `widget_messages`.
  */
-export function MessagesSection({ draft, onChange }: MessagesSectionProps): ReactElement {
+export function MessagesSection({ draft, onChange, multilingual = false }: MessagesSectionProps): ReactElement {
   const { quickActions, suggestionsLayout } = draft;
 
   const setAction = (index: number, value: string): void => {
@@ -77,6 +80,10 @@ export function MessagesSection({ draft, onChange }: MessagesSectionProps): Reac
 
   return (
     <div className="space-y-8">
+      {/* Every field on this tab is customer-authored copy that overrides the
+          translated defaults, so the notice sits above all of them. */}
+      <CustomCopyNotice multilingual={multilingual} />
+
       <section className="space-y-5">
         <SectionHeader
           title="Widget identity"

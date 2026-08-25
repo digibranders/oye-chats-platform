@@ -4,6 +4,8 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
+import { getDirection, onLocaleChange, setLocale } from './i18n/i18n.js'
+import { readLocalePreference } from './services/storage-keys.js'
 
 // True when the page embedding the widget is a developer machine rather than a
 // deployed site, including a production widget bundle (`vite preview`) dropped
@@ -92,6 +94,9 @@ const ensureShadowAndStyles = (container, cssUrl) => {
     target.id = RENDER_TARGET_ID
     shadow.appendChild(target)
   }
+  const dir = getDirection()
+  container.setAttribute('dir', dir)
+  target.setAttribute('dir', dir)
   return target
 }
 
@@ -112,6 +117,8 @@ const buildPublicApi = () => {
     shutdown: () => ctrl.shutdown(),
     boot: (v) => ctrl.boot(v),
     update: (cfg) => ctrl.update(cfg),
+    setLocale: (loc) => ctrl.setLocale(loc),
+    getLocale: () => ctrl.getLocale(),
     on: (e, cb) => ctrl.on(e, cb),
     off: (e, cb) => ctrl.off(e, cb),
     once: (e, cb) => ctrl.once(e, cb),
@@ -140,6 +147,7 @@ const diagnose = () => {
 
 let _bootContext = null
 let _registered = false
+let _localeUnsubscribe = null
 
 const mount = () => {
   if (_root) return
@@ -147,6 +155,14 @@ const mount = () => {
     console.error('[OyeChats] init() called before loader bootstrap, no boot context.')
     return
   }
+  // Apply a previously stored locale before the shadow host is created, so a
+  // returning RTL visitor does not get a frame of left-to-right layout while
+  // the bot settings request is still in flight. ChatWidget re-resolves against
+  // the bot's supported locales once settings arrive and corrects this if the
+  // stored value is no longer offered.
+  const storedPreference = readLocalePreference()
+  if (storedPreference?.locale) setLocale(storedPreference.locale)
+
   const container = ensureContainer()
   _container = container
   const target = ensureShadowAndStyles(container, _bootContext.cssUrl)
@@ -164,12 +180,29 @@ const mount = () => {
       </ErrorBoundary>
     </StrictMode>
   )
+
+  // Keep the Shadow DOM host `dir` synced with the active locale. The
+  // unsubscribe function must be retained and called from unmount(): an
+  // init/destroy/init cycle otherwise leaves every previous listener alive,
+  // each holding a closure over a `_container` that is no longer in the
+  // document.
+  _localeUnsubscribe = onLocaleChange(({ direction }) => {
+    if (_container) _container.setAttribute('dir', direction)
+    const shadow = _container?.shadowRoot
+    const shadowTarget = shadow?.querySelector(`#${RENDER_TARGET_ID}`)
+    if (shadowTarget) shadowTarget.setAttribute('dir', direction)
+  })
+
   // Fire ready on next tick so any synchronous handlers attached during init
   // can register before they're called.
   setTimeout(() => getController().emit('ready', { version: VERSION }), 0)
 }
 
 const unmount = () => {
+  if (_localeUnsubscribe) {
+    try { _localeUnsubscribe() } catch { /* listener already gone */ }
+    _localeUnsubscribe = null
+  }
   if (_root) {
     try { _root.unmount() } catch (e) { console.warn('[OyeChats] unmount error:', e) }
     _root = null

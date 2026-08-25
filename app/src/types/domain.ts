@@ -237,6 +237,14 @@ export interface ChatMessage {
   timestamp?: string | null;
   created_at?: string;
   trace_id?: string | null;
+  /** Language `content` is written in (Phase 4). Server-resolved. */
+  source_language?: string | null;
+  /**
+   * Derived translations by target language code. `content` above stays the
+   * canonical original; this never replaces it. Returned by
+   * `GET /chat/history` so translations survive a reload.
+   */
+  translations?: Record<string, { content?: string; status: 'ok' | 'failed' }> | null;
 }
 
 // ── Leads ──────────────────────────────────────────────────────────────────

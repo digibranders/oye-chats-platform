@@ -136,6 +136,7 @@ def _bot(*, client_id: int = 1) -> SimpleNamespace:
         meeting_provider=None,
         meeting_booking_enabled=False,
         feature_flags={},
+        language_config={},
         widget_messages={},
         widget_config={},
         branding_text=None,

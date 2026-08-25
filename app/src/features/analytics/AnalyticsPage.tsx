@@ -27,6 +27,7 @@ import {
   SegmentedControl,
   Skeleton,
   Tabs,
+  cn,
 } from '../../design-system';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
@@ -44,10 +45,11 @@ import { MessageTrendChart } from './MessageTrendChart';
 import { TopQuestionsList } from './TopQuestionsList';
 import { LeadJourneyFunnel } from './LeadJourneyFunnel';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
+import { LanguageBreakdown, TranslationUsage } from './LanguageBreakdown';
 import { FeedbackPanel } from '../feedback/FeedbackPanel';
 import { UnansweredQuestionsPanel } from './UnansweredQuestionsPanel';
 
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback' | 'uaq';
+type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'language' | 'feedback' | 'uaq';
 
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
@@ -57,9 +59,29 @@ const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'uaq', label: 'UAQ' },
 ];
 
-/** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
+/**
+ * Shown only for an agent with multilingual on. For a single-language chatbot
+ * the panel would be one "English 100%" row, which is noise rather than
+ * insight, and on the "All agents" scope there is no single language config to
+ * report against. Inserted before Feedback, beside the other per-agent views.
+ */
+const LANGUAGE_TAB: { key: AnalyticsTab; label: string } = { key: 'language', label: 'Languages' };
+
+/**
+ * Narrow the Tabs string key back to the AnalyticsTab union without casting.
+ *
+ * Must cover LANGUAGE_TAB as well as TAB_ITEMS. That tab is rendered from a
+ * separate constant because it is conditional, and validating against
+ * TAB_ITEMS alone made `onChange` reject its own key, so the tab rendered but
+ * could never be selected.
+ */
+const TAB_KEYS: ReadonlySet<string> = new Set([
+  ...TAB_ITEMS.map((item) => item.key),
+  LANGUAGE_TAB.key,
+]);
+
 function isAnalyticsTab(key: string): key is AnalyticsTab {
-  return TAB_ITEMS.some((item) => item.key === key);
+  return TAB_KEYS.has(key);
 }
 
 /**
@@ -138,9 +160,20 @@ export function AnalyticsPage(): ReactElement {
   // When the shell BotSwitcher is set to a specific agent, scope the whole
   // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
   // back to workspace-aggregated across every agent.
-  const { status, data, error, refreshing, reload } = useWorkspaceAnalytics(selectedBot?.id ?? null);
-  const [tab, setTab] = useState<AnalyticsTab>('conversations');
+  // One period control for the page. It slices the message trend client-side
+  // AND scopes the language breakdown server-side, so a customer never has to
+  // reconcile two different notions of "last 30 days" on one screen.
   const [range, setRange] = useState<TrendRange>('all');
+  const {
+    status,
+    data,
+    error,
+    refreshing,
+    reload,
+    language: languageData,
+    languageRefreshing,
+  } = useWorkspaceAnalytics(selectedBot?.id ?? null, range);
+  const [tab, setTab] = useState<AnalyticsTab>('conversations');
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   // Leads is BANT-derived (Standard+). Free / Starter see a lock chip on the
@@ -151,9 +184,23 @@ export function AnalyticsPage(): ReactElement {
   const leadsUnlocked = hasFeature('bant');
   const satisfactionUnlocked = hasFeature('live_chat');
 
+  // Resolved server-side and delivered with the data, so the tab appears once
+  // the page has loaded rather than being guessed at from another source.
+  const showLanguage = languageData?.multilingualEnabled === true;
+
+  // Switching the shell's bot switcher to a single-language agent, or to
+  // "All agents", removes the Languages tab. The selected-tab state survives
+  // that, so without this the strip would show nothing selected above an empty
+  // body. Derived rather than corrected in an effect, so there is no flash of
+  // the broken state.
+  const activeTab: AnalyticsTab = tab === 'language' && !showLanguage ? 'conversations' : tab;
+
   const tabItems = useMemo(
     () =>
-      TAB_ITEMS.map((item) => {
+      (showLanguage
+        ? [...TAB_ITEMS.slice(0, TAB_ITEMS.length - 1), LANGUAGE_TAB, TAB_ITEMS[TAB_ITEMS.length - 1]]
+        : TAB_ITEMS
+      ).map((item) => {
         const locked =
           (item.key === 'leads' && !leadsUnlocked) ||
           (item.key === 'satisfaction' && !satisfactionUnlocked);
@@ -173,7 +220,7 @@ export function AnalyticsPage(): ReactElement {
           ),
         };
       }),
-    [leadsUnlocked, satisfactionUnlocked],
+    [leadsUnlocked, satisfactionUnlocked, showLanguage],
   );
 
   const trendWindow = useMemo(
@@ -243,7 +290,7 @@ export function AnalyticsPage(): ReactElement {
 
           <Tabs
             tabs={tabItems}
-            value={tab}
+            value={activeTab}
             onChange={(key) => {
               if (!isAnalyticsTab(key)) return;
               if (key === 'leads' && !leadsUnlocked) {
@@ -260,7 +307,7 @@ export function AnalyticsPage(): ReactElement {
           />
 
           {/* Conversations */}
-          {tab === 'conversations' && (
+          {activeTab === 'conversations' && (
             <div
               role="tabpanel"
               id="tabpanel-conversations"
@@ -337,7 +384,7 @@ export function AnalyticsPage(): ReactElement {
           )}
 
           {/* Leads */}
-          {tab === 'leads' && (
+          {activeTab === 'leads' && (
             <div
               role="tabpanel"
               id="tabpanel-leads"
@@ -354,7 +401,7 @@ export function AnalyticsPage(): ReactElement {
           )}
 
           {/* Satisfaction */}
-          {tab === 'satisfaction' && (
+          {activeTab === 'satisfaction' && (
             <div
               role="tabpanel"
               id="tabpanel-satisfaction"
@@ -380,8 +427,63 @@ export function AnalyticsPage(): ReactElement {
             </div>
           )}
 
+          {/* Languages. While a period change is in flight the PREVIOUS period's
+              numbers are still on screen under the NEW period's label, so the
+              panel is dimmed and marked busy rather than reading as final. It
+              stays mounted so the panel never flashes to a skeleton. */}
+          {activeTab === 'language' && languageData && (
+            <div
+              role="tabpanel"
+              id="tabpanel-language"
+              aria-labelledby="tab-language"
+              tabIndex={0}
+              aria-busy={languageRefreshing}
+              className={cn(
+                'space-y-6 transition-opacity focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+                languageRefreshing && 'opacity-60',
+              )}
+            >
+              <Card>
+                <CardHeader>
+                  <SectionHeader
+                    title="Languages"
+                    description={`What visitors chat to ${selectedBot?.name ?? 'this chatbot'} in, and how each language performs`}
+                    actions={
+                      // The SAME state the message trend uses, rendered here so
+                      // the control is reachable from the tab it affects. Not a
+                      // second selector: moving it on either tab moves it on both.
+                      <SegmentedControl
+                        options={TREND_RANGES}
+                        value={range}
+                        onChange={setRange}
+                        ariaLabel="Language breakdown time range"
+                      />
+                    }
+                  />
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <LanguageBreakdown data={languageData} />
+                </CardContent>
+              </Card>
+
+              {languageData.operatorTranslationEnabled && (
+                <Card>
+                  <CardHeader>
+                    <SectionHeader
+                      title="Translation"
+                      description="Live chat translated between your visitors and your team"
+                    />
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <TranslationUsage data={languageData} />
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+
           {/* Feedback */}
-          {tab === 'feedback' && (
+          {activeTab === 'feedback' && (
             <div
               role="tabpanel"
               id="tabpanel-feedback"

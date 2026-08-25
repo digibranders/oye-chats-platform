@@ -151,6 +151,13 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # cost scales with document size (below); a file short enough to price
     # under this floor still costs this much.
     "credit_cost.document_upload": 1,
+    # Operator live-chat translation (Phase 4), charged once per translated
+    # message per target language. Live chat itself remains free; this is the
+    # only metered thing on that path. Gated to the per-bot
+    # ``language_config.operator_translation_enabled`` flag AND to the
+    # ``feature.translation_enabled`` switch below. A workspace that runs out
+    # of credits loses translation, never message delivery.
+    "credit_cost.translation": 1,
     # Size-based upload pricing: one flat rate, no buckets. A document costs
     # ``ceil(words / 250)`` credits (1 credit per 250 words) floored at the
     # minimum above. Both halves are super-admin tunable from the pricing
@@ -176,6 +183,28 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # consumer ISP ranges that name no employer, and the customer must not pay
     # 10 credits for "not identified".
     "feature.company_name_enabled": True,
+    # Operator live-chat translation (Phase 4). Off = no translation call and
+    # no charge, for every workspace, with no deploy. The per-bot
+    # ``operator_translation_enabled`` flag is the customer-facing control;
+    # this is the platform-wide one. Turning it off degrades live chat to
+    # original-language-only, it never interrupts a conversation.
+    "feature.translation_enabled": True,
+    # Visitor language resolution and the AI's answer language (Phases 2/3).
+    # The platform-wide counterpart to each bot's ``language_config.enabled``.
+    #
+    # Separate from ``feature.translation_enabled`` on purpose: that one governs
+    # operator live-chat translation, which is metered and can be withdrawn on
+    # its own. This one governs whether a conversation has a language at all.
+    # Turning it off makes every bot behave exactly as a bot with multilingual
+    # disabled: no directive in the prompt, the legacy QA cache key, English
+    # canned paths. It charges nothing, so it is not a credit switch; it lives
+    # here because this is where the platform's DB-backed, no-deploy feature
+    # flags already are.
+    #
+    # It does NOT govern the admin dashboard's own UI language (Phase 7). Those
+    # are different slices and coupling them would let a conversation-side
+    # incident silently change what language the dashboard renders in.
+    "feature.multilingual_chat_enabled": True,
     # One-time top-up packs (lifetime credits). Charged in INR via Razorpay;
     # ``usd`` is a display-only headline for non-INR buyers (never charged).
     # ``bonus_pct`` / ``badge`` are marketing metadata, fully super-admin

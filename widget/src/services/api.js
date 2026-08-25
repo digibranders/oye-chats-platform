@@ -4,7 +4,13 @@
 import { createSentinelStripper } from './sentinelStripper.js';
 import { readSessionId } from './storage-keys.js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+const getApiUrl = () => {
+    if (typeof window !== 'undefined' && window.OYECHATS_API_URL) {
+        return window.OYECHATS_API_URL;
+    }
+    return import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+};
+const API_URL = getApiUrl();
 
 const getHeaders = () => {
     const headers = {
@@ -61,7 +67,7 @@ const _readWithTimeout = (reader) =>
         );
     });
 
-export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError, ctaDimension }) => {
+export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError, ctaDimension, locale, language, languageSource }) => {
     try {
         const response = await fetch(`${API_URL}/chat/stream`, {
             method: 'POST',
@@ -74,6 +80,9 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                 // deterministically from the rubric instead of re-interpreting
                 // it as free text (see rag_service._score_cta_answer).
                 ...(ctaDimension ? { cta_dimension: ctaDimension } : {}),
+                ...(locale ? { locale } : {}),
+                ...(language ? { language } : {}),
+                ...(languageSource ? { language_source: languageSource } : {}),
             }),
         });
 
@@ -427,6 +436,8 @@ export const cancelHandoff = async (sessionId) => {
     }
 };
 
+
+
 export const getSessionStatus = async (sessionId) => {
     try {
         const response = await fetch(`${API_URL}/operators/session-status/${sessionId}`, {
@@ -437,6 +448,21 @@ export const getSessionStatus = async (sessionId) => {
     } catch {
         return null;
     }
+};
+
+export const changeSessionLanguage = async (sessionId, locale) => {
+    const response = await fetch(`${API_URL}/chat/language`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+            session_id: sessionId,
+            locale: locale,
+        }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to change language: ${response.status}`);
+    }
+    return await response.json();
 };
 
 export const getDepartments = async () => {

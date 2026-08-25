@@ -12,22 +12,27 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
 from app.core.csv_safety import csv_safe_row
+from app.core.metrics import get_latency_percentile, get_metric_counts
 from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
+    get_language_breakdown,
     get_message_activity,
     get_ratings_summary,
     get_resolution_summary,
     get_top_questions,
+    get_translation_credit_spend,
     get_unanswered_questions,
     get_visitor_data,
 )
 from app.db.session import get_session
 from app.schemas.validators import RowId, YearMonth
+from app.services.language_service import LANGUAGE_NAMES
 from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
 from app.services.reporting_service import get_per_bot_rollup
+from app.services.translation_service import TRANSLATION_LATENCY_METRIC
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +325,171 @@ def get_resolution_summary_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch resolution summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load resolution summary.") from e
+
+
+# Rolling translation counters, per bot, written by ``translation_service``.
+# ``translation_tokens_prompt`` / ``_completion`` are deliberately absent: they
+# are incremented WITHOUT a bot_id, so they only exist at global scope and
+# cannot be attributed to one customer's bot. Reporting the platform-wide
+# figure on a per-bot screen would be worse than reporting nothing.
+_TRANSLATION_COUNTERS = (
+    "requests",
+    "ok",
+    "failed",
+    "timeout",
+    "cache_hit",
+    "skipped_same_language",
+    # Phase 6. Skipped because the platform switch is off or the workspace ran
+    # out of credits. Distinct from "failed", which means the provider was
+    # tried and did not answer.
+    "gated",
+    # Phase 6. Provider rejected or timed out. Overlaps `failed` + `timeout` by
+    # construction; kept because it is the name that pages, so a reader
+    # comparing the dashboard to an alert sees the same number.
+    "provider_failed",
+)
+
+# The counters carry a ~26h TTL (``metrics._COUNTER_TTL_SECONDS``), so 24h is
+# the longest window that can be read without silently undercounting.
+_TRANSLATION_WINDOW_HOURS = 24
+
+
+def _language_label(code: str | None) -> str:
+    """Display name for a conversation's base language code.
+
+    NULL is a real row, not an error: it is every session recorded before
+    multilingual was switched on. An unrecognised code renders as its
+    uppercased tag rather than being dropped, so a locale later removed from
+    the catalogue does not erase its own history from the totals.
+    """
+    if not code:
+        return "Not detected"
+    return LANGUAGE_NAMES.get(code.lower(), code.upper())
+
+
+def _translation_activity(bot_id: int) -> dict:
+    """Rolling translation activity for one bot, from the Redis counters.
+
+    A ROLLING 24-HOUR WINDOW, not history. These counters expire, so this can
+    never answer "how much have we translated this month"; durable cost lives
+    in the credit ledger instead. The response says so in ``window_hours`` and
+    the UI is required to label it.
+
+    Redis being down yields zeros rather than an error: analytics degrading to
+    empty is always better than an analytics page that will not load.
+    """
+    activity = {}
+    for name in _TRANSLATION_COUNTERS:
+        buckets = get_metric_counts(f"translation_{name}", bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS)
+        activity[name] = int(sum(buckets.values()))
+    activity["window_hours"] = _TRANSLATION_WINDOW_HOURS
+    # p95 over the same window. None when nothing was recorded, or when the
+    # 95th percentile falls past the largest histogram bucket; both are
+    # meaningfully different from "fast" and must not render as a number.
+    # `latency_over_ms` is how many observations landed in that tail.
+    activity["latency_p95_ms"] = get_latency_percentile(
+        TRANSLATION_LATENCY_METRIC, 95.0, bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+    )
+    activity["latency_p50_ms"] = get_latency_percentile(
+        TRANSLATION_LATENCY_METRIC, 50.0, bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+    )
+    activity["latency_over_ms"] = int(
+        sum(
+            get_metric_counts(
+                f"{TRANSLATION_LATENCY_METRIC}_over", bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+            ).values()
+        )
+    )
+    return activity
+
+
+@router.get("/language-breakdown")
+def get_language_breakdown_endpoint(
+    bot_id: RowId = Query(...),
+    period: Literal["7d", "30d", "90d", "all"] = Query("30d"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Conversations broken down by the language they were held in (Phase 5C).
+
+    Read-only. Two very different kinds of number are returned and are kept in
+    separate objects on purpose:
+
+    * ``conversations`` and ``cost`` are DURABLE, queried from Postgres over
+      ``period``.
+    * ``translation`` is a ROLLING 24-hour window from expiring Redis counters.
+
+    Display names are resolved here from ``KNOWN_LOCALES`` rather than sent as
+    a bare code for the client to interpret, matching how Phase 3 and Phase 4
+    resolve names. A code with no catalogue entry (a locale later removed, or
+    an old session) is reported as its uppercased tag rather than dropped, so
+    historical rows never vanish from the totals.
+    """
+    try:
+        with get_session() as session:
+            bot = session.execute(
+                select(Bot).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not bot:
+                raise HTTPException(status_code=404, detail="Bot not found.")
+
+            language_config = bot.language_config if isinstance(bot.language_config, dict) else {}
+            multilingual_enabled = bool(language_config.get("enabled"))
+            translation_enabled = multilingual_enabled and bool(language_config.get("operator_translation_enabled"))
+
+            since: datetime | None = None
+            if period != "all":
+                since = datetime.now(UTC) - timedelta(days={"7d": 7, "30d": 30, "90d": 90}[period])
+
+            rows = get_language_breakdown(session, client_id=auth["client_id"], bot_id=bot_id, since=since)
+
+            conversations = [
+                {
+                    "language_code": row["language_code"],
+                    # ``ChatSession.language_code`` is a BASE code ("hi"), so
+                    # it is named from the base-language map. Resolving it with
+                    # ``language_display_name`` would label it "Hindi (India)",
+                    # naming a locale the conversation was never pinned to.
+                    # Same map the admin's own labels come from via GET /locales.
+                    "label": _language_label(row["language_code"]),
+                    "total": row["total"],
+                    "resolved": row["resolved"],
+                    "live_chat": row["live_chat"],
+                }
+                for row in rows
+            ]
+
+            # Totals are summed from the SAME rows the client renders, so the
+            # breakdown always reconciles against its own header instead of
+            # against a second query that could drift.
+            totals = {
+                "total": sum(row["total"] for row in conversations),
+                "resolved": sum(row["resolved"] for row in conversations),
+                "live_chat": sum(row["live_chat"] for row in conversations),
+                "languages": sum(1 for row in conversations if row["language_code"]),
+            }
+
+            return {
+                "bot_id": bot_id,
+                "period": period,
+                "multilingual_enabled": multilingual_enabled,
+                "operator_translation_enabled": translation_enabled,
+                "conversations": conversations,
+                "totals": totals,
+                # Rolling. Expires.
+                "translation": _translation_activity(bot_id),
+                # Durable. The billing record, scoped to `period`.
+                "cost": {
+                    "credits": get_translation_credit_spend(
+                        session, client_id=auth["client_id"], bot_id=bot_id, since=since
+                    ),
+                    "period": period,
+                },
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch language breakdown: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load language breakdown.") from e
 
 
 @router.get("/feedback")

@@ -23,6 +23,16 @@ mkdirSync(dirname(dest), { recursive: true })
 copyFileSync(src, dest)
 console.log(`[copy-host-fixture] copied ${src} → ${dest}`)
 
+// The locale fixture declares a different `<html lang>` per query string, which
+// is the only way to exercise the html_lang tier: it has to come from the
+// served markup, because the parser overwrites anything set before it.
+const localeSrc = join(widgetRoot, 'dev', 'locale-test.html')
+if (existsSync(localeSrc)) {
+  const localeDest = join(widgetRoot, 'dist', 'locale-test.html')
+  copyFileSync(localeSrc, localeDest)
+  console.log(`[copy-host-fixture] copied ${localeSrc} → ${localeDest}`)
+}
+
 // Marker file for CORS verification — fetch this from a different origin to
 // confirm the CDN serves the right Access-Control-Allow-Origin header.
 const wellKnownDir = join(widgetRoot, 'dist', '.well-known')

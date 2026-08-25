@@ -1019,6 +1019,7 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "meeting_provider": bot.meeting_provider,
         "meeting_booking_enabled": bot.meeting_booking_enabled,
         "feature_flags": bot.feature_flags,
+        "language_config": getattr(bot, "language_config", None),
         "widget_messages": bot.widget_messages,
         "widget_config": bot.widget_config,
         "branding_text": bot.branding_text,

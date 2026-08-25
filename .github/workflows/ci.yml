@@ -125,6 +125,19 @@ jobs:
           VITE_API_URL: https://api.oyechats.com
           VITE_WIDGET_BASE: https://cdn.oyechats.com/
 
+      # The Playwright suites were in the repo but never wired into CI, so the
+      # widget's WebKit project had never actually run anywhere. Installs both
+      # browsers the config declares (chromium + the iPhone 14 WebKit profile)
+      # so neither project is silently skipped.
+      - name: Install browsers
+        working-directory: widget
+        run: npm run e2e:install
+
+      # Serves the build produced above, so this is the shipped bundle.
+      - name: Browser tests (chromium + WebKit)
+        working-directory: widget
+        run: npm run e2e
+
       - name: Bundle size check
         working-directory: widget
         run: npm run size
@@ -168,5 +181,15 @@ jobs:
       - name: Build
         working-directory: app
         run: npm run build
+
+      - name: Install browsers
+        working-directory: app
+        run: npm run e2e:install
+
+      # `npm run e2e` rebuilds against the mock origin first, so this does not
+      # disturb the production build above.
+      - name: Browser tests
+        working-directory: app
+        run: npm run e2e
         env:
           VITE_API_URL: https://api.oyechats.com

@@ -108,6 +108,20 @@ def _build_gate_prompt(question: str, chunks: list) -> str:
         chunk_previews.append(f"Chunk {i}: {preview}")
 
     chunks_text = "\n".join(chunk_previews)
+    # The cross-lingual instruction below is guidance, NOT a fix, and the
+    # difference matters to anyone reading this later. A knowledge base is
+    # almost always written in one language while a multilingual bot is asked
+    # questions in many, so this judge routinely compares a Hindi question
+    # against English chunks. It handles that badly: measured on a real bot
+    # with an identical chunk set, "what kind of organization is this" scored
+    # 0.70 four times out of four while the SAME question in Hindi scored 0.00
+    # four times out of four. Adding this instruction did NOT move that score.
+    #
+    # The actual fix is upstream: ``rag_service`` bypasses the gate entirely for
+    # a non-English conversation, alongside ``route_intent`` and the FlashRank
+    # reranker. This wording stays because it is correct guidance and may help a
+    # future judge model, but do not rely on it to make cross-lingual gating
+    # safe on its own.
     return f"""You are a relevance judge. Given a user question and retrieved document chunks, rate how relevant the chunks are to answering the question.
 
 User question: {question}
@@ -119,6 +133,11 @@ Rate the overall relevance of these chunks to the question on a scale from 0.0 t
 - 1.0: chunks directly answer the question
 - 0.5: chunks are somewhat related and could help answer the question
 - 0.0: chunks are completely unrelated to the question
+
+IMPORTANT: the question and the chunks may be written in DIFFERENT languages.
+That is normal and expected. Judge only whether the chunks contain the
+information needed to answer the question, translating in your head as needed.
+A language difference is NEVER a reason to lower the score.
 
 Respond with ONLY a JSON object in this exact format: {{"score": 0.7}}
 No explanation, no other text."""

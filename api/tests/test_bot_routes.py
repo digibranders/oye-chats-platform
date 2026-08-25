@@ -310,6 +310,7 @@ class TestBotSettingsPublic:
         bot.launcher_logo = None
         bot.launcher_name = None
         bot.feature_flags = {}
+        bot.language_config = None
         bot.widget_messages = {}
         bot.widget_config = {}
         bot.bant_enabled = False
@@ -353,6 +354,7 @@ class TestBotSettingsPublic:
         bot.launcher_logo = None
         bot.launcher_name = None
         bot.feature_flags = {}
+        bot.language_config = None
         bot.widget_messages = {}
         bot.widget_config = {}
         bot.bant_enabled = False
@@ -458,6 +460,7 @@ class TestUpdateBot:
             bot_key="bot-xyz",
             name="Old Name",
             feature_flags={},
+            language_config={},
             widget_messages={},
             widget_config={},
             bant_config=None,
@@ -484,6 +487,7 @@ class TestUpdateBot:
             bot_key="bot-xyz",
             name="Bot",
             feature_flags={"existing_flag": True, "another": False},
+            language_config={},
             widget_messages={},
             widget_config={},
             bant_config=None,
@@ -512,6 +516,7 @@ class TestUpdateBot:
             bot_key="bot-xyz",
             name="Bot",
             feature_flags={},
+            language_config={},
             widget_messages={},
             widget_config={},
             bant_config=None,
@@ -547,6 +552,7 @@ class TestUpdateBot:
             live_chat_queue_timeout_seconds=20,
             live_chat_max_queue_size=10,
             feature_flags={},
+            language_config={},
             widget_messages={},
             widget_config={},
             bant_config=None,

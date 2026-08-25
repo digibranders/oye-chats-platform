@@ -227,3 +227,71 @@ export function markLeadCaptured(storage = (typeof localStorage !== 'undefined' 
 export function getSlashHintSeenKey(botKey) {
     return `oyechats_slash_hint_seen_${botKey || currentBotKey()}`;
 }
+
+// ── Multilingual / visitor locale preference ────────────────────────────────
+export function getLocaleKey(botKey) {
+    return `oyechats_locale_${botKey || currentBotKey()}`;
+}
+
+/**
+ * Read the stored locale preference as `{ locale, source }`, or null.
+ *
+ * The source is stored alongside the locale because precedence depends on it:
+ * a locale the visitor picked by hand outranks the host page's <html lang> and
+ * the browser's language on their next visit, whereas an auto-resolved one does
+ * not. Storing the bare string (as this did originally) made the two
+ * indistinguishable, so an explicit choice was silently overridden on return.
+ *
+ * Values written before the source was recorded come back as `source: null`
+ * and are treated as auto-resolved, which is the safe reading.
+ */
+export function readLocalePreference(botKey) {
+    try {
+        if (typeof localStorage === 'undefined') return null;
+        const raw = localStorage.getItem(getLocaleKey(botKey));
+        if (!raw) return null;
+
+        if (raw.startsWith('{')) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.locale === 'string') {
+                return { locale: parsed.locale, source: parsed.source || null };
+            }
+            return null;
+        }
+        // Legacy plain-string value from an earlier build.
+        return { locale: raw, source: null };
+    } catch {
+        return null;
+    }
+}
+
+/** Locale string only, for callers that do not care how it was chosen. */
+export function readLocale(botKey) {
+    return readLocalePreference(botKey)?.locale ?? null;
+}
+
+/**
+ * Persist the visitor's locale preference and how it was arrived at.
+ * `source` should be 'explicit' when the visitor chose it in the selector.
+ */
+export function writeLocale(locale, source = null, botKey = undefined) {
+    if (!locale || typeof locale !== 'string') return;
+    try {
+        if (typeof localStorage === 'undefined') return;
+        localStorage.setItem(
+            getLocaleKey(botKey),
+            JSON.stringify({ locale: locale.trim(), source: source || null }),
+        );
+    } catch {
+        /* storage disabled (private mode, quota), no-op */
+    }
+}
+
+export function clearLocale(botKey) {
+    try {
+        if (typeof localStorage === 'undefined') return;
+        localStorage.removeItem(getLocaleKey(botKey));
+    } catch {
+        /* no-op */
+    }
+}

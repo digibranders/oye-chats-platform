@@ -177,6 +177,17 @@ export function buildTrendSeries(activity: ActivityPoint[]): TrendPoint[] {
 /** Selectable trend windows. `all` keeps the full series. */
 export type TrendRange = '7d' | '30d' | '90d' | 'all';
 
+/**
+ * The reporting period, as the backend's `?period=` parameter spells it.
+ *
+ * Structurally identical to {@link TrendRange} and deliberately so: one
+ * control on the Analytics page drives both the client-side trend window and
+ * the server-side language breakdown, so a customer never has to reconcile two
+ * different notions of "last 30 days" on the same screen. The alias exists to
+ * make that shared meaning explicit at the call sites that talk to the API.
+ */
+export type AnalyticsPeriod = TrendRange;
+
 export const TREND_RANGES: ReadonlyArray<{ value: TrendRange; label: string }> = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
@@ -247,4 +258,103 @@ export function weekOverWeekChange(series: TrendPoint[]): number | null {
 
   if (prior === 0) return null;
   return Math.round(((recent - prior) / prior) * 100);
+}
+
+// ── Language analytics (Phase 5C) ────────────────────────────────────────────
+
+/** One language's share of an agent's conversations. */
+export interface LanguageRow {
+  /** Base language code, or null for sessions with no detected language. */
+  languageCode: string | null;
+  /** Display name, resolved server-side. Never derived in the client. */
+  label: string;
+  total: number;
+  /** Conversations the visitor explicitly marked resolved. A subset of `total`. */
+  resolved: number;
+  /** Conversations that reached an operator, including ones since closed. */
+  liveChat: number;
+}
+
+/**
+ * Rolling translation activity. NOT history: these come from Redis counters
+ * that expire after roughly a day, so `windowHours` bounds everything here and
+ * the UI is required to say so.
+ */
+export interface TranslationActivity {
+  requests: number;
+  ok: number;
+  failed: number;
+  timeout: number;
+  windowHours: number;
+}
+
+export interface LanguageBreakdown {
+  /** False when the agent has multilingual off; the whole tab is hidden. */
+  multilingualEnabled: boolean;
+  /** False when operator translation is off; the translation card is hidden. */
+  operatorTranslationEnabled: boolean;
+  rows: LanguageRow[];
+  totals: { total: number; resolved: number; liveChat: number; languages: number };
+  /** Rolling. Expires. */
+  translation: TranslationActivity;
+  /** Durable, from the credit ledger, scoped to the requested period. */
+  creditsSpent: number;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Narrow the `/analytics/language-breakdown` payload.
+ *
+ * Totals are the server's and are NOT recomputed from the rows, so the cards
+ * always show the same figures the endpoint reported. Recomputing here would
+ * let a client-side parsing quirk silently disagree with the API.
+ */
+export function parseLanguageBreakdown(record: Record<string, unknown>): LanguageBreakdown {
+  const rowsRaw = Array.isArray(record.conversations) ? record.conversations : [];
+  const totals = asRecord(record.totals);
+  const translation = asRecord(record.translation);
+  const cost = asRecord(record.cost);
+
+  const rows: LanguageRow[] = rowsRaw.map((entry) => {
+    const row = asRecord(entry);
+    const code = typeof row.language_code === 'string' && row.language_code ? row.language_code : null;
+    return {
+      languageCode: code,
+      // The server always sends a label, including for the null row. Falling
+      // back keeps a malformed payload readable rather than blank.
+      label:
+        typeof row.label === 'string' && row.label
+          ? row.label
+          : (code?.toUpperCase() ?? 'Not detected'),
+      total: toNumber(row.total),
+      resolved: toNumber(row.resolved),
+      liveChat: toNumber(row.live_chat),
+    };
+  });
+
+  return {
+    multilingualEnabled: record.multilingual_enabled === true,
+    operatorTranslationEnabled: record.operator_translation_enabled === true,
+    rows,
+    totals: {
+      total: toNumber(totals.total),
+      resolved: toNumber(totals.resolved),
+      liveChat: toNumber(totals.live_chat),
+      languages: toNumber(totals.languages),
+    },
+    translation: {
+      requests: toNumber(translation.requests),
+      ok: toNumber(translation.ok),
+      failed: toNumber(translation.failed),
+      timeout: toNumber(translation.timeout),
+      // Defaulted so the UI never renders "last 0 hours".
+      windowHours: toNumber(translation.window_hours) || 24,
+    },
+    creditsSpent: toNumber(cost.credits),
+  };
 }

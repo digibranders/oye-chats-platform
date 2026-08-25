@@ -174,12 +174,28 @@ def sentry_enabled(dsn: str | None, app_env: str, force_enable: bool = False) ->
 SENTRY_ENABLED = sentry_enabled(SENTRY_DSN, APP_ENV, _SENTRY_FORCE_ENABLE)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Email Notifications (Brevo / Sendinblue)
+# Email Notifications (Brevo / Sendinblue, or AWS SES via the HTTPS API)
 # ─────────────────────────────────────────────────────────────────────────────
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChats")
 EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
-EMAIL_ENABLED = bool(BREVO_API_KEY)
+
+# Transport selection: "brevo" (default, HTTP API) or "ses" (AWS SES HTTP API via
+# boto3). Deliberately NOT SMTP: DigitalOcean (and most hosts) block outbound
+# SMTP ports 25/465/587 by default, which silently breaks a working SES-over-SMTP
+# integration the moment it's deployed there — discovered the hard way on
+# 2026-08-22. The SES HTTPS API rides port 443, same as Brevo, so it's immune to
+# that class of host-level port blocking. Migration is per-environment: flip
+# EMAIL_PROVIDER in .env to cut an environment over without touching any sender
+# or template — see email_service._send_raw_email.
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "brevo").strip().lower()
+SES_AWS_REGION = os.getenv("SES_AWS_REGION", "ap-south-1")
+SES_AWS_ACCESS_KEY_ID = os.getenv("SES_AWS_ACCESS_KEY_ID")
+SES_AWS_SECRET_ACCESS_KEY = os.getenv("SES_AWS_SECRET_ACCESS_KEY")
+
+EMAIL_ENABLED = (
+    bool(SES_AWS_ACCESS_KEY_ID and SES_AWS_SECRET_ACCESS_KEY) if EMAIL_PROVIDER == "ses" else bool(BREVO_API_KEY)
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand & public URLs (used by email templates and any other branded surface)
@@ -217,9 +233,9 @@ BRAND_TAGLINE_HEADER = os.getenv("BRAND_TAGLINE_HEADER", "AI-Powered Customer Co
 BRAND_TAGLINE_FOOTER = os.getenv("BRAND_TAGLINE_FOOTER", "AI Customer Support, on every site")
 
 if EMAIL_ENABLED:
-    logger.info("Email notifications enabled (Brevo)")
+    logger.info("Email notifications enabled (provider=%s)", EMAIL_PROVIDER)
 else:
-    logger.info("Email notifications disabled (no BREVO_API_KEY)")
+    logger.info("Email notifications disabled (no credentials configured for provider=%s)", EMAIL_PROVIDER)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Web Push (VAPID). Operator notifications when their dashboard tab is closed

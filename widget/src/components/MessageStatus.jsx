@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { t } from '../i18n/i18n.js';
 
 /**
  * WhatsApp-style message receipt indicator.
@@ -30,20 +31,30 @@ const formatTimestamp = (iso) => {
     }
 };
 
+// `time` is already locale-formatted by formatTimestamp above, so the
+// dictionary entries only position it: Hindi puts the separator and the
+// receipt word in a different order than English does.
 const labelFor = (status, readAt, deliveredAt, sentAt) => {
     switch (status) {
-        case 'sending':   return 'Sending…';
+        case 'sending':
+            return t('status.sending') || 'Sending\u2026';
         case 'sent': {
-            const t = formatTimestamp(sentAt);
-            return t ? `Sent · ${t}` : 'Sent';
+            const time = formatTimestamp(sentAt);
+            return time
+                ? t('status.sent_at', { time }) || `Sent · ${time}`
+                : t('status.sent') || 'Sent';
         }
         case 'delivered': {
-            const t = formatTimestamp(deliveredAt || sentAt);
-            return t ? `Delivered · ${t}` : 'Delivered';
+            const time = formatTimestamp(deliveredAt || sentAt);
+            return time
+                ? t('status.delivered_at', { time }) || `Delivered · ${time}`
+                : t('status.delivered') || 'Delivered';
         }
         case 'read': {
-            const t = formatTimestamp(readAt);
-            return t ? `Read · ${t}` : 'Read';
+            const time = formatTimestamp(readAt);
+            return time
+                ? t('status.read_at', { time }) || `Read · ${time}`
+                : t('status.read') || 'Read';
         }
         default: return '';
     }

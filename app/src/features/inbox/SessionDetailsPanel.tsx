@@ -5,6 +5,7 @@ import { getSessionDetails } from '../../services/api';
 import { useLeadAnnotations, type LeadAnnotationController } from '../leads/useLeadAnnotations';
 import type { SessionDetails } from './liveChatProtocol';
 import { relativeTime } from './liveChatHelpers';
+import { ConversationLanguageBadge } from './ConversationLanguageBadge';
 
 const CURRENCY_SYMBOL: Record<string, string> = {
   INR: '₹',
@@ -69,6 +70,8 @@ function toSessionDetails(raw: Record<string, unknown>): SessionDetails {
     referrer: str(raw.referrer),
     visitor_rating:
       typeof raw.visitor_rating === 'number' && raw.visitor_rating > 0 ? raw.visitor_rating : null,
+    language_code: str(raw.language_code),
+    locale: str(raw.locale),
     bant: bantRaw
       ? {
           need: str(bantRaw.need),
@@ -316,6 +319,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
           {details.page_url && <Row icon={<Globe size={14} />} value={shortUrl(details.page_url)} />}
           {details.referrer && <Row icon={<Link2 size={14} />} value={`from ${shortUrl(details.referrer)}`} />}
           <div className="flex flex-wrap gap-1.5 pt-1">
+            <ConversationLanguageBadge languageCode={details.language_code} />
             {details.bot_name && <StatusBadge tone="neutral">{details.bot_name}</StatusBadge>}
             {details.department_name && <StatusBadge tone="neutral">{details.department_name}</StatusBadge>}
             {typeof details.message_count === 'number' && (

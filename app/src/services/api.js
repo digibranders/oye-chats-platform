@@ -917,6 +917,28 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
+/**
+ * Conversations broken down by the language they were held in (Phase 5C).
+ *
+ * Two different kinds of number come back and must not be conflated:
+ * `conversations` and `cost` are durable Postgres reads over `period`, while
+ * `translation` is a rolling 24-hour window from expiring Redis counters.
+ *
+ * @param {number} botId
+ * @param {'7d'|'30d'|'90d'|'all'} [period]
+ */
+export const getLanguageBreakdown = async (botId, period = '30d') => {
+    try {
+        const response = await api.get('/analytics/language-breakdown', {
+            params: { bot_id: botId, period },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching language breakdown:', error);
+        throw buildApiError(error, 'Failed to load language breakdown');
+    }
+};
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 // Account-wide, never scoped to the shell's agent switcher: the whole point is
 // one row per agent side by side, so an agency can show each of its own clients
@@ -1119,6 +1141,68 @@ export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) =
     } catch (error) {
         console.error('API Error fetching chat history:', error);
         throw buildApiError(error, 'Failed to load chat history');
+    }
+};
+
+/**
+ * Reads the platform's locale catalogue: every locale a bot can be configured
+ * with, plus the base-language names a conversation is labelled by.
+ *
+ * Deploy-static, so callers fetch it once per session (see
+ * `hooks/useLocaleCatalog`) rather than per screen.
+ *
+ * @returns {Promise<{locales: Array<{code: string, locale: string, name: string, native_name: string, direction: 'ltr'|'rtl'}>, languages: Record<string, string>}>}
+ */
+export const getLocales = async () => {
+    const response = await api.get('/locales');
+    return response.data;
+};
+
+/**
+ * Reads the caller's own live-chat working language.
+ * @returns {Promise<{preferred_locale: string|null, supported_languages: string[]}>}
+ */
+export const getMyLanguage = async () => {
+    const response = await api.get('/operators/me/language');
+    return response.data;
+};
+
+/**
+ * Sets the caller's OWN live-chat working language. Pass null/'' to clear it,
+ * which turns translation off for this operator.
+ * @param {string|null} preferredLocale - BCP-47 tag, e.g. 'en-IN'
+ * @returns {Promise<{preferred_locale: string|null}>}
+ */
+export const setMyLanguage = async (preferredLocale) => {
+    try {
+        const response = await api.put('/operators/me/language', { preferred_locale: preferredLocale ?? '' });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save your language preference');
+    }
+};
+
+/**
+ * Translates text in the context of a conversation the caller owns.
+ *
+ * The target language is derived server-side: passing `messageId` backfills an
+ * existing message into the reader's language, omitting it previews an
+ * outgoing reply in the visitor's. There is deliberately no way to ask for an
+ * arbitrary target.
+ *
+ * @param {string} sessionId - must belong to the caller's workspace
+ * @param {string} text
+ * @param {number} [messageId] - persist the result onto this message
+ * @returns {Promise<{translated: string, target_locale: string, cached: boolean, status: string}>}
+ */
+export const translateForSession = async (sessionId, text, messageId) => {
+    try {
+        const body = { session_id: sessionId, text };
+        if (messageId != null) body.message_id = messageId;
+        const response = await api.post('/operators/translate', body);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Translation is unavailable right now');
     }
 };
 

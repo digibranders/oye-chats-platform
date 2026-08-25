@@ -23,7 +23,23 @@ class ChatRequest(BaseModel):
     # configured option labels (see ``rag_service._score_cta_answer``);
     # otherwise it's ignored and the message falls back to normal extraction.
     cta_dimension: str | None = Field(None, max_length=64)
+    # Multilingual context (Phase 2). Resolved or requested by widget
+    locale: str | None = Field(default=None, max_length=32)
+    language: str | None = Field(default=None, max_length=16)
+    language_source: str | None = Field(default=None, max_length=32)
 
 
 class FeedbackRequest(BaseModel):
     feedback: int = Field(..., ge=-1, le=1, description="1 for positive, -1 for negative")
+
+
+class ChangeLanguageRequest(BaseModel):
+    session_id: SessionId
+    locale: str = Field(..., min_length=2, max_length=32)
+
+
+class ChangeLanguageResponse(BaseModel):
+    language: str
+    locale: str
+    source: str
+    locked: bool

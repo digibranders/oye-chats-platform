@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OyeChats — Host Locale Test</title>
+  <!--
+    Sets <html lang> from ?lang= BEFORE the widget script runs.
+
+    This must happen here, in the markup, not from an injected script that runs
+    earlier: the HTML parser applies the <html> tag's own lang attribute as it
+    reads it, so anything set before parsing is overwritten. An inline script in
+    <head> runs after <html> exists and before the widget loads, which is the
+    window that works.
+  -->
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var lang = q.get('lang');
+      if (lang) document.documentElement.lang = lang;
+      // The widget pins a locale the VISITOR picked by hand, and that outranks
+      // the host page for good reason. It also makes ?lang look broken on a
+      // second run, so make clearing it one click.
+      if (q.get('clear') === '1') {
+        Object.keys(localStorage)
+          .filter(function (k) { return k.indexOf('oyechats_locale_') === 0; })
+          .forEach(function (k) { localStorage.removeItem(k); });
+      }
+    })();
+  </script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 780px; margin: 40px auto; padding: 0 16px; color: #222; }
+    h1 { margin-bottom: 4px; } p.lead { color: #666; margin-top: 0; }
+    .panel { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 16px 0; background: #fafafa; }
+    code { background: #eee; padding: 2px 4px; border-radius: 3px; font-size: .9em; }
+    a.btn, button { display: inline-block; padding: 7px 11px; margin: 0 6px 6px 0; border: 1px solid #999; background: #fff; cursor: pointer; border-radius: 4px; text-decoration: none; color: #222; font-size: 14px; }
+    a.btn:hover, button:hover { background: #f0f0f0; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+    td:first-child { color: #666; width: 40%; }
+    b.val { font-family: ui-monospace, monospace; }
+    pre { background: #1e1e1e; color: #eee; padding: 12px; border-radius: 4px; font-size: 12px; max-height: 180px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>Host locale → widget language</h1>
+  <p class="lead">Each button reloads the page with a different <code>&lt;html lang&gt;</code>, which is what a real customer site declares.</p>
+
+  <div class="panel">
+    <strong>1. Set the page language</strong><br />
+    <a class="btn" href="?lang=en">lang="en"</a>
+    <a class="btn" href="?lang=hi">lang="hi"</a>
+    <a class="btn" href="?lang=hi-IN">lang="hi-IN"</a>
+    <a class="btn" href="?lang=de">lang="de" (unsupported)</a>
+    <a class="btn" href="?">no lang</a>
+  </div>
+
+  <div class="panel">
+    <strong>2. Live state</strong>
+    <table>
+      <tr><td>&lt;html lang&gt;</td><td><b class="val" id="s-lang">-</b></td></tr>
+      <tr><td>Widget active locale</td><td><b class="val" id="s-active">-</b></td></tr>
+      <tr><td>Stored visitor preference</td><td><b class="val" id="s-stored">-</b></td></tr>
+      <tr><td>Browser languages</td><td><b class="val" id="s-nav">-</b></td></tr>
+    </table>
+    <p style="margin:10px 0 0">
+      <button onclick="refresh()">Refresh</button>
+      <button onclick="OyeChats.open()">Open widget</button>
+      <a class="btn" href="?clear=1">Clear stored preference</a>
+    </p>
+  </div>
+
+  <div class="panel">
+    <strong>3. Override from the host page</strong>
+    <p class="lead" style="margin:4px 0 8px">
+      <code>OyeChats.setLocale()</code> is the <code>site</code> tier. It outranks
+      <code>&lt;html lang&gt;</code> and is what an integrator uses when the page language
+      and the chat language are decided separately.
+    </p>
+    <button onclick="OyeChats.setLocale('hi-IN'); refresh()">setLocale('hi-IN')</button>
+    <button onclick="OyeChats.setLocale('en-IN'); refresh()">setLocale('en-IN')</button>
+  </div>
+
+  <div class="panel">
+    <strong>4. localeChanged events</strong>
+    <pre id="log">(waiting)</pre>
+  </div>
+
+  <script>
+    var lines = [];
+    function log(msg) {
+      lines.unshift(new Date().toLocaleTimeString() + '  ' + msg);
+      document.getElementById('log').textContent = lines.slice(0, 12).join('\n');
+    }
+    function storedPref() {
+      var k = Object.keys(localStorage).filter(function (x) { return x.indexOf('oyechats_locale_') === 0; })[0];
+      return k ? k + ' = ' + localStorage.getItem(k) : '(none)';
+    }
+    function refresh() {
+      document.getElementById('s-lang').textContent = document.documentElement.lang || '(not set)';
+      document.getElementById('s-stored').textContent = storedPref();
+      document.getElementById('s-nav').textContent = (navigator.languages || []).join(', ');
+      document.getElementById('s-active').textContent =
+        (window.OyeChats && OyeChats.getLocale) ? OyeChats.getLocale() : '(widget not ready)';
+    }
+    refresh();
+    // The widget resolves its locale after fetching bot settings, so poll until
+    // the reported value settles rather than reading once on load.
+    var tries = 0;
+    var poll = setInterval(function () {
+      refresh();
+      if (++tries > 40) clearInterval(poll);
+    }, 250);
+    window.addEventListener('load', function () {
+      if (window.OyeChats && OyeChats.on) {
+        OyeChats.on('localeChanged', function (e) { log('localeChanged -> ' + JSON.stringify(e)); refresh(); });
+      }
+    });
+  </script>
+
+  <!-- Point this at whichever build you are testing. -->
+  <script src="/oyechats-widget.js" data-bot-key="bot-DEV"></script>
+</body>
+</html>

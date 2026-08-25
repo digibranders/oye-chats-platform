@@ -214,7 +214,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
     getQuotationCatalog(botId)
       .then((data) => {
         if (cancelled) return;
-        const normalized = normalize(data);
+        const normalized = normalize(data as QuotationCatalog);
         setCatalog(normalized);
         setInitial(normalized);
       })
@@ -399,7 +399,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
         }
       }
       const saved = await putQuotationCatalog(botId, cleaned);
-      const normalized = normalize(saved);
+      const normalized = normalize(saved as QuotationCatalog);
       setCatalog(normalized);
       setInitial(normalized);
       setSavedTick((t) => t + 1);
