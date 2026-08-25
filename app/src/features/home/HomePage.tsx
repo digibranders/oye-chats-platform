@@ -19,6 +19,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  BotAvatar,
   Button,
   Card,
   EmptyState,
@@ -418,7 +419,7 @@ function HomeContent({
                 <AgentCard
                   key={agent.bot.id}
                   name={agent.bot.name}
-                  avatar={agent.bot.bot_logo ?? undefined}
+                  avatarSlot={<BotAvatar bot={agent.bot} size={40} radius="lg" />}
                   status={{ label: agent.health.label, tone: agent.health.tone }}
                   to={`/agents/${agent.bot.id}/overview`}
                   metrics={[
