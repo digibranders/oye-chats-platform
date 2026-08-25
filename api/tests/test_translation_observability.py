@@ -124,19 +124,80 @@ class TestAlerting:
         for name in ("translation_ok", "translation_requests", "translation_cache_hit"):
             assert name not in metrics._SENTRY_FORWARD_METRICS
 
-    def test_forwarding_ignores_names_outside_the_set(self, monkeypatch):
-        sent: list[str] = []
-        monkeypatch.setattr(metrics, "_SENTRY_FORWARD_METRICS", frozenset({"translation_gated"}))
+    @staticmethod
+    def _fake_sdk(sent, tags):
+        """Stand in for sentry_sdk, recording what a real forward would send.
+
+        It has to model ``new_scope`` as well as ``capture_message``: the
+        forwarder sets its tags on a scope, and a stub missing that method
+        raises inside the forwarder's own ``except`` clause, which would make a
+        "nothing was sent" assertion pass for the wrong reason.
+        """
+
+        class _Scope:
+            def set_tag(self, key, value):
+                tags[key] = value
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
 
         class _SDK:
+            @staticmethod
+            def new_scope():
+                return _Scope()
+
             @staticmethod
             def capture_message(msg, level=None):
                 sent.append(msg)
 
-        monkeypatch.setitem(__import__("sys").modules, "sentry_sdk", _SDK)
+        return _SDK
+
+    def _install(self, monkeypatch, sent, tags):
+        monkeypatch.setitem(__import__("sys").modules, "sentry_sdk", self._fake_sdk(sent, tags))
         monkeypatch.setattr("app.config.SENTRY_ENABLED", True, raising=False)
+
+    def test_forwarding_ignores_names_outside_the_set(self, monkeypatch):
+        sent: list[str] = []
+        tags: dict[str, str] = {}
+        monkeypatch.setattr(metrics, "_SENTRY_FORWARD_METRICS", frozenset({"translation_gated"}))
+        self._install(monkeypatch, sent, tags)
         metrics.forward_to_sentry_if_alertable("translation_ok")
         assert sent == []
+
+    def test_the_gating_reason_reaches_the_alert(self, monkeypatch):
+        """An alert that cannot say WHY is not actionable.
+
+        ``translation_gated`` fires both when an operator deliberately turns a
+        switch off and when a workspace runs out of credits. Those want
+        opposite responses, and the only thing that separates them in Sentry is
+        this tag. The reason was being passed and silently dropped.
+        """
+        sent: list[str] = []
+        tags: dict[str, str] = {}
+        self._install(monkeypatch, sent, tags)
+        metrics.forward_to_sentry_if_alertable("translation_gated", bot_id=7, reason="insufficient_credits")
+        assert sent == ["rag.safety_net.translation_gated"]
+        assert tags == {"bot_id": "7", "reason": "insufficient_credits"}
+
+    def test_a_provider_failure_is_attributable_to_a_bot(self, monkeypatch):
+        sent: list[str] = []
+        tags: dict[str, str] = {}
+        self._install(monkeypatch, sent, tags)
+        metrics.forward_to_sentry_if_alertable("translation_provider_failed", bot_id=3, kind="translation_timeout")
+        assert sent == ["rag.safety_net.translation_provider_failed"]
+        assert tags == {"bot_id": "3", "kind": "translation_timeout"}
+
+    def test_absent_tags_are_omitted_rather_than_sent_as_none(self, monkeypatch):
+        # "bot_id: None" in a Sentry filter is worse than no tag: it looks like
+        # a real value and matches nothing useful.
+        sent: list[str] = []
+        tags: dict[str, str] = {}
+        self._install(monkeypatch, sent, tags)
+        metrics.forward_to_sentry_if_alertable("translation_gated", bot_id=None, reason="feature_off")
+        assert tags == {"reason": "feature_off"}
 
 
 class TestNoContentLeaks:

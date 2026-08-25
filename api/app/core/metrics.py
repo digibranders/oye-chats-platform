@@ -197,6 +197,19 @@ def forward_to_sentry_if_alertable(name: str, **tags) -> None:
 
         if not SENTRY_ENABLED:
             return
-        sentry_sdk.capture_message(f"rag.safety_net.{name}", level="warning")
+        # Tags are what make the alert actionable. Without them every
+        # translation_gated event reads the same, so a workspace that just ran
+        # out of credits is indistinguishable from a switch somebody turned off
+        # on purpose, and neither can be attributed to a bot. Callers already
+        # pass reason= and bot_id=; these were being accepted and dropped.
+        #
+        # Values are always short scalars the caller chose (a bot id, a reason
+        # enum). Message text never reaches this function and must not: keep it
+        # that way when adding callers.
+        with sentry_sdk.new_scope() as scope:
+            for key, value in tags.items():
+                if value is not None:
+                    scope.set_tag(key, str(value))
+            sentry_sdk.capture_message(f"rag.safety_net.{name}", level="warning")
     except Exception as exc:  # noqa: BLE001
         logger.debug("forward_to_sentry_if_alertable failed (non-blocking): %s", exc)
