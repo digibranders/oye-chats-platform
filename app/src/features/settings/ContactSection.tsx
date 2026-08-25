@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Mail, Sparkles } from 'lucide-react';
 import { Card, SectionHeader, buttonVariants, cn } from '../../design-system';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Where bespoke requests land. Mirrors the platform's published contact address. */
 const CONTACT_EMAIL = 'support@oyechats.com';
@@ -18,6 +19,7 @@ const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Custom req
  * global toast, matching the rest of Settings.
  */
 export function ContactSection(): ReactElement {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState('');
   // Hold the reset timer so an unmount (or a rapid re-copy) can clear it
@@ -43,15 +45,26 @@ export function ContactSection(): ReactElement {
         resetTimer.current = null;
       }, 2000);
     } catch {
-      setCopyError('Couldn’t copy - select the address above and copy it manually.');
+      setCopyError(
+        t('settings.contact.copyFailed') ||
+          'Couldn’t copy - select the address above and copy it manually.',
+      );
     }
+    // `t` is intentionally omitted. It is a thin wrapper over the module-level
+    // store and resolves against the CURRENT locale at call time, so a stale
+    // closure still produces correctly localized text. Including it would
+    // re-run this on every language change for no benefit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <section aria-labelledby="contact-heading" className="space-y-4">
       <SectionHeader
-        title={<span id="contact-heading">Need something custom?</span>}
-        description="Bespoke integrations, custom pricing, or a feature built for your workspace."
+        title={<span id="contact-heading">{t('settings.contact.title') || 'Need something custom?'}</span>}
+        description={
+          t('settings.contact.description') ||
+          'Bespoke integrations, custom pricing, or a feature built for your workspace.'
+        }
       />
       <Card>
         <div className="p-5 sm:p-6">
@@ -63,8 +76,8 @@ export function ContactSection(): ReactElement {
               <Sparkles size={18} />
             </span>
             <p className="text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              Our team handles these directly rather than through the standard support queue. Reach
-              out and we’ll get back to you.
+              {t('settings.contact.body') ||
+                'Our team handles these directly rather than through the standard support queue. Reach out and we’ll get back to you.'}
             </p>
           </div>
 
@@ -78,7 +91,12 @@ export function ContactSection(): ReactElement {
             <button
               type="button"
               onClick={() => void handleCopy()}
-              aria-label={copied ? 'Email address copied' : `Copy ${CONTACT_EMAIL}`}
+              aria-label={
+                copied
+                  ? t('settings.contact.copied') || 'Email address copied'
+                  : t('settings.contact.copyAddress', { email: CONTACT_EMAIL }) ||
+                    `Copy ${CONTACT_EMAIL}`
+              }
               className={cn(
                 'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors',
                 'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
@@ -88,7 +106,7 @@ export function ContactSection(): ReactElement {
               )}
             >
               {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? t('settings.contact.copiedShort') || 'Copied' : t('settings.contact.copy') || 'Copy'}
             </button>
           </div>
 
@@ -103,7 +121,7 @@ export function ContactSection(): ReactElement {
           <div className="mt-5">
             <a href={MAILTO} className={cn(buttonVariants({ variant: 'primary' }))}>
               <Mail size={16} aria-hidden="true" />
-              Email us
+              {t('settings.contact.emailUs') || 'Email us'}
             </a>
           </div>
         </div>

@@ -138,6 +138,35 @@ function isSentenceShaped(text) {
   return true;
 }
 
+/**
+ * Whether a literal is already served through `t()`.
+ *
+ * The `t('key') || 'English'` idiom deliberately KEEPS the English literal in
+ * the source as the inline fallback, so counting raw literals cannot measure
+ * remaining work: a fully localized file still contains every English string it
+ * ever had. A literal therefore counts as localized when a `t(` call opens
+ * shortly before it, which is exactly what that idiom produces. Same technique
+ * the widget's own guard uses.
+ */
+const LOOKBEHIND = 220;
+function isLocalized(source, start) {
+  const preceding = source.slice(Math.max(0, start - LOOKBEHIND), start);
+  return /\bt\(\s*['"`]/.test(preceding);
+}
+
+/**
+ * Strings that stay English on purpose. Every entry carries its reason.
+ *
+ * An allowlist is a liability if it becomes a dumping ground, so it is keyed on
+ * the exact text and each entry has to justify itself. Anything that is merely
+ * inconvenient to translate does NOT belong here.
+ */
+const ALLOWED_ENGLISH = new Map([
+  ['you@example.com', 'example address in a placeholder, not prose'],
+  ['Custom request', 'mailto subject line, read by an English-speaking support team'],
+  ['OyeChats', 'brand name; never translated'],
+]);
+
 /** A single word that is still clearly UI copy (button labels etc.). */
 function isSingleWordLabel(text) {
   const t = text.trim();
@@ -205,7 +234,14 @@ function scanFile(file) {
     if (ts.isJsxText(node)) {
       const text = node.text.replace(/\s+/g, ' ').trim();
       if (text && /[A-Za-z]/.test(text) && (isSentenceShaped(text) || isSingleWordLabel(text))) {
-        hits.push({ file: relPath, line: lineOf(node), kind: 'jsx-text', text, attr: null });
+        hits.push({
+          file: relPath,
+          line: lineOf(node),
+          kind: 'jsx-text',
+          text,
+          attr: null,
+          localized: isLocalized(source, node.getStart(sf)),
+        });
       }
     }
 
@@ -223,7 +259,14 @@ function scanFile(file) {
           value = node.initializer.expression.text;
         }
         if (value && LOCALIZABLE_ATTRS.has(attr) && /[A-Za-z]{2}/.test(value)) {
-          hits.push({ file: relPath, line: lineOf(node), kind: 'attr', text: value, attr });
+          hits.push({
+            file: relPath,
+            line: lineOf(node),
+            kind: 'attr',
+            text: value,
+            attr,
+            localized: isLocalized(source, node.getStart(sf)),
+          });
         }
       }
     }
@@ -254,6 +297,7 @@ function scanFile(file) {
           attr: null,
           inConsole,
           inThrow,
+          localized: isLocalized(source, node.getStart(sf)),
         });
       }
     }
@@ -308,6 +352,12 @@ const payload = {
   byClass,
   byPhase,
   byDir,
+  unlocalized: allHits.filter(
+    (h) =>
+      (h.class === CLASSES.UI_TEXT || h.class === CLASSES.A11Y) &&
+      !h.localized &&
+      !ALLOWED_ENGLISH.has(h.text.trim()),
+  ).length,
   formatSites: allFormat.length,
   formatSitesWithoutLocale: allFormat.filter((f) => !f.hasLocaleArg).length,
   tCallsTotal: results.reduce((a, r) => a + r.tCalls, 0),
@@ -315,6 +365,17 @@ const payload = {
 
 if (wantJson) {
   console.log(JSON.stringify({ ...payload, hits: allHits, format: allFormat }, null, 2));
+} else if (listMode === 'unlocalized') {
+  for (const h of allHits.filter(
+    (x) =>
+      (x.class === CLASSES.UI_TEXT || x.class === CLASSES.A11Y) &&
+      !x.localized &&
+      !ALLOWED_ENGLISH.has(x.text.trim()),
+  )) {
+    console.log(
+      `${h.file}:${h.line} [${h.phase}] (${h.kind}${h.attr ? ':' + h.attr : ''}) ${JSON.stringify(h.text).slice(0, 100)}`,
+    );
+  }
 } else if (listMode === 'bare') {
   for (const h of allHits.filter((x) => x.class === CLASSES.UI_TEXT || x.class === CLASSES.A11Y)) {
     console.log(`${h.file}:${h.line} [${h.phase}] (${h.kind}${h.attr ? ':' + h.attr : ''}) ${JSON.stringify(h.text).slice(0, 100)}`);
@@ -329,6 +390,7 @@ if (wantJson) {
   console.log(`total hits                    ${payload.totalHits}`);
   console.log(`files with localizable copy   ${payload.filesWithLocalizableStrings}`);
   console.log(`existing t() call sites       ${payload.tCallsTotal}`);
+  console.log(`STILL UNLOCALIZED             ${payload.unlocalized}`);
   console.log('\n-- by classification --');
   for (const [k, v] of Object.entries(byClass).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${String(v).padStart(5)}  ${k}`);

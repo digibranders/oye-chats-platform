@@ -10,6 +10,7 @@ import {
   requestClientEmailChange,
 } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,11 +69,12 @@ function PasswordToggle({
   readonly shown: boolean;
   readonly onToggle: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-label={shown ? 'Hide password' : 'Show password'}
+      aria-label={shown ? t('settings.security.hidePassword') || 'Hide password' : t('settings.security.showPassword') || 'Show password'}
       aria-pressed={shown}
       className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
     >
@@ -94,6 +96,7 @@ interface ChangePasswordCardProps {
  * (`POST /auth/operator-change-password`).
  */
 export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactElement {
+  const { t } = useTranslation();
   const [form, setForm] = useState<PasswordForm>(EMPTY_PASSWORD_FORM);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
@@ -115,7 +118,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
     setSuccess('');
 
     if (form.next !== form.confirm) {
-      setError('New passwords do not match.');
+      setError(t('settings.security.passwordsDoNotMatch') || 'New passwords do not match.');
       return;
     }
     if (!isStrongPassword(form.next)) {
@@ -133,9 +136,9 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
       setForm(EMPTY_PASSWORD_FORM);
       setShowCurrent(false);
       setShowNext(false);
-      setSuccess('Your password has been changed.');
+      setSuccess(t('settings.security.passwordChanged') || 'Your password has been changed.');
     } catch (err) {
-      setError(toMessage(err, 'We couldn’t change your password. Please try again.'));
+      setError(toMessage(err, t('settings.security.passwordChangeFailed') || 'We couldn’t change your password. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -145,8 +148,11 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
     <Card>
       <form onSubmit={handleSubmit} className="p-5 sm:p-6">
         <SectionHeader
-          title="Password"
-          description="Update your sign-in password. Use at least 8 characters with a letter and a number."
+          title={t('settings.security.password') || 'Password'}
+          description={
+            t('settings.security.passwordDescription') ||
+            'Update your sign-in password. Use at least 8 characters with a letter and a number.'
+          }
           actions={
             // Recovery for a password you can't remember. The public
             // /forgot-password page already owns the full email-OTP reset flow;
@@ -160,7 +166,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
                 to="/forgot-password"
                 className="text-[12px] font-medium text-[var(--ds-accent-text)] transition-colors hover:underline"
               >
-                Forgot your password?
+                {t('settings.security.forgotPassword') || 'Forgot your password?'}
               </Link>
             ) : undefined
           }
@@ -168,11 +174,11 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
 
         {!isOperator && (
           <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
-            Don’t remember your current password? Use{' '}
+            {t('settings.security.forgotHintPrefix') || 'Don’t remember your current password? Use'}{' '}
             <Link to="/forgot-password" className="font-medium text-[var(--ds-accent-text)] hover:underline">
-              Forgot your password?
+              {t('settings.security.forgotPassword') || 'Forgot your password?'}
             </Link>{' '}
-            to reset it with a code sent to your email.
+            {t('settings.security.forgotHintSuffix') || 'to reset it with a code sent to your email.'}
           </p>
         )}
 
@@ -184,7 +190,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
         <div className="mt-4 grid max-w-md gap-4">
           <div>
             <label htmlFor="account-security-current-password" className={labelClass}>
-              Current password
+              {t('settings.security.currentPassword') || 'Current password'}
             </label>
             <div className="relative">
               <Input
@@ -192,7 +198,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
                 type={showCurrent ? 'text' : 'password'}
                 required
                 autoComplete="current-password"
-                placeholder="Your current password"
+                placeholder={t('settings.security.currentPasswordPlaceholder') || 'Your current password'}
                 className="pr-10"
                 value={form.current}
                 onChange={(event) => setForm((prev) => ({ ...prev, current: event.target.value }))}
@@ -203,7 +209,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
 
           <div>
             <label htmlFor="account-security-new-password" className={labelClass}>
-              New password
+              {t('settings.security.newPassword') || 'New password'}
             </label>
             <div className="relative">
               <Input
@@ -212,7 +218,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
                 required
                 minLength={8}
                 autoComplete="new-password"
-                placeholder="At least 8 characters, a letter and a number"
+                placeholder={t('settings.security.newPasswordPlaceholder') || 'At least 8 characters, a letter and a number'}
                 aria-describedby="account-security-new-password-hint"
                 className="pr-10"
                 value={form.next}
@@ -221,20 +227,21 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
               <PasswordToggle shown={showNext} onToggle={() => setShowNext((v) => !v)} />
             </div>
             <p id="account-security-new-password-hint" className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-              Must be at least 8 characters and include a letter and a number.
+              {t('settings.security.passwordRuleHint') ||
+                'Must be at least 8 characters and include a letter and a number.'}
             </p>
           </div>
 
           <div>
             <label htmlFor="account-security-confirm-password" className={labelClass}>
-              Confirm new password
+              {t('settings.security.confirmNewPassword') || 'Confirm new password'}
             </label>
             <Input
               id="account-security-confirm-password"
               type="password"
               required
               autoComplete="new-password"
-              placeholder="Repeat your new password"
+              placeholder={t('settings.security.confirmPlaceholder') || 'Repeat your new password'}
               aria-invalid={confirmMismatch}
               aria-describedby={confirmMismatch ? 'account-security-confirm-error' : undefined}
               className={cn(
@@ -246,7 +253,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
             />
             {confirmMismatch && (
               <p id="account-security-confirm-error" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
-                Passwords do not match.
+                {t('settings.security.passwordsDoNotMatch') || 'Passwords do not match.'}
               </p>
             )}
           </div>
@@ -259,7 +266,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
             ) : (
               <>
                 <KeyRound size={16} aria-hidden="true" />
-                Change password
+                {t('settings.security.changePassword') || 'Change password'}
               </>
             )}
           </Button>
@@ -292,6 +299,7 @@ interface ChangeEmailCardProps {
  * asking for the password again rather than faking a passwordless resend.
  */
 export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactElement {
+  const { t } = useTranslation();
   const [step, setStep] = useState<EmailStep>(user.pending_email ? 'verify' : 'idle');
   const [newEmail, setNewEmail] = useState(user.pending_email ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -333,7 +341,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
       await cancelClientEmailChange();
       onEmailChange({ pending_email: null });
     } catch (err) {
-      setError(toMessage(err, 'Failed to cancel the email change.'));
+      setError(toMessage(err, t('settings.security.emailCancelFailed') || 'Failed to cancel the email change.'));
       setStep('verify');
     } finally {
       setBusy(false);
@@ -345,15 +353,15 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
     setError('');
     const email = newEmail.trim();
     if (!EMAIL_RE.test(email)) {
-      setError('Enter a valid email address.');
+      setError(t('settings.security.emailInvalid') || 'Enter a valid email address.');
       return;
     }
     if (email.toLowerCase() === (user.email ?? '').toLowerCase()) {
-      setError('That’s already your current email address.');
+      setError(t('settings.security.emailSame') || 'That’s already your current email address.');
       return;
     }
     if (!currentPassword) {
-      setError('Enter your current password to confirm this change.');
+      setError(t('settings.security.emailNeedPassword') || 'Enter your current password to confirm this change.');
       return;
     }
     setBusy(true);
@@ -365,7 +373,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
       setSuccess('');
       setStep('verify');
     } catch (err) {
-      setError(toMessage(err, 'Failed to start the email change.'));
+      setError(toMessage(err, t('settings.security.emailStartFailed') || 'Failed to start the email change.'));
     } finally {
       setBusy(false);
     }
@@ -375,7 +383,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
     event.preventDefault();
     setError('');
     if (!otp.trim()) {
-      setError('Enter the verification code.');
+      setError(t('settings.security.emailNeedCode') || 'Enter the verification code.');
       return;
     }
     setBusy(true);
@@ -384,7 +392,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
       onEmailChange({ email: updated.email, pending_email: null });
       setOtp('');
       setStep('idle');
-      setSuccess('Email address updated.');
+      setSuccess(t('settings.security.emailUpdated') || 'Email address updated.');
     } catch (err) {
       setError(toMessage(err, 'Failed to confirm the email change.'));
     } finally {
@@ -396,13 +404,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
     <Card>
       <div className="p-5 sm:p-6">
         <SectionHeader
-          title="Email address"
+          title={t('settings.security.emailAddress') || 'Email address'}
           description="Changing your login email requires your current password and a code sent to the new address."
           actions={
             step === 'idle' ? (
               <Button variant="outline" size="sm" onClick={startRequest}>
                 <Mail size={14} aria-hidden="true" />
-                Change
+                {t('settings.security.change') || 'Change'}
               </Button>
             ) : undefined
           }
@@ -415,7 +423,9 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
 
         {step === 'idle' && (
           <div className="mt-4 flex items-center justify-between gap-4 py-1">
-            <span className="text-[13px] text-[var(--ds-text-muted)]">Current email</span>
+            <span className="text-[13px] text-[var(--ds-text-muted)]">
+              {t('settings.security.currentEmail') || 'Current email'}
+            </span>
             <span className="truncate text-[13px] font-medium text-[var(--ds-text)]">
               {user.email ?? '-'}
             </span>
@@ -426,7 +436,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
           <form onSubmit={handleRequest} className="mt-4 grid max-w-md gap-4">
             <div>
               <label htmlFor="account-security-new-email" className={labelClass}>
-                New email
+                {t('settings.security.newEmail') || 'New email'}
               </label>
               <Input
                 id="account-security-new-email"
@@ -440,14 +450,14 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
             </div>
             <div>
               <label htmlFor="account-security-email-password" className={labelClass}>
-                Current password
+                {t('settings.security.currentPassword') || 'Current password'}
               </label>
               <Input
                 id="account-security-email-password"
                 type="password"
                 required
                 autoComplete="current-password"
-                placeholder="Confirm it's you"
+                placeholder={t('settings.security.confirmItsYou') || "Confirm it's you"}
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
               />
@@ -459,13 +469,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
                 ) : (
                   <>
                     <Mail size={16} aria-hidden="true" />
-                    Send verification code
+                    {t('settings.security.sendCode') || 'Send verification code'}
                   </>
                 )}
               </Button>
               <Button type="button" variant="ghost" disabled={busy} onClick={() => void cancel()}>
                 <X size={16} aria-hidden="true" />
-                Cancel
+                {t('common.cancel') || 'Cancel'}
               </Button>
             </div>
           </form>
@@ -476,21 +486,21 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
             <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-warning)]">
               <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
               <span>
-                Verification pending for <strong>{pendingEmail ?? newEmail}</strong>. Enter the code we
+                {t('settings.security.verificationPendingFor') || 'Verification pending for'} <strong>{pendingEmail ?? newEmail}</strong>. Enter the code we
                 emailed there to finish the change - your login email stays{' '}
                 <strong>{user.email ?? 'unchanged'}</strong> until then.
               </span>
             </div>
             <div>
               <label htmlFor="account-security-email-otp" className={labelClass}>
-                Verification code
+                {t('settings.security.verificationCode') || 'Verification code'}
               </label>
               <Input
                 id="account-security-email-otp"
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                placeholder="6-digit code"
+                placeholder={t('settings.security.codePlaceholder') || '6-digit code'}
                 value={otp}
                 onChange={(event) => setOtp(event.target.value)}
               />
@@ -500,7 +510,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
                 disabled={busy}
                 className="mt-1.5 text-[12px] font-medium text-[var(--ds-accent-text)] transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Didn’t receive a code? Resend
+                {t('settings.security.resendCode') || 'Didn’t receive a code? Resend'}
               </button>
             </div>
             <div className="flex items-center gap-2">
@@ -510,13 +520,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
                 ) : (
                   <>
                     <Check size={16} aria-hidden="true" />
-                    Confirm change
+                    {t('settings.security.confirmChange') || 'Confirm change'}
                   </>
                 )}
               </Button>
               <Button type="button" variant="ghost" disabled={busy} onClick={() => void cancel()}>
                 <X size={16} aria-hidden="true" />
-                Cancel change
+                {t('settings.security.cancelChange') || 'Cancel change'}
               </Button>
             </div>
           </form>
@@ -542,12 +552,15 @@ export interface AccountSecuritySectionProps {
  * form.
  */
 export function AccountSecuritySection({ user, onEmailChange }: AccountSecuritySectionProps): ReactElement {
+  const { t } = useTranslation();
   const isOperator = user.kind === 'operator';
 
   return (
     <section aria-labelledby="account-security-heading" className="space-y-4">
       <SectionHeader
-        title={<span id="account-security-heading">Account security</span>}
+        title={
+          <span id="account-security-heading">{t('settings.security.title') || 'Account security'}</span>
+        }
         description="Manage how you sign in."
       />
       <div className="space-y-4">
@@ -559,15 +572,15 @@ export function AccountSecuritySection({ user, onEmailChange }: AccountSecurityS
               <div className="min-w-0">
                 <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
                   <Mail size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                  Email address
+                  {t('settings.security.emailAddress') || 'Email address'}
                 </p>
                 <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                  Contact your workspace owner to change your email - operator accounts don’t have a
-                  self-serve email change today.
+                  {t('settings.security.operatorEmailNote') ||
+                    'Contact your workspace owner to change your email - operator accounts don’t have a self-serve email change.'}
                 </p>
               </div>
               <StatusBadge tone="neutral" className="shrink-0">
-                Not available
+                {t('settings.security.notAvailable') || 'Not available'}
               </StatusBadge>
             </div>
           </Card>
