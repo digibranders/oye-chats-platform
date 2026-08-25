@@ -130,6 +130,28 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     { botId: BOT_ID },
   );
 
+  // Abort every EXTERNAL origin, registered first so all mocks below win.
+  //
+  // A regex that matches only foreign origins, deliberately: a `**/*` route
+  // would also intercept the preview server's own module chunks, and routing
+  // those through Playwright re-issues them in a way WebKit does not survive.
+  // Same-origin requests are therefore never intercepted at all.
+  //
+  // This exists because WebKit leaves an unroutable request pending and blocks
+  // the `load` event on it, so one stray URL timed out every navigation the
+  // moment WebKit joined the matrix. Chromium failed those fast and hid it.
+  await page.route(
+    /^https?:\/\/(?!127\.0\.0\.1:4174|oyechats-admin-e2e\.test)/,
+    (route) => route.abort(),
+  );
+
+  // The app root injects the production chat widget from cdn.oyechats.com.
+  // Nothing mocked it, so the browser fetched it from the real CDN on every
+  // spec. Chromium tolerated that; WebKit blocks the `load` event on it, which
+  // timed out every single navigation once WebKit was added to the matrix.
+  // Aborting keeps the suite hermetic and independent of an external host.
+  await page.route('https://cdn.oyechats.com/**', (route) => route.abort());
+
   // ORDER MATTERS. Playwright tries the most recently registered matching route
   // FIRST, so the catch-all goes down first and the specific handlers below
   // take precedence. Registering it last silently swallows every mock.
