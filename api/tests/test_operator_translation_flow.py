@@ -673,15 +673,23 @@ class TestTranscriptBackfill:
 
         return _P()
 
-    def test_backfills_untranslated_visitor_turns(self, db, monkeypatch):
+    def test_backfills_both_sides_of_the_conversation(self, db, monkeypatch):
+        """The operator must be able to read what the BOT said too.
+
+        This originally translated only the visitor's turns, reasoning that the
+        AI already answered in the visitor's language. That left an English
+        operator able to read the customer's questions but not the answers the
+        bot had already given, which is exactly what they need in order not to
+        repeat or contradict it.
+        """
         _seed(db)
-        ids = []
+        visitor_ids, bot_ids = [], []
         for text in ("नमस्ते", "कीमत क्या है", "मुझे मदद चाहिए"):
-            m = add_chat_message(db, "sess-1", role="user", content=text, source_language="hi")
-            ids.append(m.id)
-        # Bot turns are NOT the operator's to act on and are already native to
-        # the visitor's language, so they must be left alone.
-        bot_msg = add_chat_message(db, "sess-1", role="bot", content="नमस्ते जी", source_language="hi")
+            visitor_ids.append(add_chat_message(db, "sess-1", role="user", content=text, source_language="hi").id)
+        for text in ("नमस्ते जी", "हमारी कीमत ५००० से शुरू होती है"):
+            bot_ids.append(add_chat_message(db, "sess-1", role="bot", content=text, source_language="hi").id)
+        # System turns are per-viewer UI notices, not conversation.
+        system_msg = add_chat_message(db, "sess-1", role="system", content="ऑपरेटर जुड़ गया", source_language="hi")
         db.commit()
 
         monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
@@ -689,10 +697,53 @@ class TestTranscriptBackfill:
         asyncio.run(ts._backfill_transcript("sess-1"))
 
         db.expire_all()
-        for mid in ids:
+        for mid in visitor_ids + bot_ids:
             row = db.get(ChatMessage, mid)
             assert row.translations["en"]["content"] == "TRANSLATED", f"message {mid} not backfilled"
-        assert db.get(ChatMessage, bot_msg.id).translations is None
+        assert db.get(ChatMessage, system_msg.id).translations is None
+
+    def test_originals_are_byte_identical_after_backfill(self, db, monkeypatch):
+        """`content` is canonical. Translation is derived data, never a rewrite."""
+        _seed(db)
+        originals = {
+            add_chat_message(db, "sess-1", role="user", content="कीमत क्या है", source_language="hi").id: "कीमत क्या है",
+            add_chat_message(db, "sess-1", role="bot", content="५००० रुपये से", source_language="hi").id: "५००० रुपये से",
+        }
+        db.commit()
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._stub()))
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        db.expire_all()
+        for mid, original in originals.items():
+            row = db.get(ChatMessage, mid)
+            assert row.content == original, "the original was mutated"
+            assert row.translations["en"]["content"] == "TRANSLATED"
+
+    def test_same_language_handoff_makes_zero_provider_calls(self, db, monkeypatch):
+        """An English visitor and an English operator cost nothing."""
+        _seed(db, session_language="en", operator_locale="en-IN")
+        add_chat_message(db, "sess-1", role="user", content="What is the price?", source_language="en")
+        add_chat_message(db, "sess-1", role="bot", content="It starts at 5000.", source_language="en")
+        db.commit()
+
+        calls, charges = [], []
+
+        class _Counting:
+            provider_name = "stub"
+            model = "stub-model"
+
+            async def translate(self, text, _s, _target, timeout=None):
+                calls.append(text)
+                return ts.TranslationResult(content="X", provider="stub", model="m", cached=False)
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: charges.append(a) or True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=_Counting()))
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        assert calls == [], "same-language transcript must not reach the provider"
+        assert charges == [], "and must not be charged for"
 
     def test_skips_messages_already_translated(self, db, monkeypatch):
         _seed(db)
@@ -710,17 +761,28 @@ class TestTranscriptBackfill:
         assert db.get(ChatMessage, done.id).translations["en"]["content"] == "Hello"
         assert calls == []
 
-    def test_skips_messages_with_no_source_language(self, db, monkeypatch):
-        # Rows written before Phase 4 have no source_language and are
-        # untranslatable; they must be passed over silently, not guessed at.
-        _seed(db)
-        legacy = add_chat_message(db, "sess-1", role="user", content="नमस्ते")
+    def test_unstamped_rows_fall_back_to_the_session_language(self, db, monkeypatch):
+        """Rows predating bot-turn stamping still reach the operator.
+
+        The fallback is the authoritative ``ChatSession.language_code``, read at
+        translation time. The ROW is never rewritten, so a wrong inference costs
+        one bad translation the operator can retry, rather than corrupting
+        history. Without this, every conversation already in flight at deploy
+        would hand the operator an untranslated bot side forever.
+        """
+        _seed(db)  # session language is "hi"
+        legacy_bot = add_chat_message(db, "sess-1", role="bot", content="नमस्ते जी")
         db.commit()
+
         monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
         monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._stub()))
         asyncio.run(ts._backfill_transcript("sess-1"))
+
         db.expire_all()
-        assert db.get(ChatMessage, legacy.id).translations is None
+        row = db.get(ChatMessage, legacy_bot.id)
+        assert row.translations["en"]["content"] == "TRANSLATED"
+        # Derived, not written back: the row's own column stays untouched.
+        assert row.source_language is None
 
     def test_skips_messages_already_in_the_operator_language(self, db, monkeypatch):
         _seed(db)
@@ -803,3 +865,134 @@ class TestTranscriptBackfill:
 
     def test_spawn_outside_an_event_loop_is_a_noop(self):
         ts.spawn_transcript_backfill("sess-1")
+
+
+class TestBotTurnStamping:
+    """The other half of the fix: bot turns must CARRY a language to translate.
+
+    Widening the backfill to bot turns is useless if those rows have no
+    ``source_language``, so this guards the write side.
+    """
+
+    def test_a_bot_turn_persists_its_language(self, db):
+        _seed(db)
+        msg = add_chat_message(db, "sess-1", role="bot", content="नमस्ते जी", source_language="hi")
+        db.commit()
+        db.expire_all()
+        assert db.get(ChatMessage, msg.id).source_language == "hi"
+
+    def test_every_bot_insert_in_the_rag_pipeline_stamps_the_language(self):
+        """A source assertion, because a behavioural test cannot cover this.
+
+        ``rag_service`` writes bot turns from sixteen places across the
+        streaming and non-streaming pipelines. A seventeenth added without
+        ``source_language`` would silently hand operators an untranslatable
+        row, and only in whichever branch that call site serves. Reverting any
+        one stamp must fail here.
+        """
+        import re
+        from pathlib import Path
+
+        source = Path(__file__).resolve().parents[1].joinpath("app/services/rag_service.py").read_text()
+        # Each add_chat_message(...) call that writes a bot turn.
+        calls = [
+            call
+            for call in re.findall(r"add_chat_message\((?:[^()]|\([^()]*\))*\)", source, re.S)
+            if 'role="bot"' in call
+        ]
+        assert len(calls) >= 16, f"expected every bot insert to be found, got {len(calls)}"
+        unstamped = [c for c in calls if "source_language=" not in c]
+        assert unstamped == [], f"{len(unstamped)} bot insert(s) do not stamp source_language"
+
+
+class TestBackfillAcrossBothRoles:
+    def _stub(self, text="TRANSLATED"):
+        class _P:
+            provider_name = "stub"
+            model = "stub-model"
+
+            async def translate(self, _t, _s, _target, timeout=None):
+                return ts.TranslationResult(content=text, provider=self.provider_name, model=self.model, cached=False)
+
+        return _P()
+
+    def test_the_bound_counts_messages_not_visitor_turns(self, db, monkeypatch):
+        """The cost ceiling is unchanged now that both roles are included."""
+        _seed(db)
+        for i in range(ts.TRANSCRIPT_BACKFILL_LIMIT):
+            add_chat_message(db, "sess-1", role="user", content=f"प्रश्न {i}", source_language="hi")
+            add_chat_message(db, "sess-1", role="bot", content=f"उत्तर {i}", source_language="hi")
+        db.commit()
+
+        charged = []
+        monkeypatch.setattr(ts, "charge_for_translation", lambda bot, mid, lang: charged.append(mid) or True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._stub()))
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        assert len(charged) == ts.TRANSCRIPT_BACKFILL_LIMIT
+        assert len(set(charged)) == len(charged), "the same message was charged twice"
+
+    def test_running_twice_translates_and_charges_nothing_the_second_time(self, db, monkeypatch):
+        """Idempotent: a retried or duplicated handoff must be free."""
+        _seed(db)
+        add_chat_message(db, "sess-1", role="user", content="कीमत क्या है", source_language="hi")
+        add_chat_message(db, "sess-1", role="bot", content="५००० रुपये", source_language="hi")
+        db.commit()
+
+        charged = []
+        monkeypatch.setattr(ts, "charge_for_translation", lambda bot, mid, lang: charged.append(mid) or True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._stub()))
+
+        asyncio.run(ts._backfill_transcript("sess-1"))
+        first = len(charged)
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        assert first == 2
+        assert len(charged) == first, "the second run re-charged an already-translated message"
+
+    def test_a_provider_outage_leaves_the_original_transcript_readable(self, db, monkeypatch):
+        """Translation failing must never cost the operator the conversation."""
+        _seed(db)
+        originals = {
+            add_chat_message(db, "sess-1", role="user", content="कीमत क्या है", source_language="hi").id: "कीमत क्या है",
+            add_chat_message(db, "sess-1", role="bot", content="५००० रुपये", source_language="hi").id: "५००० रुपये",
+        }
+        db.commit()
+
+        class _Dead:
+            provider_name = "stub"
+            model = "stub-model"
+
+            async def translate(self, _t, _s, _target, timeout=None):
+                raise ts.TranslationUnavailable("provider down")
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=_Dead()))
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        db.expire_all()
+        for mid, original in originals.items():
+            row = db.get(ChatMessage, mid)
+            assert row.content == original, "the original was lost"
+            # Recorded as failed so the console can offer a retry rather than
+            # rendering silence.
+            assert row.translations["en"]["status"] == "failed"
+            assert "content" not in row.translations["en"]
+
+    def test_history_returns_both_sides_after_a_reload(self, db, monkeypatch):
+        """A reload rebuilds from GET /chat/history, so it must carry both."""
+        _seed(db)
+        user_id = add_chat_message(db, "sess-1", role="user", content="कीमत क्या है", source_language="hi").id
+        bot_id = add_chat_message(db, "sess-1", role="bot", content="५००० रुपये", source_language="hi").id
+        db.commit()
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._stub()))
+        asyncio.run(ts._backfill_transcript("sess-1"))
+
+        db.expire_all()
+        for mid in (user_id, bot_id):
+            row = db.get(ChatMessage, mid)
+            assert row.source_language == "hi"
+            assert row.translations["en"]["content"] == "TRANSLATED"
+            assert row.translations["en"]["status"] == "ok"

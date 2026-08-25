@@ -626,10 +626,23 @@ async def translate_outgoing(
 # Transcript backfill on handoff
 # ─────────────────────────────────────────────────────────────────────────────
 
+#: Roles whose content is real conversation the operator must be able to read.
+#: ``system`` is excluded: those are per-viewer UI notices, not anything either
+#: party said. ``operator`` turns are translated on the way OUT by
+#: ``translate_outgoing``, never here.
+TRANSLATABLE_ROLES: tuple[str, ...] = ("user", "bot")
+
 #: How far back to translate when an operator picks up a conversation. The
 #: operator needs enough context to answer, not the entire history of a visitor
 #: who has been chatting for an hour. Every message costs a credit, so this is
 #: the cap that keeps a handoff's cost bounded and predictable.
+#:
+#: Counted in MESSAGES, across both roles. It used to select 20 visitor turns;
+#: now that the bot's own replies are translated too, the same 20 covers
+#: roughly ten exchanges instead of twenty. That is deliberate: it holds the
+#: worst-case cost of a handoff at exactly what it was before (20 credits, 20
+#: provider calls) while giving the operator both halves of the conversation,
+#: which is what makes the context usable at all.
 TRANSCRIPT_BACKFILL_LIMIT = 20
 
 
@@ -657,7 +670,18 @@ def spawn_transcript_backfill(session_id: str) -> None:
 
 
 async def _backfill_transcript(session_id: str) -> None:
-    """Translate recent visitor turns that have no translation for the operator.
+    """Translate the recent transcript into the operator's working language.
+
+    Covers BOTH sides of the conversation. An earlier version translated only
+    the visitor's turns, on the reasoning that the AI already answered in the
+    visitor's language. That was the wrong call: the operator could read what
+    the customer asked but not what the bot had already told them, which is
+    exactly the context needed to avoid repeating or contradicting it. Half a
+    transcript in your working language is worse than none, because it reads
+    as complete.
+
+    ``system`` turns are excluded. They are UI notices ("operator joined"),
+    generated per-viewer by the client, not conversation content.
 
     Catches everything: this runs detached, and a handoff must never fail
     because a translation did.
@@ -669,34 +693,41 @@ async def _backfill_transcript(session_id: str) -> None:
     from app.services.live_chat_service import manager
 
     try:
-        target, bot, _source = resolve_incoming_target(session_id)
+        target, bot, session_source = resolve_incoming_target(session_id)
         if not target or bot is None:
             return
 
-        # Only the VISITOR's turns. Bot answers are already native to the
-        # visitor's language (Phase 3) and are not the operator's to act on;
-        # translating them would double the cost for no decision-making value.
         with get_session() as session:
             rows = session.execute(
                 select(ChatMessage.id, ChatMessage.content, ChatMessage.source_language, ChatMessage.translations)
-                .where(ChatMessage.session_id == session_id, ChatMessage.role == "user")
+                .where(ChatMessage.session_id == session_id, ChatMessage.role.in_(TRANSLATABLE_ROLES))
                 .order_by(ChatMessage.id.desc())
                 .limit(TRANSCRIPT_BACKFILL_LIMIT)
             ).all()
 
-        # Carry each row's OWN source_language: a session can change language
-        # mid-conversation, so the session-level value is not necessarily what
-        # any given turn was written in.
-        pending = [
-            (mid, content, source_language)
-            for mid, content, source_language, translations in rows
-            # Skip anything already done, anything with no language to
-            # translate from, and anything already in the operator's language.
-            if content
-            and source_language
-            and language_from_locale(source_language) != target
-            and not (translations or {}).get(target)
-        ]
+        pending = []
+        for mid, content, source_language, translations in rows:
+            if not content:
+                continue
+            # Prefer the row's OWN language: a session can change language
+            # mid-conversation, so the session-level value is not necessarily
+            # what any given turn was written in.
+            #
+            # Fall back to the session language ONLY for rows that predate
+            # bot-turn stamping. That is a read-time inference for this one
+            # translation, not a write: the row is never rewritten, so a wrong
+            # guess costs one bad translation and can be retried, rather than
+            # corrupting history. Rows with neither are skipped, which is the
+            # safe direction: the operator keeps the original.
+            effective = source_language or session_source
+            if not effective:
+                continue
+            if language_from_locale(effective) == target:
+                continue
+            if (translations or {}).get(target):
+                continue
+            pending.append((mid, content, effective))
+
         if not pending:
             return
 

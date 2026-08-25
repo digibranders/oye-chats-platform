@@ -6089,7 +6089,13 @@ def rag_pipeline(
             )
             if _ask_msg is not None:
                 _name_bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_ask_msg, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_ask_msg,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.commit()
                 return {
@@ -6141,7 +6147,13 @@ def rag_pipeline(
                     _intent.answer, session, session_id, bid, cid, question, language=language
                 )
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_intent_answer,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.commit()
                 return {
@@ -6164,7 +6176,13 @@ def rag_pipeline(
                 )
                 _refusal = _off_topic_refusal(_company_name)
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_refusal,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.commit()
                 return {
@@ -6189,7 +6207,13 @@ def rag_pipeline(
                 )
                 _refusal = _off_topic_refusal(_company_name)
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_refusal,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.commit()
                 return {
@@ -6228,7 +6252,13 @@ def rag_pipeline(
                             cached_qa["answer"], session, session_id, bid, cid, question, language=language
                         )
                         bot_msg = add_chat_message(
-                            session, session_id, client_id=cid, role="bot", content=_cached_answer, bot_id=bid
+                            session,
+                            session_id,
+                            client_id=cid,
+                            role="bot",
+                            content=_cached_answer,
+                            bot_id=bid,
+                            source_language=_lang_base(language),
                         )
                         session.commit()
                         return {
@@ -6429,7 +6459,14 @@ def rag_pipeline(
                         _company_name
                     )
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_pivot,
+                        bot_id=bid,
+                        is_unanswered=True,
+                        source_language=_lang_base(language),
                     )
                     session.commit()
                     return {
@@ -6478,7 +6515,14 @@ def rag_pipeline(
                         _company_name
                     )
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_pivot,
+                        bot_id=bid,
+                        is_unanswered=True,
+                        source_language=_lang_base(language),
                     )
                     session.commit()
                     return {
@@ -6831,6 +6875,7 @@ def rag_pipeline(
                 role="bot",
                 content=answer,
                 bot_id=bid,
+                source_language=_lang_base(language),
                 media_card=_media_card,
                 media_secondary=_media_secondary,
             )
@@ -7199,7 +7244,13 @@ async def rag_pipeline_stream(
                 yield _stream_metadata(session_id, [], language)
                 yield _ask_msg
                 _name_bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_ask_msg, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_ask_msg,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.flush()
                 _name_msg_id = _name_bot_msg.id
@@ -7243,7 +7294,13 @@ async def rag_pipeline_stream(
                 yield _stream_metadata(session_id, [], language)
                 yield _intent_answer
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_intent_answer,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.flush()
                 _msg_id = _bot_msg.id
@@ -7263,7 +7320,13 @@ async def rag_pipeline_stream(
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_refusal,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.flush()
                 _msg_id = _bot_msg.id
@@ -7285,7 +7348,13 @@ async def rag_pipeline_stream(
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_refusal,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
                 )
                 session.flush()
                 _msg_id = _bot_msg.id
@@ -7332,7 +7401,13 @@ async def rag_pipeline_stream(
                         yield _stream_metadata(session_id, cached_sources, language)
                         yield cached_answer
                         bot_msg = add_chat_message(
-                            session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid
+                            session,
+                            session_id,
+                            client_id=cid,
+                            role="bot",
+                            content=cached_answer,
+                            bot_id=bid,
+                            source_language=_lang_base(language),
                         )
                         session.flush()
                         _cached_msg_id = bot_msg.id
@@ -7598,7 +7673,14 @@ async def rag_pipeline_stream(
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_pivot,
+                        bot_id=bid,
+                        is_unanswered=True,
+                        source_language=_lang_base(language),
                     )
                     session.flush()
                     _msg_id = _bot_msg.id
@@ -7640,7 +7722,14 @@ async def rag_pipeline_stream(
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_pivot,
+                        bot_id=bid,
+                        is_unanswered=True,
+                        source_language=_lang_base(language),
                     )
                     session.flush()
                     _msg_id = _bot_msg.id
@@ -8099,6 +8188,7 @@ async def rag_pipeline_stream(
                         role="bot",
                         content=full_answer,
                         bot_id=bid,
+                        source_language=_lang_base(language),
                         media_card=_media_card,
                         media_secondary=_media_secondary,
                     )
