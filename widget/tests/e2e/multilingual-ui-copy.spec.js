@@ -167,19 +167,17 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
     // `isAvailable` hides /new and /clear until the visitor has sent something,
     // so a fresh chat offers /human alone. That is the one to assert on.
     //
-    // Asserted on rendered TEXT rather than `toBeVisible()`: the palette row is
-    // a `flex-1 min-w-0` span whose measured width is 0 inside the shadow host
-    // (the host itself measures 0x0 because its content is position:fixed), so
-    // Playwright reports it hidden. That is identical in English and unrelated
-    // to translation - the English build measures the same way.
+    // `toBeVisible()` deliberately, not a text match. An earlier revision of
+    // this test asserted on rendered text because the label measured 0 wide and
+    // Playwright called it hidden, and a comment here wrote that off as a
+    // shadow-host measurement artifact since it reproduced in English too. It
+    // was not an artifact: `/human`'s icon was ignoring its `size` prop and
+    // expanding to 320x320, squeezing the label to nothing. Visibility is the
+    // assertion that catches that; a text match sails straight past it.
     const composer = root.locator('textarea, input[type="text"]').first()
     await composer.click()
     await composer.fill('/')
-    await expect
-      .poll(async () => (await renderedText(page)).includes('लाइव एजेंट का अनुरोध करें'), {
-        timeout: 5000,
-      })
-      .toBe(true)
+    await expect(root.getByText('लाइव एजेंट का अनुरोध करें')).toBeVisible({ timeout: 5000 })
     await expectNoEnglishChrome(page, 'the slash palette')
   })
 

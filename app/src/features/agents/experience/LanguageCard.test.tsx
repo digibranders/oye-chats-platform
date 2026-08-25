@@ -14,13 +14,16 @@ vi.mock('../../../services/api', () => ({
   getLocales: () => Promise.resolve(CATALOG),
 }));
 
+// Shaped like the real `GET /locales`: the catalogue is WIDER than the set the
+// widget has dictionaries for, which is the whole reason `ui_translated` exists.
 const CATALOG = {
   locales: [
-    { code: 'en', locale: 'en-IN', name: 'English (India)', native_name: 'English (India)', direction: 'ltr' },
-    { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr' },
-    { code: 'fr', locale: 'fr-FR', name: 'French (France)', native_name: 'Français (France)', direction: 'ltr' },
+    { code: 'en', locale: 'en-IN', name: 'English (India)', native_name: 'English (India)', direction: 'ltr', ui_translated: true },
+    { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr', ui_translated: true },
+    { code: 'fr', locale: 'fr-FR', name: 'French (France)', native_name: 'Français (France)', direction: 'ltr', ui_translated: false },
+    { code: 'ur', locale: 'ur-PK', name: 'Urdu (Pakistan)', native_name: 'اردو', direction: 'rtl', ui_translated: false },
   ],
-  languages: { en: 'English', hi: 'Hindi', fr: 'French' },
+  languages: { en: 'English', hi: 'Hindi', fr: 'French', ur: 'Urdu' },
 };
 
 const config = (over: Partial<LanguageConfig> = {}): LanguageConfig => ({
@@ -141,5 +144,66 @@ describe('turning multilingual off', () => {
     renderCard(config({ enabled: false }), config({ enabled: false }));
     expect(screen.queryByText(/will turn multilingual off/i)).toBeNull();
     expect(screen.getByRole('button', { name: 'Save language' })).toBeTruthy();
+  });
+});
+
+/**
+ * The picker offers a SUBSET of the catalogue.
+ *
+ * The backend catalogue lists every locale the AI can converse in; the widget
+ * ships UI dictionaries for fewer. Offering the difference gave visitors
+ * answers in their language wrapped in an English interface, and on an RTL
+ * language a mirrored layout with English chrome. Two live bots were configured
+ * that way before this filter existed.
+ */
+describe('languages the widget is not translated into', () => {
+  it('does not offer them in the add picker', () => {
+    renderCard(config({ supportedLocales: ['en-IN'], defaultLocale: 'en-IN' }));
+    fireEvent.click(screen.getByLabelText('Add a language'));
+
+    // Hindi has a dictionary and is still offered.
+    expect(screen.getByRole('option', { name: /Hindi \(India\)/ })).toBeTruthy();
+    // French and Urdu do not, so they must not be selectable at all.
+    expect(screen.queryByRole('option', { name: /French/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: /Urdu/ })).toBeNull();
+  });
+
+  it('still lists one that is already saved, so it can be found and removed', () => {
+    // Filtering the picker does not clean up stored config. Hiding these would
+    // leave a customer able to see the symptom and not the cause.
+    renderCard(config({ supportedLocales: ['en-IN', 'ur-PK'], defaultLocale: 'en-IN' }));
+    expect(screen.getByLabelText('Remove Urdu (Pakistan)')).toBeTruthy();
+  });
+
+  it('explains the consequence and names the language', () => {
+    renderCard(config({ supportedLocales: ['en-IN', 'ur-PK'], defaultLocale: 'en-IN' }));
+    const notice = screen.getByRole('status', { name: /without a translated widget/i });
+    expect(notice.textContent).toMatch(/not translated into Urdu \(Pakistan\)/i);
+    expect(notice.textContent).toMatch(/buttons and forms stay in English/i);
+  });
+
+  it('names every offender when more than one is configured', () => {
+    renderCard(config({ supportedLocales: ['en-IN', 'ur-PK', 'fr-FR'], defaultLocale: 'en-IN' }));
+    const notice = screen.getByRole('status', { name: /without a translated widget/i });
+    expect(notice.textContent).toMatch(/Urdu \(Pakistan\)/);
+    expect(notice.textContent).toMatch(/French \(France\)/);
+  });
+
+  it('removing the last one takes the warning away', () => {
+    const { latest } = renderCard(config({ supportedLocales: ['en-IN', 'ur-PK'], defaultLocale: 'en-IN' }));
+    fireEvent.click(screen.getByLabelText('Remove Urdu (Pakistan)'));
+    expect(latest().supportedLocales).toEqual(['en-IN']);
+  });
+
+  it('says nothing when every configured language is translated', () => {
+    renderCard(config({ supportedLocales: ['en-IN', 'hi-IN'], defaultLocale: 'en-IN' }));
+    expect(screen.queryByRole('status', { name: /without a translated widget/i })).toBeNull();
+  });
+
+  it('tells the customer why the list is short', () => {
+    renderCard(config({ supportedLocales: ['en-IN'], defaultLocale: 'en-IN' }));
+    expect(
+      screen.getByText(/Only languages the chat widget itself is translated into can be added/i),
+    ).toBeTruthy();
   });
 });

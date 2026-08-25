@@ -973,18 +973,26 @@ test('customer-authored copy still wins over the translated default', () => {
     // Precedence is settings -> dictionary -> inline English. The sweep must not
     // have reordered it: a greeting the customer wrote is shown as written.
     const chat = readComponent('ChatWindow.jsx');
+    // Precedence is now three-way (see i18n/seededCopy.js): an authored value
+    // wins verbatim, the backend's seeded default is translated, and an empty
+    // field falls back to the widget's own line. `authoredCopy` is what draws
+    // the first boundary, so it must be consulted before any t().
     assert.match(
         chat,
-        /settings\?\.widget_messages\?\.rating_prompt\s*\n?\s*\|\|\s*t\('survey\.rating_prompt'\)/,
-        'rating_prompt: customer copy must be checked before the dictionary',
+        /authoredCopy\(\s*\n?\s*settings\.widget_messages\.rating_prompt/,
+        'rating_prompt: an authored value must still win over the dictionary',
     );
+    assert.match(chat, /t\('presets\.rating_prompt'\)/);
+    assert.match(chat, /t\('survey\.rating_prompt'\)/);
     const lead = readComponent('LeadCaptureForm.jsx');
     assert.match(lead, /settings\?\.lead_form_title \|\| t\('lead\.title'\)/);
     assert.match(lead, /settings\?\.lead_form_subtitle \|\| t\('lead\.subtitle'\)/);
     const launcher = readComponent('Launcher.jsx');
     assert.match(launcher, /settings\?\.greeting_message\s*\n?\s*\|\|\s*t\('launcher\.greeting_default'\)/);
     const welcome = readFileSync(new URL('../components/WelcomeScreen.jsx', import.meta.url), 'utf8');
-    assert.match(welcome, /settings\?\.welcome_subtitle \|\| t\('welcome\.subtitle'\)/);
+    assert.match(welcome, /authoredCopy\(settings\?\.welcome_subtitle, SEEDED\.welcome_subtitle\)/);
+    assert.match(welcome, /authoredCopy\(settings\?\.welcome_title, SEEDED\.welcome_title\)/);
+    assert.match(welcome, /authoredList\(messages\.welcome_suggestions, SEEDED\.welcome_suggestions\)/);
 });
 
 test('every t() key used in a component exists in the English dictionary', async () => {
@@ -1106,4 +1114,135 @@ test('every dictionary key is actually used by the widget', () => {
             'dictionary keys no component references; delete them or wire them up',
         );
     });
+});
+
+// ── Seeded copy vs authored copy ─────────────────────────────────────────────
+//
+// Reported from production: a bot configured for Hindi rendered its whole
+// welcome screen in English. The cause was not a missing translation. Every
+// bot arrives with `welcome_title`, `welcome_subtitle`, `waiting_message` and
+// `widget_messages` already populated from the backend's server_default, so
+// `settings.welcome_title || t(...)` never reached the `t(...)`.
+
+test('seededCopy: an untouched field is not treated as authored', async () => {
+    const { SEEDED, authoredCopy, authoredList } = await import('./seededCopy.js');
+    // Exactly what GET /bots/settings/public sends for a bot nobody edited.
+    assert.equal(authoredCopy(SEEDED.welcome_title, SEEDED.welcome_title), null);
+    assert.equal(authoredCopy(SEEDED.welcome_subtitle, SEEDED.welcome_subtitle), null);
+    assert.equal(authoredCopy(SEEDED.waiting_message, SEEDED.waiting_message), null);
+    assert.equal(authoredCopy(SEEDED.input_placeholder, SEEDED.input_placeholder), null);
+    assert.equal(authoredList(SEEDED.welcome_suggestions, SEEDED.welcome_suggestions), null);
+    // Surrounding whitespace is not authorship either.
+    assert.equal(authoredCopy(`  ${SEEDED.welcome_title}  `, SEEDED.welcome_title), null);
+});
+
+test('seededCopy: a real override is returned verbatim', async () => {
+    const { SEEDED, authoredCopy, authoredList } = await import('./seededCopy.js');
+    assert.equal(authoredCopy('Namaste from Acme', SEEDED.welcome_title), 'Namaste from Acme');
+    // Whitespace inside an authored value is the customer's, and is preserved.
+    assert.equal(authoredCopy('  Acme  ', SEEDED.welcome_title), '  Acme  ');
+    assert.deepEqual(authoredList(['Pricing'], SEEDED.welcome_suggestions), ['Pricing']);
+    // Same strings, different order, is a deliberate reordering.
+    const reordered = [...SEEDED.welcome_suggestions].reverse();
+    assert.deepEqual(authoredList(reordered, SEEDED.welcome_suggestions), reordered);
+});
+
+test('seededCopy: empty and malformed values fall through', async () => {
+    const { SEEDED, authoredCopy, authoredList } = await import('./seededCopy.js');
+    for (const empty of ['', '   ', null, undefined, 42, {}]) {
+        assert.equal(authoredCopy(empty, SEEDED.welcome_title), null, String(empty));
+    }
+    for (const empty of [[], null, undefined, 'nope', {}]) {
+        assert.equal(authoredList(empty, SEEDED.welcome_suggestions), null, String(empty));
+    }
+    // A partial list is still an override, not a coincidence.
+    assert.deepEqual(
+        authoredList(['Our Services'], SEEDED.welcome_suggestions),
+        ['Our Services'],
+    );
+});
+
+test('seeded welcome copy has a Hindi translation to fall through to', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+    for (const key of ['presets.welcome_title', 'presets.welcome_subtitle',
+        'presets.waiting_message', 'presets.rating_prompt']) {
+        const value = t(key);
+        assert.ok(value, `${key} must resolve`);
+        assert.ok(DEVANAGARI.test(value), `${key} must be Devanagari, got "${value}"`);
+    }
+    // The chips and the composer reuse keys that already existed, because the
+    // backend seeds exactly the strings those keys hold.
+    for (const key of ['welcome.suggestion_services', 'welcome.suggestion_about',
+        'welcome.suggestion_contact', 'input.placeholder']) {
+        assert.ok(DEVANAGARI.test(t(key)), key);
+    }
+    resetI18n();
+});
+
+test('the English preset wording matches what the backend seeds', async () => {
+    // If these drift, a bot on the default renders one sentence in English and
+    // a different one in Hindi, which reads as a mistranslation.
+    const { SEEDED } = await import('./seededCopy.js');
+    const { en } = await loadDicts();
+    assert.equal(en.messages.presets.welcome_subtitle, SEEDED.welcome_subtitle);
+    assert.equal(en.messages.presets.waiting_message, SEEDED.waiting_message);
+    assert.equal(en.messages.presets.rating_prompt, SEEDED.rating_prompt);
+    assert.equal(en.messages.input.placeholder, SEEDED.input_placeholder);
+    assert.deepEqual(
+        [en.messages.welcome.suggestion_services, en.messages.welcome.suggestion_about,
+            en.messages.welcome.suggestion_contact],
+        SEEDED.welcome_suggestions,
+    );
+    // welcome_title is the one exception: the seed carries an emoji that
+    // WelcomeScreen strips before rendering, so the dictionary holds the
+    // stripped form.
+    assert.equal(`${en.messages.presets.welcome_title} 👋`, SEEDED.welcome_title);
+});
+
+test('the welcome screen consults authoredCopy before any fallback', () => {
+    const src = readComponent('WelcomeScreen.jsx');
+    // All three cases must be distinguishable, so the absent branch (a
+    // time-of-day greeting) has to survive alongside the seeded branch.
+    assert.match(src, /hasTitle \? t\('presets\.welcome_title'\)/);
+    assert.match(src, /: getGreeting\(\)/);
+    assert.doesNotMatch(src, /settings\?\.welcome_title \|\| getGreeting\(\)/);
+});
+
+// ── Slash palette icon sizing ────────────────────────────────────────────────
+
+test('every slash command icon honours the size prop', async () => {
+    // The popover renders `<Icon size={14} />`. Two commands use lucide
+    // components, which map `size` to width/height. `/human` used a bare <svg>
+    // where `size` landed as an inert attribute, so the icon expanded to fill
+    // its container: on a fresh chat, where `/human` is the ONLY available
+    // command, the whole palette became one giant headphones glyph.
+    //
+    // Asserted on RENDERED markup rather than the element's props: lucide icons
+    // are forwardRef objects that cannot be called directly, and the rendered
+    // attributes are what actually sized the box.
+    const { createElement } = await import('react');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { SLASH_COMMANDS } = await import('../lib/slashCommands.js');
+
+    for (const cmd of SLASH_COMMANDS) {
+        const html = renderToStaticMarkup(createElement(cmd.icon, { size: 14 }));
+        assert.match(html, /width="14"/, `${cmd.name}: icon ignored size, width missing`);
+        assert.match(html, /height="14"/, `${cmd.name}: icon ignored size, height missing`);
+        // A stray `size` attribute is the exact symptom of the bug: React
+        // forwards an unknown prop straight onto the SVG element.
+        assert.doesNotMatch(html, /\ssize="/, `${cmd.name}: size leaked onto the element`);
+    }
+});
+
+test('a slash icon still renders at its natural size with no size prop', async () => {
+    const { createElement } = await import('react');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { SLASH_COMMANDS } = await import('../lib/slashCommands.js');
+    for (const cmd of SLASH_COMMANDS) {
+        const html = renderToStaticMarkup(createElement(cmd.icon, {}));
+        assert.match(html, /width="\d+"/, `${cmd.name}: no intrinsic width, would fill its container`);
+        assert.match(html, /height="\d+"/, `${cmd.name}: no intrinsic height`);
+    }
 });

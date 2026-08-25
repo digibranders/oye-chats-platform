@@ -273,5 +273,16 @@ export default {
             clear_description: 'Hide the messages above',
             human_description: 'Request a live agent',
         },
+        // Translations of the copy the BACKEND seeds into every new bot
+        // (api/app/db/models.py server_default). These are NOT the widget's own
+        // fallbacks: a bot that still carries the seeded wording must show the
+        // translated version of THAT wording, not a different sentence. See
+        // i18n/seededCopy.js for why the two cannot be collapsed.
+        presets: {
+            welcome_title: 'Hi there',
+            welcome_subtitle: 'How can we help you today?',
+            waiting_message: 'Connecting you to support...',
+            rating_prompt: 'How was your experience?',
+        },
     },
 };

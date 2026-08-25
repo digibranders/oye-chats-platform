@@ -1,5 +1,6 @@
 import React from 'react';
 import { t } from '../i18n/i18n.js';
+import { SEEDED, authoredCopy, authoredList } from '../i18n/seededCopy.js';
 
 const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration = 350 }) => {
     const messages = settings?.widget_messages || {};
@@ -8,7 +9,12 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
         t('welcome.suggestion_about') || 'About us',
         t('welcome.suggestion_contact') || 'Contact us',
     ];
-    const suggestions = messages.welcome_suggestions || settings?.welcome_suggestions || defaultSuggestions;
+    // `welcome_suggestions` arrives populated on every bot (backend server_default),
+    // so a plain `||` never reached defaultSuggestions and the chips stayed English.
+    const configuredSuggestions =
+        authoredList(messages.welcome_suggestions, SEEDED.welcome_suggestions) ??
+        authoredList(settings?.welcome_suggestions, SEEDED.welcome_suggestions);
+    const suggestions = configuredSuggestions || defaultSuggestions;
     // 'horizontal' (default) → pill row that wraps. 'vertical' → full-width
     // stacked rows that read like a menu. The greeting sits just above the
     // first action in both modes; vertical tightens that gap so the welcome
@@ -29,6 +35,25 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
         return text.replace(/[\p{Emoji}]/gu, '').trim();
     };
 
+    // Three distinct cases, and they are not interchangeable:
+    //   authored   -> the customer's wording, verbatim, in every language
+    //   seeded     -> the backend's default wording, translated
+    //   absent     -> the widget's own fallback (a time-of-day greeting)
+    // Collapsing the middle case into the first is what froze this screen in
+    // English; collapsing it into the last would silently swap a bot's
+    // "Hi there" for "Good evening". See i18n/seededCopy.js.
+    const hasTitle = Boolean(settings?.welcome_title?.trim());
+    const title =
+        authoredCopy(settings?.welcome_title, SEEDED.welcome_title)
+        || (hasTitle ? t('presets.welcome_title') || SEEDED.welcome_title : getGreeting());
+
+    const hasSubtitle = Boolean(settings?.welcome_subtitle?.trim());
+    const subtitle =
+        authoredCopy(settings?.welcome_subtitle, SEEDED.welcome_subtitle)
+        || (hasSubtitle
+            ? t('presets.welcome_subtitle') || SEEDED.welcome_subtitle
+            : t('welcome.subtitle') || 'How can I help you today?');
+
     const contentExitStyle = welcomeExiting ? {
         opacity: 0,
         transform: 'translateY(-20px)',
@@ -40,9 +65,9 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
             className="flex flex-col items-start text-left w-full"
             style={contentExitStyle || { animation: 'fadeUp 0.4s ease-out' }}
         >
-            <h2 className="text-2xl font-bold text-[#16202C]">{removeEmoji(settings?.welcome_title || getGreeting())}</h2>
+            <h2 className="text-2xl font-bold text-[#16202C]">{removeEmoji(title)}</h2>
             <p className={`text-[15px] text-gray-500 ${isVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
-                {settings?.welcome_subtitle || t('welcome.subtitle') || 'How can I help you today?'}
+                {subtitle}
             </p>
 
             <div

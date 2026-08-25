@@ -371,5 +371,11 @@ export default {
             clear_description: 'ऊपर के संदेश छिपाएँ',
             human_description: 'लाइव एजेंट का अनुरोध करें',
         },
+        presets: {
+            welcome_title: 'नमस्ते',
+            welcome_subtitle: 'आज हम आपकी क्या मदद कर सकते हैं?',
+            waiting_message: 'हम आपको सहायता टीम से जोड़ रहे हैं...',
+            rating_prompt: 'आपका अनुभव कैसा रहा?',
+        },
     },
 };

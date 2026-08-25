@@ -5,6 +5,7 @@ import {
   type LocaleEntry,
   directionForLocale,
   getLocaleCatalog,
+  isUiTranslated,
   labelForLanguage,
   nameForLocale,
   setLocaleCatalog,
@@ -53,6 +54,8 @@ export interface UseLocaleCatalogResult {
   localeNameFor: (locale: string | null | undefined) => string | null;
   /** Text direction for a locale or bare language code. */
   directionFor: (locale: string | null | undefined) => 'ltr' | 'rtl';
+  /** Whether the widget's own UI is translated into this locale's language. */
+  uiTranslatedFor: (locale: string | null | undefined) => boolean;
 }
 
 export function useLocaleCatalog(): UseLocaleCatalogResult {
@@ -77,9 +80,22 @@ export function useLocaleCatalog(): UseLocaleCatalogResult {
     [catalog],
   );
 
+  const uiTranslatedFor = useCallback(
+    (locale: string | null | undefined) => isUiTranslated(locale),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catalog],
+  );
+
   return useMemo(
-    () => ({ locales: catalog.locales, ready: catalog.ready, labelFor, localeNameFor, directionFor }),
-    [catalog, labelFor, localeNameFor, directionFor],
+    () => ({
+      locales: catalog.locales,
+      ready: catalog.ready,
+      labelFor,
+      localeNameFor,
+      directionFor,
+      uiTranslatedFor,
+    }),
+    [catalog, labelFor, localeNameFor, directionFor, uiTranslatedFor],
   );
 }
 

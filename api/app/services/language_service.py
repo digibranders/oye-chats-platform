@@ -40,6 +40,21 @@ SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
 # Right-to-left language base codes
 RTL_LANGUAGES: frozenset[str] = frozenset({"ar", "he", "fa", "ur"})
 
+# Base languages the WIDGET ships a UI dictionary for.
+#
+# Distinct from SUPPORTED_LANGUAGE_CODES above, which is about what the AI can
+# converse in. A locale can be in that set and absent here: the bot answers in
+# the visitor's language while the widget's own buttons, forms and error
+# messages stay English. On an RTL language that is worse than either half,
+# because the widget flips to a right-to-left layout and then renders English
+# into it.
+#
+# The authority is widget/src/i18n/i18n.js's DICTIONARY_LOADERS plus English,
+# which needs no runtime dictionary because every call site carries an inline
+# English default. tests/test_widget_ui_languages_contract.py reads the widget's
+# locales directory and fails if the two drift.
+WIDGET_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
+
 # Standard locale catalog with metadata
 KNOWN_LOCALES: dict[str, LocaleInfo] = {
     "en-IN": LocaleInfo(
@@ -106,6 +121,12 @@ KNOWN_LOCALES: dict[str, LocaleInfo] = {
     "fa-IR": LocaleInfo(code="fa", locale="fa-IR", name="Persian (Iran)", native_name="فارسی", direction="rtl"),
     "ur-PK": LocaleInfo(code="ur", locale="ur-PK", name="Urdu (Pakistan)", native_name="اردو", direction="rtl"),
 }
+
+# Derived rather than written on each of the 29 entries above: a hand-set flag
+# repeated per row is a drift waiting to happen, and the rule is one line.
+for _info in KNOWN_LOCALES.values():
+    _info.ui_translated = _info.code in WIDGET_UI_LANGUAGES
+del _info
 
 
 def _derive_base_language_names() -> dict[str, str]:

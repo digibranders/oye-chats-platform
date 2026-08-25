@@ -1,10 +1,23 @@
 import React from 'react';
 import { RotateCcw, Eraser } from 'lucide-react';
 
-const HeadphonesIcon = (props) =>
+// Hand-rolled rather than imported so it matches the headphones glyph the
+// composer's own handoff button draws inline.
+//
+// `size` MUST be translated into width/height here. The popover renders every
+// command icon as `<Icon size={14} />`, which is lucide-react's API: the other
+// two commands use real lucide components and honour it. This one is a bare
+// <svg>, where an unknown `size` prop lands as an inert SVG attribute and the
+// element falls back to filling its container. That shipped: `/human` is the
+// only command offered on a fresh chat, so the palette rendered as one
+// full-width headphones icon roughly 300px tall with the label squeezed to
+// zero width.
+const HeadphonesIcon = ({ size = 24, ...props }) =>
     React.createElement(
         'svg',
         {
+            width: size,
+            height: size,
             viewBox: '0 0 24 24',
             fill: 'none',
             stroke: 'currentColor',

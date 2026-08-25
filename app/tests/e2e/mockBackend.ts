@@ -50,6 +50,11 @@ export interface MockOptions {
   translate?: { ok: true; translated: string } | { ok: false; status: number };
   /** Whether the operator is on duty. `false` means no socket connects. */
   online?: boolean;
+  /**
+   * Overrides merged into the bot the API serves. Use it to reproduce a stored
+   * configuration, such as a locale the widget has no dictionary for.
+   */
+  bot?: Partial<typeof BOT>;
 }
 
 const ENTITLEMENTS = {
@@ -71,10 +76,14 @@ const ENTITLEMENTS = {
  */
 const LOCALES = {
   locales: [
-    { code: 'en', locale: 'en-IN', name: 'English (India)', native_name: 'English (India)', direction: 'ltr' },
-    { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr' },
+    { code: 'en', locale: 'en-IN', name: 'English (India)', native_name: 'English (India)', direction: 'ltr', ui_translated: true },
+    { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr', ui_translated: true },
+    // In the catalogue because the AI converses in them, but the widget ships
+    // no UI dictionary, so the language picker must not offer them.
+    { code: 'fr', locale: 'fr-FR', name: 'French (France)', native_name: 'Français (France)', direction: 'ltr', ui_translated: false },
+    { code: 'ur', locale: 'ur-PK', name: 'Urdu (Pakistan)', native_name: 'اردو', direction: 'rtl', ui_translated: false },
   ],
-  languages: { en: 'English', hi: 'Hindi' },
+  languages: { en: 'English', hi: 'Hindi', fr: 'French', ur: 'Urdu' },
 };
 
 const BOT = {
@@ -96,7 +105,8 @@ const BOT = {
  * Call BEFORE `page.goto`.
  */
 export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<OperatorSocket> {
-  const { history = [], operatorLocale = 'en-IN', translate, online = true } = opts;
+  const { history = [], operatorLocale = 'en-IN', translate, online = true, bot: botOverrides } = opts;
+  const bot = { ...BOT, ...botOverrides };
 
   // Auth lives in localStorage and is read at app startup, so it has to be in
   // place before the bundle evaluates.
@@ -129,8 +139,13 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   await page.route(`${API}/auth/me*`, (route) =>
     route.fulfill({ json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true } }),
   );
-  await page.route(`${API}/bots`, (route) => route.fulfill({ json: [BOT] }));
-  await page.route(`${API}/bots?*`, (route) => route.fulfill({ json: [BOT] }));
+  await page.route(`${API}/bots`, (route) => route.fulfill({ json: [bot] }));
+  await page.route(`${API}/bots?*`, (route) => route.fulfill({ json: [bot] }));
+  // `getClientSettings` reads a single bot. Without this it fell through to the
+  // catch-all `{}`, so every agent page in these specs was rendering an empty
+  // payload and its defaults rather than the bot above.
+  // The `*` glob does not cross `/`, so sub-resources are unaffected.
+  await page.route(`${API}/bots/*`, (route) => route.fulfill({ json: bot }));
   await page.route(`${API}/operators/me/status*`, (route) =>
     route.fulfill({ json: { operator_id: 1, operator_name: 'Asha', is_online: online } }),
   );
@@ -141,7 +156,7 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
         supported_languages: [],
         // What the operator's translation picker may offer (Phase 5A): the
         // locales this bot supports, not the whole platform catalogue.
-        available_locales: BOT.language_config.supported_locales,
+        available_locales: bot.language_config.supported_locales,
       },
     }),
   );
