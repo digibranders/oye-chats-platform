@@ -29,6 +29,16 @@ export interface LocaleEntry {
   /** Endonym: "हिन्दी". */
   nativeName: string;
   direction: 'ltr' | 'rtl';
+  /**
+   * Whether the WIDGET's own buttons and labels are translated into this
+   * language, as opposed to the AI merely being able to converse in it.
+   *
+   * False means a visitor who picks it reads the chatbot's answers in their
+   * language and the widget's chrome in English. On an RTL language the layout
+   * also mirrors, so the result is an English interface laid out backwards.
+   * The language picker offers only the true ones.
+   */
+  uiTranslated: boolean;
 }
 
 export interface LocaleCatalog {
@@ -93,6 +103,24 @@ export function nameForLocale(locale: string | null | undefined): string | null 
   return match ? match.name : labelForLanguage(trimmed);
 }
 
+/**
+ * Whether the widget's own UI is translated into this locale's language.
+ *
+ * Unknown tags return false: an unrecognised locale certainly has no
+ * dictionary, and this gates a control that must not offer more than the
+ * widget can actually render.
+ */
+export function isUiTranslated(locale: string | null | undefined): boolean {
+  if (!locale || typeof locale !== 'string') return false;
+  const normalized = locale.trim().replace(/_/g, '-').toLowerCase();
+  const match = snapshot.locales.find((entry) => entry.locale.toLowerCase() === normalized);
+  if (match) return match.uiTranslated;
+  // A bare base code ('hi') is still answerable: any locale of that language
+  // shares its dictionary.
+  const base = baseLanguage(locale);
+  return base ? snapshot.locales.some((e) => e.code === base && e.uiTranslated) : false;
+}
+
 /** Text direction for a locale or bare language code. */
 export function directionForLocale(locale: string | null | undefined): 'ltr' | 'rtl' {
   if (!locale || typeof locale !== 'string') return 'ltr';
@@ -134,6 +162,10 @@ function parseLocale(value: unknown): LocaleEntry | null {
     name,
     nativeName: typeof row.native_name === 'string' && row.native_name ? row.native_name : name,
     direction: row.direction === 'rtl' ? 'rtl' : 'ltr',
+    // Absent means an API older than the field, which can only happen for the
+    // seconds a deploy is in flight. Failing OPEN there shows the full list
+    // briefly; failing closed would empty the picker and read as broken.
+    uiTranslated: typeof row.ui_translated === 'boolean' ? row.ui_translated : true,
   };
 }
 

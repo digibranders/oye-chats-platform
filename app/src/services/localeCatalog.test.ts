@@ -3,6 +3,7 @@ import {
   baseLanguage,
   directionForLocale,
   getLocaleCatalog,
+  isUiTranslated,
   labelForLanguage,
   nameForLocale,
   resetLocaleCatalog,
@@ -152,9 +153,18 @@ describe('no locale registry survives in the dashboard source', () => {
     eager: true,
   }) as Record<string, string>;
 
+  /**
+   * Test files are exempt. The rule protects PRODUCTION source from growing a
+   * second locale registry; a spec listing a few tags to build a scenario is
+   * fixture data, not a registry. This file was already exempted for exactly
+   * that reason, and the exemption is generalised rather than special-cased
+   * once per new spec.
+   */
+  const isSpec = (path: string): boolean => /\.test\.tsx?$/.test(path);
+
   function offendersMatching(pattern: RegExp, allow: (path: string) => boolean = () => false): string[] {
     return Object.entries(SOURCES)
-      .filter(([path]) => !path.endsWith('localeCatalog.test.ts') && !allow(path))
+      .filter(([path]) => !isSpec(path) && !allow(path))
       .filter(([, source]) => pattern.test(source))
       .map(([path]) => path);
   }
@@ -173,5 +183,50 @@ describe('no locale registry survives in the dashboard source', () => {
     // Three or more quoted locale tags in a row is what a registry looks like.
     const registry = /(['"][a-z]{2}-[A-Z]{2}['"],\s*){2,}['"][a-z]{2}-[A-Z]{2}['"]/;
     expect(offendersMatching(registry, (path) => path.endsWith('/services/localeCatalog.ts'))).toEqual([]);
+  });
+});
+
+describe('uiTranslated', () => {
+  it('is read from the payload', () => {
+    setLocaleCatalog({
+      locales: [
+        { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr', ui_translated: true },
+        { code: 'ur', locale: 'ur-PK', name: 'Urdu (Pakistan)', native_name: 'اردو', direction: 'rtl', ui_translated: false },
+      ],
+      languages: { hi: 'Hindi', ur: 'Urdu' },
+    });
+    expect(isUiTranslated('hi-IN')).toBe(true);
+    expect(isUiTranslated('ur-PK')).toBe(false);
+  });
+
+  it('answers for a bare base code from any locale of that language', () => {
+    setLocaleCatalog({
+      locales: [
+        { code: 'en', locale: 'en-GB', name: 'English (UK)', native_name: 'English (UK)', direction: 'ltr', ui_translated: true },
+      ],
+      languages: { en: 'English' },
+    });
+    expect(isUiTranslated('en')).toBe(true);
+    expect(isUiTranslated('en-US')).toBe(true);
+  });
+
+  it('is false for anything the catalogue does not know', () => {
+    // This gates a control that must never offer more than the widget renders,
+    // so an unrecognised tag has to be treated as untranslated.
+    setLocaleCatalog({ locales: [], languages: {} });
+    for (const value of ['zz-ZZ', '', null, undefined, 'not a locale']) {
+      expect(isUiTranslated(value as string)).toBe(false);
+    }
+  });
+
+  it('defaults to true when the API predates the field', () => {
+    // Only reachable while a deploy is in flight. Failing open shows the full
+    // list for a few seconds; failing closed would empty the picker entirely
+    // and read as a broken screen.
+    setLocaleCatalog({
+      locales: [{ code: 'fr', locale: 'fr-FR', name: 'French', native_name: 'Français', direction: 'ltr' }],
+      languages: { fr: 'French' },
+    });
+    expect(isUiTranslated('fr-FR')).toBe(true);
   });
 });

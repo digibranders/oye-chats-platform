@@ -40,7 +40,7 @@ export function LanguageCard({
 }): ReactElement {
   const addId = useId();
   const defaultId = useId();
-  const { locales, localeNameFor } = useLocaleCatalog();
+  const { locales, localeNameFor, uiTranslatedFor } = useLocaleCatalog();
 
   const off = !value.enabled;
   const singleLocale = value.supportedLocales.length < 2;
@@ -49,12 +49,35 @@ export function LanguageCard({
   // widget, so it gets an explicit second step rather than a silent save.
   const turningOff = baseline.enabled && !value.enabled;
 
+  /**
+   * Only languages the WIDGET is translated into can be added.
+   *
+   * The catalogue is wider than the widget's dictionaries: the AI converses in
+   * every locale it lists, but the widget's own buttons, forms and error
+   * messages exist in a smaller set. Offering the difference produced a visitor
+   * experience nobody would choose on purpose - answers in Spanish, interface
+   * in English - and on Arabic or Urdu the layout mirrored while the chrome
+   * stayed English. Two live bots were configured that way before this filter
+   * existed.
+   */
   const addable = useMemo(
     () =>
       locales
-        .filter((entry) => !value.supportedLocales.includes(entry.locale))
+        .filter((entry) => entry.uiTranslated && !value.supportedLocales.includes(entry.locale))
         .map((entry) => ({ value: entry.locale, label: entry.name, search: `${entry.name} ${entry.nativeName}` })),
     [locales, value.supportedLocales],
+  );
+
+  /**
+   * Locales already saved that the widget has no dictionary for.
+   *
+   * Filtering the picker does not clean up what is already stored, and hiding
+   * these would leave a customer with a configuration they can see the effects
+   * of but not the cause of. They stay listed, marked, and removable.
+   */
+  const untranslated = useMemo(
+    () => value.supportedLocales.filter((locale) => !uiTranslatedFor(locale)),
+    [value.supportedLocales, uiTranslatedFor],
   );
 
   const defaultOptions = useMemo(
@@ -120,6 +143,13 @@ export function LanguageCard({
                   key={locale}
                   className="inline-flex items-center gap-1.5 rounded-full border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] py-1 pl-3 pr-1.5 text-[12px] text-[var(--ds-text)]"
                 >
+                  {!uiTranslatedFor(locale) && (
+                    <AlertTriangle
+                      size={11}
+                      aria-hidden="true"
+                      className="text-[var(--ds-warning,var(--ds-text-muted))]"
+                    />
+                  )}
                   {localeNameFor(locale) ?? locale}
                   {locale === value.defaultLocale && (
                     <span className="text-[11px] text-[var(--ds-text-subtle)]">default</span>
@@ -156,6 +186,38 @@ export function LanguageCard({
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
                 A chatbot needs at least one language, so the last one can’t be removed.
               </p>
+            )}
+            <p className="text-[11px] text-[var(--ds-text-subtle)]">
+              Only languages the chat widget itself is translated into can be added, so visitors
+              never meet an English interface around a translated conversation.
+            </p>
+            {untranslated.length > 0 && (
+              <div
+                role="status"
+                // Named so it is distinguishable from the turning-off warning
+                // below, which is also a status region.
+                aria-label="Languages without a translated widget"
+                className="flex gap-2.5 rounded-[var(--ds-radius-lg)] border border-[var(--ds-warning-border,var(--ds-border))] bg-[var(--ds-bg-sunken)] p-3"
+              >
+                <AlertTriangle
+                  size={14}
+                  className="mt-0.5 shrink-0 text-[var(--ds-warning,var(--ds-text-muted))]"
+                  aria-hidden="true"
+                />
+                <div className="space-y-1 text-[12px] text-[var(--ds-text-muted)]">
+                  <p className="font-medium text-[var(--ds-text)]">
+                    {untranslated.length === 1
+                      ? `The widget is not translated into ${localeNameFor(untranslated[0]) ?? untranslated[0]}.`
+                      : 'The widget is not translated into some of these languages.'}
+                  </p>
+                  <p>
+                    Your chatbot answers in{' '}
+                    {untranslated.map((locale) => localeNameFor(locale) ?? locale).join(', ')}, but
+                    its buttons and forms stay in English. Remove{' '}
+                    {untranslated.length === 1 ? 'it' : 'them'} unless you want that.
+                  </p>
+                </div>
+              </div>
             )}
           </div>
 

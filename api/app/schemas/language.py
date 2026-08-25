@@ -14,6 +14,14 @@ class LocaleInfo(BaseModel):
     native_name: str = Field(..., description="Endonym / native name, e.g. 'English', 'हिन्दी'")
     direction: Literal["ltr", "rtl"] = Field(default="ltr", description="Text direction")
     enabled: bool = Field(default=True, description="Whether this locale is active")
+    ui_translated: bool = Field(
+        default=False,
+        description=(
+            "Whether the chat widget's own buttons and labels are translated into this "
+            "language. False means the AI can still converse in it, but the widget chrome "
+            "renders in English."
+        ),
+    )
 
 
 class LanguageContext(BaseModel):
