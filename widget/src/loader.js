@@ -41,6 +41,18 @@ const stub = {
   shutdown: stubMethod('shutdown'),
   boot: stubMethod('boot'),
   update: stubMethod('update'),
+  setLocale: stubMethod('setLocale'),
+  getLocale: () => {
+    if (_impl && typeof _impl.getLocale === 'function') {
+      return _impl.getLocale()
+    }
+    try {
+      const key = (typeof window !== 'undefined' && (window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY)) || 'default'
+      return (typeof localStorage !== 'undefined' && localStorage.getItem(`oyechats_locale_${key}`)) || 'en-IN'
+    } catch {
+      return 'en-IN'
+    }
+  },
   on: stubMethod('on'),
   off: stubMethod('off'),
   once: stubMethod('once'),
@@ -84,11 +96,19 @@ const findScriptTag = () => {
 const scriptTag = findScriptTag()
 const botKey = scriptTag?.getAttribute('data-bot-key') || null
 const apiKey = scriptTag?.getAttribute('data-api-key') || null
+const apiUrl = scriptTag?.getAttribute('data-api-url') || null
 
 if (botKey) {
   window.OYECHATS_BOT_KEY = botKey
 } else if (apiKey) {
   window.OYECHATS_API_KEY = apiKey
+}
+if (apiUrl) {
+  window.OYECHATS_API_URL = apiUrl
+} else if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  if (!window.OYECHATS_API_URL && scriptTag?.src?.includes('localhost')) {
+    window.OYECHATS_API_URL = 'http://localhost:8000'
+  }
 }
 
 // ── Resolve the base URL for app chunks. ───────────────────────────────────

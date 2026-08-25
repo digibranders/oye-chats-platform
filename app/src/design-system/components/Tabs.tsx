@@ -24,6 +24,13 @@ export interface TabsProps {
  * roving `tabIndex`, and arrow / Home / End keyboard navigation. The caller
  * renders the panel for `value` (associate it via `aria-controls`/`id` as
  * needed).
+ *
+ * The strip scrolls horizontally rather than overflowing. Without that, a set
+ * of tabs wider than its column squashed its labels onto three lines and then
+ * still spilled sideways underneath whatever sat beside it - on the agent
+ * Experience page the last two tabs rendered under the preview panel, where
+ * clicks landed on the panel instead of the tab. Scrolling keeps every tab
+ * reachable at any width.
  */
 export function Tabs({ tabs, value, onChange, ariaLabel, className }: TabsProps) {
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -91,7 +98,11 @@ export function Tabs({ tabs, value, onChange, ariaLabel, className }: TabsProps)
       role="tablist"
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex items-center gap-1 border-b border-[var(--ds-border)]',
+        // `max-w-full` caps the shrink-to-fit width at the container so there
+        // is something to scroll; `pb-px` absorbs the tabs' `-mb-px` overhang,
+        // which would otherwise count as a 1px vertical overflow and summon a
+        // vertical scrollbar next to the horizontal one.
+        'inline-flex max-w-full items-center gap-1 overflow-x-auto border-b border-[var(--ds-border)] pb-px',
         className,
       )}
     >
@@ -113,7 +124,9 @@ export function Tabs({ tabs, value, onChange, ariaLabel, className }: TabsProps)
             onClick={() => !tab.disabled && onChange(tab.key)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              '-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-40',
+              // `shrink-0`: a tab keeps its label on one line and scrolls out
+              // of view instead of being compressed until the text wraps.
+              '-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-40',
               selected
                 ? 'border-[var(--ds-accent)] text-[var(--ds-accent-text)]'
                 : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',

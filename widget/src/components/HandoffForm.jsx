@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { User, Mail, ArrowRight, Headphones, ArrowLeft } from 'lucide-react';
+import { User, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
+import { t } from '../i18n/i18n.js';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 'pending' }) => {
     const hasEmail = !!(existingLeadInfo?.email?.trim());
@@ -48,7 +49,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
         if (!email || email === lastCheckedEmailRef.current) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
-            setEmailError('Please enter a valid email address.');
+            setEmailError(t('handoff.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
@@ -63,7 +64,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 setEmailError('');
             } else {
                 setEmailCheckState('invalid');
-                setEmailError(result.reason || 'Please enter a valid email address.');
+                setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
             }
             return result;
         });
@@ -78,7 +79,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
             const email = formData.email.trim();
             if (!looksLikeEmail(email)) {
                 setEmailCheckState('invalid');
-                setEmailError('Please enter a valid email address.');
+                setEmailError(t('handoff.invalid_email') || 'Please enter a valid email address.');
                 return;
             }
 
@@ -96,7 +97,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 const result = await checkEmailWithServer(email);
                 if (!result.valid) {
                     setEmailCheckState('invalid');
-                    setEmailError(result.reason || 'Please enter a valid email address.');
+                    setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
                     return;
                 }
                 setEmailCheckState('valid');
@@ -122,14 +123,16 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                     className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
                     style={{ backgroundColor: `${primaryColor}15` }}
                 >
-                    <Headphones className="w-3.5 h-3.5" style={{ color: primaryColor }} />
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: primaryColor }}>
+                        <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+                    </svg>
                 </div>
                 <div>
-                    <p className="text-[13px] font-semibold text-[#16202C] leading-tight">
-                        Connect with our team
+                    <p className="text-[13px] font-semibold text-[#16202C]">
+                        {t('handoff.title') || 'Talk to a human'}
                     </p>
                     <p className="text-[11px] text-gray-400 leading-tight mt-0.5">
-                        Share a few details to get started.
+                        {t('handoff.subtitle') || 'Share a few details to get started.'}
                     </p>
                 </div>
             </div>
@@ -144,7 +147,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                                 <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                                 <input
                                     type="email"
-                                    placeholder="Email address *"
+                                    placeholder={t('handoff.email_placeholder') || 'Email address *'}
                                     value={formData.email}
                                     onChange={(e) => {
                                         setFormData(prev => ({ ...prev, email: e.target.value }));
@@ -171,7 +174,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                         <User className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                         <input
                             type="text"
-                            placeholder="Your name *"
+                            placeholder={t('handoff.name_placeholder') || 'Your name *'}
                             value={formData.name}
                             onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                             className="flex-1 bg-transparent outline-none text-[13px] text-[#16202C] placeholder:text-gray-400"
@@ -190,7 +193,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                             <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         ) : (
                             <>
-                                Connect Now
+                                {t('handoff.submit') || 'Connect Now'}
                                 <ArrowRight className="w-3.5 h-3.5" />
                             </>
                         )}
@@ -203,7 +206,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                             className="w-full flex items-center justify-center gap-1 py-1.5 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                         >
                             <ArrowLeft className="w-3 h-3" />
-                            Continue with AI instead
+                            {t('handoff.cancel') || 'Back to bot'}
                         </button>
                     )}
                 </form>

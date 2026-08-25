@@ -78,6 +78,8 @@ export { BotAvatar } from './components/BotAvatar';
 export type { BotAvatarProps, BotAvatarSource } from './components/BotAvatar';
 export { ConversationCard } from './components/ConversationCard';
 export type { ConversationCardProps, ConversationStatus } from './components/ConversationCard';
+export { DayDivider } from './components/DayDivider';
+export type { DayDividerProps } from './components/DayDivider';
 export { QuickAction } from './components/QuickAction';
 export type { QuickActionProps } from './components/QuickAction';
 export { ActivityTimeline } from './components/ActivityTimeline';

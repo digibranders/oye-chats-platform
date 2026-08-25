@@ -3,8 +3,10 @@ import { X } from 'lucide-react';
 import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
 import { sanitizeColor } from '../services/sanitize';
+import { displayTextFor } from '../lib/liveChatTranslation';
+import { getLocale, t } from '../i18n/i18n';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 /**
  * Headless WebSocket provider for live chat.
@@ -160,7 +162,7 @@ const LiveChatMode = ({
                             setChatMode('waiting');
                         } else if (data.status === 'connected') {
                             setChatMode('live');
-                            setOperatorName(data.operator_name || 'Our team');
+                            setOperatorName(data.operator_name || t('system.our_team') || 'Our team');
                             setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
                             // Always re-fetch history on (re)connect. Covers the
@@ -168,6 +170,11 @@ const LiveChatMode = ({
                             // messages were sent into a dead socket. Without this,
                             // those messages live in the DB but never reach the UI.
                             historyLoadedRef.current = true;
+                            // The visitor's own language, which is what the
+                            // server resolved for this session in Phase 2 (the
+                            // widget is what reported it). Used to pick the
+                            // right persisted translation below.
+                            const sessionLanguage = getLocale();
                             getChatHistory(sessionId)
                                 .then(history => {
                                     if (!history || history.length === 0) return;
@@ -206,7 +213,7 @@ const LiveChatMode = ({
                                             const base = {
                                                 id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
                                                 sender: isUser ? 'user' : 'operator',
-                                                operatorName: !isUser ? (data.operator_name || 'Our team') : undefined,
+                                                operatorName: !isUser ? (data.operator_name || t('system.our_team') || 'Our team') : undefined,
                                                 timestamp: m.timestamp || m.created_at,
                                                 ...(isUser ? {
                                                     dbId: typeof m.id === 'number' ? m.id : undefined,
@@ -231,7 +238,16 @@ const LiveChatMode = ({
                                                     content_type: imageExts.includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain'),
                                                 };
                                             }
-                                            return { ...base, text: m.content };
+                                            // Prefer the persisted translation
+                                            // for this visitor's language. The
+                                            // operator's reply is stored in
+                                            // THEIR language (that row is the
+                                            // canonical original), so rendering
+                                            // `content` here would flip the
+                                            // thread back to English on every
+                                            // reconnect. See
+                                            // lib/liveChatTranslation.js.
+                                            return { ...base, text: displayTextFor(m, sessionLanguage) };
                                         });
                                     onLiveMessagesChange?.(prev => {
                                         if (!Array.isArray(prev) || prev.length === 0) return restored;
@@ -494,11 +510,14 @@ const LiveChatMode = ({
     const openFilePreview = (file) => {
         const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
         if (!ALLOWED.includes(file.type)) {
-            setFileError('Unsupported file type. Allowed: images, PDF, and text files.');
+            setFileError(
+                t('livechat.unsupported_file')
+                || 'Unsupported file type. Allowed: images, PDF, and text files.'
+            );
             return;
         }
         if (file.size > 10 * 1024 * 1024) {
-            setFileError('File is too large. Maximum size is 10 MB.');
+            setFileError(t('livechat.file_too_large') || 'File is too large. Maximum size is 10 MB.');
             return;
         }
         const isImage = file.type.startsWith('image/');
@@ -593,11 +612,11 @@ const LiveChatMode = ({
                     }]);
                 }
             } else {
-                setFileError('Connection lost. Please try again.');
+                setFileError(t('livechat.connection_lost') || 'Connection lost. Please try again.');
             }
         } catch (err) {
             console.error('[OyeChats] File upload error:', err);
-            setFileError('Failed to send file. Please try again.');
+            setFileError(t('livechat.upload_failed') || 'Failed to send file. Please try again.');
         } finally {
             setUploadProgress(null);
         }
@@ -627,19 +646,19 @@ const LiveChatMode = ({
                         <button
                             type="button"
                             onClick={cancelPendingFile}
-                            aria-label="Cancel"
+                            aria-label={t('livechat.cancel_aria') || 'Cancel'}
                             className="text-gray-400 hover:text-gray-700 transition-colors"
                         >
                             <X size={20} />
                         </button>
-                        <span className="text-sm font-semibold text-[#16202C]">Send file</span>
+                        <span className="text-sm font-semibold text-[#16202C]">{t('livechat.send_file') || 'Send file'}</span>
                     </div>
 
                     <div className="flex-1 flex items-center justify-center p-6 bg-gray-50 overflow-hidden">
                         {pendingFile.isImage ? (
                             <img
                                 src={pendingFile.previewUrl}
-                                alt="Preview"
+                                alt={t('livechat.preview_alt') || 'Preview'}
                                 className="max-w-full max-h-full object-contain rounded-xl shadow-sm"
                             />
                         ) : (
@@ -672,7 +691,7 @@ const LiveChatMode = ({
                                 value={pendingFile.caption}
                                 onChange={(e) => setPendingFile(prev => ({ ...prev, caption: e.target.value }))}
                                 onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
-                                placeholder="Add a caption…"
+                                placeholder={t('livechat.caption_placeholder') || 'Add a caption\u2026'}
                                 className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
                                 autoFocus
                             />
@@ -680,7 +699,7 @@ const LiveChatMode = ({
                                 type="button"
                                 onClick={sendPendingFile}
                                 disabled={uploadProgress !== null}
-                                aria-label="Send"
+                                aria-label={t('livechat.send_aria') || 'Send'}
                                 className="w-9 h-9 flex items-center justify-center rounded-xl transition-all disabled:opacity-40"
                                 style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
@@ -698,7 +717,7 @@ const LiveChatMode = ({
                     <button
                         onClick={() => setFileError(null)}
                         className="shrink-0 text-red-400 hover:text-red-600 transition-colors"
-                        aria-label="Dismiss"
+                        aria-label={t('livechat.dismiss_aria') || 'Dismiss'}
                     >
                         <X className="w-3.5 h-3.5" />
                     </button>
@@ -712,19 +731,19 @@ const LiveChatMode = ({
                     onClick={() => setLightboxSrc(null)}
                     role="dialog"
                     aria-modal="true"
-                    aria-label="Image viewer"
+                    aria-label={t('livechat.image_viewer_aria') || 'Image viewer'}
                 >
                     <button
                         type="button"
                         onClick={() => setLightboxSrc(null)}
-                        aria-label="Close"
+                        aria-label={t('livechat.close_aria') || 'Close'}
                         className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
                     >
                         <X size={28} />
                     </button>
                     <img
                         src={lightboxSrc}
-                        alt="Full size"
+                        alt={t('livechat.full_size_alt') || 'Full size'}
                         className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     />

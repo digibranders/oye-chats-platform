@@ -13,11 +13,39 @@ takes the LB down with it.
 """
 
 import json
+from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import Request
 
 from app.main import _gather_health, health_check, health_check_full
+
+# The health endpoints only emit the full subsystem payload (DB pool internals,
+# version, chat-gate ceiling, billing state) to a caller presenting a valid
+# X-Health-Token; anonymous callers get just the status label. Most tests here
+# assert on that full payload, so an autouse fixture arms the token and the
+# endpoints are invoked with an authorized request. The gate itself is covered
+# by TestHealthDetailGate.
+TEST_HEALTH_TOKEN = "test-health-detail-token"
+
+
+@pytest.fixture(autouse=True)
+def _enable_health_detail():
+    with patch("app.main.HEALTH_DETAIL_TOKEN", TEST_HEALTH_TOKEN):
+        yield
+
+
+def _authed_request() -> Request:
+    """A Request carrying the valid X-Health-Token, so the endpoint returns the
+    full detail body the payload-shape assertions rely on."""
+    return Request({"type": "http", "headers": [(b"x-health-token", TEST_HEALTH_TOKEN.encode())]})
+
+
+def _request_with_token(token: bytes | None) -> Request:
+    """A Request with an arbitrary (or absent) X-Health-Token, for gate tests."""
+    headers = [(b"x-health-token", token)] if token is not None else []
+    return Request({"type": "http", "headers": headers})
 
 
 @pytest.fixture()
@@ -76,7 +104,7 @@ class TestHealthEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check()
+            response = health_check(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 200
         assert body["status"] == "degraded"
@@ -93,7 +121,7 @@ class TestHealthEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", False),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check()
+            response = health_check(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 200
         assert body["status"] == "healthy"
@@ -106,7 +134,7 @@ class TestHealthEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check()
+            response = health_check(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 503
         assert body["status"] == "unhealthy"
@@ -119,7 +147,7 @@ class TestHealthEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check()
+            response = health_check(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 503
         assert body["status"] == "unhealthy"
@@ -142,7 +170,7 @@ class TestHealthFullEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check_full()
+            response = health_check_full(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 503
         assert body["status"] == "degraded"
@@ -158,7 +186,7 @@ class TestHealthFullEndpoint:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_probe", return_value=(True, None)),
         ):
-            response = health_check_full()
+            response = health_check_full(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 200
         assert body["status"] == "healthy"
@@ -190,7 +218,7 @@ class TestLlmReadiness:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_ready", return_value=False),
         ):
-            response = health_check_full()
+            response = health_check_full(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 503
         assert body["status"] == "degraded"
@@ -211,7 +239,7 @@ class TestLlmReadiness:
             patch("app.worker.enqueue.WORKER_ENABLED", True),
             patch("app.main._llm_ready", return_value=False),
         ):
-            response = health_check()
+            response = health_check(_authed_request())
         body = json.loads(response.body)
         assert response.status_code == 200
         assert body["llm"]["status"] == "unavailable"
@@ -390,6 +418,90 @@ class TestFallbackCount1h:
             patch("app.main._llm_probe", return_value=(True, None)),
             patch("app.main._fallback_count_1h", return_value=7),
         ):
-            response = health_check_full()
+            response = health_check_full(_authed_request())
         body = json.loads(response.body)
         assert body["llm"]["fallback_count_1h"] == 7
+
+
+# ── Detail gate (recon hardening) ──────────────────────────────────────────
+
+
+def _healthy_patches(healthy_engine):
+    """The set of patches that make _gather_health report a fully healthy
+    system with the worker intentionally disabled (so status == 'healthy')."""
+    return (
+        patch("app.main.engine", healthy_engine),
+        patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
+        patch("app.worker.enqueue.WORKER_ENABLED", False),
+        patch("app.main._llm_probe", return_value=(True, None)),
+    )
+
+
+class TestHealthDetailGate:
+    """The verbose payload is attacker recon (stack, version for CVE matching,
+    chat-gate ceiling for DoS planning, billing state). It must be disclosed
+    ONLY to a caller presenting a valid X-Health-Token; everyone else gets the
+    bare status label, while the HTTP status *code* stays fully accurate so
+    deploy gates and uptime monitors are unaffected.
+
+    `_DETAIL_ONLY_KEYS` are the sensitive fields that must never appear in an
+    anonymous response. `status` is the only key that always ships.
+    """
+
+    _DETAIL_ONLY_KEYS = ("database", "redis", "worker", "llm", "pool", "chat_gate", "billing", "version")
+
+    def test_anonymous_caller_gets_only_status_label(self, healthy_engine):
+        """No token → body is exactly {"status": ...}, code still correct."""
+        with ExitStack() as stack:
+            for cm in _healthy_patches(healthy_engine):
+                stack.enter_context(cm)
+            response = health_check(_request_with_token(None))
+        body = json.loads(response.body)
+        assert response.status_code == 200
+        assert body == {"status": "healthy"}
+        for key in self._DETAIL_ONLY_KEYS:
+            assert key not in body
+
+    def test_wrong_token_gets_only_status_label(self, healthy_engine):
+        """A present-but-wrong token is treated exactly like no token."""
+        with ExitStack() as stack:
+            for cm in _healthy_patches(healthy_engine):
+                stack.enter_context(cm)
+            response = health_check(_request_with_token(b"not-the-real-token"))
+        body = json.loads(response.body)
+        assert response.status_code == 200
+        assert body == {"status": "healthy"}
+
+    def test_valid_token_unlocks_full_payload(self, healthy_engine):
+        with ExitStack() as stack:
+            for cm in _healthy_patches(healthy_engine):
+                stack.enter_context(cm)
+            response = health_check(_authed_request())
+        body = json.loads(response.body)
+        assert response.status_code == 200
+        for key in self._DETAIL_ONLY_KEYS:
+            assert key in body
+
+    def test_status_code_is_accurate_even_when_body_is_minimal(self, broken_engine):
+        """A 503 must still be a 503 for an anonymous caller — the gate hides
+        the body, never the response code the monitors depend on."""
+        with (
+            patch("app.main.engine", broken_engine),
+            patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
+            patch("app.worker.enqueue.WORKER_ENABLED", False),
+            patch("app.main._llm_probe", return_value=(True, None)),
+        ):
+            response = health_check(_request_with_token(None))
+        body = json.loads(response.body)
+        assert response.status_code == 503
+        assert body == {"status": "unhealthy"}
+
+    def test_unset_token_never_leaks_detail_even_with_matching_header(self, healthy_engine):
+        """Secure by default: when HEALTH_DETAIL_TOKEN is unset, no header value
+        (including an empty string) can unlock the detailed payload."""
+        with patch("app.main.HEALTH_DETAIL_TOKEN", None), ExitStack() as stack:
+            for cm in _healthy_patches(healthy_engine):
+                stack.enter_context(cm)
+            response = health_check(_request_with_token(b""))
+        body = json.loads(response.body)
+        assert body == {"status": "healthy"}

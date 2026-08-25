@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 
 from app.db.models import Bot, ChatSession
@@ -598,6 +599,52 @@ def framework_dimension_keys(framework_config: dict) -> list[str]:
     (e.g. ``lead_service``) that need to iterate a framework's actual
     dimension names instead of assuming BANT's need/timeline/authority/budget."""
     return _dimension_keys(framework_config)
+
+
+def select_next_probe_dimension(
+    bant_state: dict | None,
+    framework_config: dict,
+    recently_probed: Sequence[str] = (),
+) -> tuple[str | None, list[str]]:
+    """Pick the next qualification dimension to probe, human-style.
+
+    Returns ``(next_dimension, missing_dimensions)`` where ``missing_dimensions``
+    is every enabled dimension still below 60% of its max score (in
+    ``conversation_order``), and ``next_dimension`` is the first of those that
+    was NOT probed on a recent turn.
+
+    Two behaviours this encodes that ``missing_dims[0]`` alone could not:
+
+    - **No back-to-back re-asks.** A dimension named in ``recently_probed``
+      (typically just the previous turn's ``last_probed_dimension``) is skipped,
+      so the bot advances to the next open dimension instead of re-asking the
+      one it just asked while the async score for that answer is still landing.
+    - **Circle back, don't hammer.** When the ONLY thing left unassessed is a
+      recently-probed dimension, this returns ``None`` — the bot asks nothing
+      this turn (answers helpfully / offers a next step) rather than repeating
+      the same question. The dimension becomes eligible again on a later turn
+      once ``recently_probed`` no longer contains it, giving a natural "ask,
+      let it breathe, revisit" rhythm instead of an interrogation loop.
+    """
+    state = bant_state or {}
+    order = framework_config.get("conversation_order") or _dimension_keys(framework_config)
+    recent = {d for d in recently_probed if d}
+
+    missing: list[str] = []
+    for dim in order:
+        dim_cfg = framework_config.get(dim, {}) if isinstance(framework_config.get(dim), dict) else {}
+        if not dim_cfg.get("enabled", True):
+            continue
+        options = dim_cfg.get("options") or []
+        max_score = max((int(opt.get("score", 0)) for opt in options), default=25)
+        assess_threshold = max(1, int(round(max_score * 0.6)))
+        score = int(state.get(f"{dim}_score", 0) or 0)
+        if score < assess_threshold:
+            missing.append(dim)
+
+    fresh = [dim for dim in missing if dim not in recent]
+    next_dimension = fresh[0] if fresh else None
+    return next_dimension, missing
 
 
 def get_framework_config(bot: Bot | None) -> dict:

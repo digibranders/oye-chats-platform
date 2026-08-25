@@ -306,6 +306,38 @@ export function getChatHistory(
 ): Promise<ChatMessage[]>;
 export function getQualificationFunnel(botId: number, period?: string): Promise<Record<string, unknown>>;
 
+// ── Language analytics (Phase 5C) ────────────────────────────────────────────
+export function getLanguageBreakdown(
+  botId: number,
+  period?: '7d' | '30d' | '90d' | 'all',
+): Promise<Record<string, unknown>>;
+
+// ── Locale catalogue (Phase 5A) ──────────────────────────────────────────────
+export function getLocales(): Promise<{
+  locales: Array<{
+    code: string;
+    locale: string;
+    name: string;
+    native_name: string;
+    direction: 'ltr' | 'rtl';
+  }>;
+  languages: Record<string, string>;
+}>;
+
+// ── Operator language / translation (Phase 4) ────────────────────────────────
+export function getMyLanguage(): Promise<{
+  preferred_locale: string | null;
+  supported_languages: string[];
+  /** Locales the caller's bot supports - what the translation picker offers. */
+  available_locales: string[];
+}>;
+export function setMyLanguage(preferredLocale: string | null): Promise<{ preferred_locale: string | null }>;
+export function translateForSession(
+  sessionId: string,
+  text: string,
+  messageId?: number,
+): Promise<{ translated: string; target_locale: string; cached: boolean; status: string }>;
+
 // ── Leads ────────────────────────────────────────────────────────────────────
 export function getLeads(botId?: number, params?: LeadsQuery): Promise<LeadsResult>;
 export function getLeadDetail(sessionId: string): Promise<Lead & { messages?: ChatMessage[] }>;

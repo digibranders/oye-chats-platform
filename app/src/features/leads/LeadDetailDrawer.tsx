@@ -8,7 +8,7 @@
  * `aria-modal`, an Escape-to-close handler, focus moved into the panel on open
  * and returned to the trigger on close, and a click-away scrim.
  */
-import { type ReactElement, useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactElement, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   AlertCircle,
@@ -24,7 +24,17 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { Button, EmptyState, LockedFeatureCard, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
+import {
+  Button,
+  DayDivider,
+  EmptyState,
+  LockedFeatureCard,
+  Skeleton,
+  StatusBadge,
+  Textarea,
+  cn,
+} from '../../design-system';
+import { formatDayLabel, isNewDay } from '../../lib/messageDay';
 import { useCountUp } from '../../hooks/useCountUp';
 import { type ChatMessage, type LeadSignal } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
@@ -225,11 +235,17 @@ function distinctSignalValues(
   return values;
 }
 
+/** A message's time — the lead-detail API sends `timestamp`; fall back to
+ *  `created_at` for any other shape. */
+function messageTime(message: ChatMessage): string | null | undefined {
+  return message.timestamp ?? message.created_at;
+}
+
 function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
   const text = message.content ?? message.message ?? '';
   const isVisitor = message.role === 'user';
   const roleLabel = isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
-  const time = formatClock(message.created_at);
+  const time = formatClock(messageTime(message));
   return (
     <div className={cn('flex', isVisitor ? 'justify-end' : 'justify-start')}>
       <div
@@ -699,9 +715,23 @@ export function LeadDetailDrawer({
               </div>
               {detail.messages && detail.messages.length > 0 ? (
                 <div className="space-y-2.5">
-                  {detail.messages.map((message) => (
-                    <TranscriptBubble key={message.id} message={message} />
-                  ))}
+                  {detail.messages.map((message, index, all) => {
+                    // Insert a "Today / Yesterday / Aug 14" divider whenever the
+                    // calendar day changes, so a conversation that spans several
+                    // days (returning visitor) stays readable instead of a wall
+                    // of bare clock times.
+                    const prev = all[index - 1];
+                    const showDivider = isNewDay(
+                      messageTime(message),
+                      prev ? messageTime(prev) : undefined,
+                    );
+                    return (
+                      <Fragment key={message.id}>
+                        {showDivider && <DayDivider label={formatDayLabel(messageTime(message))} />}
+                        <TranscriptBubble message={message} />
+                      </Fragment>
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[13px] text-[var(--ds-text-subtle)]">

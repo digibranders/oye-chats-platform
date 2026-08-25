@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
+    "e2e:build": "VITE_API_URL=http://oyechats-admin-e2e.test vite build",
+    "e2e": "npm run e2e:build && playwright test",
+    "e2e:install": "playwright install --with-deps chromium",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -34,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.2.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",

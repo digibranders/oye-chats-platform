@@ -27,6 +27,17 @@
   pointer-events: auto;
 }
 
+/* RTL language support inside Shadow DOM */
+:host([dir="rtl"]),
+#oyechats-shadow-inner[dir="rtl"] {
+  direction: rtl;
+}
+
+:host([dir="ltr"]),
+#oyechats-shadow-inner[dir="ltr"] {
+  direction: ltr;
+}
+
 /* iOS safe area support. Prevents content from going behind notch/home indicator.
    Uses max() so the rule never shrinks the Tailwind base padding on desktop
    (where env(safe-area-inset-bottom) = 0). On iOS with notch the safe inset wins. */

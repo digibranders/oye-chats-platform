@@ -70,3 +70,6 @@ graphify-out/
 
 # Redis persistence dump — runtime artifact written by a local redis-server
 dump.rdb
+
+# Strix security-scan run output (generated, not source)
+strix_runs/

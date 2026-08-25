@@ -11,9 +11,9 @@
     "lint": "eslint .",
     "preview": "vite preview --port 4173",
     "size": "size-limit",
-    "test": "node --test --test-reporter=spec src/services/*.test.js src/lib/*.test.js",
+    "test": "node --test --test-reporter=spec src/services/*.test.js src/lib/*.test.js src/i18n/*.test.js",
     "e2e": "playwright test",
-    "e2e:install": "playwright install --with-deps chromium"
+    "e2e:install": "playwright install --with-deps chromium webkit"
   },
   "size-limit": [
     {
@@ -43,7 +43,13 @@
     {
       "name": "Chat chunk (lazy on first widget open)",
       "path": "dist/app/oyechats-ChatWindow.*.js",
-      "limit": "29 KB",
+      "limit": "31 KB",
+      "gzip": true
+    },
+    {
+      "name": "Locale dictionary (lazy per non-English locale)",
+      "path": "dist/app/oyechats-hi.*.js",
+      "limit": "9 KB",
       "gzip": true
     },
     {

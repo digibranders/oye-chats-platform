@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, Play } from 'lucide-react';
+import { t } from '../i18n/i18n.js';
 
 /**
  * MediaCard. Inline chat card for a single YouTube video OR a downloadable
@@ -114,7 +115,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
     // hqdefault.jpg is free and always available; guaranteed 480×360 and
     // renders sharply at the widget's card width (~300px).
     const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    const displayTitle = loading ? '' : title || 'Watch on YouTube';
+    const displayTitle = loading ? '' : title || t('media.watch_on_youtube') || 'Watch on YouTube';
 
     return (
         <a
@@ -122,7 +123,12 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
             target="_blank"
             rel="noopener noreferrer"
             className="oyechats-media-card oyechats-media-card--youtube flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
-            aria-label={loading ? 'Loading YouTube video' : `Watch on YouTube: ${displayTitle}`}
+            aria-label={
+                loading
+                    ? (t('media.loading_video_aria') || 'Loading YouTube video')
+                    : (t('media.watch_youtube_aria', { title: displayTitle })
+                        || `Watch on YouTube: ${displayTitle}`)
+            }
         >
             <div className="relative aspect-video w-full bg-gray-100">
                 <img
@@ -262,7 +268,11 @@ const DownloadCard = ({ url, name }) => {
     const ext = dotIndex > 0 ? rawName.slice(dotIndex + 1).toUpperCase() : '';
     const { tint, label } = _FILE_META[ext] || (ext ? { ..._DEFAULT_FILE_META, label: ext } : _DEFAULT_FILE_META);
     const openable = _OPENABLE_EXTS.has(ext);
-    const action = openable ? 'View' : 'Download';
+    // The visible pill label AND the aria sentence below are built from this,
+    // so it has to be the localized word, not an English key.
+    const action = openable
+        ? (t('media.action_view') || 'View')
+        : (t('media.action_download') || 'Download');
 
     // File size is not in the card payload (the backend only stores url + name),
     // so we probe it client-side with a HEAD request and read Content-Length.
@@ -317,7 +327,13 @@ const DownloadCard = ({ url, name }) => {
             // non-viewable types; viewable ones (PDF, images) open in a tab.
             download={openable ? undefined : rawName}
             className="oyechats-media-card oyechats-media-card--download group flex max-w-full items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 pl-2 pr-2 shadow-sm transition-all hover:border-gray-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
-            aria-label={`${action} ${rawName}${sizeLabel ? `, ${sizeLabel}` : ''}`}
+            aria-label={
+                sizeLabel
+                    ? (t('media.file_aria_sized', { action, name: rawName, size: sizeLabel })
+                        || `${action} ${rawName}, ${sizeLabel}`)
+                    : (t('media.file_aria', { action, name: rawName })
+                        || `${action} ${rawName}`)
+            }
         >
             <span
                 className="flex h-8 w-8 flex-none items-center justify-center rounded-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]"
@@ -353,37 +369,39 @@ const _SecondaryChip = ({ item }) => {
     if (!item || typeof item !== 'object') return null;
     if (item.type === 'youtube' && typeof item.video_id === 'string' && item.video_id) {
         const href = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
-        const label = (typeof item.title === 'string' && item.title.trim()) || 'Related video';
+        const label = (typeof item.title === 'string' && item.title.trim())
+            || t('media.related_video') || 'Related video';
         return (
             <a
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="oyechats-media-secondary group mt-1.5 inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-800"
-                aria-label={`Related video: ${label}`}
+                aria-label={t('media.related_video_aria', { label }) || `Related video: ${label}`}
             >
                 <span className="flex h-4 w-4 flex-none items-center justify-center rounded-sm bg-red-600 text-[8px] font-bold uppercase leading-none text-white">▶</span>
                 <span className="truncate">
-                    Also available: <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
+                    {t('media.also_available') || 'Also available:'} <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
                 </span>
             </a>
         );
     }
     if (item.type === 'download' && typeof item.url === 'string' && item.url) {
-        const label = (typeof item.name === 'string' && item.name.trim()) || 'Related file';
+        const label = (typeof item.name === 'string' && item.name.trim())
+            || t('media.related_file') || 'Related file';
         return (
             <a
                 href={item.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="oyechats-media-secondary group mt-1.5 inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-800"
-                aria-label={`Related file: ${label}`}
+                aria-label={t('media.related_file_aria', { label }) || `Related file: ${label}`}
             >
                 <span className="flex h-4 w-4 flex-none items-center justify-center rounded-sm bg-gray-800 text-[8px] font-bold uppercase leading-none text-white">
                     PDF
                 </span>
                 <span className="truncate">
-                    Also available: <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
+                    {t('media.also_available') || 'Also available:'} <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
                 </span>
             </a>
         );
@@ -407,7 +425,7 @@ const _MediaHint = ({ card }) => {
                 aria-hidden="true"
             >
                 <Play className="h-3 w-3 fill-current text-red-500" strokeWidth={0} />
-                <span>Watch the video for the full picture</span>
+                <span>{t('media.watch_video') || 'Watch the video for the full picture'}</span>
             </div>
         );
     }
@@ -416,7 +434,9 @@ const _MediaHint = ({ card }) => {
         const dotIndex = rawName.lastIndexOf('.');
         const ext = dotIndex > 0 ? rawName.slice(dotIndex + 1).toUpperCase() : '';
         const openable = _OPENABLE_EXTS.has(ext);
-        const label = openable ? 'Open the document to learn more' : 'Download the file to learn more';
+        const label = openable
+            ? (t('media.open_document_hint') || 'Open the document to learn more')
+            : (t('media.download_file_hint') || 'Download the file to learn more');
         return (
             <div
                 className="oyechats-media-hint mb-1.5 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-gray-500"

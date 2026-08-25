@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Float, case, cast, desc, func, insert, select, text
+from sqlalchemy import Float, case, cast, desc, func, insert, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -12,6 +12,7 @@ from app.db.models import (
     ChatMessage,
     ChatSession,
     Client,
+    CreditLedger,
     Document,
     Event,
     LeadInfo,
@@ -74,12 +75,17 @@ def ensure_chat_session(
     bot_id: int = None,
     location: str = None,
     device: str = None,
+    language_code: str = None,
+    locale: str = None,
+    language_source: str = None,
+    language_confidence: float = None,
+    language_locked: bool = None,
 ) -> ChatSession:
     """Get-or-create a chat session, returning the row.
 
     * Looks up by primary key only. ``id`` uniquely identifies a session.
     * If the row exists and belongs to ``bot_id``, updates ``last_active_at``
-      (plus optional ``location`` / ``device``) and returns it.
+      (plus optional ``location`` / ``device`` / initial language) and returns it.
     * If the row exists but ``bot_id`` doesn't match, raises
       ``SessionOwnershipError`` (handled as HTTP 404 at the API layer).
     * If no row exists, INSERTs and returns. ``IntegrityError`` from a
@@ -95,6 +101,11 @@ def ensure_chat_session(
                 bot_id=bot_id,
                 location=location,
                 device=device,
+                language_code=language_code,
+                locale=locale,
+                language_source=language_source,
+                language_confidence=language_confidence,
+                language_locked=language_locked if language_locked is not None else False,
             )
             session.add(chat_session)
             session.flush()
@@ -117,6 +128,44 @@ def ensure_chat_session(
         chat_session.location = location
     if device and not chat_session.device:
         chat_session.device = device
+    if not getattr(chat_session, "language_locked", False):
+        if language_code and not getattr(chat_session, "language_code", None):
+            chat_session.language_code = language_code
+        if locale and not getattr(chat_session, "locale", None):
+            chat_session.locale = locale
+        if language_source and not getattr(chat_session, "language_source", None):
+            chat_session.language_source = language_source
+        if language_confidence is not None and getattr(chat_session, "language_confidence", None) is None:
+            chat_session.language_confidence = language_confidence
+        if language_locked is not None:
+            chat_session.language_locked = language_locked
+    session.flush()
+    return chat_session
+
+
+def update_chat_session_language(
+    session,
+    session_id: str,
+    bot_id: int,
+    *,
+    language_code: str,
+    locale: str,
+    language_source: str = "explicit",
+    language_confidence: float = 1.0,
+    language_locked: bool = True,
+) -> ChatSession:
+    """Explicitly update and lock the language on a chat session."""
+    chat_session = _get_session_for_bot(session, session_id, bot_id)
+    if chat_session is None:
+        raise SessionOwnershipError(session_id, bot_id, None)
+
+    chat_session.language_code = language_code
+    chat_session.locale = locale
+    chat_session.language_source = language_source
+    chat_session.language_confidence = language_confidence
+    chat_session.language_locked = language_locked
+    chat_session.language_changed_at = func.now()
+    chat_session.last_active_at = func.now()
     session.flush()
     return chat_session
 
@@ -186,6 +235,7 @@ def add_chat_message(
     media_card: dict | None = None,
     media_secondary: list | None = None,
     is_unanswered: bool = False,
+    source_language: str | None = None,
 ):
     """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
 
@@ -193,6 +243,13 @@ def add_chat_message(
     so the widget can re-render video/document cards on refresh. See
     ``ChatMessage.media_card`` for the shape. Both stay ``None`` for user
     turns and for bot answers that don't emit a card.
+
+    ``source_language`` records the language ``content`` is written IN (Phase
+    4). It is set only for live-chat turns on a bot with multilingual enabled
+    and stays ``None`` everywhere else. This function is the ONLY writer of
+    ``ChatMessage``, and ``content`` is written here exactly once: translations
+    never come back through this path, they land in ``ChatMessage.translations``
+    so the original stays canonical and immutable.
     """
     ensure_chat_session(session, session_id, client_id=client_id, bot_id=bot_id, location=location, device=device)
     new_message = ChatMessage(
@@ -202,6 +259,7 @@ def add_chat_message(
         media_card=media_card,
         media_secondary=media_secondary,
         is_unanswered=is_unanswered,
+        source_language=source_language,
     )
     session.add(new_message)
     session.flush()
@@ -1019,6 +1077,94 @@ def get_resolution_summary(session, client_id: int = None, bot_id: int = None):
         "total": total,
         "rate": rate,
     }
+
+
+def get_language_breakdown(session, client_id: int = None, bot_id: int = None, since=None):
+    """Group a bot's conversations by the language they were held in (Phase 5C).
+
+    Returns one row per distinct ``language_code`` with the conversation total,
+    how many the AI resolved, and how many reached live chat.
+
+    Sessions with a NULL ``language_code`` are returned as a real row rather
+    than dropped. That is the normal state for every session recorded before
+    multilingual was switched on, and for every bot that has it off, so
+    dropping them would make this breakdown silently disagree with the
+    conversation count on the dashboard. The caller labels the row.
+
+    ``visitor_resolved`` is a post-chat answer that most visitors never give,
+    so ``resolved`` counts only explicit yes answers and is always a subset of
+    ``total``. It is not ``total - unresolved``.
+
+    Served by the existing ``ix_chat_sessions_bot_id_created``. A dedicated
+    language index was measured and rejected; see ``ChatSession.__table_args__``.
+    """
+    sf = _session_owner_filter(bot_id, client_id)
+
+    stmt = (
+        select(
+            ChatSession.language_code,
+            func.count(ChatSession.id).label("total"),
+            func.count(case((ChatSession.visitor_resolved.is_(True), 1))).label("resolved"),
+            # A conversation counts as live chat once it has left bot mode,
+            # whatever it did afterwards: 'closed' is where a finished live
+            # chat ends up, so keying on the CURRENT status alone would
+            # under-report every completed handoff. ``assigned_operator_id``
+            # is the durable record that an operator was involved.
+            func.count(
+                case(
+                    (
+                        or_(
+                            ChatSession.assigned_operator_id.isnot(None),
+                            ChatSession.status.in_(("waiting", "live")),
+                        ),
+                        1,
+                    )
+                )
+            ).label("live_chat"),
+        )
+        .where(sf)
+        .group_by(ChatSession.language_code)
+        .order_by(desc("total"))
+    )
+    if since is not None:
+        stmt = stmt.where(ChatSession.created_at >= since)
+
+    return [
+        {
+            "language_code": row.language_code,
+            "total": int(row.total or 0),
+            "resolved": int(row.resolved or 0),
+            "live_chat": int(row.live_chat or 0),
+        }
+        for row in session.execute(stmt).all()
+    ]
+
+
+def get_translation_credit_spend(session, client_id: int, bot_id: int = None, since=None) -> int:
+    """Credits spent on translation, from the ledger (Phase 5C).
+
+    DURABLE, unlike the rolling Redis counters that report translation
+    activity. This is the billing record and it does not expire, so it is the
+    only honest source for "what has translation cost me".
+
+    Reads ``attributed_bot_id``, which ``charge_for_translation`` always sets
+    to the bot even when the deduction itself lands in the pooled client scope.
+    ``bot_id`` on the ledger is the BALANCE scope and is NULL for pooled
+    accounts, so grouping cost by it would report zero for most workspaces.
+
+    Deductions are stored as negative deltas; the return value is a positive
+    number of credits spent.
+    """
+    stmt = select(func.coalesce(func.sum(-CreditLedger.delta), 0)).where(
+        CreditLedger.client_id == client_id,
+        CreditLedger.reason == "translation",
+        CreditLedger.delta < 0,
+    )
+    if bot_id is not None:
+        stmt = stmt.where(CreditLedger.attributed_bot_id == bot_id)
+    if since is not None:
+        stmt = stmt.where(CreditLedger.created_at >= since)
+    return int(session.execute(stmt).scalar_one() or 0)
 
 
 def get_top_questions(session, client_id: int = None, limit: int = 5, bot_id: int = None):

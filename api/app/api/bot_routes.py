@@ -507,6 +507,7 @@ class UpdateBotRequest(BaseModel):
     # not unbounded: each is held to the default object budget (64 KB, 6
     # levels, 200 keys) so a JSONB column cannot be used as free storage.
     feature_flags: BoundedJsonObject | None = None
+    language_config: BoundedJsonObject | None = None
     widget_messages: BoundedJsonObject | None = None
     widget_config: BoundedJsonObject | None = None
     # Branding customization
@@ -642,6 +643,7 @@ class BotResponse(BaseModel):
     live_chat_max_queue_size: int = 10
     business_hours: dict | None = None
     feature_flags: dict = {}
+    language_config: dict = {}
     widget_messages: dict = {}
     widget_config: dict = {}
     branding_text: str = "Powered by OyeChats"
@@ -778,6 +780,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         live_chat_max_queue_size=bot.live_chat_max_queue_size,
         business_hours=bot.business_hours,
         feature_flags=bot.feature_flags or {},
+        language_config=bot.language_config or {},
         widget_messages=bot.widget_messages or {},
         widget_config=bot.widget_config or {},
         branding_text=bot.branding_text or "Powered by OyeChats",
@@ -972,6 +975,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": effective_feature_flags,
+        "language_config": bot.language_config or {},
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
         "branding_text": effective_branding_text,
@@ -1679,6 +1683,7 @@ def list_bots(
                     live_chat_max_queue_size=b.live_chat_max_queue_size,
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
+                    language_config=b.language_config or {},
                     widget_messages=b.widget_messages or {},
                     widget_config=b.widget_config or {},
                     branding_text=b.branding_text or "Powered by OyeChats",
@@ -2463,6 +2468,29 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 current_flags = dict(bot.feature_flags or {})
                 current_flags.update(update_data.pop("feature_flags"))
                 bot.feature_flags = current_flags
+
+            # Merge language_config. Partial updates must not wipe existing language config
+            if "language_config" in update_data and update_data["language_config"] is not None:
+                current_lang = dict(bot.language_config or {})
+                current_lang.update(update_data.pop("language_config"))
+                # Operator translation (Phase 4) depends on the multilingual
+                # feature being on: the session language it translates to and
+                # from is written only by the language resolver, which returns
+                # early when ``enabled`` is false. Validate the MERGED result,
+                # not the request body, because this is a partial update: a
+                # call sending only ``{"enabled": false}`` would otherwise
+                # leave a stale ``operator_translation_enabled: true`` behind
+                # and produce a bot that thinks translation is on with no
+                # language to translate.
+                if current_lang.get("operator_translation_enabled") and not current_lang.get("enabled"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "operator_translation_enabled requires language_config.enabled to be true. "
+                            "Enable multilingual for this bot first."
+                        ),
+                    )
+                bot.language_config = current_lang
 
             # Merge widget_messages. Partial updates must not wipe existing messages
             if "widget_messages" in update_data and update_data["widget_messages"] is not None:

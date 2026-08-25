@@ -1,8 +1,14 @@
 import React from 'react';
+import { t } from '../i18n/i18n.js';
 
 const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration = 350 }) => {
     const messages = settings?.widget_messages || {};
-    const suggestions = messages.welcome_suggestions || settings?.welcome_suggestions || ['Our Services', 'About us', 'Contact us'];
+    const defaultSuggestions = [
+        t('welcome.suggestion_services') || 'Our Services',
+        t('welcome.suggestion_about') || 'About us',
+        t('welcome.suggestion_contact') || 'Contact us',
+    ];
+    const suggestions = messages.welcome_suggestions || settings?.welcome_suggestions || defaultSuggestions;
     // 'horizontal' (default) → pill row that wraps. 'vertical' → full-width
     // stacked rows that read like a menu. The greeting sits just above the
     // first action in both modes; vertical tightens that gap so the welcome
@@ -12,9 +18,9 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
 
     const getGreeting = () => {
         const hour = new Date().getHours();
-        if (hour < 12) return 'Good morning';
-        if (hour < 18) return 'Good afternoon';
-        return 'Good evening';
+        if (hour < 12) return t('welcome.good_morning') || 'Good morning';
+        if (hour < 18) return t('welcome.good_afternoon') || 'Good afternoon';
+        return t('welcome.good_evening') || 'Good evening';
     };
 
     const removeEmoji = (text) => {
@@ -36,7 +42,7 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
         >
             <h2 className="text-2xl font-bold text-[#16202C]">{removeEmoji(settings?.welcome_title || getGreeting())}</h2>
             <p className={`text-[15px] text-gray-500 ${isVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
-                {settings?.welcome_subtitle || 'How can I help you today?'}
+                {settings?.welcome_subtitle || t('welcome.subtitle') || 'How can I help you today?'}
             </p>
 
             <div

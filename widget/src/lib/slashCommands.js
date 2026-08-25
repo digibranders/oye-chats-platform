@@ -1,4 +1,22 @@
-import { RotateCcw, Eraser, Headphones } from 'lucide-react';
+import React from 'react';
+import { RotateCcw, Eraser } from 'lucide-react';
+
+const HeadphonesIcon = (props) =>
+    React.createElement(
+        'svg',
+        {
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            ...props,
+        },
+        React.createElement('path', {
+            d: 'M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3',
+        })
+    );
 
 // Visitor-facing slash commands rendered by ChatInput's `/` popover.
 // Each entry is picked by exact name (case-insensitive) or by keyboard-navigated
@@ -11,11 +29,24 @@ import { RotateCcw, Eraser, Headphones } from 'lucide-react';
 // `/clear` or `/new` on a transcript that only holds the welcome message
 // does nothing visible and confuses visitors who typed a command expecting
 // a result. Predicates receive `{ userMessageCount }` (extend as needed).
+//
+// `name` is the command's IDENTITY: it is what the visitor types, what
+// matchSlashCommand/filterSlashCommands compare against, and what the popover
+// prints as `/name`. It is deliberately NOT translated, so a Hindi visitor
+// still types `/human` and the matcher keeps working.
+//
+// `descriptionKey` carries the DISPLAY copy instead of a resolved string.
+// (`label` is not keyed: the popover renders `/${name}` as the title and only
+// `description` beneath it, so a translated label would be copy nobody sees.) This array is a module-level constant evaluated once at import,
+// long before a locale is chosen, so calling t() here would freeze whichever
+// language happened to be active at load time. ChatInput resolves the keys at
+// render, which is also what makes the palette follow a mid-session switch.
 export const SLASH_COMMANDS = [
     {
         name: 'new',
         label: 'New chat',
         description: 'Start a fresh conversation',
+        descriptionKey: 'commands.new_description',
         icon: RotateCcw,
         destructive: true,
         handlerKey: 'onNewChat',
@@ -25,6 +56,7 @@ export const SLASH_COMMANDS = [
         name: 'clear',
         label: 'Clear chat',
         description: 'Hide the messages above',
+        descriptionKey: 'commands.clear_description',
         icon: Eraser,
         destructive: false,
         handlerKey: 'onClearMessages',
@@ -34,7 +66,8 @@ export const SLASH_COMMANDS = [
         name: 'human',
         label: 'Talk to a human',
         description: 'Request a live agent',
-        icon: Headphones,
+        descriptionKey: 'commands.human_description',
+        icon: HeadphonesIcon,
         destructive: false,
         handlerKey: 'onHandoff',
         isAvailable: () => true,
