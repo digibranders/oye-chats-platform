@@ -606,6 +606,67 @@ def get_lead_detail(
                 for s in signals
             ]
 
+        # Attach the quotation-flow summary if the session went through it.
+        # We enrich the raw per-session state with names + subtotals resolved
+        # from the bot's current catalog so the operator sees a readable
+        # itemised quote instead of just ids. Falls back to id + qty when a
+        # service has since been deleted from the catalog.
+        quotation_state = getattr(chat_session, "quotation_state", None) or {}
+        if quotation_state:
+            services_by_id: dict[str, dict] = {}
+            currency = "INR"
+            if bot and isinstance(getattr(bot, "quotation_catalog", None), dict):
+                currency = (bot.quotation_catalog.get("currency") or "INR").upper()
+                for svc in bot.quotation_catalog.get("services") or []:
+                    if isinstance(svc, dict) and svc.get("id"):
+                        services_by_id[svc["id"]] = svc
+
+            selected_ids = list(quotation_state.get("selected_service_ids") or [])
+            answers = quotation_state.get("answers") or {}
+            quantities = quotation_state.get("quantities") or {}
+            line_items: list[dict] = []
+            total = 0.0
+            for sid in selected_ids:
+                svc = services_by_id.get(sid) or {}
+                unit_price = float(svc.get("price_per_unit") or 0)
+                qty = int(quantities.get(sid, svc.get("default_quantity") or 0) or 0)
+                subtotal = round(unit_price * qty, 2)
+                total += subtotal
+
+                svc_answers = answers.get(sid) or {}
+                question_defs = {q.get("id"): q for q in (svc.get("questions") or []) if isinstance(q, dict)}
+                answer_rows: list[dict] = []
+                for qid, value in svc_answers.items():
+                    q = question_defs.get(qid) or {}
+                    answer_rows.append(
+                        {
+                            "question_id": qid,
+                            "question_text": q.get("text") or qid,
+                            "answer": value,
+                        }
+                    )
+
+                line_items.append(
+                    {
+                        "service_id": sid,
+                        "name": svc.get("name") or sid,
+                        "unit_label": svc.get("unit_label") or "unit",
+                        "price_per_unit": unit_price,
+                        "quantity": qty,
+                        "subtotal": subtotal,
+                        "answers": answer_rows,
+                    }
+                )
+
+            lead["quotation"] = {
+                "status": quotation_state.get("status") or "idle",
+                "currency": currency,
+                "line_items": line_items,
+                "total": round(total, 2),
+                "activated_at": quotation_state.get("activated_at"),
+                "completed_at": quotation_state.get("completed_at"),
+            }
+
         return lead
 
 

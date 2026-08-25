@@ -1,11 +1,48 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Building2, Globe, Link2, Mail, MapPin, Monitor, Phone, Star, Tag, User } from 'lucide-react';
+import { Building2, Globe, Link2, Mail, MapPin, Monitor, Phone, Receipt, Star, Tag, User } from 'lucide-react';
 import { Button, Skeleton, StatusBadge, Textarea } from '../../design-system';
 import { getSessionDetails } from '../../services/api';
 import { useLeadAnnotations, type LeadAnnotationController } from '../leads/useLeadAnnotations';
 import type { SessionDetails } from './liveChatProtocol';
 import { relativeTime } from './liveChatHelpers';
 import { ConversationLanguageBadge } from './ConversationLanguageBadge';
+
+const CURRENCY_SYMBOL: Record<string, string> = {
+  INR: '₹',
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  AUD: 'A$',
+  CAD: 'C$',
+  SGD: 'S$',
+  AED: 'د.إ',
+};
+
+function formatMoney(currency: string, value: number): string {
+  const symbol = CURRENCY_SYMBOL[currency] ?? currency;
+  const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  return `${symbol}${rounded.toLocaleString()}`;
+}
+
+type QuotationStatus = 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';
+
+const QUOTATION_STATUS_TONE: Record<QuotationStatus, 'success' | 'warning' | 'neutral' | 'info'> = {
+  complete: 'success',
+  quoting: 'info',
+  selecting: 'info',
+  answering: 'info',
+  skipped: 'warning',
+  idle: 'neutral',
+};
+
+const QUOTATION_STATUS_LABEL: Record<QuotationStatus, string> = {
+  complete: 'Quote accepted',
+  quoting: 'Quote pending',
+  selecting: 'Selecting services',
+  answering: 'Answering questions',
+  skipped: 'Skipped by visitor',
+  idle: 'Not started',
+};
 
 export interface SessionDetailsPanelProps {
   sessionId: string;
@@ -51,6 +88,7 @@ function toSessionDetails(raw: Record<string, unknown>): SessionDetails {
           company: str(leadRaw.company),
         }
       : null,
+    quotation: (raw.quotation as SessionDetails['quotation']) ?? null,
   };
 }
 
@@ -300,6 +338,63 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
                 <p className="text-[13px] text-[var(--ds-text)]">{value}</p>
               </div>
             ))}
+          </div>
+        </Field>
+      )}
+
+      {details.quotation && (
+        <Field label="Quotation">
+          <div className="space-y-3">
+            <StatusBadge tone={QUOTATION_STATUS_TONE[details.quotation.status as QuotationStatus] ?? 'neutral'}>
+              {QUOTATION_STATUS_LABEL[details.quotation.status as QuotationStatus] ?? details.quotation.status}
+            </StatusBadge>
+            {details.quotation.line_items.length > 0 ? (
+              <>
+                <ul className="divide-y divide-[var(--ds-border)] rounded-md border border-[var(--ds-border)]">
+                  {details.quotation.line_items.map((line) => (
+                    <li key={line.service_id} className="space-y-2 p-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-[12.5px] font-medium text-[var(--ds-text)]">{line.name}</p>
+                          <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
+                            {line.quantity} × {formatMoney(details.quotation!.currency, line.price_per_unit)} /{' '}
+                            {line.unit_label}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-[12.5px] font-semibold text-[var(--ds-text)]">
+                          {formatMoney(details.quotation!.currency, line.subtotal)}
+                        </p>
+                      </div>
+                      {line.answers.length > 0 && (
+                        <dl className="space-y-1 rounded bg-[var(--ds-bg-sunken)] p-2">
+                          {line.answers.map((a) => (
+                            <div key={a.question_id} className="flex gap-2 text-[11px]">
+                              <dt className="min-w-0 shrink-0 text-[var(--ds-text-subtle)]">{a.question_text}</dt>
+                              <dd className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{a.answer || '—'}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex items-center justify-between rounded-md bg-[var(--ds-bg-sunken)] px-2.5 py-2">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--ds-text-subtle)]">
+                    <Receipt size={12} aria-hidden="true" />
+                    Estimated total
+                  </span>
+                  <span className="text-[14px] font-semibold text-[var(--ds-text)]">
+                    {formatMoney(details.quotation.currency, details.quotation.total)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                {details.quotation.status === 'skipped'
+                  ? 'The visitor skipped the quotation flow.'
+                  : 'The visitor started but did not finish a quote.'}
+              </p>
+            )}
           </div>
         </Field>
       )}

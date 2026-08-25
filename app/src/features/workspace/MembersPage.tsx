@@ -4,11 +4,13 @@ import {
   Building2,
   Check,
   Headphones,
+  Loader2,
   Mail,
   Pencil,
   Plus,
   RotateCcw,
   Trash2,
+  Upload,
   UserPlus,
   Users,
   UserRound,
@@ -43,10 +45,12 @@ import {
   getDepartments,
   getOperators,
   listOperatorInvites,
+  removeOperatorAvatar,
   resendOperatorInvite,
   revokeOperatorInvite,
   updateDepartment,
   updateOperator,
+  uploadOperatorAvatar,
 } from '../../services/api';
 import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 import { useBotContext } from '../../context/BotContext';
@@ -108,6 +112,9 @@ interface TeamData {
   departments: Department[];
   invites: OperatorInvite[];
   currentUserId: number | null;
+  /** 'operator' when logged in via X-Operator-Key, 'client' via X-API-Key - decides
+   * how to match `currentUserId` against a roster row (see `isEditingSelf` below). */
+  currentUserKind: 'client' | 'operator' | null;
 }
 
 type LoadPhase =
@@ -119,14 +126,18 @@ type TabKey = 'people' | 'departments';
 
 // ── Small presentational pieces ──────────────────────────────────────────────
 
-function Avatar({ name }: { name: string }): ReactElement {
+function Avatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }): ReactElement {
   const initial = name.trim().charAt(0).toUpperCase() || '?';
   return (
     <span
       aria-hidden="true"
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[12px] font-bold text-[var(--ds-accent-text)]"
+      className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent-soft)] text-[12px] font-bold text-[var(--ds-accent-text)]"
     >
-      {initial}
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        initial
+      )}
     </span>
   );
 }
@@ -189,6 +200,10 @@ export function MembersPage(): ReactElement {
   const [editMaxChats, setEditMaxChats] = useState('3');
   const [editBusy, setEditBusy] = useState(false);
 
+  // Profile picture - optional, self-only (see `isEditingSelf` below).
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+
   // `editMaxChats` is the raw string from a number input: clearing it yields ''
   // (Number('') === 0, an operator that can never be routed a live chat) and it
   // does not enforce the documented [1, 20] cap. Parse + validate before we let
@@ -242,6 +257,7 @@ export function MembersPage(): ReactElement {
             departments: unwrapList<Department>(deptRes, 'departments'),
             invites: unwrapList<OperatorInvite>(inviteRes, 'invites'),
             currentUserId: user ? user.id : null,
+            currentUserKind: (user?.kind as 'client' | 'operator' | undefined) ?? null,
           },
         });
       } catch (error) {
@@ -317,6 +333,20 @@ export function MembersPage(): ReactElement {
     return botOperators.find((operator) => operator.linked_client_id === data.currentUserId) ?? null;
   }, [data, botOperators]);
   const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
+
+  // Is the row currently open in the edit panel the logged-in user's own
+  // roster entry? An operator login's `currentUserId` IS the operator id
+  // (`/auth/me` returns `id=operator.id` for that branch); a client login's
+  // `currentUserId` is the Client id, matched instead via `linked_client_id`
+  // - the two id spaces are not interchangeable, so this must branch on
+  // `currentUserKind` rather than try either comparison unconditionally.
+  const isEditingSelf =
+    !!editing &&
+    !!data &&
+    data.currentUserId != null &&
+    (data.currentUserKind === 'operator'
+      ? editing.id === data.currentUserId
+      : editing.linked_client_id === data.currentUserId);
 
   // ── Free-plan gate ───────────────────────────────────────────────────────
   // Placed after every hook call (rules-of-hooks requires hooks to run
@@ -398,6 +428,57 @@ export function MembersPage(): ReactElement {
     setEditDept(operator.department_id != null ? String(operator.department_id) : '');
     setEditMaxChats(String(operator.max_concurrent_chats ?? 3));
     setRemovingId(null);
+    setAvatarError('');
+  };
+
+  /** Patches one operator's `avatar_url` in both the open edit panel and the roster list. */
+  const patchOperatorAvatar = (operatorId: number, avatarUrl: string | null): void => {
+    setEditing((current) => (current && current.id === operatorId ? { ...current, avatar_url: avatarUrl } : current));
+    setPhase((current) =>
+      current.status === 'ready'
+        ? {
+            status: 'ready',
+            data: {
+              ...current.data,
+              operators: current.data.operators.map((operator) =>
+                operator.id === operatorId ? { ...operator, avatar_url: avatarUrl } : operator,
+              ),
+            },
+          }
+        : current,
+    );
+  };
+
+  const handleAvatarUpload = async (file: File): Promise<void> => {
+    if (!editing) return;
+    const operatorId = editing.id;
+    setAvatarUploading(true);
+    setAvatarError('');
+    try {
+      const { avatar_url } = await uploadOperatorAvatar(file);
+      patchOperatorAvatar(operatorId, avatar_url);
+      notify({ tone: 'success', message: 'Your profile picture has been updated.' });
+    } catch (error) {
+      setAvatarError(toMessage(error, 'Failed to upload profile picture.'));
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleAvatarRemove = async (): Promise<void> => {
+    if (!editing) return;
+    const operatorId = editing.id;
+    setAvatarUploading(true);
+    setAvatarError('');
+    try {
+      await removeOperatorAvatar();
+      patchOperatorAvatar(operatorId, null);
+      notify({ tone: 'success', message: 'Your profile picture has been removed.' });
+    } catch (error) {
+      setAvatarError(toMessage(error, 'Failed to remove profile picture.'));
+    } finally {
+      setAvatarUploading(false);
+    }
   };
 
   const handleSaveEdit = async (event: FormEvent): Promise<void> => {
@@ -530,7 +611,7 @@ export function MembersPage(): ReactElement {
       header: 'Operator',
       render: (operator) => (
         <div className="flex items-center gap-3">
-          <Avatar name={operator.name} />
+          <Avatar name={operator.name} avatarUrl={operator.avatar_url} />
           <div className="min-w-0">
             <p className="truncate font-medium text-[var(--ds-text)]">{operator.name}</p>
             <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{operator.email}</p>
@@ -824,6 +905,70 @@ export function MembersPage(): ReactElement {
                     title={`Edit ${editing.name}`}
                     description="Change their role, department, or how many chats they can take at once."
                   />
+
+                  {/* Profile picture - optional, and only the operator themselves can set
+                      their own (mirrors the name/email self-only rule above). */}
+                  {isEditingSelf && (
+                    <div className="mt-4 flex flex-col gap-3 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3">
+                        <span
+                          aria-hidden="true"
+                          className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent-soft)] text-[14px] font-semibold text-[var(--ds-accent-text)]"
+                        >
+                          {editing.avatar_url ? (
+                            <img src={editing.avatar_url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            editing.name.trim().charAt(0).toUpperCase() || '?'
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-[var(--ds-text)]">Profile picture</p>
+                          <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
+                            Optional - shown to teammates and to visitors in live chat.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]">
+                          {avatarUploading ? (
+                            <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Upload size={14} aria-hidden="true" />
+                          )}
+                          {editing.avatar_url ? 'Replace' : 'Upload image'}
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg,image/webp"
+                            className="hidden"
+                            disabled={avatarUploading}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              event.target.value = '';
+                              if (file) void handleAvatarUpload(file);
+                            }}
+                          />
+                        </label>
+                        {editing.avatar_url && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={avatarUploading}
+                            onClick={() => void handleAvatarRemove()}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {isEditingSelf && avatarError && (
+                    <p role="alert" className="mt-2 text-[12px] text-[var(--ds-danger)]">
+                      {avatarError}
+                    </p>
+                  )}
+
                   <div className="mt-4 grid gap-4 sm:grid-cols-3">
                     <div>
                       <label htmlFor="edit-role" className={labelClass}>

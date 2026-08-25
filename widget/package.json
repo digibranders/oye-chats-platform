@@ -41,9 +41,9 @@
       "gzip": true
     },
     {
-      "name": "Chat chunk (lazy on first widget open)",
+      "name": "Chat chunk (lazy on first widget open; +1.2 KB from quotation orchestration)",
       "path": "dist/app/oyechats-ChatWindow.*.js",
-      "limit": "31 KB",
+      "limit": "32 KB",
       "gzip": true
     },
     {
@@ -73,6 +73,12 @@
     {
       "name": "MeetingBooking (lazy on demand)",
       "path": "dist/app/oyechats-MeetingBooking.*.js",
+      "limit": "4 KB",
+      "gzip": true
+    },
+    {
+      "name": "QuotationFlow (lazy on quote request)",
+      "path": "dist/app/oyechats-QuotationFlow.*.js",
       "limit": "4 KB",
       "gzip": true
     },

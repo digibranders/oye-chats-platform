@@ -1383,6 +1383,42 @@ export const uploadLogo = async (file) => {
     }
 };
 
+/**
+ * Uploads (or replaces) the current operator's own profile picture. Purely
+ * optional - an operator who never calls this just shows initials.
+ * @param {File} file - The image file to upload
+ * @returns {Promise<{avatar_url: string}>}
+ */
+export const uploadOperatorAvatar = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const response = await api.post('/operators/me/avatar', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error uploading operator avatar:', error);
+        throw buildApiError(error, 'Failed to upload profile picture');
+    }
+};
+
+/**
+ * Removes the current operator's own profile picture, reverting to initials.
+ * @returns {Promise<{success: boolean}>}
+ */
+export const removeOperatorAvatar = async () => {
+    try {
+        const response = await api.delete('/operators/me/avatar');
+        return response.data;
+    } catch (error) {
+        console.error('API Error removing operator avatar:', error);
+        throw buildApiError(error, 'Failed to remove profile picture');
+    }
+};
+
 // --- SUPERADMIN ENDPOINTS ---
 
 /**
@@ -3501,6 +3537,29 @@ export const addSelfAsOperator = async (botId) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to add yourself as an operator');
+    }
+};
+
+/**
+ * Read the quotation catalog for a bot.
+ * Returns { enabled, currency, services[] }.
+ */
+export const getQuotationCatalog = async (botId) => {
+    try {
+        const response = await api.get(`/bots/${botId}/quotation-catalog`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load quotation catalog');
+    }
+};
+
+/** Replace the quotation catalog for a bot. */
+export const putQuotationCatalog = async (botId, catalog) => {
+    try {
+        const response = await api.put(`/bots/${botId}/quotation-catalog`, catalog);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save quotation catalog');
     }
 };
 

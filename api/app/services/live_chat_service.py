@@ -153,6 +153,9 @@ class ConnectionManager:
         # off it would silently not happen for cross-process pairs.
         # ``translation_service.resolve_incoming_target`` reads the DB instead.
         self._operator_locales: dict[int, str | None] = {}
+        # operator_id → avatar URL (cached on connect so visitor-facing payloads
+        # can show the operator's photo instead of falling back to initials).
+        self._operator_avatars: dict[int, str | None] = {}
         # operator_id → client_id (cached on connect so disconnect cleanup
         # can address the right Redis presence bucket without a DB lookup
         # . Important because the cleanup runs after the operator row may
@@ -446,6 +449,7 @@ class ConnectionManager:
         client_id: int | None = None,
         subprotocol: str | None = None,
         preferred_locale: str | None = None,
+        operator_avatar: str | None = None,
     ):
         self._ensure_background_tasks()
         # Cancel any pending grace-period timeout. Operator is back before it expired.
@@ -473,6 +477,7 @@ class ConnectionManager:
         self._operator_departments[operator_id] = department_id
         self._operator_names[operator_id] = operator_name
         self._operator_locales[operator_id] = preferred_locale
+        self._operator_avatars[operator_id] = operator_avatar
         if client_id is not None:
             self._operator_client_ids[operator_id] = client_id
             # Mark in Redis presence, the state resolver and routing service
@@ -491,6 +496,7 @@ class ConnectionManager:
                 "type": "init",
                 "operator_id": operator_id,
                 "operator_name": operator_name,
+                "operator_avatar": operator_avatar,
                 "is_online": is_online,
             },
         )
@@ -516,9 +522,11 @@ class ConnectionManager:
         # transitioned from "all offline" to "1 online"). Skipped on operator
         # reconnects to avoid spamming visitors with toasts.
         if client_id is not None and was_workspace_empty:
-            await self._notify_visitors_operator_available(client_id, operator_name)
+            await self._notify_visitors_operator_available(client_id, operator_name, operator_avatar)
 
-    async def _notify_visitors_operator_available(self, client_id: int, operator_name: str) -> None:
+    async def _notify_visitors_operator_available(
+        self, client_id: int, operator_name: str, operator_avatar: str | None = None
+    ) -> None:
         """Broadcast ``operator_joined`` to every visitor currently connected
         whose session belongs to a bot in this workspace.
 
@@ -558,6 +566,7 @@ class ConnectionManager:
                     {
                         "type": "operator_joined",
                         "operator_name": operator_name,
+                        "operator_avatar": operator_avatar,
                     },
                 )
             if matching:
@@ -649,6 +658,7 @@ class ConnectionManager:
                 self._operator_departments.pop(operator_id, None)
                 self._operator_names.pop(operator_id, None)
                 self._operator_locales.pop(operator_id, None)
+                self._operator_avatars.pop(operator_id, None)
                 self._operator_message_queue.pop(operator_id, None)  # Discard stale queue
 
                 # Persist offline status and reassign this operator's live sessions
@@ -798,6 +808,7 @@ class ConnectionManager:
         # Drop in-memory roster state for this operator so the broadcast shows them offline.
         self._operator_departments.pop(operator_id, None)
         self._operator_names.pop(operator_id, None)
+        self._operator_avatars.pop(operator_id, None)
         self._operator_client_ids.pop(operator_id, None)
         self._operator_message_queue.pop(operator_id, None)
 
@@ -882,19 +893,30 @@ class ConnectionManager:
             return True
         return operator_dept == department_id
 
-    async def accept_chat(self, session_id: str, operator_id: int, operator_name: str) -> bool:
+    async def accept_chat(
+        self, session_id: str, operator_id: int, operator_name: str, operator_avatar: str | None = None
+    ) -> bool:
         """Operator accepts a waiting chat. Returns False if already accepted by a *different* operator.
 
         Uses a per-session asyncio.Lock to prevent TOCTOU races between the
         existence check and the assignment.
+
+        ``operator_avatar`` is the accepting operator's photo URL (resolved from
+        the DB by the caller). It is forwarded to the visitor so the widget can
+        show the real avatar in the "joined the chat" pill instead of initials.
+        Callers that don't have it may omit it; the manager falls back to the
+        avatar cached at ``connect_operator`` time, and the widget falls back to
+        initials when neither is present.
         """
         if session_id not in self._accept_locks:
             self._accept_locks[session_id] = asyncio.Lock()
 
         async with self._accept_locks[session_id]:
-            return await self._accept_chat_inner(session_id, operator_id, operator_name)
+            return await self._accept_chat_inner(session_id, operator_id, operator_name, operator_avatar)
 
-    async def _accept_chat_inner(self, session_id: str, operator_id: int, operator_name: str) -> bool:
+    async def _accept_chat_inner(
+        self, session_id: str, operator_id: int, operator_name: str, operator_avatar: str | None = None
+    ) -> bool:
         existing_assignee = self.assignments.get(session_id)
         if existing_assignee is not None:
             if existing_assignee == operator_id:
@@ -910,13 +932,17 @@ class ConnectionManager:
         self.assignments[session_id] = operator_id
         self._cancel_timeout(session_id)
 
-        # Notify visitor
+        # Notify visitor. Prefer the caller-supplied avatar (DB truth, correct
+        # even across workers); fall back to the one cached when this operator
+        # connected. ``None`` → widget shows initials.
+        avatar = operator_avatar if operator_avatar is not None else self._operator_avatars.get(operator_id)
         await self._send_to_visitor(
             session_id,
             {
                 "type": "status",
                 "status": "connected",
                 "operator_name": operator_name,
+                "operator_avatar": avatar,
             },
         )
 
@@ -1400,6 +1426,7 @@ class ConnectionManager:
         session_id: str,
         content: str,
         operator_name: str,
+        operator_avatar: str | None = None,
         *,
         delivered_content: str | None = None,
         translated_from: str | None = None,
@@ -1421,12 +1448,28 @@ class ConnectionManager:
         ``message_id`` was previously never sent. The widget already reads it
         (``dbId: typeof data.message_id === 'number' ? ...``), so populating it
         also closes a pre-existing gap in the visitor's read-receipt chain.
+
+        ``operator_avatar`` lets the visitor see the operator's photo instead
+        of initials. The caller resolves it from the sending operator, so the
+        fallback below is only reached if a future caller omits it.
         """
+        avatar = operator_avatar
+        if avatar is None:
+            # NOT ``self.assignments.get``: that map is per-process, written by
+            # whichever worker handled the accept, which is oyechats-api while
+            # this code runs in oyechats-ws. Reading it directly here would
+            # resolve to None for every cross-process pair and silently drop
+            # back to initials. This path is rare (the caller passes the
+            # avatar), so the opt-in database read is affordable.
+            assignee = self._assigned_operator(session_id, consult_db=True)
+            if assignee is not None:
+                avatar = self._operator_avatars.get(assignee)
         payload = {
             "type": "message",
             "role": "operator",
             "content": delivered_content if delivered_content is not None else content,
             "operator_name": operator_name,
+            "operator_avatar": avatar,
             "timestamp": datetime.now(UTC).isoformat(),
         }
         if translated_from:
@@ -1512,9 +1555,20 @@ class ConnectionManager:
         return False
 
     async def route_operator_file(
-        self, session_id: str, file_url: str, filename: str, content_type: str, operator_name: str
+        self,
+        session_id: str,
+        file_url: str,
+        filename: str,
+        content_type: str,
+        operator_name: str,
+        operator_avatar: str | None = None,
     ):
         """Route a file message from operator to visitor."""
+        avatar = operator_avatar
+        if avatar is None:
+            assignee = self.assignments.get(session_id)
+            if assignee is not None:
+                avatar = self._operator_avatars.get(assignee)
         await self._send_to_visitor(
             session_id,
             {
@@ -1524,6 +1578,7 @@ class ConnectionManager:
                 "filename": filename,
                 "content_type": content_type,
                 "operator_name": operator_name,
+                "operator_avatar": avatar,
                 "timestamp": datetime.now(UTC).isoformat(),
             },
         )

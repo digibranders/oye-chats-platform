@@ -15,9 +15,135 @@
  *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { Activity, Compass, Maximize2 } from 'lucide-react';
+import { Activity, Compass, Maximize2, Receipt } from 'lucide-react';
 import { Modal, StatusBadge, cn } from '../../design-system';
 import { type LeadDetail } from './useLeadDetail';
+
+const CURRENCY_SYMBOL: Record<string, string> = {
+  INR: '₹',
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  AUD: 'A$',
+  CAD: 'C$',
+  SGD: 'S$',
+  AED: 'د.إ',
+};
+
+function formatMoney(currency: string, value: number): string {
+  const symbol = CURRENCY_SYMBOL[currency] ?? currency;
+  const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  return `${symbol}${rounded.toLocaleString()}`;
+}
+
+interface QuotationLineItem {
+  service_id: string;
+  name: string;
+  unit_label: string;
+  price_per_unit: number;
+  quantity: number;
+  subtotal: number;
+  answers: { question_id: string; question_text: string; answer: string }[];
+}
+
+interface QuotationSummary {
+  status: 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';
+  currency: string;
+  line_items: QuotationLineItem[];
+  total: number;
+  activated_at: string | null;
+  completed_at: string | null;
+}
+
+const QUOTATION_STATUS_TONE: Record<QuotationSummary['status'], 'success' | 'warning' | 'neutral' | 'info'> = {
+  complete: 'success',
+  quoting: 'info',
+  selecting: 'info',
+  answering: 'info',
+  skipped: 'warning',
+  idle: 'neutral',
+};
+
+const QUOTATION_STATUS_LABEL: Record<QuotationSummary['status'], string> = {
+  complete: 'Quote accepted',
+  quoting: 'Quote pending',
+  selecting: 'Selecting services',
+  answering: 'Answering questions',
+  skipped: 'Skipped by visitor',
+  idle: 'Not started',
+};
+
+/**
+ * QuotationSummarySection - itemised view of what the visitor built through
+ * the quotation flow. Renders nothing when the session never activated it.
+ * Line items include per-service question answers so operators land on the
+ * call with the visitor's stated scope in front of them.
+ */
+function QuotationSummarySection({ detail }: { detail: LeadDetail }): ReactElement | null {
+  const quotation = (detail as unknown as { quotation?: QuotationSummary }).quotation ?? null;
+  const hasQuote = Boolean(quotation && quotation.line_items && quotation.line_items.length > 0);
+  const explicitlyEnded = quotation && (quotation.status === 'skipped' || quotation.status === 'complete');
+  if (!quotation || (!hasQuote && !explicitlyEnded)) return null;
+
+  const tone = QUOTATION_STATUS_TONE[quotation.status] ?? 'neutral';
+  const label = QUOTATION_STATUS_LABEL[quotation.status] ?? quotation.status;
+
+  return (
+    <section className="space-y-3">
+      <header className="flex items-center justify-between gap-2">
+        <h4 className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--ds-text)]">
+          <Receipt size={14} aria-hidden="true" className="text-[var(--ds-accent)]" />
+          Quotation
+        </h4>
+        <StatusBadge tone={tone}>{label}</StatusBadge>
+      </header>
+
+      {hasQuote ? (
+        <>
+          <ul className="divide-y divide-[var(--ds-border)] rounded-md border border-[var(--ds-border)]">
+            {quotation.line_items.map((line) => (
+              <li key={line.service_id} className="space-y-2 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{line.name}</p>
+                    <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
+                      {line.quantity} × {formatMoney(quotation.currency, line.price_per_unit)} / {line.unit_label}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-[13px] font-semibold text-[var(--ds-text)]">
+                    {formatMoney(quotation.currency, line.subtotal)}
+                  </p>
+                </div>
+                {line.answers.length > 0 && (
+                  <dl className="space-y-1 rounded bg-[var(--ds-bg-sunken)] p-2">
+                    {line.answers.map((a) => (
+                      <div key={a.question_id} className="flex gap-2 text-[11px]">
+                        <dt className="min-w-0 shrink-0 text-[var(--ds-text-subtle)]">{a.question_text}</dt>
+                        <dd className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{a.answer || '—'}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-between rounded-md bg-[var(--ds-bg-sunken)] px-3 py-2">
+            <span className="text-[11px] uppercase tracking-wider text-[var(--ds-text-subtle)]">
+              Estimated total
+            </span>
+            <span className="text-[15px] font-semibold text-[var(--ds-text)]">
+              {formatMoney(quotation.currency, quotation.total)}
+            </span>
+          </div>
+        </>
+      ) : (
+        <p className="rounded-md border border-dashed border-[var(--ds-border)] p-3 text-[12px] text-[var(--ds-text-subtle)]">
+          The visitor {quotation.status === 'skipped' ? 'skipped the quotation flow' : 'started but did not complete a quote'}.
+        </p>
+      )}
+    </section>
+  );
+}
 
 // ── Safe readers over the loosely-typed `source` / `behavioral` JSON ─────────
 
@@ -334,6 +460,7 @@ function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | n
 export function LeadInsights({ detail }: { detail: LeadDetail }): ReactElement {
   return (
     <>
+      <QuotationSummarySection detail={detail} />
       <SourceAttribution detail={detail} />
       <BehavioralSignals detail={detail} />
     </>

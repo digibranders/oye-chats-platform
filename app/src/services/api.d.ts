@@ -666,3 +666,18 @@ export function detectBrandTone(botId: number): Promise<Record<string, unknown>>
 // ── Demo share tracking (channels) ───────────────────────────────────────────
 /** POST /bots/{id}/demo-share-click - record a shared demo-link click. */
 export function trackDemoShareClick(botId: number): Promise<Record<string, unknown>>;
+
+// ── Operator profile picture (settings, members) ─────────────────────────────
+/** POST /operators/me/avatar (multipart) - upload the caller's profile picture. */
+export function uploadOperatorAvatar(file: File): Promise<{ avatar_url: string }>;
+/** DELETE /operators/me/avatar - drop the picture and revert to initials. */
+export function removeOperatorAvatar(): Promise<{ success: boolean }>;
+
+// ── Quotation catalog (agents/advanced) ──────────────────────────────────────
+/** GET /bots/{id}/quotation-catalog - the bot's quotation catalog. Returned as
+ *  `unknown`: the payload is unvalidated wire data, and the only consumer runs
+ *  it through its own `normalize()` before touching a field. */
+export function getQuotationCatalog(botId: number): Promise<unknown>;
+/** PUT /bots/{id}/quotation-catalog - replace the bot's quotation catalog.
+ *  Returns the stored catalog, `unknown` for the same reason as above. */
+export function putQuotationCatalog(botId: number, catalog: unknown): Promise<unknown>;

@@ -104,6 +104,7 @@ export default {
             chunk_generic: 'Couldn’t load this just now.',
             chunk_connect_form: 'Couldn’t load the connect form.',
             chunk_booking_form: 'Couldn’t load the booking form.',
+            chunk_quote: 'Couldn’t load the quote.',
             try_again: 'Try again',
             cancel_return_ai: 'Cancel and return to AI chat',
             connecting_team_title: 'Connecting you with our team',
