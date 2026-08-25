@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.api.bot_routes import BusinessHours
+from app.api.quotation_routes import build_quotation_summary
 from app.core.rate_limit import key_from_operator_credential, limiter
 from app.core.security import get_password_hash
 from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
@@ -587,6 +588,11 @@ async def update_operator(
                     normalized_list.append(normalized)
             operator.supported_languages = normalized_list
         if request.avatar_url is not None:
+            if not is_self_edit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the operator themselves can change their profile picture.",
+                )
             operator.avatar_url = request.avatar_url
         if request.max_concurrent_chats is not None:
             operator.max_concurrent_chats = request.max_concurrent_chats
@@ -606,6 +612,75 @@ async def update_operator(
         await manager.update_operator_department(operator_id, new_department_id)
 
     return {"success": True, "message": f"Operator '{operator_name}' updated."}
+
+
+def _resolve_self_operator(session, auth: dict) -> Operator | None:
+    """Look up the Operator row for the calling identity: an operator-key login
+    resolves directly by id; a client login resolves via the row it is linked
+    to (``Operator.linked_client_id``). Returns None if the caller has no
+    operator profile at all (e.g. a client who has never added themselves as
+    an operator)."""
+    caller_op_id = auth.get("operator_id") if auth["type"] == "operator" else None
+    if caller_op_id is not None:
+        return session.execute(select(Operator).where(Operator.id == caller_op_id)).scalar_one_or_none()
+
+    caller_client_id = (
+        auth.get("linked_client_id")
+        if auth["type"] == "operator"
+        else (auth["client_id"] if auth["type"] == "client" else None)
+    )
+    if caller_client_id is None:
+        return None
+    return session.execute(
+        select(Operator).where(Operator.linked_client_id == caller_client_id, Operator.client_id == auth["client_id"])
+    ).scalar_one_or_none()
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(file: UploadFile = File(...), auth: dict = Depends(get_current_client_or_operator)):
+    """Upload (or replace) the caller's own profile picture.
+
+    Purely optional self-personalization for the operator workspace — an
+    operator without one just shows initials (see ``AvatarCircle`` on the
+    frontend), so there is no server-side requirement to ever call this.
+    """
+    from app.core.upload_guard import IMAGE_UPLOAD_TYPES, MAX_LOGO_BYTES, ensure_allowed_type, read_bounded
+    from app.services.r2_service import UnsupportedImage, _build_public_url, upload_to_r2
+
+    ensure_allowed_type(file, IMAGE_UPLOAD_TYPES)
+    file_data = await read_bounded(file, MAX_LOGO_BYTES)
+
+    try:
+        file_key = upload_to_r2(file_data, file.filename, file.content_type)
+    except UnsupportedImage as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Operator avatar upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload profile picture.") from e
+
+    avatar_url = _build_public_url(file_key)
+
+    with get_session() as session:
+        operator = _resolve_self_operator(session, auth)
+        if not operator:
+            raise HTTPException(status_code=404, detail="No operator profile is linked to this account.")
+        operator.avatar_url = avatar_url
+        session.commit()
+
+    return {"avatar_url": avatar_url}
+
+
+@router.delete("/me/avatar")
+def remove_my_avatar(auth: dict = Depends(get_current_client_or_operator)):
+    """Remove the caller's own profile picture, reverting to initials."""
+    with get_session() as session:
+        operator = _resolve_self_operator(session, auth)
+        if not operator:
+            raise HTTPException(status_code=404, detail="No operator profile is linked to this account.")
+        operator.avatar_url = None
+        session.commit()
+
+    return {"success": True}
 
 
 @router.delete("/{operator_id}")
@@ -851,6 +926,24 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             }
         fire_webhook(bot.id, "handoff_requested", webhook_data)
 
+        # Email the team. Operators may not be watching the dashboard when a
+        # visitor queues (that's exactly when this matters most), so this is
+        # the notification path for "come look, someone's waiting" - same
+        # email_on_* / notification_emails machinery as the qualified-lead
+        # notification. Never blocks the handoff response on send failure.
+        if getattr(db_bot, "email_on_handoff", True):
+            from app.services.email_service import get_notification_recipients, send_handoff_request_email
+
+            recipients = get_notification_recipients(db_bot, "handoff_requested")
+            if recipients:
+                contact = {"name": lead_info.name, "email": lead_info.email} if lead_info else None
+                reply_to = getattr(db_bot, "reply_to_email", None)
+                for recipient in recipients:
+                    try:
+                        send_handoff_request_email(recipient, db_bot.name, request.reason, contact, reply_to=reply_to)
+                    except Exception:
+                        logger.warning("handoff_request_email_failed | bot=%s session=%s", bot.id, request.session_id)
+
         # Cache queue timeout for the response. Read BEFORE the session
         # closes so the value travels out cleanly.
         queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
@@ -1020,19 +1113,22 @@ def get_session_live_status(session_id: SessionId, bot: Bot = Depends(get_curren
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id == bot.id)
         ).scalar_one_or_none()
         if not chat_session:
-            return {"status": "bot", "operator_name": None}
+            return {"status": "bot", "operator_name": None, "operator_avatar": None}
 
         operator_name = None
+        operator_avatar = None
         if chat_session.assigned_operator_id:
             operator = session.execute(
                 select(Operator).where(Operator.id == chat_session.assigned_operator_id)
             ).scalar_one_or_none()
             if operator:
                 operator_name = operator.name
+                operator_avatar = operator.avatar_url
 
         return {
             "status": chat_session.status,
             "operator_name": operator_name,
+            "operator_avatar": operator_avatar,
         }
 
 
@@ -1180,11 +1276,12 @@ async def accept_chat(
         session.commit()
         operator_name = operator.name
         operator_id = operator.id
+        operator_avatar = operator.avatar_url
 
     # DB already committed status='live', the in-memory manager is secondary.
     # If accept_chat returns False (already assigned in memory to another operator),
     # that means DB and memory diverged. Force-sync memory to match DB truth.
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted:
         logger.warning(
             f"DB accepted chat {session_id} for operator {operator_id} but in-memory "
@@ -1929,6 +2026,7 @@ def get_session_details(session_id: SessionId, auth=Depends(get_current_client_o
             "bot_name": bot.name,
             "department_name": dept_name,
             "operator_name": operator_name,
+            "quotation": build_quotation_summary(bot, chat_session),
         }
 
 
@@ -2594,6 +2692,7 @@ async def takeover_bot_session(
         session.commit()
         operator_id = operator.id
         operator_name = operator.name
+        operator_avatar = operator.avatar_url
         department_id = target.department_id
 
     # Register session metadata in the in-memory manager so subsequent WS
@@ -2605,7 +2704,7 @@ async def takeover_bot_session(
     if department_id is not None:
         manager._session_departments[session_id] = department_id
 
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted:
         logger.warning(
             "Takeover for %s succeeded in DB but manager.accept_chat reported "

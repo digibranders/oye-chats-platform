@@ -355,6 +355,44 @@ class Bot(Base):
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
 
+    # Admin-defined pre-handoff question flow. Fires once the BANT signals reach
+    # ``threshold`` marked dimensions and BEFORE the handoff card is offered,
+    # to finish qualifying the lead with structured answers the sales team
+    # sees on the very first touch. NULL disables the feature for this bot.
+    # Shape:
+    #   {
+    #     "enabled": true,
+    #     "threshold": 2,          # BANT dimensions needed to trigger (1-4)
+    #     "questions": [
+    #       {"id": "q1", "text": "...", "type": "text"|"choice"|"email"|"phone",
+    #        "options": ["..."], "required": true,
+    #        "skip_if_bant": null|"need"|"timeline"|"authority"|"budget"}
+    #     ]
+    #   }
+    qualification_flow = Column(JSONB, nullable=True)
+
+    # Admin-defined quotation catalog. An ordered list of billable services
+    # the bot can quote a qualified visitor on (Website design, Logo, SEO
+    # audit, …). Each service carries its own price per unit, unit label,
+    # optional default quantity, and per-service questions the bot asks to
+    # scope the quote. NULL disables quoting for this bot.
+    # Shape:
+    #   {
+    #     "enabled": true,
+    #     "currency": "INR",
+    #     "services": [
+    #       {"id": "s1", "name": "Landing page", "description": "...",
+    #        "unit_label": "page", "price_per_unit": 5000,
+    #        "default_quantity": 1,
+    #        "questions": [
+    #          {"id": "q1", "text": "How many sections?",
+    #           "type": "number"|"text"|"choice",
+    #           "options": [...], "required": true}
+    #        ]}
+    #     ]
+    #   }
+    quotation_catalog = Column(JSONB, nullable=True)
+
     # CRAG relevance gate threshold override.
     # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
     # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
@@ -826,6 +864,22 @@ class ChatSession(Base):
     # frame for the visitor's reply, so a terse answer ("2 months") binds to
     # the dimension actually asked instead of being dropped as ambiguous.
     last_probed_dimension = Column(String, nullable=True)
+
+    # Pre-handoff quotation flow progress. NULL == "idle" (never activated).
+    # Shape:
+    #   {"status": "active"|"selecting"|"answering"|"quoting"|"complete"|"skipped",
+    #    "selected_service_ids": ["s1", "s2"],
+    #    "current_service_index": 0, "current_question_index": 0,
+    #    "answers": {"s1": {"q1": "value"}}, "quantities": {"s1": 3},
+    #    "activated_at": "...", "completed_at": null}
+    quotation_state = Column(JSONB, nullable=True)
+
+    # Pre-handoff qualification flow progress. NULL == "idle" (never activated).
+    # Shape once activated:
+    #   {"status": "active"|"complete"|"skipped",
+    #    "current_index": 0, "answers": {"q1": "5"},
+    #    "activated_at": "2026-08-21T...", "completed_at": null}
+    flow_state = Column(JSONB, nullable=True)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed

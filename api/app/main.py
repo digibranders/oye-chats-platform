@@ -46,6 +46,7 @@ from app.api.operator_routes import router as operator_router
 from app.api.payment_method_routes import router as payment_method_router
 from app.api.public_pricing_routes import router as public_pricing_router
 from app.api.push_routes import router as push_router
+from app.api.quotation_routes import router as quotation_router
 from app.api.subscription_routes import credits_router
 from app.api.subscription_routes import router as subscription_router
 from app.api.superadmin_ops_routes import router as superadmin_ops_router
@@ -185,6 +186,7 @@ app.include_router(superadmin_router)
 app.include_router(public_bot_router)
 app.include_router(bot_router)
 app.include_router(chat_router)
+app.include_router(quotation_router)
 app.include_router(document_router)
 app.include_router(analytics_router)
 app.include_router(unsubscribe_router)

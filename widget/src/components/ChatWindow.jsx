@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Globe } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, changeSessionLanguage } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -33,6 +33,7 @@ const LeadCaptureForm = lazyWithRetry(() => import('./LeadCaptureForm'));
 const HandoffForm = lazyWithRetry(() => import('./HandoffForm'));
 const LiveChatMode = lazyWithRetry(() => import('./LiveChatMode'));
 const MeetingBooking = lazyWithRetry(() => import('./MeetingBooking'));
+const QuotationFlow = lazyWithRetry(() => import('./QuotationFlow'));
 const LanguageSelector = lazyWithRetry(() => import('./LanguageSelector'));
 
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -49,6 +50,14 @@ const SYSTEM_MSG = {
 };
 
 const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === systemId;
+
+// Trailing sentences the bot's LLM tends to append when it thinks a handoff
+// is imminent. If the quotation card is about to render, we strip this off
+// the last bot message so the visitor doesn't see the invitation AND the
+// quote card competing side-by-side. On Skip the stashed text is replayed
+// as its own bot message so the follow-up still lands, just AFTER the
+// quote decision.
+const HANDOFF_INVITATION_TAIL_RE = /\n?\s*(would you like (me )?to (connect|introduce|arrange)|shall i connect|should i connect|do you want me to connect|can i connect you|would you like to (chat|speak) with (our|the) team|would you like to talk to (our|the) team|would you like me to loop in (our|the) team|let me know if you'?d like me to (connect|introduce))[^.?!]*[.?!]?\s*$/i;
 
 // Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
@@ -119,8 +128,9 @@ const getInitials = (name) => {
 // prominent pill showing the operator's initials, name, department, and time.
 // Mirrors the bot-identity badge style so the live-chat handoff feels like a
 // natural identity swap rather than a silent system event.
-const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
+const OperatorJoinedNotice = ({ name, department, avatarUrl, timestamp, settings }) => {
     const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
+    const [imgOk, setImgOk] = useState(!!avatarUrl);
     const timeLabel = (() => {
         if (!timestamp) return '';
         const d = new Date(timestamp);
@@ -133,13 +143,23 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
                 className="inline-flex items-center gap-2.5 rounded-full pl-1.5 pr-3.5 py-1.5 bg-white border shadow-sm"
                 style={{ borderColor: `${primaryColor}26` }}
             >
-                <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0"
-                    style={{ backgroundColor: primaryColor }}
-                    aria-hidden="true"
-                >
-                    {getInitials(name)}
-                </div>
+                {avatarUrl && imgOk ? (
+                    <img
+                        src={avatarUrl}
+                        alt=""
+                        aria-hidden="true"
+                        onError={() => setImgOk(false)}
+                        className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+                    />
+                ) : (
+                    <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0"
+                        style={{ backgroundColor: primaryColor }}
+                        aria-hidden="true"
+                    >
+                        {getInitials(name)}
+                    </div>
+                )}
                 <div className="flex flex-col leading-tight">
                     <span className="text-[12px] font-semibold text-[#16202C]">
                         {name || t('system.our_team') || 'Our team'}
@@ -296,6 +316,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, []);
     const [operatorName, setOperatorName] = useState(null);
     const [operatorDepartment, setOperatorDepartment] = useState(null);
+    const [operatorAvatar, setOperatorAvatar] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [hasMoreHistory, setHasMoreHistory] = useState(false);
@@ -738,6 +759,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         if (sessionStatus.operator_name) {
                             setOperatorName(sessionStatus.operator_name);
                         }
+                        if (sessionStatus.operator_avatar) {
+                            setOperatorAvatar(sessionStatus.operator_avatar);
+                        }
                     }
                 } catch { /* non-critical */ }
             }
@@ -846,12 +870,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     type: 'operator_joined',
                     operatorName,
                     operatorDepartment,
+                    operatorAvatar,
                     timestamp: new Date().toISOString(),
                 }
             ]);
         }
         prevOperatorNameRef.current = operatorName;
-    }, [operatorName, operatorDepartment]);
+    }, [operatorName, operatorDepartment, operatorAvatar]);
 
     // Strip the "Connecting…" system divider once the offline-message form
     // takes over (handoff timed out or the user chose "Leave a message").
@@ -1165,6 +1190,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setShowWelcomeBackBanner(true);
             setChatMode('bot');
             setOperatorName(null);
+            setOperatorAvatar(null);
             setIsInitializing(false);
         }, 600);
     };
@@ -1247,7 +1273,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         });
                     }
                 },
-                onFinalMetadata: (finalMeta) => {
+                onFinalMetadata: async (finalMeta) => {
                     // Flush any buffered chunks to state BEFORE processing metadata.
                     // Prevents the handoff form from appearing while text is still
                     // waiting in the rAF buffer (race condition: truncated response).
@@ -1313,6 +1339,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             triggerHandoff();
                             handoffTriggeredRef.current = false;
                         }, delay);
+                    } else if (!handoffFormInjectedRef.current) {
+                        // No explicit handoff intent this turn, but BANT may have
+                        // just crossed the quotation threshold on the previous
+                        // message (extraction runs async after stream close). Poll
+                        // proactively so the visitor sees the quote card WITHOUT
+                        // having to type "connect me". Handoff-intent turns keep
+                        // their existing path (above); this branch only covers the
+                        // "bot mentioned quoting on its own" case.
+                        const activeSessionId = sessionId || readSessionId({ shareDomain });
+                        if (activeSessionId) {
+                            const injected = await maybeInjectQuotation(activeSessionId);
+                            if (injected) {
+                                handoffFormInjectedRef.current = true;
+                            }
+                        }
                     }
                 },
                 onError: (err) => {
@@ -1471,22 +1512,172 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'unavailable') refreshLeadInfo();
     }, [chatMode, refreshLeadInfo]);
 
-    const triggerHandoff = useCallback(() => {
-        if (!sessionId) {
-            const newSession = `session_${crypto.randomUUID()}`;
-            setSessionId(newSession);
-            writeSessionId(newSession, { shareDomain });
+    // Stashed handoff invitation text pulled off the last bot message when
+    // the quote card fires. Restored as a new bot message on Skip.
+    const strippedHandoffTextRef = useRef(null);
+
+    const injectQuotationFlow = useCallback((initialState) => {
+        setMessages(prev => {
+            if (prev.some(m => m.type === 'quotation_flow' && m.status === 'active')) return prev;
+            // Peel any trailing handoff-invitation sentence off the last bot
+            // message (walking backwards past cards / typing indicators so we
+            // don't accidentally target a system row). Idempotent on repeated
+            // injections since after the first strip the regex no longer matches.
+            let stripped = null;
+            const updated = prev.map((msg) => msg);
+            for (let i = updated.length - 1; i >= 0; i -= 1) {
+                const m = updated[i];
+                if (m.sender !== 'bot' || m.type || !m.text) continue;
+                const match = m.text.match(HANDOFF_INVITATION_TAIL_RE);
+                if (match) {
+                    stripped = match[0].trim();
+                    updated[i] = { ...m, text: m.text.slice(0, match.index).trimEnd() };
+                }
+                break;
+            }
+            strippedHandoffTextRef.current = stripped;
+            return [
+                ...updated.filter((m) => m.type !== 'quotation_flow'),
+                {
+                    id: 'quotation-flow',
+                    type: 'quotation_flow',
+                    status: 'active',
+                    initialState,
+                    timestamp: new Date().toISOString(),
+                },
+            ];
+        });
+        // The card is lazy-imported (Suspense fallback={null}), so it mounts
+        // empty and grows after its chunk resolves. Land the visitor directly
+        // on it rather than leaving it below the fold behind the "scroll to
+        // latest" chevron — same multi-stop pattern as injectHandoffForm:
+        // 60ms covers a warm chunk cache, 280ms a cold import, 600ms a slow
+        // network.
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (messagesArea) {
+            [60, 280, 600].forEach((delay) => {
+                setTimeout(() => {
+                    const area = containerRef.current?.querySelector('[data-messages-area]');
+                    area?.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+                }, delay);
+            });
+        }
+    }, []);
+
+    // Try quotation next in the pre-handoff chain. Returns true when the
+    // quotation card was injected (caller must NOT fall through to handoff).
+    const maybeInjectQuotation = useCallback(async (activeSessionId) => {
+        // BANT extraction is an async LLM call after the stream closes —
+        // measured 2.5s-4.0s in practice (mega bot sample: 2.45/2.55/2.96/
+        // 3.04/3.61/3.87/3.99s). This poll is silent (no visible loading
+        // state), so widening it doesn't cost perceived speed — it just
+        // avoids missing the quote when it arrives at, say, 3.6s. A 2s cap
+        // was tried and reliably missed the mark; don't go back below ~4.5s
+        // total without re-measuring extraction latency first.
+        const POLL_DELAYS_MS = [0, 700, 1000, 1300, 1500];
+        for (const delay of POLL_DELAYS_MS) {
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+            try {
+                const quoteState = await getQuotationState(activeSessionId);
+                if (quoteState && (quoteState.status === 'complete' || quoteState.status === 'skipped')) {
+                    return false;
+                }
+                if (quoteState && quoteState.active) {
+                    injectQuotationFlow(quoteState);
+                    return true;
+                }
+            } catch {
+                // keep polling
+            }
+        }
+        return false;
+    }, [injectQuotationFlow]);
+
+    const triggerHandoff = useCallback(async () => {
+        // Ensure we have a session id, and use the FRESHEST value (React state
+        // may still be stale on the first turn). writeSessionId keeps the
+        // widget's storage in sync so the async retry loop below can re-read
+        // it if state hasn't rebuilt yet.
+        let activeSessionId = sessionId || readSessionId({ shareDomain });
+        if (!activeSessionId) {
+            activeSessionId = `session_${crypto.randomUUID()}`;
+            setSessionId(activeSessionId);
+            writeSessionId(activeSessionId, { shareDomain });
         }
         if (handoffFormInjectedRef.current) return;
+
+        // Pre-handoff quotation gate. BANT extraction runs async AFTER the
+        // LLM stream closes (see rag_service._background_bant_extraction), so
+        // the marked-count is often still behind by one turn when the visitor
+        // asks to connect. The maybeInjectQuotation helper polls a few times
+        // with short spacing before falling through to the plain handoff.
         handoffFormInjectedRef.current = true;
+        if (showWelcome) exitWelcome();
+        const injectedQuote = await maybeInjectQuotation(activeSessionId);
+        if (injectedQuote) return;
 
         if (showWelcome) {
-            exitWelcome();
             setTimeout(injectHandoffForm, WELCOME_EXIT_DURATION);
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, shareDomain]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain]);
+
+    // When the visitor submits their email at the end of the quote, don't
+    // force the handoff form — drop a thank-you card in the chat with a
+    // "Connect now" action instead, and let them take it or keep chatting.
+    // On Skip, replay the invitation sentence we stripped when the quote
+    // card fired and hand control back to the normal conversation. Either
+    // way, BANT/explicit "talk to human" intent (triggerHandoff /
+    // suggest_handoff) still decides if and when the handoff form appears
+    // on its own, same as if the quote card had never interrupted.
+    const handleQuotationFlowComplete = useCallback(({ status } = {}) => {
+        setMessages(prev => {
+            const next = prev.map(m =>
+                m.type === 'quotation_flow' ? { ...m, status: 'completed' } : m,
+            );
+            if (status === 'skipped' && strippedHandoffTextRef.current) {
+                next.push({
+                    id: `bot-followup-${Date.now()}`,
+                    text: strippedHandoffTextRef.current,
+                    sender: 'bot',
+                    timestamp: new Date().toISOString(),
+                    feedback: null,
+                });
+            }
+            if (status === 'complete') {
+                next.push({
+                    id: `quotation-thankyou-${Date.now()}`,
+                    type: 'quotation_thankyou',
+                    status: 'active',
+                    timestamp: new Date().toISOString(),
+                });
+            }
+            return next;
+        });
+        strippedHandoffTextRef.current = null;
+        handoffFormInjectedRef.current = false;
+
+        // Pre-warm the lead info (name + the email just captured) so it's
+        // ready the instant the visitor clicks "Connect now" below.
+        if (status === 'complete') refreshLeadInfo();
+    }, [refreshLeadInfo]);
+
+    const handleQuotationConnectNow = useCallback((thankyouMsgId) => {
+        setMessages(prev => prev.map(m =>
+            m.id === thankyouMsgId ? { ...m, status: 'completed' } : m,
+        ));
+        injectHandoffForm();
+        handoffFormInjectedRef.current = true;
+    }, [injectHandoffForm]);
+
+    // Visitor dismisses the post-quote thank-you card without connecting —
+    // just hide it and keep chatting with the bot.
+    const handleQuotationDismiss = useCallback((thankyouMsgId) => {
+        setMessages(prev => prev.map(m =>
+            m.id === thankyouMsgId ? { ...m, status: 'completed' } : m,
+        ));
+    }, []);
 
     const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
     // Live chat availability state from the backend resolver. Set on the
@@ -1697,6 +1888,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     || t('system.our_team')
                     || 'Our team';
                 setOperatorName(opName);
+                setOperatorAvatar(res.operator_avatar || connectRequest.operator_avatar || null);
                 setLiveChatState({
                     suggestedAction: 'accepted',
                     state: 'AVAILABLE',
@@ -1928,6 +2120,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         leaveMessageCardShownRef.current = false;
         setChatMode('bot');
         setOperatorName(null);
+        setOperatorAvatar(null);
         handoffFormInjectedRef.current = false;
         setMessages(prev => {
             const now = Date.now();
@@ -2546,10 +2739,62 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     key={msg.id}
                                     name={msg.operatorName}
                                     department={msg.operatorDepartment}
+                                    avatarUrl={msg.operatorAvatar}
                                     timestamp={msg.timestamp}
                                     settings={settings}
                                 />
                             );
+                        } else if (msg.type === 'quotation_flow' && msg.status === 'active') {
+                            items.push(
+                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                    <ErrorBoundary label="QuotationFlow" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message={t('system.chunk_quote') || 'Couldn’t load the quote.'} />}>
+                                        <Suspense fallback={null}>
+                                            <QuotationFlow
+                                                sessionId={sessionId}
+                                                settings={settings}
+                                                initialState={msg.initialState}
+                                                onComplete={handleQuotationFlowComplete}
+                                            />
+                                        </Suspense>
+                                    </ErrorBoundary>
+                                </div>
+                            );
+                        } else if (msg.type === 'quotation_flow') {
+                            // completed / skipped — already handed off, skip render.
+                        } else if (msg.type === 'quotation_thankyou' && msg.status === 'active') {
+                            items.push(
+                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px', background: '#ffffff' }}>
+                                        <p style={{ fontSize: '13px', color: '#111827', margin: '0 0 10px', lineHeight: 1.5 }}>
+                                            Thanks! We&apos;ve got your quotation request, our team will reach out to you regarding it. Want to connect with support right now instead?
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleQuotationConnectNow(msg.id)}
+                                            style={{
+                                                width: '100%', padding: '10px 12px', borderRadius: '8px',
+                                                border: 'none', background: sanitizeColor(settings?.primary_color, '#3A0CA3'), color: '#ffffff',
+                                                fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                                            }}
+                                        >
+                                            Connect now
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleQuotationDismiss(msg.id)}
+                                            style={{
+                                                width: '100%', marginTop: '8px', padding: '8px 12px', borderRadius: '8px',
+                                                border: 'none', background: 'transparent', color: '#6b7280',
+                                                fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                                            }}
+                                        >
+                                            Continue with AI instead
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        } else if (msg.type === 'quotation_thankyou') {
+                            // completed — connect action taken, skip render.
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} ref={handoffCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
@@ -2765,6 +3010,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }
                                 setChatModeRaw('bot');
                                 setOperatorName(null);
+                                setOperatorAvatar(null);
                             }}
                             className="mt-1 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                         >
@@ -3336,6 +3582,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setChatMode={setChatMode}
                         setOperatorName={setOperatorName}
                         setOperatorDepartment={setOperatorDepartment}
+                        setOperatorAvatar={setOperatorAvatar}
                         onConnectionStatusChange={(status) => {
                             setLiveConnectionStatus(status);
                             if (status === 'reconnecting') setIsLiveReconnecting(true);

@@ -295,6 +295,18 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Hide the native number input spin buttons (quotation quantity/number
+   questions, etc.) across browsers — plain digit entry only. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Premium orb avatar. Living procedural energy field. Interior motion
    is driven by SVG feTurbulence + feDisplacementMap; CSS only handles
    the outer breathing scale. Bloom lives inside the SVG and follows the

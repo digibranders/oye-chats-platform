@@ -206,6 +206,7 @@ export default {
             chunk_generic: 'यह अभी लोड नहीं हो सका।',
             chunk_connect_form: 'कनेक्ट फ़ॉर्म लोड नहीं हो सका।',
             chunk_booking_form: 'बुकिंग फ़ॉर्म लोड नहीं हो सका।',
+            chunk_quote: 'कोटेशन लोड नहीं हो सका।',
             try_again: 'फिर कोशिश करें',
             cancel_return_ai: 'रद्द करें और AI चैट पर लौटें',
             connecting_team_title: 'हम आपको अपनी टीम से जोड़ रहे हैं',

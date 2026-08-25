@@ -306,6 +306,60 @@ export const submitMeetingBooked = async (sessionId, data = {}) => {
     }
 };
 
+export const getQuotationState = async (sessionId) => {
+    try {
+        const response = await fetch(
+            `${API_URL}/chat/quotation?session_id=${encodeURIComponent(sessionId)}`,
+            { method: 'GET', headers: getHeaders() }
+        );
+        if (!response.ok) return { active: false };
+        return await response.json();
+    } catch (error) {
+        console.error('[OyeChats] Error fetching quotation state:', error);
+        return { active: false };
+    }
+};
+
+const postQuotation = async (path, body) => {
+    const response = await fetch(`${API_URL}/chat/quotation/${path}`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        const err = new Error(`Failed to submit /chat/quotation/${path}`);
+        err.status = response.status;
+        throw err;
+    }
+    return await response.json();
+};
+
+export const submitQuotationServices = (sessionId, serviceIds) =>
+    postQuotation('select-services', { session_id: sessionId, service_ids: serviceIds });
+
+export const submitQuotationAnswer = (sessionId, serviceId, questionId, answer) =>
+    postQuotation('answer', {
+        session_id: sessionId,
+        service_id: serviceId,
+        question_id: questionId,
+        answer,
+    });
+
+export const submitQuotationQuantity = (sessionId, serviceId, quantity) =>
+    postQuotation('quantity', { session_id: sessionId, service_id: serviceId, quantity });
+
+export const acceptQuotation = (sessionId) =>
+    postQuotation('accept', { session_id: sessionId });
+
+export const skipQuotation = async (sessionId) => {
+    try {
+        return await postQuotation('skip', { session_id: sessionId });
+    } catch (error) {
+        console.error('[OyeChats] Error skipping quotation:', error);
+        return { active: false, status: 'skipped' };
+    }
+};
+
 export const requestHandoff = async (sessionId, formData) => {
     try {
         const response = await fetch(`${API_URL}/operators/handoff`, {

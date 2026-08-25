@@ -17,6 +17,7 @@ import { OverviewPage } from '../features/agents/overview/OverviewPage';
 import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
 import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
 import { ChannelsPage } from '../features/agents/channels/ChannelsPage';
+import { QuotationPage } from '../features/agents/quotation/QuotationPage';
 import { AdvancedPage } from '../features/agents/advanced/AdvancedPage';
 import { InboxPage } from '../features/inbox/InboxPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
@@ -118,6 +119,7 @@ export const router = createBrowserRouter([
                           // Per-agent Analytics tab removed - performance lives on the
                           // agent-scoped workspace Analytics page. Redirect old links.
                           { path: 'analytics', element: <Navigate to="../overview" replace /> },
+                          { path: 'quotation', handle: { crumb: 'Quotation' }, element: <QuotationPage /> },
                           { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
                         ],
                       },

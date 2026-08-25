@@ -105,6 +105,7 @@ def _bot(*, client_id: int = 1) -> SimpleNamespace:
         user_bubble_color="#000",
         bant_enabled=False,
         bant_config=None,
+        quotation_catalog=None,
         avatar_type=None,
         orb_color=None,
         lead_form_enabled=False,

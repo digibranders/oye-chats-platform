@@ -661,16 +661,22 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool, str | None] | None:
+def _resolve_operator_from_key(
+    key: str, key_type: str
+) -> tuple[int, str, int, int | None, bool, str | None, str | None] | None:
     """Resolve operator identity + workspace scope from an api_key or operator_key.
 
     Returns ``(operator_id, operator_name, client_id, department_id, is_online,
-    preferred_locale)`` or None if auth fails.
+    preferred_locale, avatar_url)`` or None if auth fails.
 
     ``preferred_locale`` (Phase 4) is carried here so ``connect_operator`` can
     cache it for the console's own language badge without a second query. It is
     NOT what drives translation targeting: that reads the DB per message, see
     ``translation_service.resolve_incoming_target``.
+
+    ``avatar_url`` is the operator's uploaded photo (may be ``None``); it is
+    threaded to the widget so the live-chat "joined" pill and operator message
+    bubbles show the real avatar instead of initials.
     """
     with get_session() as session:
         if key_type == "operator_key":
@@ -686,6 +692,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
                 operator.department_id,
                 True,
                 operator.preferred_locale,
+                operator.avatar_url,
             )
 
         # Client api_key auth. Find or create the owner's operator record.
@@ -735,6 +742,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
             operator.department_id,
             operator.is_online,
             operator.preferred_locale,
+            operator.avatar_url,
         )
 
 
@@ -783,7 +791,7 @@ async def operator_websocket(
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    operator_id, operator_name, client_id, department_id, is_online, operator_locale = result
+    operator_id, operator_name, client_id, department_id, is_online, operator_locale, operator_avatar = result
 
     # ── Seat-limit enforcement: cap concurrent online operators per subscription ──
     # ``operator_quantity`` on Subscription is the customer's purchased seat count
@@ -826,6 +834,7 @@ async def operator_websocket(
         client_id=client_id,
         subprotocol=accepted_subprotocol,
         preferred_locale=operator_locale,
+        operator_avatar=operator_avatar,
     )
 
     heartbeat_task = asyncio.create_task(_operator_presence_heartbeat(ws, operator_id, client_id))
@@ -934,6 +943,7 @@ async def operator_websocket(
                     target_session,
                     content,
                     operator_name,
+                    operator_avatar,
                     delivered_content=delivered_content,
                     translated_from=translated_from,
                     message_id=op_db_id,
@@ -966,7 +976,9 @@ async def operator_websocket(
                     add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
                     session.commit()
 
-                await manager.route_operator_file(target_session, file_url, filename, content_type_val, operator_name)
+                await manager.route_operator_file(
+                    target_session, file_url, filename, content_type_val, operator_name, operator_avatar
+                )
 
             elif msg_type == "typing":
                 target_session = frame.session_id
