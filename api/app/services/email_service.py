@@ -837,12 +837,15 @@ def send_quotation_client_email(
     """Notify the client that a visitor completed a quote request.
 
     Unlike the visitor email, this one carries the full itemised quote (line
-    items + quantities + subtotals + total) plus the visitor's contact info so
-    the client can follow up. ``reply_to`` should be the visitor's email so a
-    reply lands straight in their inbox.
+    items + quantities + subtotals + total), the per-service question answers
+    the visitor gave, and the visitor's contact info so the client can follow
+    up. ``reply_to`` should be the visitor's email so a reply lands straight in
+    their inbox.
     """
     safe_bot = esc(bot_name)
     contact = contact or {}
+
+    # Money table: one row per service (name × qty → subtotal) + a bold total.
     quote_rows: list[tuple[str, str]] = []
     for item in line_items or []:
         qty = item.get("quantity")
@@ -852,11 +855,24 @@ def send_quotation_client_email(
         quote_rows.append((label, _format_money(currency, item.get("subtotal", 0))))
     quote_rows.append(("Total", strong(_format_money(currency, total))))
 
+    # Per-service Q&A: only for services that actually collected answers, so a
+    # simple pick-and-quantity service adds no empty section.
+    answer_sections = ""
+    for item in line_items or []:
+        answer_rows = [
+            (esc(ans.get("question_text") or ans.get("question_id") or "Question"), esc(ans.get("answer")))
+            for ans in item.get("answers") or []
+            if (ans.get("answer") or "").strip()
+        ]
+        if answer_rows:
+            answer_sections += ed.section_label(esc(item.get("name") or "Service")) + info_table(answer_rows)
+
     inner = (
         h1("New quote request")
         + p(f"A visitor on {strong(safe_bot)} just completed a quote request. Here&rsquo;s what they asked for.")
         + ed.section_label("Quote")
         + info_table(quote_rows, right=True)
+        + (ed.section_label("Their answers") + answer_sections if answer_sections else "")
         + ed.section_label("Contact")
         + info_table(
             [

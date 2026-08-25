@@ -917,3 +917,42 @@ class TestQuotationEmailBuilders:
         assert "₹49.5" in body  # fractional keeps places
         assert "₹249.5" in body  # total
         assert kwargs.get("reply_to") == "jason@buyer.com"
+
+    def test_client_email_includes_per_service_answers(self, _sent):
+        from app.services import email_service
+
+        line_items = [
+            {
+                "name": "Landing page",
+                "quantity": 1,
+                "subtotal": 100.0,
+                "answers": [
+                    {"question_id": "q1", "question_text": "What style?", "answer": "Modern"},
+                    {"question_id": "q2", "question_text": "How many pages?", "answer": "5"},
+                    {"question_id": "q3", "question_text": "Skipped?", "answer": ""},  # empty → omitted
+                ],
+            }
+        ]
+        email_service.send_quotation_client_email(
+            "owner@acme.com", "Quote Bot", {"name": "Jason"}, "INR", line_items, 100.0
+        )
+        _, _, body, _ = _sent[0]
+        assert "What style?" in body and "Modern" in body
+        assert "How many pages?" in body and "5" in body
+        assert "Their answers" in body
+        # An empty answer contributes no row.
+        assert "Skipped?" not in body
+
+    def test_client_email_without_answers_has_no_answers_section(self, _sent):
+        from app.services import email_service
+
+        email_service.send_quotation_client_email(
+            "owner@acme.com",
+            "Quote Bot",
+            {"name": "Jason"},
+            "INR",
+            [{"name": "SEO audit", "quantity": 1, "subtotal": 50.0}],
+            50.0,
+        )
+        _, _, body, _ = _sent[0]
+        assert "Their answers" not in body
