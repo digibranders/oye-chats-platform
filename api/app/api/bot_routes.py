@@ -47,6 +47,7 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
+from app.services.language_service import is_multilingual_enabled
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
 # (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
@@ -845,6 +846,25 @@ def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | 
 # to prevent FastAPI from trying to parse "settings" as an integer bot_id.
 
 
+def _effective_language_config(bot) -> dict:
+    """The bot's language config as the WIDGET should see it right now.
+
+    Identical to the stored value except when the platform-wide
+    ``feature.multilingual_chat_enabled`` switch is off, in which case
+    ``enabled`` (and, with it, ``operator_translation_enabled``) is reported as
+    false. The stored configuration is never mutated: flipping the switch back
+    on restores exactly what the customer configured.
+    """
+    cfg = dict(bot.language_config or {})
+    if not cfg.get("enabled", False):
+        return cfg
+    if is_multilingual_enabled(bot):
+        return cfg
+    cfg["enabled"] = False
+    cfg["operator_translation_enabled"] = False
+    return cfg
+
+
 @router.get("/settings/public")
 def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot)):
     """
@@ -975,7 +995,12 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": effective_feature_flags,
-        "language_config": bot.language_config or {},
+        # Reported as DISABLED when the platform switch is off, not merely
+        # ignored server-side. The widget decides from this whether to resolve a
+        # locale and whether to offer the language selector at all, so leaving
+        # `enabled: true` here would show visitors a selector whose choice the
+        # pipeline then discards.
+        "language_config": _effective_language_config(bot),
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
         "branding_text": effective_branding_text,

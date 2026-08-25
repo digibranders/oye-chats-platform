@@ -38,8 +38,34 @@ _SENTRY_FORWARD_METRICS = frozenset(
         # AR-15: a misconfiguration-class LLM error (revoked key, bad request)
         # needs a human, not a retry. Page on it like the security events above.
         "llm_config_error",
+        # Phase 6. The translation provider rejected or timed out. One is
+        # normal (the visitor gets the original words and the chat continues);
+        # a spike means the provider is down or the latency budget is wrong,
+        # and both are invisible otherwise. This is the class of failure that
+        # already shipped once: an outbound budget set below the provider's
+        # median delivered roughly six operator replies in ten untranslated,
+        # and it was found by hand-timing calls rather than by an alarm.
+        "translation_provider_failed",
+        # Phase 6. Translation was skipped because the platform switch is off
+        # or the workspace is out of credits. Expected while a switch is
+        # deliberately off; a spike on a workspace that was translating a
+        # minute ago means it just ran out of credits, which is a billing
+        # event somebody should see before the customer reports it.
+        "translation_gated",
     }
 )
+
+#: Upper edges, in milliseconds, of the latency histogram buckets.
+#:
+#: A counter store cannot hold a distribution, and p95 is what actually
+#: matters for translation: the mean hides exactly the tail that causes an
+#: untranslated message. Cumulative bucket counters give a percentile to
+#: within one bucket width using the same INCRBY the rest of this module
+#: uses, with no new infrastructure and no unbounded key growth.
+#:
+#: The edges cluster around the 2 to 4 second region because that is where the
+#: outbound budget sits and where a regression has to be caught.
+LATENCY_BUCKETS_MS: tuple[int, ...] = (250, 500, 1000, 1500, 2000, 2500, 3000, 4000, 6000, 10000)
 
 
 def _hour_bucket(now: datetime | None = None) -> str:
@@ -102,6 +128,59 @@ def get_metric_counts(name: str, bot_id: int | None = None, hours: int = 24) -> 
     except Exception as exc:  # noqa: BLE001
         logger.debug("get_metric_counts failed (non-blocking): %s", exc)
         return {}
+
+
+def record_latency_ms(name: str, elapsed_ms: float, bot_id: int | None = None) -> None:
+    """Record one latency observation into the ``name`` histogram.
+
+    Increments every bucket whose upper edge the observation falls at or below,
+    so each bucket counter is CUMULATIVE ("how many were <= this"). That makes
+    a percentile a single scan of the bucket series rather than a join, and it
+    makes a missing bucket unambiguous (nothing was that fast) instead of
+    ambiguous with an expired key.
+
+    Also increments ``<name>_count`` so the total is available without summing,
+    and ``<name>_over`` for observations past the largest edge, which is the
+    bucket that matters when a provider hangs.
+
+    Best-effort, like every other counter here: never raises, never blocks.
+    """
+    try:
+        if elapsed_ms < 0:
+            return
+        increment_metric_counter(f"{name}_count", bot_id=bot_id)
+        for edge in LATENCY_BUCKETS_MS:
+            if elapsed_ms <= edge:
+                increment_metric_counter(f"{name}_le_{edge}", bot_id=bot_id)
+        if elapsed_ms > LATENCY_BUCKETS_MS[-1]:
+            increment_metric_counter(f"{name}_over", bot_id=bot_id)
+    except Exception as exc:  # noqa: BLE001 - metrics must never break the caller
+        logger.debug("record_latency_ms failed (non-blocking): %s", exc)
+
+
+def get_latency_percentile(
+    name: str, percentile: float = 95.0, bot_id: int | None = None, hours: int = 24
+) -> int | None:
+    """Approximate a percentile from the cumulative buckets, in milliseconds.
+
+    Returns the smallest bucket edge at or below which ``percentile`` of
+    observations fall, so the true value lies between the previous edge and the
+    one returned. Returns ``None`` when nothing was recorded in the window, and
+    the sentinel ``-1`` is never used: absence of data is not a latency of zero.
+
+    An observation past the largest edge cannot be attributed to any edge, so a
+    percentile that falls in that tail returns ``None`` rather than pretending
+    the largest edge covers it. Read ``<name>_over`` to see that tail.
+    """
+    total = sum(get_metric_counts(f"{name}_count", bot_id=bot_id, hours=hours).values())
+    if total <= 0:
+        return None
+    target = total * (percentile / 100.0)
+    for edge in LATENCY_BUCKETS_MS:
+        at_or_below = sum(get_metric_counts(f"{name}_le_{edge}", bot_id=bot_id, hours=hours).values())
+        if at_or_below >= target:
+            return edge
+    return None
 
 
 def forward_to_sentry_if_alertable(name: str, **tags) -> None:
