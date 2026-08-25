@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, Clock, MessageSquare } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
+import { t } from '../i18n/i18n.js';
 
 /**
  * QueueWaitingScreen. Shown when the visitor is in the live chat queue
@@ -60,11 +61,23 @@ const QueueWaitingScreen = ({
     const progress = Math.min(1, elapsed / timeoutSeconds);
     let status;
     if (progress < 0.25) {
-        status = { icon: Users, text: 'Connecting you with our team...', accent: primaryColor };
+        status = {
+            icon: Users,
+            text: t('system.connecting_team') || 'Connecting you with our team...',
+            accent: primaryColor,
+        };
     } else if (progress < 0.5) {
-        status = { icon: Clock, text: 'Our team is busy. You’re in the queue', accent: '#F59E0B' };
+        status = {
+            icon: Clock,
+            text: t('queue.busy') || 'Our team is busy. You’re in the queue',
+            accent: '#F59E0B',
+        };
     } else {
-        status = { icon: Clock, text: 'This is taking a little longer than usual...', accent: '#EF4444' };
+        status = {
+            icon: Clock,
+            text: t('queue.longer_than_usual') || 'This is taking a little longer than usual...',
+            accent: '#EF4444',
+        };
     }
     const StatusIcon = status.icon;
 
@@ -104,9 +117,9 @@ const QueueWaitingScreen = ({
                         </p>
                         {position && position > 0 && (
                             <p className="text-[11px] text-gray-400 leading-tight mt-1">
-                                Position {position}
+                                {t('queue.position', { position }) || `Position ${position}`}
                                 {etaSeconds && etaSeconds > 0
-                                    ? ` · ~${formatEta(etaSeconds)} wait`
+                                    ? ` · ${t('queue.eta_wait', { eta: formatEta(etaSeconds) }) || `~${formatEta(etaSeconds)} wait`}`
                                     : ''}
                             </p>
                         )}
@@ -136,7 +149,8 @@ const QueueWaitingScreen = ({
             {showChoicePrompt && (
                 <div className="p-4 pt-1 space-y-2">
                     <p className="text-[12px] text-gray-500 leading-relaxed">
-                        We&apos;re still trying to connect you. Would you like to leave a message instead?
+                        {t('queue.still_trying')
+                            || 'We’re still trying to connect you. Would you like to leave a message instead?'}
                     </p>
                     <div className="flex gap-2">
                         <button
@@ -144,7 +158,7 @@ const QueueWaitingScreen = ({
                             onClick={handleKeepWaiting}
                             className="flex-1 py-2 rounded-lg border border-gray-200 text-[12px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                         >
-                            Keep waiting
+                            {t('queue.keep_waiting') || 'Keep waiting'}
                         </button>
                         <button
                             type="button"
@@ -153,7 +167,7 @@ const QueueWaitingScreen = ({
                             style={{ backgroundColor: primaryColor }}
                         >
                             <MessageSquare className="w-3 h-3" />
-                            Leave a message
+                            {t('offline.leave_message_title') || 'Leave a message'}
                         </button>
                     </div>
                 </div>
@@ -163,9 +177,9 @@ const QueueWaitingScreen = ({
 };
 
 function formatEta(seconds) {
-    if (seconds < 60) return `${seconds}s`;
-    const mins = Math.round(seconds / 60);
-    return `${mins} min`;
+    if (seconds < 60) return t('queue.eta_seconds', { seconds }) || `${seconds}s`;
+    const minutes = Math.round(seconds / 60);
+    return t('queue.eta_minutes', { minutes }) || `${minutes} min`;
 }
 
 export default QueueWaitingScreen;

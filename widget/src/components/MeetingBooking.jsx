@@ -221,7 +221,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                             rel="noopener noreferrer"
                             className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
                             aria-label={t('meeting.open_new_tab_aria') || 'Open booking page in new tab'}
-                            title="Open in new tab"
+                            title={t('meeting.open_new_tab') || 'Open in new tab'}
                         >
                             <ExternalLink className="w-4 h-4" />
                         </a>
@@ -244,8 +244,10 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white gap-3 px-6 text-center">
                             <p className="text-sm text-gray-600">
                                 {cspBlocked
-                                    ? "This website's security settings don't allow embedded booking. Please open it in a new tab."
-                                    : 'Could not load the booking page. An ad or privacy blocker may be preventing it.'}
+                                    ? (t('meeting.csp_blocked')
+                                        || 'This website’s security settings don’t allow embedded booking. Please open it in a new tab.')
+                                    : (t('meeting.load_failed')
+                                        || 'Could not load the booking page. An ad or privacy blocker may be preventing it.')}
                             </p>
                             <div className="flex items-center gap-2">
                                 {/* Retry is pointless for a CSP block, the policy won't change. */}
@@ -254,7 +256,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                                         onClick={handleRetry}
                                         className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
                                     >
-                                        Try again
+                                        {t('system.try_again') || 'Try again'}
                                     </button>
                                 )}
                                 <a
@@ -267,7 +269,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                                             : 'px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50'
                                     }
                                 >
-                                    Open in new tab
+                                    {t('meeting.open_new_tab') || 'Open in new tab'}
                                 </a>
                             </div>
                         </div>
@@ -275,7 +277,12 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                     <iframe
                         ref={iframeRef}
                         key={error ? 'retry' : 'initial'}
-                        title={`${PROVIDER_LABELS[provider] || 'Calendly'} Booking`}
+                        title={(() => {
+                            // The provider name is a product name and stays as-is;
+                            // only the word around it is translated.
+                            const name = PROVIDER_LABELS[provider] || 'Calendly';
+                            return t('meeting.iframe_title', { provider: name }) || `${name} Booking`;
+                        })()}
                         src={buildIframeSrc(safeUrl, provider)}
                         width="100%"
                         height="100%"
@@ -300,7 +307,9 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         disabled={confirming}
                         className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-60 shrink-0"
                     >
-                        {confirming ? 'Confirming…' : 'Done'}
+                        {confirming
+                            ? (t('meeting.confirming') || 'Confirming…')
+                            : (t('meeting.done') || 'Done')}
                     </button>
                 </div>
             </div>

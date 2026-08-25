@@ -76,13 +76,23 @@ const sanitizeMarkdown = (text) => {
 // timestamp, "Alice left") stay on one line with side dividers; a long
 // sentence wraps to a centered pill without dividers, so it never forces the
 // chat panel wider than its container.
-const SystemMessage = ({ text }) => {
-    const isShort = typeof text === 'string' && text.length <= 28;
+// `textKey` + `textParams` are preferred over `text`: a system line created by
+// the client is resolved HERE, on every render, so a mid-session language
+// switch re-renders it in the new language. Resolving at creation time instead
+// would bake in whichever language was active when the transition happened and
+// leave a stranded English line above Hindi ones.
+//
+// `text` remains the fallback for lines that have no key: server-persisted
+// system rows replayed from history (their copy is authored backend-side) and
+// the timestamp divider, which is already locale-formatted by its caller.
+const SystemMessage = ({ text, textKey, textParams }) => {
+    const label = (textKey ? t(textKey, textParams) : null) || text || '';
+    const isShort = label.length <= 28;
     if (isShort) {
         return (
             <div className="flex items-center gap-2 my-2 px-4 min-w-0">
                 <div className="flex-1 h-px bg-gray-100" />
-                <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{text}</span>
+                <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{label}</span>
                 <div className="flex-1 h-px bg-gray-100" />
             </div>
         );
@@ -90,7 +100,7 @@ const SystemMessage = ({ text }) => {
     return (
         <div className="my-2 px-4 flex justify-center min-w-0">
             <span className="max-w-[85%] text-center text-[11px] leading-relaxed text-gray-400 font-medium break-words">
-                {text}
+                {label}
             </span>
         </div>
     );
@@ -137,7 +147,8 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
                         ) : null}
                     </span>
                     <span className="text-[10px] text-gray-400">
-                        joined the chat{timeLabel ? ` · ${timeLabel}` : ''}
+                        {t('system.joined_the_chat') || 'joined the chat'}
+                        {timeLabel ? ` · ${timeLabel}` : ''}
                     </span>
                 </div>
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" aria-hidden="true" />
@@ -153,8 +164,8 @@ const DateSeparator = ({ date }) => {
         const today = new Date();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
-        if (d.toDateString() === today.toDateString()) return 'Today';
-        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+        if (d.toDateString() === today.toDateString()) return t('system.today') || 'Today';
+        if (d.toDateString() === yesterday.toDateString()) return t('system.yesterday') || 'Yesterday';
         return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     })();
     return (
@@ -171,7 +182,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [messages, setMessages] = useState([
         {
             id: 'welcome',
-            text: "Hi There, How can I help you today?",
+            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null
@@ -640,7 +651,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (initialSettings) {
                 setSettings(initialSettings);
                 setMessages(prev => prev.map(m =>
-                    m.id === 'welcome' ? { ...m, text: `Hi There, How can I help you today?` } : m
+                    m.id === 'welcome'
+                        ? { ...m, text: t('welcome.initial_message') || 'Hi There, How can I help you today?' }
+                        : m
                 ));
             }
 
@@ -1039,7 +1052,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             await sendTranscriptEmail(sessionId, transcriptEmail.trim());
             setTranscriptSent(true);
         } catch (err) {
-            setTranscriptError(err.message || 'Failed to send transcript');
+            setTranscriptError(
+                err.message || t('system.transcript_failed') || 'Failed to send transcript'
+            );
         } finally {
             setTranscriptSending(false);
         }
@@ -1088,7 +1103,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const handleClearMessages = () => {
         setMessages([{
             id: 'welcome',
-            text: `Hi There, How can I help you today?`,
+            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null,
@@ -1129,7 +1144,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setTimeout(() => {
             setMessages([{
                 id: 'welcome',
-                text: `Hi There, How can I help you today?`,
+                text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
@@ -1530,7 +1545,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         id: `sys-connecting-${Date.now()}`,
                         type: 'system',
                         systemId: SYSTEM_MSG.CONNECTING,
-                        text: t('system.connecting_team') || 'Connecting you with our team...',
+                        textKey: 'system.connecting_team',
+                        text: 'Connecting you with our team...',
                         timestamp: new Date().toISOString(),
                     },
                 ]);
@@ -1571,7 +1587,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     id: `sys-connecting-${Date.now()}`,
                     type: 'system',
                     systemId: SYSTEM_MSG.CONNECTING,
-                    text: t('system.connecting_team') || 'Connecting you with our team...',
+                    textKey: 'system.connecting_team',
+                    text: 'Connecting you with our team...',
                     timestamp: new Date().toISOString(),
                 }
             ]);
@@ -1584,7 +1601,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-handoff-err-${Date.now()}`,
                     type: 'system',
-                    text: t('system.handoff_failed') || 'Unable to connect with our team right now. Please try again.',
+                    textKey: 'system.handoff_failed',
+                    text: 'Unable to connect with our team right now. Please try again.',
                     timestamp: new Date().toISOString(),
                 },
             ]);
@@ -1659,7 +1677,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         try {
             const res = await respondToConnectRequest(sessionId, true, connectRequest.request_id);
             if (res?.ok && res.result === 'accepted') {
-                const opName = res.operator_name || connectRequest.operator_name || 'Our team';
+                const opName = res.operator_name
+                    || connectRequest.operator_name
+                    || t('system.our_team')
+                    || 'Our team';
                 setOperatorName(opName);
                 setLiveChatState({
                     suggestedAction: 'accepted',
@@ -1670,6 +1691,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connect-accept-${Date.now()}`,
                         type: 'system',
+                        textKey: 'system.operator_joined_conversation',
+                        textParams: { name: opName },
                         text: `${opName} has joined the conversation.`,
                         timestamp: new Date().toISOString(),
                     },
@@ -1682,6 +1705,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connect-stale-${Date.now()}`,
                         type: 'system',
+                        textKey: 'system.invitation_expired',
                         text: 'That invitation expired before we could connect you.',
                         timestamp: new Date().toISOString(),
                     },
@@ -1799,7 +1823,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 id: `sys-connecting-${Date.now()}`,
                 type: 'system',
                 systemId: SYSTEM_MSG.CONNECTING,
-                text: t('system.connecting_team') || 'Connecting you with our team...',
+                textKey: 'system.connecting_team',
+                text: 'Connecting you with our team...',
                 timestamp: new Date().toISOString(),
             },
         ]);
@@ -1893,13 +1918,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 next.push({
                     id: `sys-offline-recorded-${now}`,
                     type: 'system',
-                    text: "Your message has been recorded. We'll get back to you shortly.",
+                    textKey: 'system.offline_recorded',
+                    text: 'Your message has been recorded. We’ll get back to you shortly.',
                     timestamp: new Date().toISOString(),
                 });
             }
             next.push({
                 id: now,
-                text: 'Thanks for reaching out to our support! Feel free to ask me anything.',
+                text: t('system.back_to_bot_greeting')
+                    || 'Thanks for reaching out to our support! Feel free to ask me anything.',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null,
@@ -1917,6 +1944,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setMessages(prev => [...prev, {
                 id: `sys-left-${Date.now()}`,
                 type: 'system',
+                textKey: 'system.operator_left_named',
+                textParams: { name: departingOperator },
                 text: `${departingOperator} left`,
                 timestamp: new Date().toISOString(),
             }]);
@@ -2125,7 +2154,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // Shadow DOM, where Tailwind's transform/shadow custom-property
         // composition does not resolve. ``--oyechats-brand`` feeds the hover glow.
         const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
-        const botName = settings.bot_name || 'AI Assistant';
+        const botName = settings.bot_name || t('launcher.ai_assistant') || 'AI Assistant';
         return (
             <div
                 className="oyechats-bot-pill inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border pointer-events-auto"
@@ -2187,12 +2216,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 msg.content_type?.startsWith('image/') ? (
                                     <img
                                         src={sanitizeImageUrl(msg.file_url)}
-                                        alt={msg.filename || 'image'}
+                                        alt={msg.filename || t('livechat.image_alt') || 'image'}
                                         className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
                                     />
                                 ) : (
                                     <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
-                                        📎 {msg.filename || 'file'}
+                                        📎 {msg.filename || t('livechat.file_fallback') || 'file'}
                                     </a>
                                 )
                             ) : (
@@ -2229,7 +2258,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
                             >
-                                <AlertCircle className="w-3 h-3" /> Not sent · Retry
+                                <AlertCircle className="w-3 h-3" />{' '}
+                                {t('system.not_sent_retry') || 'Not sent · Retry'}
                             </button>
                         ) : operatorHasEngaged ? (
                             <MessageStatus
@@ -2254,12 +2284,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     msg.content_type?.startsWith('image/') ? (
                         <img
                             src={sanitizeImageUrl(msg.file_url)}
-                            alt={msg.filename || 'image'}
+                            alt={msg.filename || t('livechat.image_alt') || 'image'}
                             className="max-w-[200px] rounded-xl block hover:opacity-90 transition-opacity"
                         />
                     ) : (
                         <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
-                            📎 {msg.filename || 'file'}
+                            📎 {msg.filename || t('livechat.file_fallback') || 'file'}
                         </a>
                     )
                 ) : (
@@ -2294,7 +2324,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={handleNewChat}
                                     className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title="Start New Chat"
+                                    title={t('header.start_new_chat') || 'Start New Chat'}
                                 >
                                     <Plus className="w-4 h-4" />
                                 </button>
@@ -2303,7 +2333,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={() => setShowHeaderMenu(prev => !prev)}
                                     className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title="More options"
+                                    title={t('header.more_options') || 'More options'}
                                 >
                                     <MoreHorizontal className="w-4 h-4" />
                                 </button>
@@ -2311,7 +2341,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <button
                                 onClick={handleHeaderClose}
                                 className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
-                                title="Close"
+                                title={t('header.close') || 'Close'}
                             >
                                 <X className="w-5 h-5" />
                             </button>
@@ -2336,7 +2366,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
                                         >
                                             <Mail className="w-4 h-4 text-gray-400" />
-                                            Send transcript
+                                            {t('header.send_transcript') || 'Send transcript'}
                                         </button>
                                     )}
                                     {showLeaveMessageOption && (
@@ -2351,7 +2381,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
                                             </svg>
-                                            Leave a message
+                                            {t('header.leave_message') || 'Leave a message'}
                                         </button>
                                     )}
                                 </div>
@@ -2460,7 +2490,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             {isLoadingEarlier ? (
                                 <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />{t('system.loading') || 'Loading...'}</>
                             ) : (
-                                'Load earlier messages'
+                                t('system.load_earlier') || 'Load earlier messages'
                             )}
                         </button>
                     </div>
@@ -2480,7 +2510,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             }
                         }
                         if (msg.type === 'system') {
-                            items.push(<SystemMessage key={msg.id} text={msg.text} />);
+                            items.push(
+                                <SystemMessage
+                                    key={msg.id}
+                                    text={msg.text}
+                                    textKey={msg.textKey}
+                                    textParams={msg.textParams}
+                                />
+                            );
                         } else if (msg.type === 'operator_joined') {
                             items.push(
                                 <OperatorJoinedNotice
@@ -2494,7 +2531,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} ref={handoffCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
-                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the connect form." />}>
+                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => (
+                                        <ChunkLoadNotice
+                                            onRetry={retry}
+                                            message={t('system.chunk_connect_form') || 'Couldn’t load the connect form.'}
+                                        />
+                                    )}>
                                         <Suspense fallback={null}>
                                             <HandoffForm
                                                 settings={settings}
@@ -2543,7 +2585,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.leave_message_for_team') || 'Leave a message for our team'}</p>
                         </div>
                         <p className="text-[12px] text-gray-500 mb-3">
-                            We&apos;ll reply by email as soon as we can.
+                            {t('offline.reply_by_email') || 'We’ll reply by email as soon as we can.'}
                         </p>
                         <div className="flex gap-2">
                             <button
@@ -2555,7 +2597,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 className="flex-1 py-2 rounded-xl text-white text-[13px] font-medium transition-opacity hover:opacity-90"
                                 style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
-                                Leave a message
+                                {t('offline.leave_message_title') || 'Leave a message'}
                             </button>
                             <button
                                 type="button"
@@ -2568,7 +2610,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="px-4 py-2 rounded-xl border border-gray-200 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                             >
-                                Not now
+                                {t('offline.not_now') || 'Not now'}
                             </button>
                         </div>
                     </div>
@@ -2688,7 +2730,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 className="mt-2 text-[12px] font-medium hover:underline transition-colors"
                                 style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
-                                Leave a message instead
+                                {t('offline.leave_message_instead') || 'Leave a message instead'}
                             </button>
                         )}
                         <button
@@ -2704,7 +2746,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             }}
                             className="mt-1 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                         >
-                            Cancel and return to AI chat
+                            {t('system.cancel_return_ai') || 'Cancel and return to AI chat'}
                         </button>
                     </div>
                 )}
@@ -2748,10 +2790,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-[13px] font-semibold text-[#16202C] leading-tight">
-                                    Connecting you with our team
+                                    {t('system.connecting_team_title') || 'Connecting you with our team'}
                                 </p>
                                 <p className="text-[11px] text-gray-400 leading-tight mt-1">
-                                    This usually takes just a few seconds…
+                                    {t('system.connecting_seconds') || 'This usually takes just a few seconds…'}
                                 </p>
                             </div>
                         </div>
@@ -2781,7 +2823,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
-                                    Try Again
+                                    {t('offline.try_again') || 'Try Again'}
                                 </button>
                             </div>
                         ) : offlineSubmitted ? (
@@ -2789,15 +2831,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
                                 <p className="text-[13px] font-semibold text-[#16202C] mb-1">{t('offline.sent_title') || 'Message sent!'}</p>
                                 <p className="text-[12px] text-gray-500 mb-3">
-                                    We&apos;ll get back to you at <strong>{offlineForm.email}</strong>
-                                    {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
+                                    {(() => {
+                                        // Split on the literal placeholder rather than letting t()
+                                        // interpolate, so the address keeps its <strong> AND each
+                                        // language keeps its own word order around it.
+                                        const key = offlineForm.phone ? 'offline.sent_body_phone' : 'offline.sent_body';
+                                        const template = t(key) || (offlineForm.phone
+                                            ? 'We’ll get back to you at {email} or give you a callback as soon as possible.'
+                                            : 'We’ll get back to you at {email} as soon as possible.');
+                                        const [before, after = ''] = template.split('{email}');
+                                        return (
+                                            <>
+                                                {before}
+                                                <strong>{offlineForm.email}</strong>
+                                                {after}
+                                            </>
+                                        );
+                                    })()}
                                 </p>
                                 <button
                                     onClick={handleReturnToBot}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
-                                    Continue chatting with AI
+                                    {t('offline.continue_chatting_ai') || 'Continue chatting with AI'}
                                 </button>
                             </div>
                         ) : (() => {
@@ -2963,7 +3020,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         style={{ backgroundColor: primary }}>
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            : 'Send message'}
+                                            : (t('offline.submit') || 'Send message')}
                                     </button>
                                     <button
                                         type="button"
@@ -3001,7 +3058,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-green-200 bg-green-50 text-green-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-green-100 hover:border-green-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400 disabled:opacity-50"
                                     >
                                         <CheckCircle2 className="w-4 h-4" />
-                                        Yes
+                                        {t('survey.yes') || 'Yes'}
                                     </button>
                                     <button
                                         onClick={() => { setResolvedAnswer(false); setSurveyStep(2); }}
@@ -3010,7 +3067,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-red-200 bg-red-50 text-red-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-100 hover:border-red-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-50"
                                     >
                                         <XCircle className="w-4 h-4" />
-                                        No
+                                        {t('survey.no') || 'No'}
                                     </button>
                                 </div>
                             </div>
@@ -3020,7 +3077,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {surveyStep === 2 && (
                             <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
                                 <p className="text-[12px] text-gray-500 mb-3">
-                                    {settings?.widget_messages?.rating_prompt || 'How would you rate this experience?'}
+                                    {settings?.widget_messages?.rating_prompt
+                                        || t('survey.rating_prompt')
+                                        || 'How would you rate this experience?'}
                                 </p>
                                 <div
                                     className="flex justify-center gap-2 mb-3"
@@ -3032,7 +3091,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             onClick={() => !ratingSubmitting && handleSubmitRating(star)}
                                             onMouseEnter={() => setHoveredStar(star)}
                                             disabled={ratingSubmitting}
-                                            aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                            aria-label={
+                                                (star === 1
+                                                    ? t('survey.rate_star_aria', { count: star })
+                                                    : t('survey.rate_stars_aria', { count: star }))
+                                                || `Rate ${star} star${star !== 1 ? 's' : ''}`
+                                            }
                                             className="p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-110 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-lg"
                                         >
                                             <Star
@@ -3049,7 +3113,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                         {/* Step dots + skip */}
                         <div className="flex items-center justify-center gap-3">
-                            <div className="flex gap-1.5" aria-label={`Step ${surveyStep} of 2`}>
+                            <div
+                                className="flex gap-1.5"
+                                aria-label={
+                                    t('survey.step_aria', { step: surveyStep, total: 2 })
+                                    || `Step ${surveyStep} of 2`
+                                }
+                            >
                                 <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 1 ? 'bg-gray-600' : 'bg-gray-300'}`} />
                                 <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 2 ? 'bg-gray-600' : 'bg-gray-300'}`} />
                             </div>
@@ -3058,7 +3128,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 disabled={ratingSubmitting}
                                 className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 rounded px-1"
                             >
-                                Skip
+                                {t('survey.skip') || 'Skip'}
                             </button>
                         </div>
                     </div>
@@ -3083,8 +3153,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 const fullName = (existingLeadInfo?.name || liveChatState?.capturedName || '').trim();
                                 const firstName = fullName.split(/\s+/)[0];
                                 return firstName
-                                    ? `Welcome back ${firstName}! Continue your conversation or start something new.`
-                                    : 'Welcome back! Continue your conversation or start something new.';
+                                    ? (t('system.welcome_back_named', { name: firstName })
+                                        || `Welcome back ${firstName}! Continue your conversation or start something new.`)
+                                    : (t('system.welcome_back')
+                                        || 'Welcome back! Continue your conversation or start something new.');
                             })()}
                         </span>
                         <button
@@ -3125,7 +3197,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 here it pins to the widget shell (the fixed theme container)
                 and stays visible regardless of scroll position. */}
             {showBooking && calendlyUrl && (
-                <ErrorBoundary label="MeetingBooking" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the booking form." />}>
+                <ErrorBoundary label="MeetingBooking" fallback={(retry) => (
+                    <ChunkLoadNotice
+                        onRetry={retry}
+                        message={t('system.chunk_booking_form') || 'Couldn’t load the booking form.'}
+                    />
+                )}>
                 <Suspense fallback={null}>
                 <MeetingBooking
                     calendlyUrl={calendlyUrl}
@@ -3144,7 +3221,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 ...prev,
                                 {
                                     id: `meeting-booked-${Date.now()}`,
-                                    text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
+                                    text: t('meeting.confirmed')
+                                        || 'Great, your meeting is confirmed. Our team will connect with you soon.',
                                     sender: 'bot',
                                     timestamp: new Date().toISOString(),
                                     feedback: null,
@@ -3155,7 +3233,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 ...prev,
                                 {
                                     id: `meeting-booked-error-${Date.now()}`,
-                                    text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
+                                    text: t('meeting.sync_failed')
+                                        || 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
                                     sender: 'bot',
                                     timestamp: new Date().toISOString(),
                                     feedback: null,
@@ -3264,12 +3343,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </svg>
                                 </div>
                                 <p className="text-sm font-medium text-gray-800 mb-1">{t('system.transcript_sent') || 'Transcript sent!'}</p>
-                                <p className="text-xs text-gray-500">Check your inbox at {transcriptEmail}</p>
+                                <p className="text-xs text-gray-500">
+                                    {t('system.transcript_check_inbox', { email: transcriptEmail })
+                                        || `Check your inbox at ${transcriptEmail}`}
+                                </p>
                                 <button
                                     onClick={() => setShowTranscriptModal(false)}
                                     className="mt-4 w-full py-2.5 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
                                 >
-                                    Close
+                                    {t('header.close') || 'Close'}
                                 </button>
                             </div>
                         ) : (
@@ -3280,13 +3362,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                 </div>
                                 <p className="text-sm font-medium text-gray-800 text-center mb-4">
-                                    Send the chat transcript to your e-mail.
+                                    {t('system.transcript_prompt') || 'Send the chat transcript to your e-mail.'}
                                 </p>
                                 <input
                                     type="email"
                                     value={transcriptEmail}
                                     onChange={(e) => setTranscriptEmail(e.target.value)}
-                                    placeholder="your@email.com"
+                                    placeholder={t('system.transcript_email_placeholder') || 'your@email.com'}
                                     required
                                     autoFocus
                                     className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 mb-3"
@@ -3300,7 +3382,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-50"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#2563eb') }}
                                 >
-                                    {transcriptSending ? 'Sending...' : 'Send'}
+                                    {transcriptSending
+                                        ? (t('system.sending') || 'Sending...')
+                                        : (t('system.send') || 'Send')}
                                 </button>
                             </form>
                         )}
@@ -3343,13 +3427,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
                         </div>
                         <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
-                            End conversation?
+                            {t('system.end_conversation_title') || 'End conversation?'}
                         </p>
                         {operatorName && (
-                            <p className="text-[12px] text-gray-500 mb-1">with {operatorName}</p>
+                            <p className="text-[12px] text-gray-500 mb-1">
+                                {t('system.end_conversation_with', { name: operatorName })
+                                    || `with ${operatorName}`}
+                            </p>
                         )}
                         <p id="end-chat-desc" className="text-[12px] text-gray-400 mb-4">
-                            You'll be returned to the AI assistant.
+                            {t('system.end_conversation_desc') || 'You’ll be returned to the AI assistant.'}
                         </p>
                         <div className="flex flex-col gap-2">
                             <button
@@ -3359,14 +3446,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="w-full py-2.5 min-h-[44px] rounded-xl bg-red-500 text-white text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-600 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                             >
-                                End chat
+                                {t('input.end_chat') || 'End chat'}
                             </button>
                             <button
                                 onClick={() => setShowEndConfirm(false)}
                                 autoFocus
                                 className="w-full py-2.5 min-h-[44px] rounded-xl bg-white border border-gray-200 text-gray-600 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                             >
-                                Keep chatting
+                                {t('system.keep_chatting') || 'Keep chatting'}
                             </button>
                         </div>
                     </div>

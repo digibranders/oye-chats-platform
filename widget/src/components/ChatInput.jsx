@@ -471,7 +471,7 @@ const ChatInput = ({
                         onClick={onEndChat}
                         className="text-[11px] text-gray-400 hover:text-red-500 transition-colors focus-visible:outline-none"
                     >
-                        End chat and return to AI
+                        {t('input.end_chat_return') || 'End chat and return to AI'}
                     </button>
                 </div>
             )}
@@ -518,7 +518,7 @@ const ChatInput = ({
                                         /{cmd.name}
                                     </span>
                                     <span className="block text-[11px] text-gray-500 leading-tight mt-0.5">
-                                        {cmd.description}
+                                        {t(cmd.descriptionKey) || cmd.description}
                                     </span>
                                 </span>
                             </button>
@@ -665,8 +665,10 @@ const ChatInput = ({
                 <div className="mt-3 px-1 flex items-center justify-between gap-3">
                     <span className="text-[12px] text-[#16202C]">
                         {pendingConfirm.name === 'new'
-                            ? 'Start a new chat? This will clear the current conversation.'
-                            : `Run /${pendingConfirm.name}?`}
+                            ? (t('input.confirm_new_chat')
+                                || 'Start a new chat? This will clear the current conversation.')
+                            : (t('input.confirm_run_command', { name: pendingConfirm.name })
+                                || `Run /${pendingConfirm.name}?`)}
                     </span>
                     <span className="flex items-center gap-2">
                         <button
@@ -674,7 +676,7 @@ const ChatInput = ({
                             onClick={cancelPending}
                             className="text-[12px] text-gray-500 hover:text-gray-700 px-2 py-1 rounded-md"
                         >
-                            Cancel
+                            {t('input.cancel') || 'Cancel'}
                         </button>
                         <button
                             type="button"
@@ -683,7 +685,7 @@ const ChatInput = ({
                             className="text-[12px] font-semibold text-white px-2.5 py-1 rounded-md"
                             style={{ backgroundColor: primaryColor || '#3A0CA3' }}
                         >
-                            Yes
+                            {t('input.yes') || 'Yes'}
                         </button>
                     </span>
                 </div>
@@ -701,7 +703,7 @@ const ChatInput = ({
                             <button
                                 type="button"
                                 onClick={onHandoff}
-                                title="Live chat"
+                                title={t('input.live_chat_aria') || 'Live chat'}
                                 aria-label={t('input.live_chat_aria') || 'Live chat'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
@@ -723,7 +725,7 @@ const ChatInput = ({
                             <button
                                 type="button"
                                 onClick={onBookMeeting}
-                                title="Book a meeting"
+                                title={t('input.book_meeting') || 'Book a meeting'}
                                 aria-label={t('input.book_meeting') || 'Book a meeting'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
                             >
@@ -738,7 +740,7 @@ const ChatInput = ({
                             rel="noopener noreferrer"
                             className="font-semibold text-gray-300 hover:text-gray-400 transition-colors"
                         >
-                            Privacy Policy
+                            {t('input.privacy_policy') || 'Privacy Policy'}
                         </a>
                     </p>
                     {showBranding ? (

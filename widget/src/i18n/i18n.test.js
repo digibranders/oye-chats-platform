@@ -643,3 +643,344 @@ test('HandoffForm renders no hardcoded English placeholders', () => {
     assert.match(src, /t\('handoff\.name_placeholder'\)/);
     assert.match(src, /t\('handoff\.invalid_email'\)/);
 });
+
+// ── Dictionary parity ────────────────────────────────────────────────────────
+//
+// Every non-English dictionary is a translation OF locales/en.js, so the two key
+// sets must match exactly. A missing key silently falls back to the component's
+// inline English default, which is the failure mode that shipped a half-Hindi
+// widget: it looks fine in code review and only shows up in front of a visitor.
+
+const flattenKeys = (obj, prefix = '') =>
+    Object.entries(obj).flatMap(([k, v]) =>
+        v && typeof v === 'object' ? flattenKeys(v, `${prefix}${k}.`) : [`${prefix}${k}`],
+    );
+
+const loadDicts = async () => {
+    const [en, hi] = await Promise.all([
+        import('./locales/en.js'),
+        import('./locales/hi.js'),
+    ]);
+    return { en: en.default, hi: hi.default };
+};
+
+test('dictionaries: en and hi expose exactly the same keys', async () => {
+    const { en, hi } = await loadDicts();
+    const a = flattenKeys(en.messages).sort();
+    const b = flattenKeys(hi.messages).sort();
+    assert.deepEqual(
+        a.filter((k) => !b.includes(k)),
+        [],
+        'keys present in English but missing from Hindi',
+    );
+    assert.deepEqual(
+        b.filter((k) => !a.includes(k)),
+        [],
+        'keys present in Hindi that English does not define',
+    );
+});
+
+test('dictionaries: every hi value is a non-empty string', async () => {
+    const { hi } = await loadDicts();
+    const walk = (obj, prefix = '') => {
+        for (const [k, v] of Object.entries(obj)) {
+            if (v && typeof v === 'object') walk(v, `${prefix}${k}.`);
+            else {
+                assert.equal(typeof v, 'string', `${prefix}${k} must be a string`);
+                assert.ok(v.trim().length > 0, `${prefix}${k} must not be empty`);
+            }
+        }
+    };
+    walk(hi.messages);
+});
+
+test('dictionaries: interpolation placeholders survive translation', async () => {
+    // t() replaces `{name}` style tokens. A translation that drops or renames one
+    // renders the sentence with a hole in it ("… has joined the conversation."),
+    // which no key-parity check would catch.
+    const { en, hi } = await loadDicts();
+    const params = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    const walk = (a, b, prefix = '') => {
+        for (const [k, v] of Object.entries(a)) {
+            if (v && typeof v === 'object') walk(v, b[k], `${prefix}${k}.`);
+            else {
+                assert.deepEqual(
+                    params(b[k]),
+                    params(v),
+                    `${prefix}${k}: Hindi placeholders must match English`,
+                );
+            }
+        }
+    };
+    walk(en.messages, hi.messages);
+});
+
+// ── Hindi coverage for the swept surfaces ────────────────────────────────────
+
+const DEVANAGARI = /[ऀ-ॿ]/;
+
+// One representative key per visitor-facing surface the sweep touched. Keys that
+// are deliberately script-free (a bare '{provider}' style token, an email
+// placeholder) are excluded and covered by the parity tests above instead.
+const SURFACE_KEYS = {
+    'queue / waiting': ['queue.busy', 'queue.longer_than_usual', 'queue.still_trying', 'queue.keep_waiting', 'queue.position'],
+    'operator connecting': ['system.connecting_team_title', 'system.connecting_seconds', 'connect.connecting'],
+    'connect request': ['connect.wants_to_connect', 'connect.switch_prompt', 'connect.accept', 'connect.decline', 'connect.expires_in'],
+    'leave-message flow': ['offline.reply_by_email', 'offline.not_now', 'offline.leave_message_instead', 'offline.sent_body', 'offline.continue_chatting_ai'],
+    'no-operator state': ['offline.try_again', 'system.handoff_failed', 'connect.operator_available', 'system.someone_from_team'],
+    'lead capture': ['lead.field_required', 'lead.invalid_email_short'],
+    'live-chat status': ['status.sending', 'status.sent_at', 'status.delivered_at', 'status.read_at', 'system.not_sent_retry'],
+    'post-chat survey': ['survey.yes', 'survey.no', 'survey.rating_prompt', 'survey.skip', 'survey.step_aria'],
+    'upload / file flow': ['livechat.unsupported_file', 'livechat.file_too_large', 'livechat.upload_failed', 'livechat.preview_alt', 'livechat.full_size_alt'],
+    'meeting confirmation': ['meeting.confirmed', 'meeting.sync_failed', 'meeting.done', 'meeting.open_new_tab', 'meeting.csp_blocked'],
+    'errors and reconnect': ['system.chunk_generic', 'system.try_again', 'system.transcript_failed', 'livechat.connection_lost', 'system.reconnecting'],
+    'end chat / transcript': ['system.end_conversation_title', 'system.end_conversation_desc', 'system.keep_chatting', 'system.transcript_prompt'],
+    'slash commands': ['commands.new_description', 'commands.clear_description', 'commands.human_description'],
+    'chat chrome': ['header.start_new_chat', 'header.close', 'system.load_earlier', 'system.today', 'system.yesterday'],
+};
+
+for (const [surface, keys] of Object.entries(SURFACE_KEYS)) {
+    test(`Hindi: ${surface} renders in Devanagari`, async () => {
+        resetI18n();
+        await preloadDictionary('hi-IN');
+        setLocale('hi-IN');
+        for (const key of keys) {
+            const value = t(key);
+            assert.ok(value, `${key} must resolve in Hindi`);
+            assert.ok(
+                DEVANAGARI.test(value),
+                `${key} must actually be Devanagari, got "${value}"`,
+            );
+        }
+        resetI18n();
+    });
+}
+
+test('Hindi: interpolation actually substitutes inside a translated sentence', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+
+    const joined = t('system.operator_joined_conversation', { name: 'Priya' });
+    assert.ok(joined.includes('Priya'), 'the operator name must appear');
+    assert.ok(!joined.includes('{name}'), 'the token must be consumed');
+    assert.ok(DEVANAGARI.test(joined));
+
+    const step = t('survey.step_aria', { step: 2, total: 2 });
+    assert.ok(!/\{\w+\}/.test(step), `unsubstituted token left in "${step}"`);
+    resetI18n();
+});
+
+test('Hindi: the offline confirmation keeps {email} for the caller to split on', async () => {
+    // ChatWindow splits this template on the literal token so the address can be
+    // wrapped in <strong> at whatever position the language puts it. The token
+    // must therefore survive translation AND must not be pre-substituted.
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+    for (const key of ['offline.sent_body', 'offline.sent_body_phone']) {
+        const template = t(key);
+        assert.ok(template.includes('{email}'), `${key} must keep the {email} token`);
+        const [before, after] = template.split('{email}');
+        assert.equal(typeof before, 'string');
+        assert.equal(typeof after, 'string');
+    }
+    resetI18n();
+});
+
+// ── English is unchanged ─────────────────────────────────────────────────────
+
+test('English: t() stays null so the inline defaults render verbatim', async () => {
+    // English has no runtime dictionary by design. This is what guarantees a
+    // single-language bot renders byte-identical copy to before the sweep.
+    resetI18n();
+    setLocale('en-IN');
+    for (const key of Object.values(SURFACE_KEYS).flat()) {
+        assert.equal(t(key), null, `${key} must not resolve in English`);
+    }
+    resetI18n();
+});
+
+test('English: the canonical dictionary still holds the shipped wording', async () => {
+    const { en } = await loadDicts();
+    const m = en.messages;
+    assert.equal(m.queue.keep_waiting, 'Keep waiting');
+    assert.equal(m.survey.skip, 'Skip');
+    assert.equal(m.connect.accept, 'Yes, connect me');
+    assert.equal(m.connect.decline, 'No, keep chatting with AI');
+    assert.equal(m.offline.not_now, 'Not now');
+    assert.equal(m.system.keep_chatting, 'Keep chatting');
+    assert.equal(m.meeting.done, 'Done');
+    assert.equal(m.status.sent, 'Sent');
+    assert.equal(m.commands.human_description, 'Request a live agent');
+    // "Try again" and "Try Again" are two different buttons in two different
+    // cards. They stay separate keys precisely so neither one changes case.
+    assert.equal(m.system.try_again, 'Try again');
+    assert.equal(m.offline.try_again, 'Try Again');
+});
+
+test('a bot with multilingual off is untouched by the sweep', async () => {
+    // No dictionary is ever loaded for such a bot, so every t() in every swept
+    // component returns null and the component's own English default renders.
+    resetI18n();
+    assert.equal(getLocale(), 'en-IN');
+    const probes = ['queue.busy', 'connect.accept', 'status.read', 'media.also_available'];
+    for (const key of probes) assert.equal(t(key), null);
+    // Interpolation on a missing key must not throw or emit a partial string.
+    assert.equal(t('system.operator_joined_conversation', { name: 'Priya' }), null);
+    resetI18n();
+});
+
+test('a missing key falls back rather than rendering the key path', async () => {
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+    assert.equal(t('queue.does_not_exist'), null);
+    assert.equal(t('nope.at.all'), null);
+    // A key that resolves to an object, not a string, is also a miss.
+    assert.equal(t('queue'), null);
+    resetI18n();
+});
+
+// ── Source guards ────────────────────────────────────────────────────────────
+//
+// The dictionary tests above prove the translations EXIST. They cannot prove a
+// component actually asks for them - which is exactly how ~120 strings sat
+// untranslated behind a complete-looking dictionary. These read the components
+// and fail when a visitor-facing string goes back to being a bare literal.
+
+const readComponent = (name) =>
+    readFileSync(new URL(`../components/${name}`, import.meta.url), 'utf8');
+
+// Components whose every visitor-visible attribute must route through t().
+// `alt=""` is exempt: an empty alt is the correct markup for a decorative image.
+const SWEPT_COMPONENTS = [
+    'ChatWindow.jsx',
+    'ChatInput.jsx',
+    'QueueWaitingScreen.jsx',
+    'ConnectRequestPopup.jsx',
+    'OperatorJoinedToast.jsx',
+    'QualifiedLeadCard.jsx',
+    'ChunkLoadNotice.jsx',
+    'MessageStatus.jsx',
+    'LeadCaptureForm.jsx',
+    'HandoffForm.jsx',
+    'MediaCard.jsx',
+    'MeetingBooking.jsx',
+    'LiveChatMode.jsx',
+    'Launcher.jsx',
+];
+
+for (const name of SWEPT_COMPONENTS) {
+    test(`${name}: no bare localizable attributes`, () => {
+        const src = readComponent(name);
+        const offenders = [];
+        for (const attr of ['placeholder', 'aria-label', 'title', 'alt']) {
+            const re = new RegExp(`\\b${attr}="([^"]*)"`, 'g');
+            for (const m of src.matchAll(re)) {
+                if (attr === 'alt' && m[1] === '') continue;
+                offenders.push(`${attr}="${m[1]}"`);
+            }
+        }
+        assert.deepEqual(offenders, [], `untranslated attributes in ${name}`);
+    });
+}
+
+test('QueueWaitingScreen routes every status line through t()', () => {
+    const src = readComponent('QueueWaitingScreen.jsx');
+    for (const key of ['system.connecting_team', 'queue.busy', 'queue.longer_than_usual',
+        'queue.position', 'queue.eta_wait', 'queue.still_trying', 'queue.keep_waiting']) {
+        assert.match(src, new RegExp(`t\\('${key.replace('.', '\\.')}'`), `${key} must be used`);
+    }
+});
+
+test('ConnectRequestPopup and OperatorJoinedToast route their copy through t()', () => {
+    const popup = readComponent('ConnectRequestPopup.jsx');
+    for (const key of ['connect.wants_to_connect', 'connect.switch_prompt',
+        'connect.expires_in', 'connect.accept', 'connect.decline']) {
+        assert.match(popup, new RegExp(`t\\('${key.replace('.', '\\.')}'`));
+    }
+    const toast = readComponent('OperatorJoinedToast.jsx');
+    for (const key of ['connect.operator_available', 'connect.switch_instead', 'connect.switch']) {
+        assert.match(toast, new RegExp(`t\\('${key.replace('.', '\\.')}'`));
+    }
+});
+
+test('MessageStatus builds every receipt label from the dictionary', () => {
+    const src = readComponent('MessageStatus.jsx');
+    for (const key of ['status.sending', 'status.sent_at', 'status.sent',
+        'status.delivered_at', 'status.delivered', 'status.read_at', 'status.read']) {
+        assert.match(src, new RegExp(`t\\('${key.replace('.', '\\.')}'`));
+    }
+});
+
+test('client-created system lines carry a textKey, not frozen copy', () => {
+    // A system line resolved at CREATION time keeps whatever language was active
+    // when the transition fired, stranding an English divider above Hindi
+    // messages after a switch. SystemMessage resolves textKey on every render.
+    const src = readComponent('ChatWindow.jsx');
+    assert.match(src, /const SystemMessage = \(\{ text, textKey, textParams \}\)/);
+    assert.match(src, /textKey \? t\(textKey, textParams\) : null/);
+    for (const key of ['system.connecting_team', 'system.handoff_failed',
+        'system.operator_joined_conversation', 'system.invitation_expired',
+        'system.offline_recorded', 'system.operator_left_named']) {
+        assert.match(src, new RegExp(`textKey: '${key.replace('.', '\\.')}'`), `${key} must be keyed`);
+    }
+    // Every system message the client builds must be keyed. A bare
+    // `type: 'system'` with only `text:` is the regression this catches.
+    const blocks = [...src.matchAll(/type: 'system',\n([\s\S]{0,200}?)timestamp:/g)];
+    for (const [, body] of blocks) {
+        assert.ok(/textKey:/.test(body), `a client system message has no textKey:\n${body}`);
+    }
+});
+
+test('slash commands keep untranslated identities and translated labels', async () => {
+    const { SLASH_COMMANDS } = await import('../lib/slashCommands.js');
+    for (const cmd of SLASH_COMMANDS) {
+        assert.match(cmd.name, /^[a-z]+$/, 'the typed command name must stay ASCII');
+        assert.equal(cmd.descriptionKey, `commands.${cmd.name}_description`);
+    }
+    // Resolved at render, not at import: switching locale after the module has
+    // loaded must still change what the palette shows.
+    resetI18n();
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+    for (const cmd of SLASH_COMMANDS) {
+        assert.ok(DEVANAGARI.test(t(cmd.descriptionKey)), `${cmd.name} description`);
+    }
+    resetI18n();
+});
+
+test('customer-authored copy still wins over the translated default', () => {
+    // Precedence is settings -> dictionary -> inline English. The sweep must not
+    // have reordered it: a greeting the customer wrote is shown as written.
+    const chat = readComponent('ChatWindow.jsx');
+    assert.match(
+        chat,
+        /settings\?\.widget_messages\?\.rating_prompt\s*\n?\s*\|\|\s*t\('survey\.rating_prompt'\)/,
+        'rating_prompt: customer copy must be checked before the dictionary',
+    );
+    const lead = readComponent('LeadCaptureForm.jsx');
+    assert.match(lead, /settings\?\.lead_form_title \|\| t\('lead\.title'\)/);
+    assert.match(lead, /settings\?\.lead_form_subtitle \|\| t\('lead\.subtitle'\)/);
+    const launcher = readComponent('Launcher.jsx');
+    assert.match(launcher, /settings\?\.greeting_message\s*\n?\s*\|\|\s*t\('launcher\.greeting_default'\)/);
+    const welcome = readFileSync(new URL('../components/WelcomeScreen.jsx', import.meta.url), 'utf8');
+    assert.match(welcome, /settings\?\.welcome_subtitle \|\| t\('welcome\.subtitle'\)/);
+});
+
+test('every t() key used in a component exists in the English dictionary', async () => {
+    // A typo'd key silently renders the inline English fallback forever. This is
+    // the check that turns that into a failing test.
+    const { en } = await loadDicts();
+    const known = new Set(flattenKeys(en.messages));
+    const missing = [];
+    for (const name of [...SWEPT_COMPONENTS, 'WelcomeScreen.jsx', 'LanguageSelector.jsx',
+        'MessageBubble.jsx', 'QualificationCTA.jsx']) {
+        const src = readComponent(name);
+        for (const m of src.matchAll(/\bt\(\s*'([a-z_]+(?:\.[a-z_]+)+)'/g)) {
+            if (!known.has(m[1])) missing.push(`${name}: ${m[1]}`);
+        }
+    }
+    assert.deepEqual(missing, [], 't() keys with no dictionary entry');
+});

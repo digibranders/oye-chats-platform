@@ -61,10 +61,15 @@ const OperatorJoinedToast = ({
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-semibold text-emerald-900 leading-tight">
-                        {operatorName || 'Someone from our team'} is available!
+                        {(() => {
+                            const name = operatorName
+                                || t('system.someone_from_team')
+                                || 'Someone from our team';
+                            return t('connect.operator_available', { name }) || `${name} is available!`;
+                        })()}
                     </p>
                     <p className="text-[11px] text-emerald-700 leading-tight mt-0.5">
-                        Switch to live chat instead?
+                        {t('connect.switch_instead') || 'Switch to live chat instead?'}
                     </p>
                 </div>
                 <button
@@ -73,7 +78,7 @@ const OperatorJoinedToast = ({
                     className="px-3 py-1.5 rounded-lg text-white text-[12px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
                     style={{ backgroundColor: primaryColor }}
                 >
-                    Switch
+                    {t('connect.switch') || 'Switch'}
                 </button>
                 <button
                     type="button"

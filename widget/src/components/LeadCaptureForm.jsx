@@ -43,7 +43,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         if (!email || email === lastCheckedEmailRef.current) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
-            setErrors(prev => ({ ...prev, email: 'Please enter a valid email' }));
+            setErrors(prev => ({ ...prev, email: (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             return;
         }
 
@@ -56,7 +56,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 setErrors(prev => ({ ...prev, email: undefined }));
             } else {
                 setEmailCheckState('invalid');
-                setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
+                setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             }
             return result;
         });
@@ -68,11 +68,13 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         const fieldConfigMap = getFieldConfig();
         for (const f of fields) {
             if (f.required && !formData[f.field]?.trim()) {
-                newErrors[f.field] = `${fieldConfigMap[f.field]?.label || f.field} is required`;
+                const label = fieldConfigMap[f.field]?.label || f.field;
+                newErrors[f.field] = t('lead.field_required', { field: label })
+                    || `${label} is required`;
             }
             if (f.field === 'email' && formData.email?.trim()) {
                 if (!looksLikeEmail(formData.email.trim())) {
-                    newErrors.email = 'Please enter a valid email';
+                    newErrors.email = (t('lead.invalid_email_short') || 'Please enter a valid email');
                 }
             }
         }
@@ -98,7 +100,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 const result = await checkEmailWithServer(formData.email.trim());
                 if (!result.valid) {
                     setEmailCheckState('invalid');
-                    setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
+                    setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
                     return;
                 }
                 setEmailCheckState('valid');

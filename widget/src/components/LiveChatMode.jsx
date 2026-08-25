@@ -162,7 +162,7 @@ const LiveChatMode = ({
                             setChatMode('waiting');
                         } else if (data.status === 'connected') {
                             setChatMode('live');
-                            setOperatorName(data.operator_name || 'Our team');
+                            setOperatorName(data.operator_name || t('system.our_team') || 'Our team');
                             setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
                             // Always re-fetch history on (re)connect. Covers the
@@ -213,7 +213,7 @@ const LiveChatMode = ({
                                             const base = {
                                                 id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
                                                 sender: isUser ? 'user' : 'operator',
-                                                operatorName: !isUser ? (data.operator_name || 'Our team') : undefined,
+                                                operatorName: !isUser ? (data.operator_name || t('system.our_team') || 'Our team') : undefined,
                                                 timestamp: m.timestamp || m.created_at,
                                                 ...(isUser ? {
                                                     dbId: typeof m.id === 'number' ? m.id : undefined,
@@ -510,11 +510,14 @@ const LiveChatMode = ({
     const openFilePreview = (file) => {
         const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
         if (!ALLOWED.includes(file.type)) {
-            setFileError('Unsupported file type. Allowed: images, PDF, and text files.');
+            setFileError(
+                t('livechat.unsupported_file')
+                || 'Unsupported file type. Allowed: images, PDF, and text files.'
+            );
             return;
         }
         if (file.size > 10 * 1024 * 1024) {
-            setFileError('File is too large. Maximum size is 10 MB.');
+            setFileError(t('livechat.file_too_large') || 'File is too large. Maximum size is 10 MB.');
             return;
         }
         const isImage = file.type.startsWith('image/');
@@ -609,11 +612,11 @@ const LiveChatMode = ({
                     }]);
                 }
             } else {
-                setFileError('Connection lost. Please try again.');
+                setFileError(t('livechat.connection_lost') || 'Connection lost. Please try again.');
             }
         } catch (err) {
             console.error('[OyeChats] File upload error:', err);
-            setFileError('Failed to send file. Please try again.');
+            setFileError(t('livechat.upload_failed') || 'Failed to send file. Please try again.');
         } finally {
             setUploadProgress(null);
         }
@@ -655,7 +658,7 @@ const LiveChatMode = ({
                         {pendingFile.isImage ? (
                             <img
                                 src={pendingFile.previewUrl}
-                                alt="Preview"
+                                alt={t('livechat.preview_alt') || 'Preview'}
                                 className="max-w-full max-h-full object-contain rounded-xl shadow-sm"
                             />
                         ) : (
@@ -740,7 +743,7 @@ const LiveChatMode = ({
                     </button>
                     <img
                         src={lightboxSrc}
-                        alt="Full size"
+                        alt={t('livechat.full_size_alt') || 'Full size'}
                         className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     />

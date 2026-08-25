@@ -82,7 +82,11 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
             return (
                 <img
                     src={launcherLogo}
-                    alt="Launcher"
+                    // Decorative: the enclosing button already carries the
+                    // launcher's accessible name, so alt text here would make a
+                    // screen reader announce the control twice. Matches the same
+                    // logo's treatment in the greeting bubble below.
+                    alt=""
                     className="w-full h-full object-cover"
                 />
             );
@@ -110,7 +114,9 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
         );
     };
 
-    const greetingMessage = settings?.greeting_message || 'Hi! Let us know if you have any questions.';
+    const greetingMessage = settings?.greeting_message
+        || t('launcher.greeting_default')
+        || 'Hi! Let us know if you have any questions.';
     const hasBubbleText = bubbleInput.trim().length > 0;
 
     return (
@@ -184,7 +190,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
             {/* Main Button. Bot icon always visible */}
             <button
                 onClick={() => { setShowGreeting(false); toggleChat(); }}
-                aria-label={isOpen ? 'Close chat' : launcherName}
+                aria-label={isOpen ? (t('launcher.close_chat') || 'Close chat') : launcherName}
                 aria-expanded={isOpen}
                 className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                 style={{ '--tw-ring-color': primaryColor }}
