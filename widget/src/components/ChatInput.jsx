@@ -481,7 +481,7 @@ const ChatInput = ({
             {popoverOpen && (
                 <div
                     role="listbox"
-                    aria-label="Chat commands"
+                    aria-label={t('input.commands_aria') || 'Chat commands'}
                     className="mb-2 rounded-xl border border-[#BBE7FF]/60 bg-white shadow-lg overflow-hidden"
                 >
                     {filteredCommands.map((cmd, i) => {
@@ -619,7 +619,7 @@ const ChatInput = ({
                                         ? (t('system.connecting') || 'Connecting you with the support team...')
                                         : effectivePlaceholder
                                 }
-                                aria-label="Chat message input"
+                                aria-label={t('input.message_aria') || 'Chat message input'}
                                 className="relative w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                                 style={{
                                     // Inline mirrors of the Tailwind sizing so the
@@ -702,7 +702,7 @@ const ChatInput = ({
                                 type="button"
                                 onClick={onHandoff}
                                 title="Live chat"
-                                aria-label="Live chat"
+                                aria-label={t('input.live_chat_aria') || 'Live chat'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
                             >
@@ -724,7 +724,7 @@ const ChatInput = ({
                                 type="button"
                                 onClick={onBookMeeting}
                                 title="Book a meeting"
-                                aria-label="Book a meeting"
+                                aria-label={t('input.book_meeting') || 'Book a meeting'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
                             >
                                 <CalendarDays size={12} />

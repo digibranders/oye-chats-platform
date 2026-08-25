@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, Play } from 'lucide-react';
+import { t } from '../i18n/i18n.js';
 
 /**
  * MediaCard. Inline chat card for a single YouTube video OR a downloadable
@@ -407,7 +408,7 @@ const _MediaHint = ({ card }) => {
                 aria-hidden="true"
             >
                 <Play className="h-3 w-3 fill-current text-red-500" strokeWidth={0} />
-                <span>Watch the video for the full picture</span>
+                <span>{t('media.watch_video') || 'Watch the video for the full picture'}</span>
             </div>
         );
     }

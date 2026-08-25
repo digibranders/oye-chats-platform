@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExternalLink, X } from 'lucide-react';
+import { t } from '../i18n/i18n.js';
 
 /**
  * Validate a meeting URL based on the provider. Only allows HTTPS URLs
@@ -212,14 +213,14 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
             {/* Modal panel. Slides up from bottom, ~85% of widget */}
             <div className="flex-[0.85] bg-white rounded-t-2xl border-t border-gray-200 shadow-xl flex flex-col overflow-hidden">
                 <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100 shrink-0">
-                    <h3 className="text-sm font-semibold text-gray-800">Book a Meeting</h3>
+                    <h3 className="text-sm font-semibold text-gray-800">{t('meeting.title') || 'Book a Meeting'}</h3>
                     <div className="flex items-center gap-1">
                         <a
                             href={safeUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
-                            aria-label="Open booking page in new tab"
+                            aria-label={t('meeting.open_new_tab_aria') || 'Open booking page in new tab'}
                             title="Open in new tab"
                         >
                             <ExternalLink className="w-4 h-4" />
@@ -227,7 +228,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         <button
                             onClick={onDismiss}
                             className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
-                            aria-label="Close booking widget"
+                            aria-label={t('meeting.close_aria') || 'Close booking widget'}
                         >
                             <X className="w-4 h-4" />
                         </button>
@@ -293,7 +294,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                     successful booking the parent unmounts this panel, so no
                     explicit hide is needed here. */}
                 <div className="px-4 py-2.5 border-t border-gray-100 bg-white flex items-center justify-between gap-3 shrink-0">
-                    <p className="text-xs text-gray-500">Finished booking your meeting?</p>
+                    <p className="text-xs text-gray-500">{t('meeting.finished_booking') || 'Finished booking your meeting?'}</p>
                     <button
                         onClick={handleManualConfirm}
                         disabled={confirming}

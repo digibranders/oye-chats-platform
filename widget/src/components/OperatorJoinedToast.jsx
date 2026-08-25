@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { UserCheck, X } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
+import { t } from '../i18n/i18n.js';
 
 /**
  * OperatorJoinedToast. Non-blocking notification shown when an operator
@@ -78,7 +79,7 @@ const OperatorJoinedToast = ({
                     type="button"
                     onClick={handleManualDismiss}
                     className="text-emerald-700/60 hover:text-emerald-900 transition-colors flex-shrink-0"
-                    aria-label="Dismiss"
+                    aria-label={t('livechat.dismiss_aria') || 'Dismiss'}
                 >
                     <X className="w-3.5 h-3.5" />
                 </button>

@@ -2,9 +2,18 @@ import { useState, useEffect, useRef } from 'react';
 import { Bot, ChevronDown, X, ArrowUp } from 'lucide-react';
 import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
 import PremiumOrb from './PremiumOrb';
-import { t } from '../i18n/i18n.js';
+import { getLocale, onLocaleChange, t } from '../i18n/i18n.js';
 
 const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
+    // The launcher mounts before any non-English dictionary is loaded and, unlike
+    // ChatWindow and QualificationCTA, had no subscription - so every t() call
+    // below was evaluated once against English and never refreshed. A visitor
+    // who switched language kept an English launcher bubble for the rest of the
+    // session. The locale itself is not read here; the state exists purely to
+    // re-render when it changes.
+    const [, setDisplayLocale] = useState(() => getLocale());
+    useEffect(() => onLocaleChange(({ locale: next }) => setDisplayLocale(next)), []);
+
     const launcherName = settings?.launcher_name || t('launcher.have_questions') || "Have Questions?";
     const launcherLogo = sanitizeImageUrl(settings?.launcher_logo);
     const avatarType = settings?.avatar_type || 'upload';
@@ -121,7 +130,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                         <button
                             onClick={dismissGreeting}
                             className="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-gray-500 transition-colors"
-                            aria-label="Dismiss"
+                            aria-label={t('launcher.dismiss_aria') || 'Dismiss'}
                         >
                             <X size={12} />
                         </button>
@@ -135,7 +144,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                                 type="text"
                                 value={bubbleInput}
                                 onChange={(e) => setBubbleInput(e.target.value)}
-                                placeholder="Write a message..."
+                                placeholder={t('input.placeholder') || 'Write a message...'}
                                 className="flex-1 text-[13px] text-[#16202C] placeholder:text-gray-400 bg-transparent outline-none"
                             />
                             <button
@@ -145,7 +154,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                                     hasBubbleText ? 'text-white' : 'text-gray-300'
                                 }`}
                                 style={hasBubbleText ? { backgroundColor: primaryColor } : undefined}
-                                aria-label="Send"
+                                aria-label={t('launcher.send_aria') || 'Send'}
                             >
                                 <ArrowUp size={12} />
                             </button>

@@ -4,7 +4,7 @@ import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
 import { sanitizeColor } from '../services/sanitize';
 import { displayTextFor } from '../lib/liveChatTranslation';
-import { getLocale } from '../i18n/i18n';
+import { getLocale, t } from '../i18n/i18n';
 
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -643,12 +643,12 @@ const LiveChatMode = ({
                         <button
                             type="button"
                             onClick={cancelPendingFile}
-                            aria-label="Cancel"
+                            aria-label={t('livechat.cancel_aria') || 'Cancel'}
                             className="text-gray-400 hover:text-gray-700 transition-colors"
                         >
                             <X size={20} />
                         </button>
-                        <span className="text-sm font-semibold text-[#16202C]">Send file</span>
+                        <span className="text-sm font-semibold text-[#16202C]">{t('livechat.send_file') || 'Send file'}</span>
                     </div>
 
                     <div className="flex-1 flex items-center justify-center p-6 bg-gray-50 overflow-hidden">
@@ -688,7 +688,7 @@ const LiveChatMode = ({
                                 value={pendingFile.caption}
                                 onChange={(e) => setPendingFile(prev => ({ ...prev, caption: e.target.value }))}
                                 onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
-                                placeholder="Add a caption…"
+                                placeholder={t('livechat.caption_placeholder') || 'Add a caption\u2026'}
                                 className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
                                 autoFocus
                             />
@@ -696,7 +696,7 @@ const LiveChatMode = ({
                                 type="button"
                                 onClick={sendPendingFile}
                                 disabled={uploadProgress !== null}
-                                aria-label="Send"
+                                aria-label={t('livechat.send_aria') || 'Send'}
                                 className="w-9 h-9 flex items-center justify-center rounded-xl transition-all disabled:opacity-40"
                                 style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
@@ -714,7 +714,7 @@ const LiveChatMode = ({
                     <button
                         onClick={() => setFileError(null)}
                         className="shrink-0 text-red-400 hover:text-red-600 transition-colors"
-                        aria-label="Dismiss"
+                        aria-label={t('livechat.dismiss_aria') || 'Dismiss'}
                     >
                         <X className="w-3.5 h-3.5" />
                     </button>
@@ -728,12 +728,12 @@ const LiveChatMode = ({
                     onClick={() => setLightboxSrc(null)}
                     role="dialog"
                     aria-modal="true"
-                    aria-label="Image viewer"
+                    aria-label={t('livechat.image_viewer_aria') || 'Image viewer'}
                 >
                     <button
                         type="button"
                         onClick={() => setLightboxSrc(null)}
-                        aria-label="Close"
+                        aria-label={t('livechat.close_aria') || 'Close'}
                         className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
                     >
                         <X size={28} />

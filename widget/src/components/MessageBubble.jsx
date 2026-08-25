@@ -4,6 +4,7 @@ import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import ErrorBoundary from './ErrorBoundary';
 import { lazyWithRetry } from '../services/lazyWithRetry';
+import { t } from '../i18n/i18n.js';
 import { sanitizeColor } from '../services/sanitize';
 import { formatBotMarkdown } from '../services/botMarkdown';
 import { isSmartLink, isSmartLinkClicked, markSmartLinkClicked } from '../services/smartLinks';
@@ -89,7 +90,7 @@ const SafeLink = ({ href, children, ...props }) => {
             <a
                 href={href}
                 rel="noopener"
-                aria-label="Open service page"
+                aria-label={t('message.open_service_aria') || 'Open service page'}
                 title="Open service page"
                 {...props}
                 className="inline-flex items-center justify-center align-middle ml-1 w-5 h-5 rounded-md bg-blue-50 text-blue-600 text-[12px] no-underline hover:bg-blue-100 transition-colors"
@@ -310,10 +311,10 @@ const MessageBubble = ({
                     {showActions && (
                         <div
                             className="flex items-center gap-1 mt-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-150"
-                            aria-label="Message actions"
+                            aria-label={t('message.actions_aria') || 'Message actions'}
                         >
                             <MessageActionButton
-                                label={copied ? 'Copied' : 'Copy message'}
+                                label={copied ? (t('message.copied') || 'Copied') : (t('message.copy') || 'Copy message')}
                                 onClick={handleCopy}
                                 success={copied}
                             >
@@ -322,7 +323,7 @@ const MessageBubble = ({
                                     : <Copy className="w-3.5 h-3.5" strokeWidth={2} />}
                             </MessageActionButton>
                             <MessageActionButton
-                                label={msg.feedback === 1 ? 'Remove thumbs up' : 'Helpful'}
+                                label={msg.feedback === 1 ? (t('message.remove_thumbs_up') || 'Remove thumbs up') : (t('message.helpful') || 'Helpful')}
                                 onClick={() => handleFeedback(1)}
                                 active={msg.feedback === 1}
                                 activeClass="text-emerald-600 bg-emerald-50"
@@ -330,7 +331,7 @@ const MessageBubble = ({
                                 <ThumbsUp className="w-3.5 h-3.5" strokeWidth={2} />
                             </MessageActionButton>
                             <MessageActionButton
-                                label={msg.feedback === -1 ? 'Remove thumbs down' : 'Not helpful'}
+                                label={msg.feedback === -1 ? (t('message.remove_thumbs_down') || 'Remove thumbs down') : (t('message.not_helpful') || 'Not helpful')}
                                 onClick={() => handleFeedback(-1)}
                                 active={msg.feedback === -1}
                                 activeClass="text-rose-500 bg-rose-50"

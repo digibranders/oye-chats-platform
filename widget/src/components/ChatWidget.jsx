@@ -4,7 +4,7 @@ import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/
 import { readSessionId, writeSessionId, resolveShareDomain, readLocalePreference, writeLocale } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
 import { resolveClientLocale, getHtmlLang, getBrowserLanguages } from '../i18n/localeResolver.js';
-import { setLocale as setI18nLocale, getLanguageCode } from '../i18n/i18n.js';
+import { setLocale as setI18nLocale, getLanguageCode, t } from '../i18n/i18n.js';
 import ErrorBoundary from './ErrorBoundary';
 import { lazyWithRetry } from '../services/lazyWithRetry';
 
@@ -398,7 +398,7 @@ const ChatWidget = () => {
   return (
     <>
       {isVisible && (
-        <ErrorBoundary label="ChatWindow" fallback={(retry) => <div className="fixed bottom-6 right-6 z-[9999] p-4 bg-white rounded-lg shadow-lg border text-sm text-red-600 flex flex-col gap-2"><span>Chat failed to load.</span><button onClick={retry} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-xs font-semibold text-gray-800">Retry</button></div>}>
+        <ErrorBoundary label="ChatWindow" fallback={(retry) => <div className="fixed bottom-6 right-6 z-[9999] p-4 bg-white rounded-lg shadow-lg border text-sm text-red-600 flex flex-col gap-2"><span>{t('system.failed_to_load') || 'Chat failed to load.'}</span><button onClick={retry} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-xs font-semibold text-gray-800">{t('system.retry') || 'Retry'}</button></div>}>
           <Suspense fallback={null}>
             <ChatWindow
               onClose={closeChat}

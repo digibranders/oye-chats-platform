@@ -2212,7 +2212,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {msg.failed || msg.status === 'failed' ? (
                             <button
                                 type="button"
-                                aria-label="Message not sent. Tap to retry"
+                                aria-label={t('system.retry_send_aria') || 'Message not sent. Tap to retry'}
                                 onClick={() => {
                                     if (!wsSendRef.current) return;
                                     const retryId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2388,7 +2388,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     paddingTop: !isInitializing && !showLeadForm ? 24 : undefined,
                 }}
                 aria-live="polite"
-                aria-label="Chat messages"
+                aria-label={t('system.messages_aria') || 'Chat messages'}
                 role="log"
             >
                 {/* Welcome overlay. Absolute, covers the messages area until first send */}
@@ -2445,7 +2445,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isInitializing && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3">
                         <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-                        <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
+                        <p className="text-gray-500 font-medium animate-pulse text-sm">{t('system.starting_new_chat') || 'Starting new chat...'}</p>
                     </div>
                 )}
 
@@ -2458,7 +2458,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium text-gray-500 bg-white border border-gray-200 rounded-full hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {isLoadingEarlier ? (
-                                <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />Loading...</>
+                                <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />{t('system.loading') || 'Loading...'}</>
                             ) : (
                                 'Load earlier messages'
                             )}
@@ -2540,7 +2540,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     >
                         <div className="flex items-center gap-2 mb-2">
                             <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message for our team</p>
+                            <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.leave_message_for_team') || 'Leave a message for our team'}</p>
                         </div>
                         <p className="text-[12px] text-gray-500 mb-3">
                             We&apos;ll reply by email as soon as we can.
@@ -2645,7 +2645,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isLiveReconnecting && (
                     <div className="mx-3 my-1 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
                         <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
+                        <span className="text-xs text-amber-700 font-medium">{t('system.reconnecting') || 'Reconnecting...'}</span>
                     </div>
                 )}
 
@@ -2775,7 +2775,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {offlineError ? (
                             <div className="text-center py-2">
                                 <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
-                                <p className="text-[13px] text-gray-600 mb-3">We couldn&apos;t send your message. Please try again.</p>
+                                <p className="text-[13px] text-gray-600 mb-3">{t('system.send_failed') || 'We couldn\u2019t send your message. Please try again.'}</p>
                                 <button
                                     onClick={() => setOfflineError(false)}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
@@ -2787,7 +2787,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         ) : offlineSubmitted ? (
                             <div className="text-center py-2">
                                 <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
-                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
+                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">{t('offline.sent_title') || 'Message sent!'}</p>
                                 <p className="text-[12px] text-gray-500 mb-3">
                                     We&apos;ll get back to you at <strong>{offlineForm.email}</strong>
                                     {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
@@ -2852,16 +2852,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message</p>
+                                            <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.leave_message_title') || 'Leave a message'}</p>
                                         </div>
                                         <p className="text-[12px] text-gray-500 mb-3">
-                                            We&apos;ll reply to <strong className="text-gray-700">{externalEmail}</strong> as soon as we can.
+                                            {t('offline.reply_to_email', { email: externalEmail }) ||
+                                                `We\u2019ll reply to ${externalEmail} as soon as we can.`}
                                         </p>
                                         <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                             <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                                 <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
                                                 <textarea
-                                                    placeholder="How can we help you?"
+                                                    placeholder={t('offline.message_placeholder') || 'How can we help you?'}
                                                     required
                                                     rows={3}
                                                     value={offlineForm.message}
@@ -2877,7 +2878,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             >
                                                 {offlineSubmitting
                                                     ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    : 'Send message'}
+                                                    : (t('offline.submit') || 'Send message')}
                                             </button>
                                             <button
                                                 type="button"
@@ -2885,7 +2886,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                                 disabled={offlineSubmitting}
                                                 className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                             >
-                                                Continue with AI instead
+                                                {t('offline.continue_with_ai') || 'Continue with AI instead'}
                                             </button>
                                         </form>
                                     </>
@@ -2916,14 +2917,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">Send message</p>
+                                    <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.send_message_title') || 'Send message'}</p>
                                 </div>
-                                <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
+                                <p className="text-[12px] text-gray-500 mb-3">{t('offline.get_back_soon') || 'We\u2019ll get back to you as soon as we can.'}</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                     <div>
                                         <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 ${offlineEmailError ? 'border-red-300' : 'border-gray-200'}`}>
                                             <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                            <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                            <input type="email" placeholder={t('offline.email_placeholder') || 'Email address'} required value={offlineForm.email}
                                                 onChange={(e) => {
                                                     setOfflineForm(p => ({ ...p, email: e.target.value }));
                                                     if (offlineEmailError) setOfflineEmailError('');
@@ -2941,19 +2942,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="text" placeholder="Your name" required value={offlineForm.name}
+                                        <input type="text" placeholder={t('offline.name_placeholder') || 'Your name'} required value={offlineForm.name}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
                                     </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
+                                        <input type="tel" placeholder={t('offline.phone_placeholder') || 'Phone number (optional)'} value={offlineForm.phone}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
                                     </div>
                                     <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                                        <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
+                                        <textarea placeholder={t('offline.message_placeholder') || 'How can we help you?'} required rows={2} value={offlineForm.message}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
                                     </div>
@@ -2970,7 +2971,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         disabled={offlineSubmitting}
                                         className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                     >
-                                        Continue with AI instead
+                                        {t('offline.continue_with_ai') || 'Continue with AI instead'}
                                     </button>
                                 </form>
                             </>
@@ -2986,17 +2987,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         style={{ animation: 'fadeUp 0.4s ease-out' }}
                     >
                         <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                        <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">Chat ended</p>
+                        <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">{t('survey.chat_ended') || 'Chat ended'}</p>
 
                         {/* Step 1: Was your issue resolved? */}
                         {surveyStep === 1 && (
                             <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
-                                <p className="text-[12px] text-gray-500 mb-3">Was your issue resolved?</p>
+                                <p className="text-[12px] text-gray-500 mb-3">{t('survey.resolved_question') || 'Was your issue resolved?'}</p>
                                 <div className="flex justify-center gap-3 mb-3">
                                     <button
                                         onClick={() => { setResolvedAnswer(true); setSurveyStep(2); }}
                                         disabled={ratingSubmitting}
-                                        aria-label="Yes, issue was resolved"
+                                        aria-label={t('survey.resolved_yes_aria') || 'Yes, issue was resolved'}
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-green-200 bg-green-50 text-green-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-green-100 hover:border-green-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400 disabled:opacity-50"
                                     >
                                         <CheckCircle2 className="w-4 h-4" />
@@ -3005,7 +3006,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <button
                                         onClick={() => { setResolvedAnswer(false); setSurveyStep(2); }}
                                         disabled={ratingSubmitting}
-                                        aria-label="No, issue was not resolved"
+                                        aria-label={t('survey.resolved_no_aria') || 'No, issue was not resolved'}
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-red-200 bg-red-50 text-red-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-100 hover:border-red-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-50"
                                     >
                                         <XCircle className="w-4 h-4" />
@@ -3089,7 +3090,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         <button
                             onClick={() => setShowWelcomeBackBanner(false)}
                             className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-                            aria-label="Dismiss welcome banner"
+                            aria-label={t('system.dismiss_banner_aria') || 'Dismiss welcome banner'}
                         >
                             <X className="w-3.5 h-3.5" />
                         </button>
@@ -3107,7 +3108,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 <button
                     type="button"
                     onClick={handleScrollToLatest}
-                    aria-label="Scroll to latest message"
+                    aria-label={t('system.scroll_latest_aria') || 'Scroll to latest message'}
                     aria-hidden={isAtBottom}
                     tabIndex={isAtBottom ? -1 : 0}
                     className={`sticky bottom-3 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 -mb-8 md:-mb-6 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
@@ -3262,7 +3263,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                                     </svg>
                                 </div>
-                                <p className="text-sm font-medium text-gray-800 mb-1">Transcript sent!</p>
+                                <p className="text-sm font-medium text-gray-800 mb-1">{t('system.transcript_sent') || 'Transcript sent!'}</p>
                                 <p className="text-xs text-gray-500">Check your inbox at {transcriptEmail}</p>
                                 <button
                                     onClick={() => setShowTranscriptModal(false)}
