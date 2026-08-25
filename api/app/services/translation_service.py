@@ -54,11 +54,28 @@ from app.services.language_service import language_display_name, language_from_l
 
 logger = logging.getLogger(__name__)
 
-#: Hard ceiling on one translation call. Chosen so the operator-to-visitor
-#: direction (the only one that awaits) can never add a perceptible pause to a
-#: live conversation. Deliberately not configurable per bot: a customer cannot
-#: be allowed to tune this into a socket stall.
-TRANSLATION_TIMEOUT_S = 2.0
+#: Hard ceiling on one translation call. Bounds the operator-to-visitor
+#: direction, which is the only one that awaits before delivery. Deliberately
+#: not configurable per bot: a customer cannot be allowed to tune this into a
+#: socket stall.
+#:
+#: Was 2.0s, chosen on the reasoning that anything longer is a perceptible
+#: pause. That reasoning was never checked against the provider. Measured over
+#: eight en->hi operator replies through gemini-2.5-flash:
+#:
+#:     1306  1309  1414  2298  2396  2448  2625  2628   (ms, median 2347)
+#:
+#: The old ceiling sat BELOW the median, so roughly six replies in ten timed
+#: out and reached the visitor in English. That is the failure this feature
+#: exists to prevent, and it is worse than the wait: a visitor who asked for
+#: Hindi would rather wait another second than be answered in a language they
+#: may not read. 4.0s clears the observed maximum with headroom while still
+#: capping the worst case an operator can experience.
+#:
+#: If a future provider is slower, RAISE this rather than accepting silent
+#: English delivery, or move the outgoing path out of band the way the
+#: incoming one already is.
+TRANSLATION_TIMEOUT_S = 4.0
 
 #: Budget for work nothing is waiting on: the post-handoff transcript backfill.
 #: The 2s ceiling above exists to protect the live SEND path, where an operator

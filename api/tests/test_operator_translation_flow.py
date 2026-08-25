@@ -996,3 +996,89 @@ class TestBackfillAcrossBothRoles:
             assert row.source_language == "hi"
             assert row.translations["en"]["content"] == "TRANSLATED"
             assert row.translations["en"]["status"] == "ok"
+
+
+class TestOutgoingTranslationBudget:
+    """The operator-to-visitor path is the only one that awaits before delivery,
+    so its timeout decides whether the visitor reads their own language.
+
+    Found by driving a real handoff end to end: the operator replied in English
+    and the Hindi visitor received English. The message was not lost and the
+    failure was recorded honestly, but the visitor still got the wrong
+    language, which is the one thing this feature exists to prevent.
+    """
+
+    class _NeedsTime:
+        """A provider that cannot answer inside a budget shorter than it needs.
+
+        Simulates the measured provider without sleeping: real en->hi calls
+        through gemini-2.5-flash ran 1306-2628ms with a median of 2347ms, so a
+        2.0s ceiling timed out on most of them.
+        """
+
+        provider_name = "stub"
+        model = "stub-model"
+        needs_seconds = 2.6
+
+        async def translate(self, text, _source, _target, timeout=None):
+            budget = timeout if timeout is not None else ts.TRANSLATION_TIMEOUT_S
+            if budget < self.needs_seconds:
+                raise ts.TranslationUnavailable(f"needed {self.needs_seconds}s, got {budget}s")
+            return ts.TranslationResult(content="अनुवादित", provider="stub", model="m", cached=False)
+
+    def test_an_operator_reply_reaches_the_visitor_translated(self, db, monkeypatch):
+        _seed(db)
+        msg = add_chat_message(db, "sess-1", role="operator", content="Our plan starts at 5000.", source_language="en")
+        db.commit()
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=self._NeedsTime()))
+        bot = db.query(Bot).filter(Bot.bot_key == "bot-acme").one()
+
+        delivered, translated_from = asyncio.run(
+            ts.translate_outgoing("sess-1", msg.id, "Our plan starts at 5000.", bot, "en-IN", "hi")
+        )
+
+        assert delivered == "अनुवादित", "the visitor received the operator's English, not a translation"
+        assert translated_from == "en"
+        db.expire_all()
+        stored = db.get(ChatMessage, msg.id)
+        assert stored.translations["hi"]["status"] == "ok"
+        # The original is canonical and survives translation.
+        assert stored.content == "Our plan starts at 5000."
+
+    def test_the_budget_clears_the_measured_provider_latency(self):
+        """Guards the number itself, not just the code path.
+
+        The old 2.0s ceiling sat below the provider's median. Anything at or
+        under the observed maximum will silently deliver English again.
+        """
+        observed_max_ms = 2628
+        assert observed_max_ms < ts.TRANSLATION_TIMEOUT_S * 1000, (
+            "the outgoing budget must clear the measured provider maximum"
+        )
+
+    def test_a_genuinely_dead_provider_still_degrades_to_the_original(self, db, monkeypatch):
+        """Raising the ceiling must not turn a failure into a lost message."""
+        _seed(db)
+        msg = add_chat_message(db, "sess-1", role="operator", content="Hello there", source_language="en")
+        db.commit()
+
+        class _Dead:
+            provider_name = "stub"
+            model = "stub-model"
+
+            async def translate(self, *_a, **_k):
+                raise ts.TranslationUnavailable("down")
+
+        monkeypatch.setattr(ts, "charge_for_translation", lambda *a, **k: True)
+        monkeypatch.setattr(ts, "translation_service", ts.TranslationService(provider=_Dead()))
+        bot = db.query(Bot).filter(Bot.bot_key == "bot-acme").one()
+
+        delivered, translated_from = asyncio.run(
+            ts.translate_outgoing("sess-1", msg.id, "Hello there", bot, "en-IN", "hi")
+        )
+        assert delivered == "Hello there"
+        assert translated_from is None
+        db.expire_all()
+        assert db.get(ChatMessage, msg.id).translations["hi"]["status"] == "failed"

@@ -134,13 +134,13 @@ class TestLiteLLMProviderContract:
         monkeypatch.setattr(ts.litellm, "acompletion", _fake_acompletion)
         return captured
 
-    def test_uses_acompletion_with_two_second_timeout_and_no_retries(self, monkeypatch):
+    def test_uses_acompletion_with_the_live_budget_and_no_retries(self, monkeypatch):
         captured = self._capture(monkeypatch)
         _run(ts.LiteLLMTranslationProvider().translate("मुझे pricing चाहिए", "hi", "en"))
         # The three runtime requirements, asserted rather than assumed. The
-        # llm_service defaults (60s / 3 retries) would turn a 2s budget into
-        # tens of seconds of blocked sockets.
-        assert captured["timeout"] == 2.0
+        # llm_service defaults (60s / 3 retries) would turn a bounded budget
+        # into tens of seconds of blocked sockets.
+        assert captured["timeout"] == ts.TRANSLATION_TIMEOUT_S
         assert captured["num_retries"] == 0
 
     def test_message_body_never_enters_the_system_prompt(self, monkeypatch):
@@ -337,10 +337,18 @@ class TestTimeoutBudgets:
         monkeypatch.setattr(ts.litellm, "acompletion", _fake)
         return captured
 
-    def test_default_is_the_tight_live_budget(self, monkeypatch):
+    def test_default_is_the_live_budget(self, monkeypatch):
+        """The live budget must clear the provider's real latency.
+
+        It was 2.0s, set on intuition. Measured over eight en->hi replies
+        through gemini-2.5-flash the median was 2347ms, so the old ceiling sat
+        below the median and most operator replies reached the visitor
+        untranslated. Pinned above the observed maximum (2628ms).
+        """
         captured = self._capture(monkeypatch)
         _run(ts.LiteLLMTranslationProvider().translate("नमस्ते", "hi", "en"))
-        assert captured["timeout"] == ts.TRANSLATION_TIMEOUT_S == 2.0
+        assert captured["timeout"] == ts.TRANSLATION_TIMEOUT_S
+        assert ts.TRANSLATION_TIMEOUT_S >= 4.0
 
     def test_an_explicit_timeout_is_honoured(self, monkeypatch):
         captured = self._capture(monkeypatch)
