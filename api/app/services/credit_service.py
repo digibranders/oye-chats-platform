@@ -189,6 +189,22 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # this is the platform-wide one. Turning it off degrades live chat to
     # original-language-only, it never interrupts a conversation.
     "feature.translation_enabled": True,
+    # Visitor language resolution and the AI's answer language (Phases 2/3).
+    # The platform-wide counterpart to each bot's ``language_config.enabled``.
+    #
+    # Separate from ``feature.translation_enabled`` on purpose: that one governs
+    # operator live-chat translation, which is metered and can be withdrawn on
+    # its own. This one governs whether a conversation has a language at all.
+    # Turning it off makes every bot behave exactly as a bot with multilingual
+    # disabled: no directive in the prompt, the legacy QA cache key, English
+    # canned paths. It charges nothing, so it is not a credit switch; it lives
+    # here because this is where the platform's DB-backed, no-deploy feature
+    # flags already are.
+    #
+    # It does NOT govern the admin dashboard's own UI language (Phase 7). Those
+    # are different slices and coupling them would let a conversation-side
+    # incident silently change what language the dashboard renders in.
+    "feature.multilingual_chat_enabled": True,
     # One-time top-up packs (lifetime credits). Charged in INR via Razorpay;
     # ``usd`` is a display-only headline for non-INR buyers (never charged).
     # ``bonus_pct`` / ``badge`` are marketing metadata, fully super-admin

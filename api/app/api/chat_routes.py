@@ -65,6 +65,7 @@ from app.services.ip_intel_service import fetch_ip_intel
 from app.services.language_service import (
     detect_message_language,
     get_locale_direction,
+    is_multilingual_enabled,
     language_from_locale,
     match_supported_locale,
     normalize_locale,
@@ -271,15 +272,16 @@ def _resolve_visitor_language_and_update_session(
     and RETURN the effective LanguageContext for the pipeline to consume.
 
     Returns:
-      * ``None`` ONLY when multilingual is disabled for this bot. This is the
-        single signal the RAG pipeline uses to stay byte-identical to
+      * ``None`` when multilingual is disabled for this bot, OR when the
+        platform-wide ``feature.multilingual_chat_enabled`` switch is off. This
+        is the single signal the RAG pipeline uses to stay byte-identical to
         pre-Phase-3 behaviour (no directive, legacy cache key, English canned
         paths, English-tuned retrieval).
       * a ``LanguageContext`` for every enabled bot, whether the language was
         already locked, already settled, freshly resolved, or detected.
 
     Order of decisions:
-      1. Multilingual off: return None immediately, no query.
+      1. Multilingual off, per bot or platform-wide: return None immediately.
       2. Locked session: return the locked context, no write (unless this turn
          is itself an explicit selection).
       3. Settled session with no higher-precedence client signal: return the
@@ -292,7 +294,7 @@ def _resolve_visitor_language_and_update_session(
     case is a single indexed read with no transaction.
     """
     lang_cfg = getattr(bot, "language_config", None) or {}
-    if not lang_cfg.get("enabled", False):
+    if not is_multilingual_enabled(bot):
         return None
 
     client_source = (body.language_source or "").strip().lower() or None
@@ -1592,7 +1594,10 @@ def change_chat_language(
     # all. Previously the `enabled` flag only gated *validation*, so a disabled
     # bot accepted any well-formed locale and locked it onto the session, which
     # broke the guarantee that such bots behave exactly as they did before.
-    if not lang_cfg.get("enabled", False):
+    # Also refused when the platform switch is off: otherwise a visitor could
+    # still lock a language onto a session that the pipeline will then ignore,
+    # leaving the session marked Hindi while every answer comes back English.
+    if not is_multilingual_enabled(bot):
         raise HTTPException(status_code=403, detail="Multilingual is not enabled for this bot")
 
     normalized = normalize_locale(body.locale)

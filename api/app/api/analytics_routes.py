@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
 from app.core.csv_safety import csv_safe_row
-from app.core.metrics import get_metric_counts
+from app.core.metrics import get_latency_percentile, get_metric_counts
 from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
@@ -32,6 +32,7 @@ from app.schemas.validators import RowId, YearMonth
 from app.services.language_service import LANGUAGE_NAMES
 from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
 from app.services.reporting_service import get_per_bot_rollup
+from app.services.translation_service import TRANSLATION_LATENCY_METRIC
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,22 @@ def get_resolution_summary_endpoint(
 # are incremented WITHOUT a bot_id, so they only exist at global scope and
 # cannot be attributed to one customer's bot. Reporting the platform-wide
 # figure on a per-bot screen would be worse than reporting nothing.
-_TRANSLATION_COUNTERS = ("requests", "ok", "failed", "timeout", "cache_hit", "skipped_same_language")
+_TRANSLATION_COUNTERS = (
+    "requests",
+    "ok",
+    "failed",
+    "timeout",
+    "cache_hit",
+    "skipped_same_language",
+    # Phase 6. Skipped because the platform switch is off or the workspace ran
+    # out of credits. Distinct from "failed", which means the provider was
+    # tried and did not answer.
+    "gated",
+    # Phase 6. Provider rejected or timed out. Overlaps `failed` + `timeout` by
+    # construction; kept because it is the name that pages, so a reader
+    # comparing the dashboard to an alert sees the same number.
+    "provider_failed",
+)
 
 # The counters carry a ~26h TTL (``metrics._COUNTER_TTL_SECONDS``), so 24h is
 # the longest window that can be read without silently undercounting.
@@ -367,6 +383,23 @@ def _translation_activity(bot_id: int) -> dict:
         buckets = get_metric_counts(f"translation_{name}", bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS)
         activity[name] = int(sum(buckets.values()))
     activity["window_hours"] = _TRANSLATION_WINDOW_HOURS
+    # p95 over the same window. None when nothing was recorded, or when the
+    # 95th percentile falls past the largest histogram bucket; both are
+    # meaningfully different from "fast" and must not render as a number.
+    # `latency_over_ms` is how many observations landed in that tail.
+    activity["latency_p95_ms"] = get_latency_percentile(
+        TRANSLATION_LATENCY_METRIC, 95.0, bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+    )
+    activity["latency_p50_ms"] = get_latency_percentile(
+        TRANSLATION_LATENCY_METRIC, 50.0, bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+    )
+    activity["latency_over_ms"] = int(
+        sum(
+            get_metric_counts(
+                f"{TRANSLATION_LATENCY_METRIC}_over", bot_id=bot_id, hours=_TRANSLATION_WINDOW_HOURS
+            ).values()
+        )
+    )
     return activity
 
 

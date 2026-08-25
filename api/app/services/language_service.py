@@ -7,10 +7,13 @@ and stub message language detection.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Literal
 
 from app.schemas.language import LanguageContext, LocaleInfo
+
+logger = logging.getLogger(__name__)
 
 # Standard BCP-47 supported language base codes
 SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
@@ -39,6 +42,53 @@ SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
 
 # Right-to-left language base codes
 RTL_LANGUAGES: frozenset[str] = frozenset({"ar", "he", "fa", "ur"})
+
+#: Pricing-config feature name for the platform-wide multilingual switch.
+#: Resolves to the ``feature.multilingual_chat_enabled`` key.
+MULTILINGUAL_FEATURE = "multilingual_chat"
+
+
+def is_multilingual_enabled(bot) -> bool:
+    """True when this bot should resolve a conversation language at all.
+
+    Two gates, checked in this order for a reason:
+
+    1. ``bot.language_config.enabled`` - the customer's own control. Checked
+       first because it needs no database access, so a bot with multilingual
+       off takes exactly the same code path it did before this switch existed.
+       That is what keeps disabled behaviour byte-identical.
+    2. ``feature.multilingual_chat_enabled`` - the platform control, read from
+       pricing config through the same 60-second in-process cache that serves
+       ``feature.translation_enabled``. Only consulted for bots that already
+       passed gate 1, so it never adds a session to the disabled fast path.
+
+    Returning False makes the caller behave as if the customer had never
+    enabled multilingual: no language directive in the prompt, the legacy QA
+    cache key, English canned paths. It is a rollout lever, not a billing one;
+    nothing is charged either way.
+
+    Fails OPEN. A pricing row that is missing, or a database that cannot be
+    reached, leaves the feature ON, matching ``is_feature_enabled``'s own
+    stance: an operator who wants it off will have set the key, and a
+    transient database problem must not silently change what language a live
+    conversation is being held in.
+    """
+    cfg = getattr(bot, "language_config", None) or {}
+    if not cfg.get("enabled", False):
+        return False
+
+    # Deferred import: credit_service imports the ORM, and this module is
+    # imported by schema-level code. Same convention translation_service uses.
+    from app.db.session import get_session
+    from app.services import credit_service
+
+    try:
+        with get_session() as session:
+            return credit_service.is_feature_enabled(session, MULTILINGUAL_FEATURE)
+    except Exception:
+        logger.warning("multilingual switch lookup failed; leaving the feature on", exc_info=True)
+        return True
+
 
 # Base languages the WIDGET ships a UI dictionary for.
 #

@@ -64,6 +64,10 @@ _CONFIG: dict[str, object] = {
     # Operator live-chat translation. Off = no translation call and no charge
     # platform-wide; live chat continues in the original language.
     "feature.translation_enabled": True,
+    # Visitor language resolution and the AI's answer language. Off = every bot
+    # behaves exactly as one with multilingual disabled, platform-wide, without
+    # a deploy. Charges nothing; it is a rollout lever, not a credit switch.
+    "feature.multilingual_chat_enabled": True,
     # One-time top-up packs, lifetime credits (headline INR + USD; provider ids
     # resolved lazily at purchase). bonus_pct/badge are marketing metadata.
     "topup_packs": [

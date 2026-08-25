@@ -13,9 +13,9 @@ THE THREE RULES THAT SHAPE THIS MODULE
    ``llm_service`` is synchronous ``litellm.completion``. Calling one from a
    WebSocket handler freezes *every* socket that worker holds, not just the
    conversation being translated. This module uses ``litellm.acompletion``
-   only, with ``timeout=2.0`` and ``num_retries=0``. The ``llm_service``
+   only, with ``timeout=4.0`` and ``num_retries=0``. The ``llm_service``
    defaults (60s, 3 retries) are tuned for answer generation and would turn a
-   2s budget into a minute of dead sockets.
+   4s budget into a minute of dead sockets.
 
 2. **Never raise into a delivery path.** ``translate()`` raises
    :class:`TranslationUnavailable` and nothing else. Callers catch it and send
@@ -49,7 +49,12 @@ from typing import NamedTuple, Protocol
 import litellm
 
 from app.core.cache import TRANSLATION_TTL, cache_get, cache_set, translation_key
-from app.core.metrics import increment_metric_counter, increment_metric_counter_by
+from app.core.metrics import (
+    forward_to_sentry_if_alertable,
+    increment_metric_counter,
+    increment_metric_counter_by,
+    record_latency_ms,
+)
 from app.services.language_service import language_display_name, language_from_locale
 
 logger = logging.getLogger(__name__)
@@ -78,14 +83,14 @@ logger = logging.getLogger(__name__)
 TRANSLATION_TIMEOUT_S = 4.0
 
 #: Budget for work nothing is waiting on: the post-handoff transcript backfill.
-#: The 2s ceiling above exists to protect the live SEND path, where an operator
+#: The 4s ceiling above exists to protect the live SEND path, where an operator
 #: is mid-conversation. Backfill runs detached after an accept, so a tight cap
 #: there buys nothing and just converts slow-but-fine translations into
 #: permanent "Translation unavailable" rows the operator has to retry by hand.
 #: Observed in a real handoff: a Hindi question failed at 2016ms.
 TRANSLATION_BACKFILL_TIMEOUT_S = 8.0
 
-#: ZERO. Retries are exactly what turn a 2s budget into a 30s stall on a
+#: ZERO. Retries are exactly what turn a 4s budget into a 30s stall on a
 #: degraded provider. LiteLLM's own ``fallbacks`` already covers primary ->
 #: fallback transparently; a second retry layer here would stack on top of it.
 TRANSLATION_NUM_RETRIES = 0
@@ -97,6 +102,10 @@ TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gemini/gemini-2.5-flash")
 #: Ledger action name. Doubles as the ``feature.<action>_enabled`` toggle key
 #: and the ``credit_cost.<action>`` pricing key.
 TRANSLATION_ACTION = "translation"
+
+#: Latency histogram name. ``record_latency_ms`` derives the bucket counters
+#: from it, so this is the only place the metric is spelled.
+TRANSLATION_LATENCY_METRIC = "translation_ms"
 
 _SYSTEM_PROMPT = (
     "You are a translation engine for a customer-support chat.\n"
@@ -298,6 +307,15 @@ class TranslationService:
             budget_ms = int((timeout if timeout is not None else TRANSLATION_TIMEOUT_S) * 1000)
             counter = "translation_timeout" if elapsed_ms >= budget_ms else "translation_failed"
             increment_metric_counter(counter, bot_id=bot_id)
+            # A failed attempt is still a latency observation: excluding it
+            # would make the p95 look healthy during exactly the outage the
+            # percentile exists to reveal.
+            record_latency_ms(TRANSLATION_LATENCY_METRIC, elapsed_ms, bot_id=bot_id)
+            # One alertable name covers both timeout and hard failure. The
+            # split above stays for diagnosis; paging on two names would just
+            # double the noise for one incident.
+            increment_metric_counter("translation_provider_failed", bot_id=bot_id)
+            forward_to_sentry_if_alertable("translation_provider_failed", bot_id=bot_id, kind=counter)
             logger.warning(
                 "translation_failed | bot_id=%s source=%s target=%s latency_ms=%s",
                 bot_id,
@@ -307,13 +325,15 @@ class TranslationService:
             )
             raise
 
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         increment_metric_counter("translation_ok", bot_id=bot_id)
+        record_latency_ms(TRANSLATION_LATENCY_METRIC, elapsed_ms, bot_id=bot_id)
         logger.info(
             "translation_ok | bot_id=%s source=%s target=%s latency_ms=%s provider=%s model=%s cached=false",
             bot_id,
             source,
             target,
-            int((time.monotonic() - started) * 1000),
+            elapsed_ms,
             result.provider,
             result.model,
         )
@@ -351,6 +371,17 @@ def is_translation_enabled(bot) -> bool:
     return bool(cfg.get("enabled", False)) and bool(cfg.get("operator_translation_enabled", False))
 
 
+def _record_gated(bot_id: int | None, *, reason: str) -> None:
+    """Count and alert on one skipped translation.
+
+    ``reason`` reaches Sentry as a tag so a deliberate switch-off is
+    distinguishable from a workspace that just ran out of credits. It is never
+    the message, the languages, or anything derived from them.
+    """
+    increment_metric_counter("translation_gated", bot_id=bot_id)
+    forward_to_sentry_if_alertable("translation_gated", bot_id=bot_id, reason=reason)
+
+
 def charge_for_translation(bot, message_id: int | None, target_language: str) -> bool:
     """Reserve credits for one translation. Return True to proceed.
 
@@ -374,7 +405,7 @@ def charge_for_translation(bot, message_id: int | None, target_language: str) ->
     try:
         with get_session() as session:
             if not credit_service.is_feature_enabled(session, TRANSLATION_ACTION):
-                increment_metric_counter("translation_gated", bot_id=getattr(bot, "id", None))
+                _record_gated(getattr(bot, "id", None), reason="feature_off")
                 return False
             cost = credit_service.get_credit_cost(session, TRANSLATION_ACTION)
             if cost <= 0:
@@ -390,8 +421,11 @@ def charge_for_translation(bot, message_id: int | None, target_language: str) ->
                     idempotency_key=f"translation:{message_id}:{target_language}",
                     attributed_bot_id=bot.id,
                 )
-            except (credit_service.InsufficientCredits, credit_service.KillSwitchActive):
-                increment_metric_counter("translation_gated", bot_id=bot.id)
+            except credit_service.InsufficientCredits:
+                _record_gated(bot.id, reason="insufficient_credits")
+                return False
+            except credit_service.KillSwitchActive:
+                _record_gated(bot.id, reason="credit_kill_switch")
                 return False
             session.commit()
             return True
