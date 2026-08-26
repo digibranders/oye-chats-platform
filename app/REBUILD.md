@@ -329,7 +329,15 @@ stands and the incoming one is folded into it:
   `en-GB`. Both were trying to stop formatting following the *browser*.
   `ui/lib/formatters` now builds its `Intl` formatters against `getLocale()`,
   keyed per locale so a language switch cannot serve a stale one. Under the
-  `en-IN` default this means Indian digit grouping throughout.
+  `en-IN` default this means Indian digit grouping throughout —
+  `1,49,900`, not `149,900`.
+
+  `formatCompact` is the one exception and stays pinned to `en-US`. The locale's
+  compact scale changes the UNIT rather than the digits (`en-IN` renders
+  2,500,000 as "25L"), and that abbreviation labels conversation and message
+  counts on chart axes and stat tiles, where it gets a few characters to be
+  understood in. Grouping carries the locale; the abbreviation stays on a scale
+  every reader parses. Pinned by `ui/lib/compactScale.test.ts`.
 - **Plan gates.** The incoming quotation gate was a bare
   `Set(['professional','enterprise'])` — the exact bug `lib/planGates` exists to
   prevent, where a bespoke contract is refused a feature the server grants it.

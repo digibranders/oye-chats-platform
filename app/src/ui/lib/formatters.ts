@@ -114,12 +114,33 @@ export function formatNumber(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? ABSENT : numberFormatter({}).format(value);
 }
 
-/** `12.4K`, for a figure that has to fit in a stat tile or an axis tick. */
+/**
+ * `12.4K`, for a figure that has to fit in a stat tile or an axis tick.
+ *
+ * **Pinned to `en-US`, unlike everything else here.** This is the one formatter
+ * whose job is to be READ AT A GLANCE in a few characters, and the locale's
+ * compact scale changes the unit rather than the digits: `en-IN` renders
+ * 2,500,000 as "25L" and 150,000 as "1.5L". Lakh grouping in a table is
+ * standard and unambiguous; "L" on a chart axis is not — it is a unit far fewer
+ * readers parse instantly than "K"/"M", and it is being asked to label counts of
+ * conversations and messages, not sums of money.
+ *
+ * So the scale stays fixed and the grouped figure beside it carries the locale.
+ * `formatNumber`, `formatMoney`, the dates and the percentages all follow the
+ * chosen language; only the abbreviation does not.
+ */
 export function formatCompact(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value)
-    ? ABSENT
-    : numberFormatter({ notation: 'compact', maximumFractionDigits: 1 }).format(value);
+  if (value == null || !Number.isFinite(value)) return ABSENT;
+  let formatter = numberCache.get(COMPACT_KEY);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+    numberCache.set(COMPACT_KEY, formatter);
+  }
+  return formatter.format(value);
 }
+
+/** Not locale-keyed, so it can never collide with a per-locale entry. */
+const COMPACT_KEY = 'compact:en-US';
 
 /**
  * Money, in the currency the account is actually charged in.
