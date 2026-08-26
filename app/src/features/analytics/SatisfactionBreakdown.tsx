@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Star } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type RatingsSummary } from './analytics-types';
@@ -41,7 +42,7 @@ export function SatisfactionBreakdown({ ratings }: SatisfactionBreakdownProps): 
         </span>
         <span className="text-sm text-[var(--ds-text-subtle)]">/ 5</span>
         <span className="ml-1 text-[13px] text-[var(--ds-text-muted)]">
-          {ratings.total.toLocaleString()} {ratings.total === 1 ? 'rating' : 'ratings'}
+          {formatNumber(ratings.total)} {ratings.total === 1 ? 'rating' : 'ratings'}
         </span>
       </div>
 

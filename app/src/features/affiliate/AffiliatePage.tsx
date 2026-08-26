@@ -14,6 +14,7 @@
  * (pool cap, split validation, code format) mirror affiliate_service.py.
  */
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { AlertTriangle, Check, Copy, Gift, Loader2, Plus, Share2, X } from 'lucide-react';
 import {
   Button,
@@ -144,13 +145,13 @@ export function AffiliatePage(): ReactElement {
         key: 'clicks',
         header: 'Clicks',
         align: 'right',
-        render: (row) => <span className="tabular-nums">{row.clicks.toLocaleString()}</span>,
+        render: (row) => <span className="tabular-nums">{formatNumber(row.clicks)}</span>,
       },
       {
         key: 'signups',
         header: 'Signups',
         align: 'right',
-        render: (row) => <span className="tabular-nums">{row.signups.toLocaleString()}</span>,
+        render: (row) => <span className="tabular-nums">{formatNumber(row.signups)}</span>,
       },
       {
         key: 'conversionPct',
@@ -292,8 +293,8 @@ export function AffiliatePage(): ReactElement {
           label="Active codes"
           value={`${stats?.activeCodes ?? activeCount} / ${profile?.maxActiveCodes ?? 0}`}
         />
-        <MetricCard label="Total clicks" value={(stats?.totalClicks ?? 0).toLocaleString()} />
-        <MetricCard label="Signups" value={(stats?.totalSignups ?? 0).toLocaleString()} />
+        <MetricCard label="Total clicks" value={formatNumber((stats?.totalClicks ?? 0))} />
+        <MetricCard label="Signups" value={formatNumber((stats?.totalSignups ?? 0))} />
         <MetricCard label="Conversion" value={formatPct(stats?.conversionPct ?? 0)} />
       </div>
 

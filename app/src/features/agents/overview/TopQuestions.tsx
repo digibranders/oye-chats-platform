@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { MessageSquare } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type TopQuestion } from '../../../types/domain';
@@ -64,7 +65,7 @@ export function TopQuestions({ questions, className }: TopQuestionsProps): React
                 </div>
               </div>
               <span className="shrink-0 text-[13px] font-semibold text-[var(--ds-text-muted)]">
-                {item.count.toLocaleString()}
+                {formatNumber(item.count)}
                 <span className="ml-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
                   {item.count === 1 ? 'ask' : 'asks'}
                 </span>

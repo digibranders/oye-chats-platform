@@ -9,6 +9,7 @@
  * actually returned.
  */
 import type { Bot, TopQuestion } from '../../types/domain';
+import { formatDate } from '../../i18n/formatters';
 import type { FeedbackItem } from '../feedback/types';
 import { t as translateNow } from '../../i18n/i18n';
 
@@ -363,7 +364,7 @@ export function firstName(fullName: string | null | undefined): string {
 
 /** Long-form date, e.g. "Monday, July 21". */
 export function formatToday(date: Date): string {
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  return formatDate(date, { weekday: 'long', month: 'long', day: 'numeric', year: undefined });
 }
 
 /**
@@ -382,5 +383,5 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
   if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
   if (diff < day) return `${Math.floor(diff / hour)}h ago`;
   if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
-  return new Date(then).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatDate, formatTime } from '../i18n/formatters';
 import {
     RefreshCw,
     CalendarClock,
@@ -365,15 +366,14 @@ function ceilToNextSweepTick(iso) {
 // other (see the AutoRecrawl "Next check" tile).
 function formatAbsoluteRunTime(tick) {
     try {
-        const time = tick.toLocaleTimeString(undefined, {
+        const time = formatTime(tick, {
             hour: 'numeric',
             minute: '2-digit',
         });
-        const date = tick.toLocaleDateString(undefined, {
+        const date = formatDate(tick, {
             weekday: 'short',
             month: 'short',
-            day: 'numeric',
-        });
+            day: 'numeric', year: undefined });
         return `≈ ${time} · ${date}`;
     } catch {
         return '-';

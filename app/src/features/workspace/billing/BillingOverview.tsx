@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from 'react';
+import { formatDate } from '../../../i18n/formatters';
 import { ArrowUpRight, CreditCard, Sparkles, Wallet, Zap } from 'lucide-react';
 import { Button, Card, StatusBadge, cn } from '../../../design-system';
 import { getCreditBalance } from '../../../services/api';
@@ -225,5 +226,5 @@ export function BillingOverview({
 function formatMeterDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return formatDate(date, { day: 'numeric', month: 'short', year: undefined });
 }

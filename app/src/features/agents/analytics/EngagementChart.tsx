@@ -68,7 +68,7 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
       translateNow('agents.chartVolumeSummary', { range: rangeLabel, total: totalLabel }) ||
       `Daily message volume over ${rangeLabel}: ${totalLabel} messages total`;
     return peak && peak.messages > 0
-      ? `${base}, peaking at ${peak.messages.toLocaleString()} on ${peak.label}.`
+      ? `${base}, peaking at ${formatNumber(peak.messages)} on ${peak.label}.`
       : `${base}.`;
   }, [windowed, range, total]);
 

@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import {
   AlertCircle,
   ExternalLink,
@@ -230,7 +231,7 @@ export function RecrawlDiffModal({
                       {bucketName}
                     </span>
                     <span className="my-1 text-2xl font-semibold tabular-nums text-[var(--ds-text)]">
-                      {bucket.count.toLocaleString()}
+                      {formatNumber(bucket.count)}
                     </span>
                     <span className="text-[11px] text-[var(--ds-text-subtle)]">{bucket.sublabel}</span>
                   </div>
@@ -297,7 +298,7 @@ export function RecrawlDiffModal({
                   <span className="text-[12px] font-semibold text-[var(--ds-text)]">
                     {activeBucket.sublabel}
                     <span className="ml-1.5 font-normal text-[var(--ds-text-subtle)]">
-                      ({activeBucket.count.toLocaleString()})
+                      ({formatNumber(activeBucket.count)})
                     </span>
                   </span>
                   <button

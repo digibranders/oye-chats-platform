@@ -1,4 +1,5 @@
 import { type StatusBadgeProps } from '../../design-system';
+import { formatDate, formatDateTime } from '../../i18n/formatters';
 
 /**
  * Pure presentation helpers for the Inbox. No React, no side effects - kept
@@ -120,7 +121,7 @@ export function relativeTime(iso: string | null | undefined): string {
   if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
   if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
   if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }
 
 /** Absolute, human date-time for the detail pane. */
@@ -128,7 +129,7 @@ export function absoluteTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, {
+  return formatDateTime(d, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Link } from 'react-router-dom';
 import {
   Activity as ActivityIcon,
@@ -61,7 +62,7 @@ import { useTranslation } from '../../i18n/useTranslation';
 // ── Small presentation helpers ───────────────────────────────────────────────
 
 function formatCount(value: number): string {
-  return Math.round(value).toLocaleString('en-US');
+  return formatNumber(Math.round(value));
 }
 
 function formatPercent(value: number): string {

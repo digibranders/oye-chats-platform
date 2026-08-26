@@ -51,8 +51,8 @@ export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): 
         <span className="font-medium text-[var(--ds-text)]">{label}</span>
         <span className={cn('font-medium tabular-nums', valueTone)}>
           {isUnlimited
-            ? `${used.toLocaleString()} used`
-            : `${used.toLocaleString()} / ${limit.toLocaleString()}`}
+            ? `${formatNumber(used)} used`
+            : `${formatNumber(used)} / ${formatNumber(limit)}`}
         </span>
       </div>
       {isUnlimited ? (

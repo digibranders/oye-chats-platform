@@ -12,6 +12,7 @@
  * question - "Who are my qualified leads?" - without a glossary.
  */
 import { type StatusBadgeProps } from '../../design-system';
+import { formatDate } from '../../i18n/formatters';
 import { type Lead, type LeadContact } from '../../types/domain';
 import { t as translateNow } from '../../i18n/i18n';
 
@@ -324,12 +325,11 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return EMPTY_PLACEHOLDER;
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return EMPTY_PLACEHOLDER;
-  return new Date(parsed).toLocaleDateString('en-US', {
+  return formatDate(new Date(parsed), {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit',
-  });
+    minute: '2-digit', year: undefined });
 }
 
 /** A short display name for a lead - real name, else "Anonymous visitor". */

@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { formatDateTime as i18nFormatDateTime } from '../../i18n/formatters';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -208,12 +209,11 @@ function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString('en-GB', {
+  return i18nFormatDateTime(date, {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
-    minute: '2-digit',
-  });
+    minute: '2-digit', year: undefined });
 }
 
 function truncateUrl(url: string, max = 72): string {

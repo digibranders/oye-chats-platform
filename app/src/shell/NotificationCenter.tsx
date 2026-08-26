@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { formatDate } from '../i18n/formatters';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -56,7 +57,7 @@ function formatRelativeTime(iso: string | null): string {
   if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
   if (diffSeconds < 86_400) return `${Math.floor(diffSeconds / 3600)}h ago`;
   if (diffSeconds < 7 * 86_400) return `${Math.floor(diffSeconds / 86_400)}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDate(date, { month: 'short', day: 'numeric', year: undefined });
 }
 
 function isToday(iso: string | null): boolean {

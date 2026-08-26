@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Building2, Globe, Link2, Mail, MapPin, Monitor, Phone, Receipt, Star, Tag, User } from 'lucide-react';
 import { Button, Skeleton, StatusBadge, Textarea } from '../../design-system';
 import { getSessionDetails } from '../../services/api';
@@ -27,7 +28,7 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 function formatMoney(currency: string, value: number): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? currency;
   const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-  return `${symbol}${rounded.toLocaleString()}`;
+  return `${symbol}${formatNumber(rounded)}`;
 }
 
 type QuotationStatus = 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';

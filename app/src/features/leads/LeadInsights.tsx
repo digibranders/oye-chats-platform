@@ -15,6 +15,7 @@
  *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { formatDate, formatNumber } from '../../i18n/formatters';
 import { Activity, Compass, Maximize2, Receipt } from 'lucide-react';
 import { Modal, StatusBadge, cn } from '../../design-system';
 import { type LeadDetail } from './useLeadDetail';
@@ -38,7 +39,7 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 function formatMoney(currency: string, value: number): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? currency;
   const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-  return `${symbol}${rounded.toLocaleString()}`;
+  return `${symbol}${formatNumber(rounded)}`;
 }
 
 interface QuotationLineItem {
@@ -237,7 +238,7 @@ function dayBucket(ts: string | null): { key: string; label: string } {
     ? 'Today'
     : sameDay(d, yesterday)
       ? 'Yesterday'
-      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      : formatDate(d, { day: 'numeric', month: 'short', year: 'numeric' });
   return { key, label };
 }
 

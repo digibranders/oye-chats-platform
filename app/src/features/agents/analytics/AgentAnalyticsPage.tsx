@@ -271,12 +271,12 @@ export function AgentAnalyticsPage(): ReactElement {
         <MetricCard
           icon={MessageSquare}
           label={t('agents.messages') || 'Messages'}
-          value={loading ? '-' : totalMessages.toLocaleString()}
+          value={loading ? '-' : formatNumber(totalMessages)}
         />
         <MetricCard
           icon={Users}
           label={t('agents.leads') || 'Leads'}
-          value={loading ? '-' : qualifiedLeads.toLocaleString()}
+          value={loading ? '-' : formatNumber(qualifiedLeads)}
         />
         <MetricCard
           icon={CheckCircle2}

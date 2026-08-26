@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatTime } from '../i18n/formatters';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import {
     IMPERSONATION_BODY_CLASS,
@@ -48,7 +49,7 @@ function parseExpiry(expiresAt) {
 /** Format the expiry as a local wall-clock time, e.g. "12:30". */
 function formatExpiry(expiresAt) {
     const at = parseExpiry(expiresAt);
-    return at ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+    return at ? formatTime(at, { hour: '2-digit', minute: '2-digit' }) : null;
 }
 
 /** `setTimeout` saturates past this - clamp so a far-future expiry doesn't fire immediately. */

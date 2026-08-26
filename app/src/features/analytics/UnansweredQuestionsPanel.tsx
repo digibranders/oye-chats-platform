@@ -14,7 +14,7 @@ import { DataTable, type Column } from '../../design-system/components/DataTable
 import { getUnansweredQuestions } from '../../services/api';
 import type { UnansweredQuestion } from '../../types/domain';
 import { useTranslation } from '../../i18n/useTranslation';
-import { formatNumber } from '../../i18n/formatters';
+import { formatDate, formatNumber } from '../../i18n/formatters';
 import { t as translateNow } from '../../i18n/i18n';
 
 const LIMIT = 50;
@@ -38,7 +38,7 @@ function formatRelativeDate(iso?: string | null): string {
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
   if (days < 30) return `${days} days ago`;
-  return new Date(then).toLocaleDateString(undefined, {
+  return formatDate(new Date(then), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

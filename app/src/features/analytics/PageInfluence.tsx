@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useRef, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { BarChart3, Compass, Info, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
@@ -223,7 +224,7 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
                 role="progressbar"
                 aria-valuenow={row.sessions}
                 aria-valuemin={0}
-                aria-label={`${row.label}: ${row.sessions.toLocaleString()} ${visitorLabel}, ${row.visits.toLocaleString()} ${visitLabel}`}
+                aria-label={`${row.label}: ${formatNumber(row.sessions)} ${visitorLabel}, ${formatNumber(row.visits)} ${visitLabel}`}
               >
                 <div
                   className="h-full rounded-full transition-[width] duration-500"
@@ -232,10 +233,10 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
               </div>
               <div className="min-w-[92px] text-right">
                 <p className="tabular-nums text-[13px] font-medium text-[var(--ds-text)]">
-                  {row.sessions.toLocaleString()} {visitorLabel}
+                  {formatNumber(row.sessions)} {visitorLabel}
                 </p>
                 <p className="tabular-nums text-[11px] text-[var(--ds-text-muted)]">
-                  {row.visits.toLocaleString()} {visitLabel}
+                  {formatNumber(row.visits)} {visitLabel}
                 </p>
               </div>
             </li>

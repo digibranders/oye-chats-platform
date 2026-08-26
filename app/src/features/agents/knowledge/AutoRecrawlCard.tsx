@@ -12,7 +12,7 @@ import { Button, Card, IconTile, Skeleton, cn } from '../../../design-system';
 import { fetchRecrawlStatus, setAutoRecrawl, type RecrawlStatus } from './recrawl-api';
 import { useTranslation } from '../../../i18n/useTranslation';
 import { t as translateNow } from '../../../i18n/i18n';
-import { formatNumber } from '../../../i18n/formatters';
+import { formatDate as i18nFormatDate, formatNumber } from '../../../i18n/formatters';
 
 export interface AutoRecrawlCardProps {
   /** The agent whose weekly auto-recrawl is configured. */
@@ -356,7 +356,7 @@ function capitalize(slug: string): string {
 function formatDate(iso: string): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '-';
-  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return i18nFormatDate(new Date(t), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatRelative(iso: string): string {

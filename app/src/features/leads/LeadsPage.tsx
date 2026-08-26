@@ -758,7 +758,7 @@ export function LeadsPage(): ReactElement {
               table never reads as data loss against the headline totals. */}
           <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
             {filtered.length === leads.length
-              ? `${leads.length.toLocaleString()} ${leads.length === 1 ? 'lead' : 'leads'}`
+              ? `${formatNumber(leads.length)} ${leads.length === 1 ? 'lead' : 'leads'}`
               : t('leads.showingOfLeads', {
                     shown: formatNumber(filtered.length),
                     total: formatNumber(leads.length),

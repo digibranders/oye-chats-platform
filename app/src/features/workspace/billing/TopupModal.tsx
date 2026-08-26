@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { ExternalLink, Loader2, Zap } from 'lucide-react';
 import { Modal, cn } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
@@ -334,7 +335,7 @@ export function TopupModal({
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-[var(--ds-text-muted)]">
                   <Zap size={14} className="shrink-0 text-[var(--ds-warning)]" />
                   <strong className="font-semibold text-[var(--ds-text)]">
-                    {Number(pack.credits).toLocaleString()}
+                    {formatNumber(Number(pack.credits))}
                   </strong>
                   <span>credits</span>
                   {(pack.bonus_pct ?? 0) > 0 && (

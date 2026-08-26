@@ -16,6 +16,7 @@ import {
   Area, AreaChart, Bar, BarChart, ResponsiveContainer,
   Tooltip, XAxis, YAxis, CartesianGrid, Cell,
 } from 'recharts';
+import { formatNumber } from '../../i18n/formatters';
 import { cn } from '../../lib/utils';
 
 // Brand palette for data-viz. Primary = violet; series scale for multi-line.
@@ -34,7 +35,7 @@ const AXIS_TICK = { fontSize: 11, fill: CHART_COLORS.axis, fontWeight: 500 };
 /** Branded tooltip card used by all charts. */
 export function BrandTooltip({ active, payload, label, valueFormatter }) {
   if (!active || !payload?.length) return null;
-  const fmt = valueFormatter || ((v) => v?.toLocaleString?.() ?? v);
+  const fmt = valueFormatter || ((v) => (typeof v === 'number' ? formatNumber(v) : (v ?? '')));
   return (
     <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 shadow-lg px-3 py-2 min-w-[120px]">
       {label != null && (

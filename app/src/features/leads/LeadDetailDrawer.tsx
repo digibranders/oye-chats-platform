@@ -9,6 +9,7 @@
  * and returned to the trigger on close, and a click-away scrim.
  */
 import { Fragment, type ReactElement, useEffect, useRef, useState } from 'react';
+import { formatTime } from '../../i18n/formatters';
 import Markdown from 'react-markdown';
 import {
   AlertCircle,
@@ -207,7 +208,7 @@ function formatClock(iso: string | null | undefined): string {
   if (!iso) return '';
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return '';
-  return new Date(parsed).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatTime(new Date(parsed), { hour: 'numeric', minute: '2-digit' });
 }
 
 /**

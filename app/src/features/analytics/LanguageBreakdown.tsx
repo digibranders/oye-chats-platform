@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Languages } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type LanguageBreakdown as LanguageBreakdownData } from './analytics-types';
@@ -52,11 +53,11 @@ export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): Re
                 <p className="text-[12px] text-[var(--ds-text-subtle)]">
                   {isResidual
                     ? t('analytics.chatsFromBeforeMultilingualWas') || 'Chats from before multilingual was on, or with no language detected'
-                    : `${row.resolved.toLocaleString()} resolved · ${row.liveChat.toLocaleString()} reached a human`}
+                    : `${formatNumber(row.resolved)} resolved · ${formatNumber(row.liveChat)} reached a human`}
                 </p>
               </div>
               <p className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
-                {row.total.toLocaleString()}
+                {formatNumber(row.total)}
                 <span className="ml-1.5 text-[var(--ds-text-subtle)]">{share}%</span>
               </p>
             </div>
@@ -131,7 +132,7 @@ export function TranslationUsage({ data }: { data: LanguageBreakdownData }): Rea
           {t('analytics.fromYourBillingRecordFor') || 'From your billing record, for the selected period. This does not expire.'}
         </p>
         <p className="mt-2 text-[20px] font-bold tabular-nums text-[var(--ds-text)]">
-          {creditsSpent.toLocaleString()}
+          {formatNumber(creditsSpent)}
         </p>
       </section>
     </div>
@@ -154,7 +155,7 @@ function Stat({
         className="mt-0.5 text-[17px] font-bold tabular-nums"
         style={{ color: warn ? 'var(--ds-warning)' : 'var(--ds-text)' }}
       >
-        {typeof value === 'number' ? value.toLocaleString() : value}
+        {typeof value === 'number' ? formatNumber(value) : value}
       </dd>
     </div>
   );

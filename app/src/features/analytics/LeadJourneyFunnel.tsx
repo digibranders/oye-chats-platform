@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { cn } from '../../design-system';
 import { getQualificationFunnel } from '../../services/api';
 import { type FunnelStageView, funnelHasData, readFunnel } from '../leads/leadModel';
@@ -41,7 +42,7 @@ function FunnelSummary({ stages }: { stages: FunnelStageView[] }): ReactElement 
                 style={{ width: `${stage.widthPct}%` }}
               >
                 <span className="text-[12px] font-semibold tabular-nums text-[var(--ds-accent-text)]">
-                  {stage.count.toLocaleString()}
+                  {formatNumber(stage.count)}
                 </span>
               </div>
             )}

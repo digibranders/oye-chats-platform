@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import {
   Area,
   AreaChart,
@@ -35,7 +36,7 @@ function TrendTooltip({ active, payload, label, palette }: TrendTooltipProps): R
         {label}
       </p>
       <p className="mt-0.5 text-sm font-bold tabular-nums" style={{ color: palette.text }}>
-        {value.toLocaleString()}
+        {formatNumber(value)}
         <span className="ml-1 text-[11px] font-normal" style={{ color: palette.muted }}>
           {value === 1 ? 'message' : 'messages'}
         </span>

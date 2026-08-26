@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { Link } from 'react-router-dom';
 import { Globe, Upload, Loader2, FileCheck2, Sparkles } from 'lucide-react';
 import { Input, Card, Button } from '../../../design-system';
@@ -166,7 +167,7 @@ export function ConnectStep(props: StepProps) {
           starting
             ? 'Starting…'
             : pages > 0
-              ? `Train ${(chosen || pages).toLocaleString()} page${(chosen || pages) === 1 ? '' : 's'}`
+              ? `Train ${formatNumber((chosen || pages))} page${(chosen || pages) === 1 ? '' : 's'}`
               : 'Start training'
         }
       >
@@ -179,12 +180,12 @@ export function ConnectStep(props: StepProps) {
               <div>
                 <p className="text-[15px] font-semibold text-[var(--ds-text)]">
                   {pages > 0
-                    ? `${pages.toLocaleString()}${estimate.capped ? '+' : ''} page${pages === 1 ? '' : 's'} found`
+                    ? `${formatNumber(pages)}${estimate.capped ? '+' : ''} page${pages === 1 ? '' : 's'} found`
                     : 'Ready to train your AI'}
                 </p>
                 <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
                   {pages > 0
-                    ? `About ${cost.toLocaleString()} credit${cost === 1 ? '' : 's'} · ${costPerPage} per page`
+                    ? `About ${formatNumber(cost)} credit${cost === 1 ? '' : 's'} · ${costPerPage} per page`
                     : "No sitemap found - we'll follow links from your homepage."}
                 </p>
               </div>
@@ -193,8 +194,8 @@ export function ConnectStep(props: StepProps) {
             {exceeds && affordable > 0 && estimate.urls?.length ? (
               <div className="mt-4 rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
                 <p className="text-[12px] text-[var(--ds-text)]">
-                  This site needs {(estimate.credits_required_full ?? 0).toLocaleString()} credits, but
-                  you have {(estimate.balance ?? 0).toLocaleString()}. Choose how many pages to train:
+                  This site needs {formatNumber((estimate.credits_required_full ?? 0))} credits, but
+                  you have {formatNumber((estimate.balance ?? 0))}. Choose how many pages to train:
                 </p>
                 <div className="mt-3 flex items-center gap-3">
                   <input
@@ -207,7 +208,7 @@ export function ConnectStep(props: StepProps) {
                     aria-label="Pages to train"
                   />
                   <span className="w-24 text-right text-[12px] font-medium text-[var(--ds-text)]">
-                    {crawlCount} × {costPerPage} = {(crawlCount * costPerPage).toLocaleString()}
+                    {crawlCount} × {costPerPage} = {formatNumber((crawlCount * costPerPage))}
                   </span>
                 </div>
                 <div className="mt-3 flex gap-4 text-[12px] text-[var(--ds-text-muted)]">

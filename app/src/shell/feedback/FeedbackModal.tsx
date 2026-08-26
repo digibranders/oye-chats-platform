@@ -7,6 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react';
+import { formatDate as i18nFormatDate } from '../../i18n/formatters';
 import { useLocation } from 'react-router-dom';
 import {
   AlertCircle,
@@ -132,7 +133,7 @@ function formatDate(iso: string | null): string {
   if (!iso) return '';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return i18nFormatDate(date, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function MetaPill({ children }: { children: ReactElement | string }): ReactElement {

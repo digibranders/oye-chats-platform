@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatDate } from '../../i18n/formatters';
 import { NavLink, Outlet } from 'react-router-dom';
 import { Bot as BotIcon, Lock } from 'lucide-react';
 import { AgentProvider, useAgent } from '../../context/AgentContext';
@@ -78,7 +79,7 @@ function formatCreatedDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed).toLocaleDateString('en-US', {
+  return formatDate(new Date(parsed), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

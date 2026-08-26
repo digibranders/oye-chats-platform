@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { formatDate as i18nFormatDate } from '../i18n/formatters';
 import {
   X,
   Bug,
@@ -74,7 +75,7 @@ function formatDate(iso) {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return i18nFormatDate(d, { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return '';
   }

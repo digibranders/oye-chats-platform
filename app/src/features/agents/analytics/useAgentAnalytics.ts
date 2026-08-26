@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatDate } from '../../../i18n/formatters';
 import {
   getActivityStats,
   getTopQuestions,
@@ -100,7 +101,7 @@ function fillTimeline(points: readonly { date: string; messages: number }[]): En
     const key = localKey(cursor);
     filled.push({
       date: key,
-      label: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      label: formatDate(cursor, { month: 'short', day: 'numeric', year: undefined }),
       messages: byDay.get(key) ?? 0,
     });
     cursor.setDate(cursor.getDate() + 1);

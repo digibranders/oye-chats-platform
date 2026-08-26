@@ -1,4 +1,5 @@
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import {
   BookOpen,
   Bot,
@@ -1367,7 +1368,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             {t('analytics.openedChatbot') || 'Opened Chatbot'}
           </p>
           <p className="tabular-nums text-[16px] font-semibold leading-tight text-[var(--ds-accent-fg)]">
-            {flow.centerValue.toLocaleString()}
+            {formatNumber(flow.centerValue)}
           </p>
         </div>
       </foreignObject>
@@ -1427,7 +1428,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               }}
               subtitle={node.isFork ? 'merged' : undefined}
               active={selectedRowId === node.id}
-              tooltip={`${node.path} · ${value.toLocaleString()} ${value === 1 ? 'visitor' : 'visitors'}${node.isFork ? t('analytics.mergedAcrossBranches') || ' (merged across branches)' : ''}`}
+              tooltip={`${node.path} · ${formatNumber(value)} ${value === 1 ? 'visitor' : 'visitors'}${node.isFork ? t('analytics.mergedAcrossBranches') || ' (merged across branches)' : ''}`}
             />
           </foreignObject>
         );
@@ -1674,7 +1675,7 @@ function FlowCard({
             {t(`analytics.destination.${node.id}`) || node.label}
           </p>
           <p className="tabular-nums text-[11px] font-semibold leading-tight text-[var(--ds-text)]">
-            {node.value.toLocaleString()}
+            {formatNumber(node.value)}
           </p>
         </div>
       </div>
@@ -1698,7 +1699,7 @@ function FlowCard({
           {t(`analytics.destination.${node.id}`) || node.label}
         </p>
         <p className="tabular-nums text-[13px] font-semibold leading-tight text-[var(--ds-text)]">
-          {node.value.toLocaleString()}
+          {formatNumber(node.value)}
           {!hidePct && typeof node.pct === 'number' && node.value > 0 && (
             <span className="ml-1 text-[11px] font-normal text-[var(--ds-text-subtle)]">
               ({node.pct}%)
@@ -1819,7 +1820,7 @@ function StartingPageFilter({
                 >
                   <span className="min-w-0 flex-1 truncate">{p.path}</span>
                   <span className="tabular-nums text-[11px] text-[var(--ds-text-muted)]">
-                    {p.sessions.toLocaleString()}
+                    {formatNumber(p.sessions)}
                   </span>
                 </button>
               </li>

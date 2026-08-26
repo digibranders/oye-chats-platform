@@ -3,7 +3,7 @@ import { Activity } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type ActivityPoint } from '../../../types/domain';
 import { useTranslation } from '../../../i18n/useTranslation';
-import { formatNumber } from '../../../i18n/formatters';
+import { formatDate, formatNumber } from '../../../i18n/formatters';
 
 /**
  * Formats a backend day string as a short "Mon 5" label; falls back to raw.
@@ -19,7 +19,7 @@ function formatDayLabel(date: string): string {
     ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
     : new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
-  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDate(parsed, { month: 'short', day: 'numeric', year: undefined });
 }
 
 export interface ActivityTrendProps {
@@ -85,7 +85,7 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
                 <div
                   className="w-full rounded-t-sm bg-[var(--ds-accent)] transition-[height]"
                   style={{ height: `${heightPct}%` }}
-                  title={`${dayLabel}: ${value.toLocaleString()} ${value === 1 ? 'message' : 'messages'}`}
+                  title={`${dayLabel}: ${formatNumber(value)} ${value === 1 ? 'message' : 'messages'}`}
                 />
               </div>
             );
@@ -110,7 +110,7 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
             {points.map((point) => (
               <tr key={point.date}>
                 <td>{formatDayLabel(point.date)}</td>
-                <td>{(point.messages ?? 0).toLocaleString()}</td>
+                <td>{formatNumber((point.messages ?? 0))}</td>
               </tr>
             ))}
           </tbody>

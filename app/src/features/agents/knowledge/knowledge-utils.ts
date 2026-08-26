@@ -1,6 +1,6 @@
 import type { KnowledgeSource } from '../../../types/domain';
 import { t as translateNow } from '../../../i18n/i18n';
-import { formatNumber } from '../../../i18n/formatters';
+import { formatDate, formatNumber } from '../../../i18n/formatters';
 
 /**
  * "12 pages" / "1 page" / "500+ pages", in the active language.
@@ -117,7 +117,7 @@ export function formatRelativeDate(iso?: string): string {
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
   if (days < 30) return `${days} days ago`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /** Most recent ingestion timestamp across all sources, or undefined. */

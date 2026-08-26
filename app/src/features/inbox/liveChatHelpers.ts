@@ -4,6 +4,7 @@
  */
 
 import type { ChatMessage } from '../../types/domain';
+import { formatDate, formatTime } from '../../i18n/formatters';
 import type { OperatorMessage, TranslationEntry } from './liveChatProtocol';
 import { baseLanguage, directionForLocale as directionFor } from '../../services/localeCatalog';
 
@@ -39,7 +40,7 @@ export function relativeTime(iso: string | null | undefined): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }
 
 /** Clock time (HH:MM) for message bubbles. */
@@ -47,7 +48,7 @@ export function clockTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '';
-  return new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return formatTime(new Date(t), { hour: '2-digit', minute: '2-digit' });
 }
 
 let fileKeySeq = 0;

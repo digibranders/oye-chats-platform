@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import {
   ArrowUpRight,
   BookOpen,
@@ -76,7 +77,7 @@ export function AgentSnapshotCards({
 
           <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
             <div className="text-lg font-bold text-[var(--ds-text)]">
-              {chunkCount > 0 ? `${chunkCount.toLocaleString()} passages` : t('agents.notTrainedYet') || 'Not trained yet'}
+              {chunkCount > 0 ? `${formatNumber(chunkCount)} passages` : t('agents.notTrainedYet') || 'Not trained yet'}
             </div>
             <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
               {chunkCount > 0

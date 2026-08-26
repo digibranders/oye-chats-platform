@@ -7,6 +7,7 @@
  * every field defaulted, so a missing key never crashes a card.
  */
 import { type ActivityPoint } from '../../types/domain';
+import { formatDate } from '../../i18n/formatters';
 import { t as translateNow } from '../../i18n/i18n';
 
 /** Coerce an unknown value into a finite number, defaulting to 0. */
@@ -167,7 +168,7 @@ export function buildTrendSeries(activity: ActivityPoint[]): TrendPoint[] {
     const key = toLocalKey(cursor);
     series.push({
       date: key,
-      label: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      label: formatDate(cursor, { month: 'short', day: 'numeric', year: undefined }),
       messages: byDay.get(key) ?? 0,
     });
     cursor.setDate(cursor.getDate() + 1);

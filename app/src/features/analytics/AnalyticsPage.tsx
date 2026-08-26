@@ -354,7 +354,7 @@ export function AnalyticsPage(): ReactElement {
                     <MetricCard
                       size="sm"
                       label={t('analytics.messages') || 'Messages'}
-                      value={trendSummary.total.toLocaleString()}
+                      value={formatNumber(trendSummary.total)}
                       icon={MessageSquare}
                       delta={messagesTrend.delta}
                       trend={messagesTrend.trend}
@@ -362,7 +362,7 @@ export function AnalyticsPage(): ReactElement {
                     <MetricCard
                       size="sm"
                       label={t('analytics.dailyAverage') || 'Daily average'}
-                      value={trendSummary.dailyAverage.toLocaleString()}
+                      value={formatNumber(trendSummary.dailyAverage)}
                       icon={BarChart3}
                     />
                     <MetricCard
@@ -370,8 +370,8 @@ export function AnalyticsPage(): ReactElement {
                       label={t('analytics.busiestDay') || 'Busiest day'}
                       value={
                         trendSummary.peak > 0
-                          ? `${trendSummary.peak.toLocaleString()} · ${trendSummary.peakLabel}`
-                          : trendSummary.peak.toLocaleString()
+                          ? `${formatNumber(trendSummary.peak)} · ${trendSummary.peakLabel}`
+                          : formatNumber(trendSummary.peak)
                       }
                       icon={Zap}
                     />

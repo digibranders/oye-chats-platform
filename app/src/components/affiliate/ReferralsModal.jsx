@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatDate, formatNumber } from '../../i18n/formatters';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Users, AlertCircle, ShieldCheck, DollarSign,
@@ -399,7 +400,7 @@ function fmtDate(iso) {
     if (!iso) return '-';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '-';
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatDate(d, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /** Format an amount in minor units (cents/paise) with the right symbol. */
@@ -408,8 +409,8 @@ function fmtMoney(cents, currency) {
     const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency || ''} `;
     const major = Number(cents) / 100;
     const formatted = Number.isInteger(major)
-        ? major.toLocaleString()
-        : major.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        ? formatNumber(major)
+        : formatNumber(major, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return `${sym}${formatted}`;
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import {
   FileText,
   Link as LinkIcon,
@@ -411,7 +412,7 @@ export function KnowledgeStep(props: StepProps) {
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-[12px] text-[var(--ds-text-subtle)]">
                     {siteEstimate.total_found > 0
-                      ? `${siteEstimate.total_found.toLocaleString()}${siteEstimate.capped ? '+' : ''} pages · ~${(siteEstimate.total_found * (siteEstimate.cost_per_page ?? 1)).toLocaleString()} credits`
+                      ? `${formatNumber(siteEstimate.total_found)}${siteEstimate.capped ? '+' : ''} pages · ~${formatNumber((siteEstimate.total_found * (siteEstimate.cost_per_page ?? 1)))} credits`
                       : "We'll follow links from the homepage."}
                   </p>
                   <Button size="sm" onClick={handleAddSite} disabled={siteBusy}>

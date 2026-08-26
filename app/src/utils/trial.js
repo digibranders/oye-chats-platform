@@ -16,6 +16,8 @@
  * @returns {number|null} Ceil day count (may be 0 or negative once lapsed),
  *   or `null` when `iso` is missing/unparseable.
  */
+
+import { formatDate } from '../i18n/formatters';
 export function trialDaysLeft(iso, nowMs = Date.now()) {
   const endMs = Date.parse(iso);
   if (Number.isNaN(endMs)) return null;
@@ -47,7 +49,7 @@ export function daysUntil(iso, nowMs = Date.now()) {
 export function formatTrialDate(iso) {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return iso ?? '';
-  return new Date(ms).toLocaleDateString(undefined, {
+  return formatDate(new Date(ms), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

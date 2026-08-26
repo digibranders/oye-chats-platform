@@ -266,6 +266,27 @@ function isExemptBlock(node, ts, sf, source) {
 }
 
 /**
+ * Whether a formatting call is actually pinned to the dashboard's locale.
+ *
+ * `arguments.length > 0` was not the question. `toLocaleString(undefined, opts)`
+ * passes an argument and still asks for the BROWSER's locale, which is the
+ * exact defect 7D exists to remove - it just spells it longer. A hardcoded
+ * 'en-US' is the same defect with the answer wired in: it pins the format to
+ * one language while the words around it follow another.
+ *
+ * Only a non-literal locale expression counts, because that is the shape that
+ * can carry `getLocale()`.
+ */
+function hasRealLocaleArg(node, ts) {
+  const first = node.arguments?.[0];
+  if (!first) return false;
+  if (first.kind === ts.SyntaxKind.UndefinedKeyword) return false;
+  if (ts.isIdentifier(first) && first.text === 'undefined') return false;
+  if (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) return false;
+  return true;
+}
+
+/**
  * Whether an ATTRIBUTE value is already served through `t()`.
  *
  * `attr={t('k') || 'English'}` is the idiom; `attr="English"` is not. This is
@@ -543,7 +564,10 @@ function scanFile(file) {
 
       // --- 7D: locale-sensitive formatting call sites ---
       if (ts.isPropertyAccessExpression(ex) && FORMAT_CALLS.has(ex.name.text)) {
-        const hasLocaleArg = node.arguments.length > 0;
+        // `i18n/formatters.ts` IS the implementation: its `undefined` calls are
+        // the deliberate fallback used when Intl throws, not a missed site.
+        if (relPath.startsWith('i18n/')) return;
+        const hasLocaleArg = hasRealLocaleArg(node, ts);
         formatSites.push({
           file: relPath,
           line: lineOf(node),
@@ -560,7 +584,7 @@ function scanFile(file) {
           file: relPath,
           line: lineOf(node),
           call: `Intl.${pa.name.text}`,
-          hasLocaleArg: node.arguments && node.arguments.length > 0,
+          hasLocaleArg: hasRealLocaleArg(node, ts),
           text: node.getText(sf).slice(0, 120),
         });
       }

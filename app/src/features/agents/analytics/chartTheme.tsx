@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { type TooltipProps } from 'recharts';
 
 // Recharts' tooltip generic params, declared locally to avoid a deep
@@ -38,7 +39,7 @@ export function ChartTooltip({ active, payload, label, unit }: ChartTooltipProps
   if (!active || !payload || payload.length === 0) return null;
   const value = payload[0]?.value;
   const display =
-    typeof value === 'number' ? value.toLocaleString() : value != null ? String(value) : '';
+    typeof value === 'number' ? formatNumber(value) : value != null ? String(value) : '';
   return (
     <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 shadow-[var(--ds-shadow-md)]">
       {label !== undefined && label !== null && (

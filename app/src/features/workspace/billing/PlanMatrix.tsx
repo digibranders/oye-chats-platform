@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
 import {
@@ -25,7 +26,7 @@ type FeatureRow = { group: string; label: string } & (
 function limitText(value: number | undefined): string {
   if (value === -1) return 'Unlimited';
   if (value == null) return '-';
-  return value.toLocaleString();
+  return formatNumber(value);
 }
 
 function historyText(value: number | undefined): string {

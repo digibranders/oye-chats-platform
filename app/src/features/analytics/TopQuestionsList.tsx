@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { MessageSquare } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type TopQuestion } from '../../types/domain';
@@ -54,7 +55,7 @@ export function TopQuestionsList({ questions }: TopQuestionsListProps): ReactEle
               </div>
             </div>
             <span className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-accent-text)]">
-              {question.count.toLocaleString()}
+              {formatNumber(question.count)}
             </span>
           </li>
         );

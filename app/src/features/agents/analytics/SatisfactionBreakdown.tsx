@@ -158,7 +158,7 @@ export function SatisfactionBreakdown({
                     {t('agents.resolved') || 'Resolved'}
                   </dt>
                   <dd className="mt-0.5 text-[15px] font-bold tabular-nums text-[var(--ds-text)]">
-                    {resolution.resolved.toLocaleString()}
+                    {formatNumber(resolution.resolved)}
                   </dd>
                 </div>
                 <div className="text-center">
@@ -170,7 +170,7 @@ export function SatisfactionBreakdown({
                     {t('agents.unresolved') || 'Unresolved'}
                   </dt>
                   <dd className="mt-0.5 text-[15px] font-bold tabular-nums text-[var(--ds-text)]">
-                    {resolution.unresolved.toLocaleString()}
+                    {formatNumber(resolution.unresolved)}
                   </dd>
                 </div>
               </dl>

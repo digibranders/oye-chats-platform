@@ -1,4 +1,5 @@
 import { useMemo, type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { Users } from 'lucide-react';
 import { Card, EmptyState, SectionHeader, Skeleton } from '../../../design-system';
 import { type LeadStats } from './analytics.types';
@@ -88,7 +89,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
                       <p className="text-[12px] text-[var(--ds-text-subtle)]">{stage.hint}</p>
                     </div>
                     <p className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
-                      {stage.value.toLocaleString()}
+                      {formatNumber(stage.value)}
                       <span className="ml-1.5 text-[var(--ds-text-subtle)]">{pct}%</span>
                     </p>
                   </div>

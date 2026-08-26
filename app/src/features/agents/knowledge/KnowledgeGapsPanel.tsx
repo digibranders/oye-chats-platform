@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useRef, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { CheckCircle2, MessageCircleQuestion } from 'lucide-react';
 import { EmptyState, SectionHeader, Skeleton } from '../../../design-system';
 import { DataTable, type Column } from '../../../design-system/components/DataTable';
@@ -80,7 +81,7 @@ export function KnowledgeGapsPanel({
       width: '8rem',
       render: (row) => (
         <span className="tabular-nums font-medium text-[var(--ds-text)]">
-          {row.count.toLocaleString()}
+          {formatNumber(row.count)}
         </span>
       ),
     },

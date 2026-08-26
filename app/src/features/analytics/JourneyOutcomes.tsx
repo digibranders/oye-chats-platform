@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useMemo, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import {
   BarChart3,
   Calendar,
@@ -366,7 +367,7 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
           sits pixel-perfect in the middle of the ring. */}
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
         <p className="tabular-nums text-[18px] font-semibold leading-none text-[var(--ds-text)]">
-          {animatedTotal.toLocaleString()}
+          {formatNumber(animatedTotal)}
         </p>
         <p className="mt-1 text-[10px] text-[var(--ds-text-muted)]">{t('analytics.chatOpens') || 'Chat Opens'}</p>
       </div>
@@ -404,7 +405,7 @@ function Legend({ outcomes }: { outcomes: readonly Outcome[] }): ReactElement {
               </span>
             </div>
             <span className="shrink-0 tabular-nums text-[12.5px] font-semibold text-[var(--ds-text)]">
-              {o.value.toLocaleString()}{' '}
+              {formatNumber(o.value)}{' '}
               <span className="text-[10.5px] font-normal text-[var(--ds-text-muted)]">{t('analytics.users') || 'users'}</span>
             </span>
           </li>
