@@ -141,6 +141,53 @@ function phaseFor(relPath) {
   return 'other';
 }
 
+/**
+ * Modules reachable from the app entry, by walking real imports.
+ *
+ * 412 of the "remaining" strings turned out to live in Admin 1.0 components
+ * that the `features/` rebuild replaced and nothing imports any more -
+ * `components/AutoRecrawlCard.jsx` beside `features/agents/knowledge/
+ * AutoRecrawlCard.tsx`, and a dozen more pairs like it. Translating them would
+ * spend a translator's time on strings no user can reach and add their weight
+ * to a lazily-loaded dictionary.
+ *
+ * Reported as their own bucket rather than silently dropped: dead code that
+ * nobody deletes is still a problem, just a different one.
+ */
+function reachableFromEntry() {
+  const entry = path.join(SRC, 'main.jsx');
+  if (!fs.existsSync(entry)) return null;
+  const seen = new Set();
+  const resolveSpec = (from, spec) => {
+    if (!spec.startsWith('.')) return null;
+    const base = path.resolve(path.dirname(from), spec);
+    const candidates = [base, `${base}.tsx`, `${base}.ts`, `${base}.jsx`, `${base}.js`];
+    for (const ext of ['tsx', 'ts', 'jsx', 'js']) candidates.push(path.join(base, `index.${ext}`));
+    for (const c of candidates) {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+    }
+    return null;
+  };
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    let src;
+    try { src = fs.readFileSync(file, 'utf8'); } catch { return; }
+    for (const m of src.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+      const r = resolveSpec(file, m[1]);
+      if (r) walk(r);
+    }
+  };
+  walk(entry);
+  return new Set([...seen].map((f) => rel(f)));
+}
+
+const REACHABLE = reachableFromEntry();
+
+function isUnreachable(relPath) {
+  return REACHABLE !== null && !REACHABLE.has(relPath);
+}
+
 function isDeferred(relPath) {
   return DEFERRED_DIRS.some((d) => relPath.startsWith(d));
 }
@@ -317,7 +364,9 @@ function isComparisonOperand(node, ts) {
       op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
       op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
       op === ts.SyntaxKind.EqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsToken
+      op === ts.SyntaxKind.ExclamationEqualsToken ||
+      // `'Notification' in window` is a capability probe, not copy.
+      op === ts.SyntaxKind.InKeyword
     );
   }
   // `['Escape', 'Tab'].includes(key)` and `key in { ... }`
@@ -328,6 +377,37 @@ function isComparisonOperand(node, ts) {
     }
   }
   return false;
+}
+
+/**
+ * A CODE SNIPPET, not copy.
+ *
+ * The platform install steps are `{ title, description, code, language }`, and
+ * `code` holds HTML, JSX and PHP that a user pastes verbatim. Translating one
+ * would hand them a broken snippet. The `language` sibling is what marks the
+ * object as carrying code rather than prose.
+ */
+function isCodeSnippet(node, ts) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isPropertyAssignment(p)) {
+      const name = p.name?.getText?.();
+      if (name === 'code' || name === 'language') return true;
+    }
+    if (ts.isObjectLiteralExpression(p)) break;
+  }
+  return false;
+}
+
+/** Whether a node sits inside a `console.*` call or a `throw`. */
+function enclosedByConsoleOrThrow(node, ts) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isCallExpression(p) && /^console\./.test(p.expression.getText())) {
+      return { inConsole: true, inThrow: false };
+    }
+    if (ts.isThrowStatement(p)) return { inConsole: false, inThrow: true };
+    if (ts.isJsxElement(p) || ts.isJsxSelfClosingElement(p)) break;
+  }
+  return { inConsole: false, inThrow: false };
 }
 
 /**
@@ -756,7 +836,7 @@ function scanFile(file) {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      if (isTemplateProse(joined)) {
+      if (isTemplateProse(joined) && !isCodeSnippet(node, ts)) {
         hits.push({
           node,
           file: relPath,
@@ -764,8 +844,11 @@ function scanFile(file) {
           kind: 'template',
           text: joined,
           attr: null,
-          inConsole: false,
-          inThrow: false,
+          // Real detection, not a placeholder: a template inside console.warn
+          // or a throw is developer text. Hardcoding `false` reported the
+          // i18n module's own DEV warnings as untranslated UI.
+          inConsole: enclosedByConsoleOrThrow(node, ts).inConsole,
+          inThrow: enclosedByConsoleOrThrow(node, ts).inThrow,
           localized:
             isTranslationFallback(node, ts) ||
             isKeyedConstant(node, ts, source, tmplPrefixes) ||
@@ -797,6 +880,7 @@ function scanFile(file) {
         !isJsxAttrValue &&
         !isPropertyKey &&
         !isComparisonOperand(node, ts) &&
+        !isCodeSnippet(node, ts) &&
         (isSentenceShaped(node.text) || isSingleWordLabel(node.text))
       ) {
         hits.push({
@@ -835,6 +919,7 @@ function scanFile(file) {
       ctx: { attr: h.attr, inConsole: h.inConsole, inThrow: h.inThrow, inImport: false, isPropertyKey: false },
     });
     h.phase = phaseFor(relPath);
+    h.unreachable = isUnreachable(relPath);
     // The AST node is circular and only needed for the block-exemption walk
     // above. Drop it before anything tries to serialise a hit.
     delete h.node;
@@ -881,6 +966,15 @@ const payload = {
       (h.class === CLASSES.UI_TEXT || h.class === CLASSES.A11Y) &&
       !h.localized &&
       !h.exempt &&
+      !h.unreachable &&
+      !ALLOWED_ENGLISH.has(h.text.trim()),
+  ).length,
+  unlocalizedInDeadCode: allHits.filter(
+    (h) =>
+      (h.class === CLASSES.UI_TEXT || h.class === CLASSES.A11Y) &&
+      !h.localized &&
+      !h.exempt &&
+      h.unreachable &&
       !ALLOWED_ENGLISH.has(h.text.trim()),
   ).length,
   formatSites: allFormat.length,
@@ -896,6 +990,7 @@ if (wantJson) {
       (x.class === CLASSES.UI_TEXT || x.class === CLASSES.A11Y) &&
       !x.localized &&
       !x.exempt &&
+      !x.unreachable &&
       !ALLOWED_ENGLISH.has(x.text.trim()),
   )) {
     console.log(
@@ -923,6 +1018,7 @@ if (wantJson) {
   console.log(`files with localizable copy   ${payload.filesWithLocalizableStrings}`);
   console.log(`existing t() call sites       ${payload.tCallsTotal}`);
   console.log(`STILL UNLOCALIZED             ${payload.unlocalized}`);
+  console.log(`  (in unreachable files)      ${payload.unlocalizedInDeadCode}`);
   console.log('\n-- by classification --');
   for (const [k, v] of Object.entries(byClass).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${String(v).padStart(5)}  ${k}`);

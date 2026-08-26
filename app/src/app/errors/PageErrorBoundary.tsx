@@ -3,6 +3,7 @@ import { Link, useRouteError } from 'react-router-dom';
 import { PageContainer, buttonVariants } from '../../design-system';
 import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * PageErrorBoundary - the in-shell error surface for a single routed page.
@@ -14,6 +15,7 @@ import { parseRouteError, useReportRouteError } from './parseRouteError';
  * of losing the whole app.
  */
 export function PageErrorBoundary() {
+  const { t } = useTranslation();
   const error = useRouteError();
   useReportRouteError(error);
   const { status, title, description, detail } = parseRouteError(error);
@@ -26,7 +28,7 @@ export function PageErrorBoundary() {
         </div>
         {status != null && (
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-            Error {status}
+            {t('app.errorStatus', { status }) || `Error ${status}`}
           </p>
         )}
         <h2 className="text-base font-semibold text-[var(--ds-text)]">{title}</h2>
@@ -38,11 +40,11 @@ export function PageErrorBoundary() {
             className={buttonVariants({ variant: 'primary', size: 'sm' })}
           >
             <RefreshCw size={14} />
-            Try again
+            {t('app.tryAgain') || 'Try again'}
           </button>
           <Link to="/" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             <Home size={14} />
-            Back to Home
+            {t('app.backToHome') || 'Back to Home'}
           </Link>
         </div>
         <ErrorDetails detail={detail} className="w-full" />

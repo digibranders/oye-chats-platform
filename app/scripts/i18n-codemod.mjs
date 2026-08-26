@@ -103,6 +103,10 @@ const todo = hits.filter(
     // deliberately kept English. It had already rewritten five sentences of the
     // install briefing that carries an @i18n-exempt-file: header.
     !h.exempt &&
+    // Never touch a module nothing imports. The inventory reports those
+    // separately; translating them adds weight to a lazily-loaded dictionary
+    // and spends a translator's time on strings no user can reach.
+    !h.unreachable &&
     (h.class === 'localizable UI text' || h.class === 'accessibility text') &&
     // Module-scope literals are evaluated once at import, before any locale
     // exists. Wrapping one in t() either fails to compile (no `t` in scope) or,

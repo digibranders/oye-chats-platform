@@ -1,4 +1,14 @@
 /**
+ * @i18n-exempt-file: everything here goes into the HTML the CUSTOMER pastes
+ * onto their own site, not into the dashboard.
+ *
+ * `ATTRIBUTION_TEXT` is the visible anchor text of the "Powered by OyeChats"
+ * link. It is brand attribution rendered to the customer's VISITORS and read
+ * by crawlers, so it is identical on every site in every language - see the
+ * embed contract in the repo's CLAUDE.md. `MANUAL_ATTRIBUTION_NOTE` travels
+ * with it into the same install steps and the coding-agent prompt.
+ */
+/**
  * widgetEmbed - single source of truth for the markup a customer pastes.
  *
  * The widget mounts into a shadow root from JavaScript, after the visitor

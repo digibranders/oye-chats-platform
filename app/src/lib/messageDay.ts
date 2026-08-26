@@ -10,6 +10,7 @@
  */
 
 import { formatDate } from '../i18n/formatters';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * Stable local-day key ("2026-8-14") for a timestamp, or null when the
@@ -39,8 +40,8 @@ export function formatDayLabel(iso: string | null | undefined, now: Date = new D
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
 
-  if (key(d) === key(now)) return 'Today';
-  if (key(d) === key(yesterday)) return 'Yesterday';
+  if (key(d) === key(now)) return translateNow('app.today') || 'Today';
+  if (key(d) === key(yesterday)) return translateNow('app.yesterday') || 'Yesterday';
 
   return formatDate(d, {
     month: 'short',

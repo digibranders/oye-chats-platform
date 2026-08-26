@@ -3,6 +3,7 @@ import { Link, useRouteError } from 'react-router-dom';
 import { buttonVariants } from '../../design-system';
 import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * RootErrorBoundary - the app-wide, full-screen error surface.
@@ -15,6 +16,7 @@ import { parseRouteError, useReportRouteError } from './parseRouteError';
  * design-system tokens, which stay valid via the `.dark` class on `<html>`.
  */
 export function RootErrorBoundary() {
+  const { t } = useTranslation();
   const error = useRouteError();
   useReportRouteError(error);
   const { status, title, description, detail } = parseRouteError(error);
@@ -27,7 +29,7 @@ export function RootErrorBoundary() {
         </div>
         {status != null && (
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-            Error {status}
+            {t('app.errorStatus', { status }) || `Error ${status}`}
           </p>
         )}
         <h1 className="text-lg font-semibold text-[var(--ds-text)]">{title}</h1>
@@ -39,11 +41,11 @@ export function RootErrorBoundary() {
             className={buttonVariants({ variant: 'primary' })}
           >
             <RefreshCw size={15} />
-            Reload page
+            {t('app.reloadPage') || 'Reload page'}
           </button>
           <Link to="/" className={buttonVariants({ variant: 'outline' })}>
             <Home size={15} />
-            Back to Home
+            {t('app.backToHome') || 'Back to Home'}
           </Link>
         </div>
         <ErrorDetails detail={detail} />

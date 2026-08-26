@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import {
@@ -44,14 +45,17 @@ const api = axios.create({
     timeout: 30000,
 });
 
-const buildApiError = (error, fallbackMessage = 'Request failed') => {
+const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed') || 'Request failed') => {
     const status = error.response?.status;
     const data = error.response?.data;
     let detail = data?.detail;
 
     // Handle Pydantic 422 validation errors (detail is an array of error objects)
     if (status === 422 && Array.isArray(detail) && detail.length > 0) {
-        const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+        const msg = detail[0]?.msg || detail[0]?.message || translateNow('app.validationError') || 'Validation error';
+        // @i18n-exempt: this strips a prefix the SERVER emits (FastAPI's
+        // pydantic message). Translating it would stop the replace matching
+        // and leak "Value error, " into the message shown to the user.
         detail = msg.replace('Value error, ', '');
     }
 
@@ -67,7 +71,7 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
         // SlowAPI uses {"error": "Rate limit exceeded: ..."} - not FastAPI's {"detail": "..."}
         message = (typeof data?.error === 'string' && data.error)
             ? data.error
-            : 'Too many requests - please wait a moment and try again.';
+            : translateNow('app.tooManyRequestsPleaseWait') || 'Too many requests - please wait a moment and try again.';
     } else {
         message = error.message || fallbackMessage;
     }
@@ -166,7 +170,7 @@ api.interceptors.request.use(
         // the super-admin's own account. Cancellations are swallowed by the
         // response interceptor's ``isCancel`` guard.
         if (isImpersonationSessionEnded()) {
-            return Promise.reject(new axios.CanceledError('Impersonation session ended'));
+            return Promise.reject(new axios.CanceledError(translateNow('app.impersonationEnded') || 'Impersonation session ended'));
         }
 
         const token = getAuthItem('admin_token');
@@ -291,7 +295,7 @@ api.interceptors.response.use(
             || isImpersonationSessionEnded()
         ) {
             if (status === 401) {
-                endImpersonationSession('This impersonation session expired or was revoked.');
+                endImpersonationSession(translateNow('app.thisImpersonationSessionExpiredOr') || 'This impersonation session expired or was revoked.');
             } else if (status === 403 && isImpersonationBlockedWrite(error)) {
                 applyImpersonationForbiddenCopy(error);
             }

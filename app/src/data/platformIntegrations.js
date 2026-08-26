@@ -1,4 +1,23 @@
 /**
+ * @i18n-exempt-file: the install steps stay ENGLISH, deliberately.
+ *
+ * They are not dashboard chrome. Every step points at a THIRD-PARTY interface
+ * the reader is looking at in English - "Online Store → Themes → Edit code",
+ * "Appearance → Theme File Editor", "Insert Headers and Footers". Those menu
+ * labels are Shopify's and WordPress's, not ours, and we cannot translate
+ * them. A Hindi sentence naming an English menu is harder to follow than an
+ * English one, not easier.
+ *
+ * They are also interleaved with `code` the reader pastes verbatim, and
+ * `channels/installPrompt` embeds the same steps into a briefing for the
+ * user's coding agent, which must stay English for the same reason that file
+ * is exempt.
+ *
+ * If this is revisited, the render sites in `channels/WebsiteInstall` and
+ * `launch-studio/steps/DeployStep` are where a lookup would go, keyed by
+ * platform id and step index.
+ */
+/**
  * Platform integration configurations for the OyeChats widget.
  *
  * Each platform provides:

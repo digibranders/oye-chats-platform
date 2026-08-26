@@ -1,3 +1,7 @@
+// @i18n-exempt-file: the `handle.crumb` labels below are route METADATA, read
+// by `shell/useBreadcrumbs`, which resolves each one from `app.crumb.<key>` at
+// render time. The English here is that lookup's fallback. This table is built
+// at import, before any locale exists, so it cannot resolve them itself.
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../shell/AppShell';

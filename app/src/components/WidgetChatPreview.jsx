@@ -1,3 +1,10 @@
+/**
+ * @i18n-exempt-file: this is a MOCK OF THE WIDGET, so every string in it is
+ * copy the VISITOR sees, not dashboard chrome. The widget has its own locale,
+ * driven by the visitor's session; rendering the preview in the operator's
+ * language would misrepresent what their visitors will actually get. Same rule
+ * as the widget defaults in `features/agents/experience/types.ts`.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { formatDate, formatTime } from '../i18n/formatters';
 import ReactMarkdown from 'react-markdown';
