@@ -3,7 +3,6 @@ import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient, detectCountry } from '../services/api';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, getAuthItem, isSessionExpired } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
@@ -160,10 +159,6 @@ export default function Register() {
 
       // Mirror Login.jsx - clear any stale trial-banner dismissals from a
       // prior session on this device so the freshly-registered client sees
-      // the trial banner immediately instead of inheriting a "dismissed"
-      // flag set by a previous account.
-      clearTrialBannerDismissals();
-
       // Email/password signups MUST verify their email before entering the
       // product - this closes the abuse vector where fake/nonexistent emails
       // farm free trial credits + crawl compute (the backend now also 403s

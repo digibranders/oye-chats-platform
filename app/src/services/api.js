@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import {
     IMPERSONATION_FORBIDDEN_MESSAGE,
     endImpersonationSession,
@@ -349,10 +348,6 @@ api.interceptors.response.use(
             // logs-out doesn't leave a stale localStorage shadow (or
             // vice versa).
             clearAuthStorage();
-            // Banner dismissals are scoped to the session, not to a user -
-            // wipe them on auto-logout so the next account sees a fresh
-            // trial banner.
-            clearTrialBannerDismissals();
             // Only force the user to /login from a PROTECTED page. On public
             // auth pages (notably /register from the "Start free" CTA) a stale
             // token's 401 must not hijack the page - clear it and stay put.

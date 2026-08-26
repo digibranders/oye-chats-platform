@@ -4,7 +4,6 @@ import { Bot as BotIcon, Calendar, LogOut, Mail, Settings } from 'lucide-react';
 import { cn, Popover, Skeleton, StatusBadge } from '../design-system';
 import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { endImpersonationSession, isImpersonating } from '../utils/impersonation';
 import type { CurrentUser } from '../types/domain';
 // `translateNow` rather than the hook's `t` inside callbacks: the hook's
@@ -154,7 +153,6 @@ export function ProfileMenu() {
         return;
       }
       clearAuthStorage();
-      clearTrialBannerDismissals();
       navigate('/login');
     },
     [navigate],

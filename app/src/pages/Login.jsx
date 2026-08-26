@@ -3,7 +3,6 @@ import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { loginAdmin, loginOperator } from '../services/api';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, getAuthItem } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
@@ -80,9 +79,6 @@ export default function Login() {
       // unchecked → 1 day); main.jsx wipes the session once that expiry passes.
       try {
         const data = await loginAdmin(email, password);
-        // Fresh login → clear any banner dismissals carried over from a
-        // previous account in this tab.
-        clearTrialBannerDismissals();
         setAuthBundle(
           {
             admin_token: data.access_token,
@@ -126,7 +122,6 @@ export default function Login() {
         // also fails, surface the admin error (the common-case message).
         try {
           const data = await loginOperator(email, password);
-          clearTrialBannerDismissals();
           setAuthBundle(
             {
               admin_token: data.access_token,

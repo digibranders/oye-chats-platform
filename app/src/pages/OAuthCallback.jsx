@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { getCurrentUser } from '../services/api';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, setAuthItem } from '../utils/authStorage';
 import { useTranslation } from '../i18n/useTranslation';
 import { t as translateNow } from '../i18n/i18n';
@@ -122,11 +121,6 @@ export default function OAuthCallback() {
         // exact set of keys the password-login flow writes so every
         // downstream guard (ProtectedRoute, ClientOnlyPage, etc.)
         // keeps working without special-casing OAuth users.
-        try {
-            clearTrialBannerDismissals();
-        } catch {
-            // banner cleanup is best-effort
-        }
         // OAuth defaults to ``persistent=true`` - Google sign-in users
         // expect to stay logged in across browser restarts (matches how
         // Google itself handles its own sessions).
