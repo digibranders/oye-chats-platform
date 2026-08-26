@@ -44,6 +44,26 @@ describe('dictionary parity', () => {
     expect(Object.keys(flatEn).length).toBeGreaterThan(0);
   });
 
+  // A dictionary value is substituted into a JS expression, never parsed as
+  // JSX, so "&hellip;" renders as those eight characters rather than an
+  // ellipsis. The codemod used to carry entities across when it lifted JSX text
+  // into a string literal; this is the guard that stops one coming back.
+  const ENTITY = /&(?:[a-zA-Z][a-zA-Z0-9]{1,10}|#\d{1,6}|#x[0-9a-fA-F]{1,6});/;
+
+  it('English has no HTML entities in any value', () => {
+    const offenders = Object.entries(flatEn)
+      .filter(([, value]) => ENTITY.test(value))
+      .map(([key, value]) => `${key}: ${value}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it.each(DICTIONARIES)('%s has no HTML entities in any value', (_name, dict) => {
+    const offenders = Object.entries(dict)
+      .filter(([, value]) => ENTITY.test(value))
+      .map(([key, value]) => `${key}: ${value}`);
+    expect(offenders).toEqual([]);
+  });
+
   it.each(DICTIONARIES)('%s has no keys missing against English', (_name, dict) => {
     const missing = Object.keys(flatEn).filter((k) => !(k in dict));
     expect(missing).toEqual([]);

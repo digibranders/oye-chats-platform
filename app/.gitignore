@@ -38,3 +38,4 @@ coverage/
 test-results/
 playwright-report/
 .playwright/
+dist-e2e

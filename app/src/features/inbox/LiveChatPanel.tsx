@@ -577,7 +577,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               {addingSelf ? (
                 <>
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                  Assigning…
+                  {t('inbox.assigning') || 'Assigning…'}
                 </>
               ) : (
                 <>
@@ -642,7 +642,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                 {addingSelf ? (
                   <>
                     <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                    Assigning…
+                    {t('inbox.assigning') || 'Assigning…'}
                   </>
                 ) : (
                   <>

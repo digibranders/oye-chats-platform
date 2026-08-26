@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { cn } from '../lib/cn';
 import { useTranslation } from '../../i18n/useTranslation';
+import { formatNumber } from '../../i18n/formatters';
 
 export type ColumnAlign = 'left' | 'center' | 'right';
 
@@ -172,7 +173,14 @@ export function DataTable<T>({
       {paginated && total > 0 && (
         <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-border)] px-4 py-2.5 text-[12px] text-[var(--ds-text-muted)]">
           <span>
-            {rangeStart}&ndash;{rangeEnd} of {total}
+            {/* One key, not "{a}–{b}" + " of " + "{c}": the word order around
+                the range is English word order, and the separator itself is
+                typographic rather than translatable. */}
+            {t('ds.table.range', {
+              start: formatNumber(rangeStart),
+              end: formatNumber(rangeEnd),
+              total: formatNumber(total),
+            }) || `${formatNumber(rangeStart)}–${formatNumber(rangeEnd)} of ${formatNumber(total)}`}
           </span>
           <div className="flex items-center gap-1">
             <button

@@ -279,7 +279,7 @@ function PlanUsageCard({
           to="/workspace/billing"
           className="flex items-center justify-between gap-2 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-accent-soft)]/80"
         >
-          <span>{t('home.youRsquoReOnThe') || 'You&rsquo;re on the Free plan - upgrade for more capacity'}</span>
+          <span>{t('home.freePlanUpgrade') || 'You’re on the Free plan - upgrade for more capacity'}</span>
           <ArrowRight size={14} aria-hidden="true" className="shrink-0" />
         </Link>
       )}

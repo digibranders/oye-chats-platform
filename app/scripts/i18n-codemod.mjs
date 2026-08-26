@@ -44,6 +44,34 @@ if (!DIR || !NS) {
   process.exit(2);
 }
 
+/**
+ * JSX text is parsed with HTML entities; a JS string literal is not. Moving
+ * `Loading&hellip;` from a text node into `t('k') || 'Loading&hellip;'` would
+ * therefore render the six characters "&hellip;" to the user. Decode on the way
+ * across so the fallback carries the character the entity stood for.
+ */
+const ENTITIES = {
+  '&hellip;': '\u2026',
+  '&mdash;': '\u2014',
+  '&ndash;': '\u2013',
+  '&rsquo;': '\u2019',
+  '&lsquo;': '\u2018',
+  '&rdquo;': '\u201d',
+  '&ldquo;': '\u201c',
+  '&nbsp;': '\u00a0',
+  '&times;': '\u00d7',
+  '&middot;': '\u00b7',
+  '&bull;': '\u2022',
+  '&deg;': '\u00b0',
+  '&quot;': '"',
+  '&apos;': "'",
+  '&amp;': '&',
+};
+function decodeEntities(text) {
+  return text.replace(/&(?:hellip|mdash|ndash|rsquo|lsquo|rdquo|ldquo|nbsp|times|middot|bull|deg|quot|apos|amp);/g,
+    (m) => ENTITIES[m] ?? m);
+}
+
 /** "Save changes" -> saveChanges ; "Couldn’t load." -> couldntLoad */
 function keyFor(text) {
   const words = text
@@ -103,8 +131,14 @@ for (const [file, fileHits] of byFile) {
       continue;
     }
     const text = h.text;
-    const key = `${NS}.${keyFor(text)}`;
-    usedKeys.set(key, text);
+    // Only JSX text was entity-parsed by the compiler. A string literal or an
+    // attribute value already holds its characters verbatim, so decoding one
+    // would corrupt a legitimate "&amp;". The literal we WRITE is decoded; the
+    // text we MATCH against the source line is not, because the source still
+    // holds the entity.
+    const decoded = h.kind === 'jsx-text' ? decodeEntities(text) : text;
+    const key = `${NS}.${keyFor(decoded)}`;
+    usedKeys.set(key, decoded);
     const call = `${FN}(${jsQuote(key)})`;
     // `a ?? t('k') || 'b'` is a TS5076 error: ?? cannot be mixed with || without
     // parentheses. Wrapping unconditionally on such lines is cheaper than
@@ -127,7 +161,7 @@ for (const [file, fileHits] of byFile) {
       // Only single-line, unbraced JSX text. Multi-line nodes and anything
       // already inside an expression are left for a human.
       if (line.split(text).length === 2 && !line.includes('{') && !line.includes('}')) {
-        next = line.replace(text, `{${call} || ${jsQuote(text)}}`);
+        next = line.replace(text, `{${call} || ${jsQuote(decoded)}}`);
       }
     }
 

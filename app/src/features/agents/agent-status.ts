@@ -1,5 +1,7 @@
 import { type Bot } from '../../types/domain';
 import { type AgentCardMetric, type AgentCardStatus } from '../../design-system/components/AgentCard';
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
 
 /**
  * Derived health of an AI agent, from the intrinsic fields on the reused Bot
@@ -20,6 +22,10 @@ export interface AgentStatusInfo {
   status: AgentCardStatus;
 }
 
+// Tone is a design decision and never varies by language, so it stays here.
+// The label does vary, and this table is built at import - before any locale
+// exists - so the English is the fallback and `getAgentStatus` resolves the
+// real one per call, at render time.
 const STATUS_BY_HEALTH: Record<AgentHealth, AgentCardStatus> = {
   live: { label: 'Live', tone: 'success' },
   ready: { label: 'Ready to deploy', tone: 'info' },
@@ -49,7 +55,11 @@ export function getAgentHealth(bot: Bot): AgentHealth {
 /** Full status info (health + badge) for a single agent. */
 export function getAgentStatus(bot: Bot): AgentStatusInfo {
   const health = getAgentHealth(bot);
-  return { health, status: STATUS_BY_HEALTH[health] };
+  const base = STATUS_BY_HEALTH[health];
+  return {
+    health,
+    status: { ...base, label: translateNow(`agents.status.${health}`) || base.label },
+  };
 }
 
 /**
@@ -61,12 +71,18 @@ export function getAgentMetrics(bot: Bot): AgentCardMetric[] {
   const chunks = bot.indexed_chunk_count ?? 0;
   return [
     {
-      label: 'Knowledge',
-      value: chunks > 0 ? `${chunks.toLocaleString()} passages` : 'Not trained yet',
+      label: translateNow('agents.knowledge') || 'Knowledge',
+      value:
+        chunks > 0
+          ? translateNow('agents.passageCount', { count: formatNumber(chunks) }) ||
+            `${formatNumber(chunks)} passages`
+          : translateNow('agents.notTrainedYet') || 'Not trained yet',
     },
     {
-      label: 'Widget',
-      value: bot.widget_installed_at ? 'Installed' : 'Not installed',
+      label: translateNow('agents.widget') || 'Widget',
+      value: bot.widget_installed_at
+        ? translateNow('agents.installed') || 'Installed'
+        : translateNow('agents.notInstalled') || 'Not installed',
     },
   ];
 }

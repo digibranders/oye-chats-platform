@@ -141,7 +141,7 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   // the `load` event on it, so one stray URL timed out every navigation the
   // moment WebKit joined the matrix. Chromium failed those fast and hid it.
   await page.route(
-    /^https?:\/\/(?!127\.0\.0\.1:4174|oyechats-admin-e2e\.test)/,
+    /^https?:\/\/(?!127\.0\.0\.1:4175|oyechats-admin-e2e\.test)/,
     (route) => route.abort(),
   );
 

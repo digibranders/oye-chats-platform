@@ -131,7 +131,7 @@ function isDeferred(relPath) {
 
 /** Sentence-shaped: at least two words, starts like prose, not a token. */
 function isSentenceShaped(text) {
-  const t = text.trim();
+  const t = decodeForShape(text).trim();
   if (t.length < 3) return false;
   if (!/[A-Za-z]{2,}(\s| )+[A-Za-z]/.test(t)) return false;
   if (!/^[A-Z‘“"'(]/.test(t) && !/^[A-Z]/.test(t)) return false;
@@ -256,8 +256,31 @@ const ALLOWED_ENGLISH = new Map([
 ]);
 
 /** A single word that is still clearly UI copy (button labels etc.). */
+/**
+ * JSX text is entity-parsed by the compiler, so "Delete&hellip;" is the single
+ * word "Delete…" on screen. The shape tests below reason about what the user
+ * reads, not what the source spells, so they run against the decoded form. The
+ * RAW text is still what gets reported, because the codemod has to match it
+ * against the source line.
+ */
+const TEXT_ENTITIES = {
+  '&hellip;': '\u2026', '&mdash;': '\u2014', '&ndash;': '\u2013',
+  '&rsquo;': '\u2019', '&lsquo;': '\u2018', '&rdquo;': '\u201d',
+  '&ldquo;': '\u201c', '&nbsp;': ' ', '&times;': '\u00d7',
+  '&middot;': '\u00b7', '&bull;': '\u2022', '&deg;': '\u00b0',
+  '&quot;': '"', '&apos;': "'", '&amp;': '&',
+};
+function decodeForShape(text) {
+  return text.replace(
+    /&(?:hellip|mdash|ndash|rsquo|lsquo|rdquo|ldquo|nbsp|times|middot|bull|deg|quot|apos|amp);/g,
+    (m) => TEXT_ENTITIES[m] ?? m,
+  );
+}
+
+// A trailing ellipsis marks "this opens something more" (Delete…, Rename…).
+// It is part of the label and must travel with it into the dictionary.
 function isSingleWordLabel(text) {
-  const t = text.trim();
+  const t = decodeForShape(text).trim().replace(/(?:\u2026|\.\.\.)$/, '');
   return /^[A-Z][a-z]{2,}$/.test(t) && !/^(True|False|Null|Undefined)$/.test(t);
 }
 

@@ -22,6 +22,8 @@ import { updateBot, deleteBot, getBotDemoUrl, trackDemoShareClick } from '../../
 import { type Bot } from '../../types/domain';
 import { cn } from '../../design-system';
 import { DeleteAgentDialog } from './DeleteAgentDialog';
+import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface AgentActionsMenuProps {
   /** The agent this menu operates on. */
@@ -31,7 +33,7 @@ export interface AgentActionsMenuProps {
 }
 
 function messageFromError(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Something went wrong.';
+  return err instanceof Error && err.message ? err.message : translateNow('agents.somethingWentWrong') || 'Something went wrong.';
 }
 
 /**
@@ -44,6 +46,7 @@ function messageFromError(err: unknown): string {
  * delete with a two-step confirm (deleteBot). Closes on outside-click and Esc.
  */
 export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): ReactElement {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(bot.name);
@@ -175,7 +178,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     try {
       await navigator.clipboard.writeText(demoUrl);
     } catch {
-      setError('Could not copy - check clipboard permissions.');
+      setError(t('agents.couldNotCopyCheckClipboard') || 'Could not copy - check clipboard permissions.');
       return;
     }
     setCopied(true);
@@ -222,7 +225,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             onClick={closeMenu}
           >
             <ArrowRight size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-            Open chatbot
+            {t('agents.openChatbot') || 'Open chatbot'}
           </Link>
 
           {demoUrl && (
@@ -235,7 +238,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
               onClick={closeMenu}
             >
               <ExternalLink size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              View demo
+              {t('agents.viewDemo') || 'View demo'}
             </a>
           )}
 
@@ -246,7 +249,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
               ) : (
                 <Link2 size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
               )}
-              {copied ? 'Link copied' : 'Copy demo link'}
+              {copied ? t('agents.linkCopied') || 'Link copied' : t('agents.copyDemoLink') || 'Copy demo link'}
             </button>
           )}
 
@@ -255,7 +258,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
           {renaming ? (
             <div className="px-3 py-2">
               <label htmlFor={`rename-${bot.id}`} className="sr-only">
-                Rename chatbot
+                {t('agents.renameChatbot') || 'Rename chatbot'}
               </label>
               <input
                 id={`rename-${bot.id}`}
@@ -279,7 +282,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
               <div className="mt-2 flex items-center justify-end gap-1.5">
                 <button
                   type="button"
-                  aria-label="Cancel rename"
+                  aria-label={t('agents.cancelRename') || 'Cancel rename'}
                   disabled={busy}
                   onClick={() => setRenaming(false)}
                   className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-border)] disabled:opacity-50"
@@ -288,7 +291,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
                 </button>
                 <button
                   type="button"
-                  aria-label="Save name"
+                  aria-label={t('agents.saveName') || 'Save name'}
                   disabled={busy}
                   onClick={() => void commitRename()}
                   className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-accent)] text-[var(--ds-accent-fg)] hover:bg-[var(--ds-accent-hover)] disabled:opacity-60"
@@ -304,7 +307,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
           ) : (
             <button role="menuitem" type="button" className={menuItemClass} onClick={startRename}>
               <Pencil size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              Rename
+              {t('agents.rename') || 'Rename'}
             </button>
           )}
 
@@ -322,7 +325,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             }}
           >
             <Trash2 size={15} aria-hidden="true" />
-            Delete&hellip;
+            {t('agents.delete') || 'Delete…'}
           </button>
 
           {error && (

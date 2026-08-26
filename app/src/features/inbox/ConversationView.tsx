@@ -533,7 +533,7 @@ export function ConversationView({
               {loadingOlder ? (
                 <>
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                  Loading…
+                  {t('inbox.loading') || 'Loading…'}
                 </>
               ) : (
                 t('inbox.loadEarlierMessages') || 'Load earlier messages'
@@ -712,7 +712,7 @@ export function ConversationView({
                 {uploading ? (
                   <>
                     <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-                    Sending…
+                    {t('inbox.sending') || 'Sending…'}
                   </>
                 ) : (
                   <>

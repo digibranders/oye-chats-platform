@@ -323,7 +323,7 @@ function LeadAnnotationsSection({
       </h3>
       <div className="space-y-4 rounded-xl border border-[var(--ds-border)] p-4">
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.onlyYourTeamSeesThese') || 'Only your team sees these - they stay in this browser and aren&rsquo;t sent to the visitor.'}
+          {t('leads.onlyYourTeamSeesThese') || 'Only your team sees these - they stay in this browser and aren’t sent to the visitor.'}
         </p>
 
         {/* Note editor */}

@@ -211,6 +211,21 @@ const PLACEHOLDER = /\{(\w+)\}/g;
  * codebase unreachable dead code. The widget shipped the key-returning
  * variant first and had exactly that bug.
  */
+/**
+ * The dictionary entry for `key`, placeholders left intact, or null on a miss.
+ *
+ * `t()` is the right call for everything that renders as a plain string. This
+ * exists for the one case it cannot serve: a sentence with a React element
+ * interpolated into it, where the caller has to split the template itself. It
+ * deliberately does NOT warn about unsubstituted placeholders, because leaving
+ * them in is the entire point here.
+ */
+export function template(key: string): string | null {
+  if (!key || typeof key !== 'string') return null;
+  const dict = dictionaryFor(currentLocale);
+  return dict ? resolveKey(dict, key) : null;
+}
+
 export function t(key: string, params?: Record<string, unknown>): string | null {
   if (!key || typeof key !== 'string') return null;
 

@@ -19,6 +19,8 @@ import {
   planGrantsUnlimitedAgents,
   type PlanView,
 } from '../workspace/billingModel';
+import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface CreateAgentDialogProps {
   /** Whether the modal is mounted/visible. */
@@ -53,7 +55,7 @@ function normalizeWebsite(raw: string): string {
 }
 
 function messageFromError(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Something went wrong. Please try again.';
+  return err instanceof Error && err.message ? err.message : translateNow('agents.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.';
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -85,6 +87,7 @@ export function CreateAgentDialog({
   gate,
   planName,
 }: CreateAgentDialogProps): ReactElement | null {
+  const { t } = useTranslation();
   const titleId = useId();
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
@@ -338,14 +341,14 @@ export function CreateAgentDialog({
             </span>
             <div className="min-w-0">
               <h2 id={titleId} className="text-base font-semibold text-[var(--ds-text)]">
-                {step === 'name' ? 'Create a new chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
+                {step === 'name' ? t('agents.createANewChatbot') || 'Create a new chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
               </h2>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
                 {step === 'plan'
-                  ? 'Each chatbot runs on its own plan. Pick one to activate it.'
+                  ? t('agents.eachChatbotRunsOnIts') || 'Each chatbot runs on its own plan. Pick one to activate it.'
                   : limitNotice
-                    ? 'Name it, then choose the plan it runs on.'
-                    : 'Give it a name - you can train and customize it next.'}
+                    ? t('agents.nameItThenChooseThe') || 'Name it, then choose the plan it runs on.'
+                    : t('agents.giveItANameYou') || 'Give it a name - you can train and customize it next.'}
               </p>
             </div>
           </div>
@@ -373,7 +376,7 @@ export function CreateAgentDialog({
                   to="/workspace/billing"
                   className="font-medium text-[var(--ds-accent-text)] underline-offset-2 hover:underline"
                 >
-                  Compare plans
+                  {t('agents.comparePlans') || 'Compare plans'}
                 </Link>
               </span>
             </div>
@@ -386,7 +389,7 @@ export function CreateAgentDialog({
                   htmlFor="create-agent-name"
                   className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
                 >
-                  Chatbot name
+                  {t('agents.chatbotName') || 'Chatbot name'}
                 </label>
                 <Input
                   id="create-agent-name"
@@ -394,7 +397,7 @@ export function CreateAgentDialog({
                   value={name}
                   required
                   maxLength={50}
-                  placeholder="e.g. Support Assistant"
+                  placeholder={t('agents.eGSupportAssistant') || 'e.g. Support Assistant'}
                   onChange={(event) => setName(event.target.value)}
                 />
               </div>
@@ -404,32 +407,32 @@ export function CreateAgentDialog({
                   htmlFor="create-agent-website"
                   className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
                 >
-                  Website <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
+                  {t('agents.website') || 'Website'} <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
                 </label>
                 <Input
                   id="create-agent-website"
                   value={website}
                   inputMode="url"
-                  placeholder="yourwebsite.com"
+                  placeholder={t('agents.yourwebsiteCom') || 'yourwebsite.com'}
                   onChange={(event) => setWebsite(event.target.value)}
                 />
                 <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-                  We&rsquo;ll use this to help train your chatbot later.
+                  {t('agents.websiteHelpsTraining') || 'We’ll use this to help train your chatbot later.'}
                 </p>
               </div>
 
               <div className="flex gap-3 pt-1">
                 <Button type="button" variant="outline" className="flex-1" onClick={resetAndClose}>
-                  Cancel
+                  {t('agents.cancel') || 'Cancel'}
                 </Button>
                 <Button type="submit" className="flex-1" disabled={!canSubmitName}>
                   {submitting ? (
                     <>
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                      Creating&hellip;
+                      Creating…
                     </>
                   ) : limitNotice ? (
-                    'Continue to plans'
+                    t('agents.continueToPlans') || 'Continue to plans'
                   ) : (
                     'Continue'
                   )}
@@ -441,7 +444,7 @@ export function CreateAgentDialog({
               {/* Billing cycle toggle */}
               <div
                 role="tablist"
-                aria-label="Billing cycle"
+                aria-label={t('agents.billingCycle') || 'Billing cycle'}
                 className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
               >
                 {(['monthly', 'annual'] as const).map((c) => (
@@ -467,14 +470,14 @@ export function CreateAgentDialog({
               {plansLoading ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[var(--ds-text-muted)]">
                   <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                  Loading plans&hellip;
+                  {t('agents.loadingPlans') || 'Loading plans…'}
                 </div>
               ) : plans.length === 0 ? (
                 <p className="py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
-                  No plans are available right now. Please try again shortly.
+                  {t('agents.noPlansAreAvailableRight') || 'No plans are available right now. Please try again shortly.'}
                 </p>
               ) : (
-                <ul className="space-y-2" aria-label="Available plans">
+                <ul className="space-y-2" aria-label={t('agents.availablePlans') || 'Available plans'}>
                   {plans.map((plan) => {
                     const active = plan.slug === selectedSlug;
                     const priceMinor = cycle === 'annual' ? plan.annualPriceMinor : plan.monthlyPriceMinor;
@@ -527,7 +530,7 @@ export function CreateAgentDialog({
                   }}
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
-                  Back
+                  {t('agents.back') || 'Back'}
                 </Button>
                 <Button
                   type="button"
@@ -538,10 +541,10 @@ export function CreateAgentDialog({
                   {submitting ? (
                     <>
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                      Starting checkout&hellip;
+                      {t('agents.startingCheckout') || 'Starting checkout…'}
                     </>
                   ) : (
-                    'Subscribe & create chatbot'
+                    t('agents.subscribeCreateChatbot') || 'Subscribe & create chatbot'
                   )}
                 </Button>
               </div>

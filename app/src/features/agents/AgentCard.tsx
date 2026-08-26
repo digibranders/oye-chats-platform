@@ -11,6 +11,7 @@ import { type ReactElement } from 'react';
 import { AgentCard as AgentCardBase, BotAvatar } from '../../design-system';
 import { type Bot } from '../../types/domain';
 import { getAgentMetrics, getAgentStatus } from './agent-status';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Mask a bot key to first-6 + last-4, e.g. `bot-6a••••29b9`. */
 function maskBotKey(botKey: string): string {
@@ -35,6 +36,7 @@ export interface AgentCardProps {
 }
 
 export function AgentCard({ bot }: AgentCardProps): ReactElement {
+  const { t } = useTranslation();
   const { status } = getAgentStatus(bot);
   const maskedKey = bot.bot_key ? maskBotKey(bot.bot_key) : null;
   const created = formatCreatedDate(bot.created_at);
@@ -52,7 +54,11 @@ export function AgentCard({ bot }: AgentCardProps): ReactElement {
         <div className="flex items-center gap-2 px-1 text-[11px] text-[var(--ds-text-subtle)]">
           {maskedKey && <span className="min-w-0 truncate font-mono">{maskedKey}</span>}
           {maskedKey && created && <span aria-hidden="true">·</span>}
-          {created && <span className="whitespace-nowrap">Created {created}</span>}
+          {created && (
+            <span className="whitespace-nowrap">
+              {t('agents.createdOn', { date: created }) || `Created ${created}`}
+            </span>
+          )}
         </div>
       )}
     </div>

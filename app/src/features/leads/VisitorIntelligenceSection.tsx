@@ -114,7 +114,7 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
               <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
             )}
             <span className="mt-1 block text-[11px] text-[var(--ds-text-subtle)]">
-              {t('leads.derivedFromTheVisitorRsquo') || 'Derived from the visitor&rsquo;s network &mdash; not a confirmed employer.'}
+              {t('leads.derivedFromVisitorNetwork') || 'Derived from the visitor’s network — not a confirmed employer.'}
             </span>
           </span>
         </div>
@@ -219,12 +219,12 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
 
       {blockedByValidation && (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.thisAddressFailedEmailValidation') || 'This address failed email validation, so it can&rsquo;t be contacted.'}
+          {t('leads.thisAddressFailedEmailValidation') || 'This address failed email validation, so it can’t be contacted.'}
         </p>
       )}
       {!blockedByValidation && isValidEmail !== true && state === 'idle' && (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.thisAddressHasnRsquoT') || 'This address hasn&rsquo;t been validated. You&rsquo;ll be asked to confirm.'}
+          {t('leads.emailNotValidated') || 'This address hasn’t been validated. You’ll be asked to confirm.'}
         </p>
       )}
 

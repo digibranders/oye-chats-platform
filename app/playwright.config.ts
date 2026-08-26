@@ -27,7 +27,7 @@ export default defineConfig({
     // first and the preview server binds IPv4 only, so every navigation hit a
     // 30s timeout while Chromium passed. A literal address removes the
     // resolution step entirely.
-    baseURL: 'http://127.0.0.1:4174',
+    baseURL: 'http://127.0.0.1:4175',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -50,10 +50,22 @@ export default defineConfig({
     ...(process.env.E2E_WEBKIT ? [{ name: 'webkit', use: { ...devices['Desktop Safari'] } }] : []),
   ],
   webServer: {
-    // Port 4174 so this never collides with the widget suite on 4173.
-    command: 'npx vite preview --port 4174 --host 127.0.0.1',
-    url: 'http://127.0.0.1:4174',
+    // Builds its OWN bundle rather than serving `dist`.
+    //
+    // The suite is hermetic only if every API call goes to an origin the mock
+    // owns. `VITE_API_URL` is baked in at build time and `.env` sets it to a
+    // local API, so a plain `npm run build` produced a bundle that called
+    // localhost:8000 - an origin the mock's foreign-origin abort then killed,
+    // and every spec failed with "Network Error". The suite was silently
+    // depending on a developer's env file.
+    //
+    // Its own outDir and port keep it from fighting `npm run build` (whose
+    // output the size gate measures) and from the widget suite on 4173.
+    command:
+      'VITE_API_URL=http://oyechats-admin-e2e.test npx vite build --outDir dist-e2e ' +
+      '&& npx vite preview --outDir dist-e2e --port 4175 --host 127.0.0.1',
+    url: 'http://127.0.0.1:4175',
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    timeout: 120_000,
   },
 });

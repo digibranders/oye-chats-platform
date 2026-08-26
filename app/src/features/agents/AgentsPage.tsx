@@ -17,6 +17,7 @@ import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { AgentActionsMenu } from './AgentActionsMenu';
 import { resolveAgentCreationGate } from './agentLimit';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * One agent in the grid: the shared, fully-navigational <AgentCard> tile with
@@ -37,10 +38,11 @@ function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }):
 
 /** Placeholder grid shown while the agent list is loading. */
 function AgentsLoading(): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="space-y-6">
       <span className="sr-only" role="status">
-        Loading your agents&hellip;
+        {t('agents.loadingYourAgents') || 'Loading your agents…'}
       </span>
       <div className="space-y-6" aria-hidden="true">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -76,6 +78,7 @@ function AgentsLoading(): ReactElement {
  * The quota is advisory copy; `can_client_add_new_bot` server-side is the rule.
  */
 export function AgentsPage(): ReactElement {
+  const { t } = useTranslation();
   const { bots, loading, error, refreshBots } = useBotContext();
   const { currentWorkspaceId } = useWorkspace();
   const { limitFor, planName } = useEntitlements();
@@ -132,7 +135,7 @@ export function AgentsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="Your chatbots"
+      title={t('agents.yourChatbots') || 'Your chatbots'}
       description="Select a chatbot to view its health, knowledge and settings."
       actions={
         <div className="flex flex-wrap items-center gap-2">
@@ -143,12 +146,12 @@ export function AgentsPage(): ReactElement {
           {showResumeSetup && (
             <Button variant="outline" onClick={() => navigate(resumeLaunchPath())}>
               <Wand2 size={16} aria-hidden="true" />
-              Resume setup
+              {t('agents.resumeSetup') || 'Resume setup'}
             </Button>
           )}
           <Button onClick={handleAddAgent}>
             <Plus size={16} aria-hidden="true" />
-            New chatbot
+            {t('agents.newChatbot') || 'New chatbot'}
           </Button>
         </div>
       }
@@ -163,15 +166,15 @@ export function AgentsPage(): ReactElement {
           </span>
           <div>
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">
-              We couldn&rsquo;t load your chatbots
+              {t('agents.couldntLoadYourChatbots') || 'We couldn’t load your chatbots'}
             </h2>
             <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-[var(--ds-text-muted)]">
-              {error.message || 'Something went wrong while loading your chatbots.'}
+              {error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading your chatbots.'}
             </p>
           </div>
           <Button variant="outline" onClick={() => void refreshBots()}>
             <RefreshCw size={16} aria-hidden="true" />
-            Try again
+            {t('agents.tryAgain') || 'Try again'}
           </Button>
         </Card>
       ) : loading && !hasAgents ? (
@@ -179,12 +182,12 @@ export function AgentsPage(): ReactElement {
       ) : !hasAgents ? (
         <EmptyState
           icon={BotIcon}
-          title="Create your first AI chatbot"
+          title={t('agents.createYourFirstAiChatbot') || 'Create your first AI chatbot'}
           description="An AI chatbot answers your visitors from your own content. Name one to get started - training and customization come next."
           action={
             <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />
-              New chatbot
+              {t('agents.newChatbot') || 'New chatbot'}
             </Button>
           }
         />
