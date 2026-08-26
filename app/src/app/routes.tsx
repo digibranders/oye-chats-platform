@@ -3,11 +3,6 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../shell/AppShell';
 import { ProtectedLayout } from './ProtectedLayout';
 import { OperatorRouteGuard } from './OperatorRouteGuard';
-import Login from '../pages/Login';
-import Register from '../pages/Register';
-import VerifyEmail from '../pages/VerifyEmail';
-import ForgotPassword from '../pages/ForgotPassword';
-import OAuthCallback from '../pages/OAuthCallback';
 
 // Admin 2.0 pages
 import { HomePage } from '../features/home/HomePage';
@@ -43,6 +38,17 @@ import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
 
+// The pre-auth screens are lazy for the same reason Launch Studio is, and a
+// stronger one: a signed-in operator never renders the register form, and a
+// signed-out visitor never renders the dashboard. Keeping both in one chunk
+// made every user download the other's code. Splitting them also stops Phase
+// 7F's ~150 new strings landing in the initial bundle.
+const Login = lazy(() => import('../pages/Login'));
+const Register = lazy(() => import('../pages/Register'));
+const VerifyEmail = lazy(() => import('../pages/VerifyEmail'));
+const ForgotPassword = lazy(() => import('../pages/ForgotPassword'));
+const OAuthCallback = lazy(() => import('../pages/OAuthCallback'));
+
 // Launch Studio is a one-time onboarding flow on a separate route - lazy-load it
 // so its layout + steps stay out of the initial bundle.
 const LaunchStudio = lazy(() =>
@@ -66,11 +72,46 @@ export const router = createBrowserRouter([
     errorElement: <RootErrorBoundary />,
     children: [
       // ── Public - reused legacy auth pages; no guard, no data providers ──
-      { path: '/login', element: <Login /> },
-      { path: '/register', element: <Register /> },
-      { path: '/verify-email', element: <VerifyEmail /> },
-      { path: '/forgot-password', element: <ForgotPassword /> },
-      { path: '/auth/callback', element: <OAuthCallback /> },
+      {
+        path: '/login',
+        element: (
+          <Suspense fallback={null}>
+            <Login />
+          </Suspense>
+        ),
+      },
+      {
+        path: '/register',
+        element: (
+          <Suspense fallback={null}>
+            <Register />
+          </Suspense>
+        ),
+      },
+      {
+        path: '/verify-email',
+        element: (
+          <Suspense fallback={null}>
+            <VerifyEmail />
+          </Suspense>
+        ),
+      },
+      {
+        path: '/forgot-password',
+        element: (
+          <Suspense fallback={null}>
+            <ForgotPassword />
+          </Suspense>
+        ),
+      },
+      {
+        path: '/auth/callback',
+        element: (
+          <Suspense fallback={null}>
+            <OAuthCallback />
+          </Suspense>
+        ),
+      },
       { path: '/affiliate-invite', element: <AffiliateInvite /> },
       // Team-invite airlock - public magic link; resolves the token and routes
       // on auth state. Must stay OUTSIDE the ProtectedLayout guard so an

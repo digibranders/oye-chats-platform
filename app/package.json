@@ -64,8 +64,8 @@
   },
   "size-limit": [
     {
-      "name": "Main app chunk (initial load, English path)",
-      "path": "dist/assets/index-*.js",
+      "name": "Initial load (entry + preloaded chunks, English path)",
+      "path": ["dist/assets/index-*.js", "dist/assets/chunk-*.js"],
       "limit": "615 KB",
       "gzip": true
     },
