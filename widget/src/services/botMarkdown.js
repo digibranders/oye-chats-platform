@@ -68,6 +68,17 @@ const _FOLLOW_UP_REGEX = /([.!?])[ \t\n]+(?=[A-Z][^.!?\n]{2,200}\?)/g;
 const _FOLLOW_UP_INLINE_REGEX =
     /(?<!:\/\/[^\s]{0,300})([a-z])(?=(?:Would|Could|Should|Do|Does|Did|Can|Will|Are|Is|Was|Were|Am|Have|Has|Had|May|Might|Must|Shall|What|Which|When|Where|Why|Who|How|Any\w*)\b[^.!?\n]{0,200}\?)/g;
 
+// Punctuation glued directly to a follow-up opener with NO gap: the LLM wrote
+// "...be fast.What matters most…?" — a sentence-ending ``.``/``!``/``?``
+// immediately followed by a question opener. This slips through BOTH regexes
+// above: ``_FOLLOW_UP_REGEX`` requires whitespace after the punctuation, and
+// ``_FOLLOW_UP_INLINE_REGEX`` requires a lowercase letter (not punctuation)
+// right before the opener. Same opener whitelist + trailing ``?`` guard so
+// brand names and abbreviations never split, and the ``://`` lookbehind keeps
+// it out of URLs.
+const _FOLLOW_UP_PUNCT_GLUE_REGEX =
+    /(?<!:\/\/[^\s]{0,300})([.!?])(?=(?:Would|Could|Should|Do|Does|Did|Can|Will|Are|Is|Was|Were|Am|Have|Has|Had|May|Might|Must|Shall|What|Which|When|Where|Why|Who|How|Any\w*)\b[^.!?\n]{0,200}\?)/g;
+
 // Markdown bullet/numbered list line.
 const _LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])\s+\S/;
 const _LIST_PREFIX_RE = /^([ \t]*(?:[-*+]|\d+[.)])\s+)(.*)$/;
@@ -180,6 +191,7 @@ export const formatBotMarkdown = (text) => {
         // afterwards. Only applied in the bot renderer; user-typed em-dashes
         // are preserved.
         .replace(/\s*\u2014\s*/g, ', ')
+        .replace(_FOLLOW_UP_PUNCT_GLUE_REGEX, '$1\n\n')
         .replace(_FOLLOW_UP_REGEX, '$1\n\n')
         .replace(_FOLLOW_UP_INLINE_REGEX, '$1\n\n');
 };

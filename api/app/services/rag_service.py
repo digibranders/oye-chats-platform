@@ -1125,6 +1125,83 @@ def _count_marked_bant_dimensions(bant_state: dict | None) -> int:
     return marked
 
 
+def _quote_gate_state(bot, bant_state: dict | None) -> tuple[bool, int, int]:
+    """Resolve the quotation trigger for this session from the BANT state we
+    already have this turn. Returns ``(enabled, marked, threshold)``.
+
+    Mirrors the widget runtime's trigger in ``quotation_routes``: only the
+    admin-chosen dimensions count (empty ``required_categories`` means any of the
+    four), and the threshold is clamped to the number of chosen dimensions so an
+    unreachable config can never wedge the gate open. ``enabled`` is False when
+    the bot has no usable quotation catalog, in which case ``marked``/
+    ``threshold`` are 0.
+    """
+    catalog = getattr(bot, "quotation_catalog", None) if bot else None
+    if not isinstance(catalog, dict) or not catalog.get("enabled") or not catalog.get("services"):
+        return (False, 0, 0)
+
+    valid = ("need", "budget", "authority", "timeline")
+    required = [d for d in (catalog.get("required_categories") or []) if d in valid]
+    dims = required or list(valid)
+
+    state = bant_state or {}
+    marked = 0
+    for dim in dims:
+        score = int(state.get(f"{dim}_score", 0) or 0)
+        value = state.get(dim)
+        if score > 0 or (isinstance(value, str) and value.strip()):
+            marked += 1
+
+    threshold = max(1, min(len(dims), int(catalog.get("threshold", 2) or 2)))
+    return (True, marked, threshold)
+
+
+def _quote_probe_hold(bot, bant_state: dict | None, answers_last_probe: bool) -> bool:
+    """Whether to hold this turn's qualifying question because the quotation
+    card is already — or about to be — triggerable.
+
+    The quote flow fires once enough BANT dimensions are marked, but the probe
+    for THIS turn is chosen *before* the current answer is scored (extraction is
+    async, after the stream closes). Without this, the bot asks one more
+    qualifying question in the very turn the quote is about to appear — which
+    reads to the visitor as "why ask, then immediately quote?".
+
+    Returns True (suppress the probe) when, using only the state we have this
+    turn:
+      * the bot already has enough marked to quote (over-qualification — no
+        reason to keep probing), OR
+      * it is exactly one dimension short AND the visitor's message answers the
+        probe just asked, so that answer will most likely complete the
+        threshold once extraction lands.
+    """
+    enabled, marked, threshold = _quote_gate_state(bot, bant_state)
+    if not enabled:
+        return False
+    if marked >= threshold:
+        return True
+    return marked >= threshold - 1 and answers_last_probe
+
+
+def _quote_active_or_pending(bot, chat_session, bant_state: dict | None) -> bool:
+    """Whether a quote is currently showing, or will fire this session — the
+    signal for holding the "connect with a team" / book-a-meeting CTA so only
+    one conversion path runs at a time.
+
+    True when the quote is enabled AND the BANT threshold is already met AND the
+    quote is not yet terminal. It flips back to False once the visitor completes
+    or skips the quote, so the team/meeting offer flows again afterwards (the
+    quote flow's own end screen already carries a "Connect now" action, so the
+    human path is only sequenced after the quote, never removed). Deliberately
+    does NOT use the speculative "one dimension away" clause — the team offer is
+    valuable, so it is only held when a quote will genuinely fire.
+    """
+    enabled, marked, threshold = _quote_gate_state(bot, bant_state)
+    if not enabled or marked < threshold:
+        return False
+    status = (getattr(chat_session, "quotation_state", None) or {}).get("status")
+    return status not in ("complete", "skipped")
+
+
 def _safety_net_metric(name: str, **tags) -> None:
     """Structured log line + rolling counter (AR-13) for aggregation.
 
@@ -1472,6 +1549,19 @@ _TRAILING_QUESTION_RE = re.compile(
     r"(?P<gap>[ \t\n]+)(?P<q>[A-Z][^.!?\n]{2,200}\?)\s*$",
 )
 
+# Follow-up glued DIRECTLY to the prior sentence with no gap: "...be fast.What
+# matters most?". ``_TRAILING_QUESTION_RE`` needs a whitespace gap before the
+# question, so this exact "punctuation+Opener" shape slips through it. A
+# question-opener whitelist (Wh-words + auxiliaries + the Any* family) keeps
+# brand names ("CleanSight") from splitting, and anchoring at end-of-string
+# keeps it clear of mid-text URLs (Python ``re`` has no variable-length
+# lookbehind, so the widget's ``://`` guard can't be reused here — the anchor
+# does the same job for the trailing-question case this function handles).
+_TRAILING_QUESTION_GLUED_RE = re.compile(
+    r"[.!?](?P<q>(?:Would|Could|Should|Do|Does|Did|Can|Will|Are|Is|Was|Were|Am|Have|Has|Had|May|Might|"
+    r"Must|Shall|What|Which|When|Where|Why|Who|How|Any\w*)\b[^.!?\n]{0,200}\?)\s*$",
+)
+
 
 def _ensure_followup_spacing(text: str) -> str:
     """Inject a blank line before a trailing follow-up question.
@@ -1487,16 +1577,22 @@ def _ensure_followup_spacing(text: str) -> str:
     stripped = text.rstrip()
     if not stripped.endswith("?"):
         return text
+    trailing = text[len(stripped) :]
     match = _TRAILING_QUESTION_RE.search(stripped)
-    if not match:
-        return text
-    gap = match.group("gap")
-    if gap.count("\n") >= 2:
-        return text
-    trailing_ws_len = len(text) - len(stripped)
-    before = stripped[: match.start("gap")].rstrip()
-    question = stripped[match.start("q") :]
-    return before + "\n\n" + question + text[len(stripped) :] if trailing_ws_len else before + "\n\n" + question
+    if match:
+        gap = match.group("gap")
+        if gap.count("\n") >= 2:
+            return text
+        before = stripped[: match.start("gap")].rstrip()
+        question = stripped[match.start("q") :]
+        return before + "\n\n" + question + trailing
+    # No whitespace gap — check for a follow-up glued straight onto the prior
+    # sentence's punctuation ("...fast.What matters most?").
+    glued = _TRAILING_QUESTION_GLUED_RE.search(stripped)
+    if glued:
+        before = stripped[: glued.start("q")]  # keeps the "." between the sentences
+        return before + "\n\n" + glued.group("q") + trailing
+    return text
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
@@ -3880,6 +3976,11 @@ def build_hybrid_prompt(
     # qualifying question this turn (browsing visitor, or too early to probe).
     # See ``_should_probe_this_turn``.
     probe_ok: bool = True,
+    # Quote is about to fire (BANT threshold already met). Firms up the no-probe
+    # instruction so the model asks NOTHING at all this turn — not even a soft
+    # clarifying question — because a quote card is about to be offered. See
+    # ``_quote_probe_hold``.
+    quote_imminent: bool = False,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
     # Cloudflare CF-IPCountry for the visitor's request ("IN", "US", ...) or
@@ -4066,7 +4167,16 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 avoid_text=history_context or "",
             )
 
-        if not next_dim_to_probe:
+        if quote_imminent:
+            probing_instruction = (
+                "You already have enough to prepare a quote for this visitor. Do "
+                "NOT ask ANY question this turn — not a qualifying question, not a "
+                "clarifying or scoping question. Give a brief, helpful reply that "
+                "acknowledges what they want; a quote will be offered to them "
+                "automatically right after this. Keep it to one or two short "
+                "sentences and end on a warm note, never a question mark."
+            )
+        elif not next_dim_to_probe:
             probing_instruction = (
                 "Do NOT ask a qualifying question this turn — either everything "
                 "you need is already known, or you just asked about the one thing "
@@ -6598,7 +6708,10 @@ def rag_pipeline(
             _binding_hint = _prev_probed if _answers_last_probe else None
             # Build-up gate: no qualifying question for a browsing visitor, and
             # not until the bot has led with value (see ``_should_probe_this_turn``).
-            _probe_ok = _should_probe_this_turn(question, history)
+            # Also hold the probe when the quote is already/about-to-be triggerable
+            # so the bot doesn't ask one more question in the turn the quote fires.
+            _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
+            _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
             _next_probe = (
                 select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
                 if is_bant_enabled and bant_config and _probe_ok
@@ -6609,6 +6722,13 @@ def rag_pipeline(
                 is_bant_enabled
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
+                # Conditional: when a quote is active or about to fire for this
+                # session, hold the team-connect / book-a-meeting CTA so only one
+                # conversion path runs at a time. An explicit handoff request
+                # still works — it sets ``suggest_handoff``, which the popup
+                # already yields to below. Flips back on once the quote is
+                # completed or skipped.
+                and not _quote_active_or_pending(bot, chat_session, current_bant)
             )
             # When the visitor is qualified (2+ dimensions) AND this bot has
             # meeting booking configured, surface a richer "connect with the
@@ -6640,6 +6760,7 @@ def rag_pipeline(
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
                 probe_ok=_probe_ok,
+                quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
@@ -7792,7 +7913,10 @@ async def rag_pipeline_stream(
             _binding_hint = _prev_probed if _answers_last_probe else None
             # Build-up gate: no qualifying question for a browsing visitor, and
             # not until the bot has led with value (see ``_should_probe_this_turn``).
-            _probe_ok = _should_probe_this_turn(question, history)
+            # Also hold the probe when the quote is already/about-to-be triggerable
+            # so the bot doesn't ask one more question in the turn the quote fires.
+            _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
+            _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
             _next_probe = (
                 select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
                 if is_bant_enabled and bant_config and _probe_ok
@@ -7803,6 +7927,13 @@ async def rag_pipeline_stream(
                 is_bant_enabled
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
+                # Conditional: when a quote is active or about to fire for this
+                # session, hold the team-connect / book-a-meeting CTA so only one
+                # conversion path runs at a time. An explicit handoff request
+                # still works — it sets ``suggest_handoff``, which the popup
+                # already yields to below. Flips back on once the quote is
+                # completed or skipped.
+                and not _quote_active_or_pending(bot, chat_session, current_bant)
             )
             # Qualified-lead popup eligibility. See non-streaming path for the
             # full rationale. Resolved before the LLM call so the plain-text
@@ -7833,6 +7964,7 @@ async def rag_pipeline_stream(
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
                 probe_ok=_probe_ok,
+                quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,

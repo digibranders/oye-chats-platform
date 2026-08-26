@@ -619,24 +619,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     }, []);
 
-    // Callback ref for the inline handoff card. The card is lazy-imported and
-    // sits inside <Suspense fallback={null}>, so it mounts empty and *grows*
-    // after its chunk resolves, a single scroll-to-bottom fired on injection
-    // lands before the card exists and leaves it clipped below the fold (the
-    // "Continue with AI instead" row cut off). Observing the card's own size
-    // and re-pinning the messages area to the bottom on every growth guarantees
-    // the whole card ends up in view. The observer self-disconnects once the
-    // card has settled so it never fights the visitor's later manual scrolling.
-    const handoffCardRef = useCallback((node) => {
+    // Callback ref for lazy-imported inline cards (handoff form, quotation
+    // card). Each sits inside <Suspense fallback={null}>, so it mounts empty and
+    // *grows* after its chunk resolves — a single scroll-to-bottom fired on
+    // injection lands before the card exists and leaves it clipped below the
+    // fold (handoff: the "Continue with AI instead" row cut off; quotation: the
+    // whole card stuck under the fold). Observing the card's own size and
+    // re-pinning the messages area to the bottom on every growth guarantees the
+    // whole card ends up in view. Crucially this pin is UNCONDITIONAL — unlike
+    // the global late-mount observer it does not gate on "was at bottom", whose
+    // read races the smooth-scroll animation and was leaving the quotation card
+    // stranded. The observer self-disconnects once the card has settled so it
+    // never fights the visitor's later manual scrolling.
+    const pinningCardRef = useCallback((node) => {
         if (!node || typeof ResizeObserver === 'undefined') return;
         const area = containerRef.current?.querySelector('[data-messages-area]');
         if (!area) return;
         const pinToBottom = () => area.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+        pinToBottom();
         const ro = new ResizeObserver(pinToBottom);
         ro.observe(node);
-        // 1.2s comfortably covers a cold lazy import + first paint; after that
+        // 1.6s comfortably covers a cold lazy import + first paint; after that
         // the card is stable and the visitor owns the scroll again.
-        setTimeout(() => ro.disconnect(), 1200);
+        setTimeout(() => ro.disconnect(), 1600);
     }, []);
 
     // Tap-handler for the floating scroll-to-latest pill. Trips the enlarge
@@ -1574,6 +1579,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // avoids missing the quote when it arrives at, say, 3.6s. A 2s cap
         // was tried and reliably missed the mark; don't go back below ~4.5s
         // total without re-measuring extraction latency first.
+        // Warm the lazy chunk while we poll so that, once the quote turns
+        // active, the card mounts on the same frame instead of cold-importing
+        // (a cold import mounts the card *after* the injection scroll fired,
+        // which is what left it stranded below the fold). Fire-and-forget; the
+        // dynamic import is cached, so the later Suspense import is instant.
+        import('./QuotationFlow').catch(() => { /* prefetch is best-effort */ });
+
         const POLL_DELAYS_MS = [0, 700, 1000, 1300, 1500];
         for (const delay of POLL_DELAYS_MS) {
             if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -2746,7 +2758,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             );
                         } else if (msg.type === 'quotation_flow' && msg.status === 'active') {
                             items.push(
-                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                <div key={msg.id} ref={pinningCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
                                     <ErrorBoundary label="QuotationFlow" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message={t('system.chunk_quote') || 'Couldn’t load the quote.'} />}>
                                         <Suspense fallback={null}>
                                             <QuotationFlow
@@ -2797,7 +2809,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             // completed — connect action taken, skip render.
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
-                                <div key={msg.id} ref={handoffCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                <div key={msg.id} ref={pinningCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
                                     <ErrorBoundary label="HandoffForm" fallback={(retry) => (
                                         <ChunkLoadNotice
                                             onRetry={retry}

@@ -261,6 +261,47 @@ class TestSessionLock:
 # ── Widget runtime: trigger gating ────────────────────────────────────────────
 
 
+class TestEmptyTriggerDelivery:
+    """When NOTHING is selected in the trigger (``required_categories == []``),
+    ANY of the four BANT dimensions count, and the quote is delivered the moment
+    ``threshold`` of them are marked — no matter which four. Documents exactly
+    "how and when the quotation is delivered" for the default (empty) trigger.
+    """
+
+    def _fire_at(self, db, *, key, threshold, marked_dims):
+        client = _make_client(db, email=f"{key}@example.com", api_key=key)
+        cat = _catalog(required_categories=[], threshold=threshold)
+        bot = _make_bot(db, client.id, bot_key=f"bot-{key}", catalog=cat)
+        scores = {d: 1 for d in marked_dims}
+        _make_session(db, session_id=f"{key}s", bot_id=bot.id, client_id=client.id, **scores)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            return api.get("/chat/quotation", params={"session_id": f"{key}s"}).json()
+
+    def test_threshold_2_needs_any_two_of_four(self, db):
+        # One marked → not yet; two (any pair) → delivered.
+        assert self._fire_at(db, key="e2a", threshold=2, marked_dims=["timeline"])["active"] is False
+        assert self._fire_at(db, key="e2b", threshold=2, marked_dims=["timeline", "authority"])["active"] is True
+        # A different pair works identically — nothing is dimension-specific.
+        assert self._fire_at(db, key="e2c", threshold=2, marked_dims=["need", "budget"])["active"] is True
+
+    def test_threshold_1_fires_on_the_first_signal(self, db):
+        # Aggressive: any single BANT signal delivers the quote immediately.
+        assert self._fire_at(db, key="e1", threshold=1, marked_dims=["authority"])["active"] is True
+
+    def test_threshold_4_requires_all_four(self, db):
+        assert self._fire_at(db, key="e4a", threshold=4, marked_dims=["need", "budget", "authority"])["active"] is False
+        assert (
+            self._fire_at(db, key="e4b", threshold=4, marked_dims=["need", "budget", "authority", "timeline"])["active"]
+            is True
+        )
+
+    def test_delivered_state_is_selecting_with_the_service_list(self, db):
+        body = self._fire_at(db, key="e2d", threshold=2, marked_dims=["need", "timeline"])
+        assert body["status"] == "selecting"
+        assert [s["id"] for s in body["services"]] == ["s1"]
+
+
 class TestTriggerGating:
     def test_below_threshold_is_inactive(self, db):
         client = _make_client(db, email="t1@example.com", api_key="t1")
