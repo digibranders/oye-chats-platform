@@ -182,7 +182,7 @@ export function CannedResponsesPanel(): ReactElement {
     <div className="space-y-5">
       <SectionHeader
         title={t('inbox.quickReplies') || 'Quick replies'}
-        description="Reusable canned responses your team can insert during a conversation."
+        description={t('inbox.reusableCannedResponsesYourTeam') || 'Reusable canned responses your team can insert during a conversation.'}
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus size={15} aria-hidden="true" />
@@ -333,7 +333,7 @@ export function CannedResponsesPanel(): ReactElement {
         dismissible={!submitting}
         size="lg"
         title={editing ? t('inbox.editQuickReply') || 'Edit quick reply' : t('inbox.newQuickReply') || 'New quick reply'}
-        description="Saved replies are shared with everyone on your team."
+        description={t('inbox.savedRepliesAreSharedWith') || 'Saved replies are shared with everyone on your team.'}
         footer={
           <>
             <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={submitting}>

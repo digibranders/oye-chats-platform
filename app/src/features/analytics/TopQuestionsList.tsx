@@ -20,7 +20,7 @@ export function TopQuestionsList({ questions }: TopQuestionsListProps): ReactEle
       <EmptyState
         icon={MessageSquare}
         title={t('analytics.noQuestionsYet') || 'No questions yet'}
-        description="Once visitors start chatting with your chatbots, their most common questions will surface here."
+        description={t('analytics.onceVisitorsStartChattingWith') || 'Once visitors start chatting with your chatbots, their most common questions will surface here.'}
       />
     );
   }

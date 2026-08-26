@@ -7,6 +7,10 @@ import { useTranslation } from '../../i18n/useTranslation';
 /** Reporting windows the funnel selector offers (mirrors the backend params). */
 type FunnelPeriod = '7d' | '30d' | '90d' | 'all';
 
+// @i18n-exempt: both fields are resolved at the render site from the period
+// value - the label as `analytics.range.<value>` on the button, the note as
+// `analytics.rangeNote.<value>` in the description below. The English here is
+// those lookups' fallback.
 const FUNNEL_PERIOD_OPTIONS: ReadonlyArray<{ value: FunnelPeriod; label: string; note: string }> = [
   { value: '7d', label: '7 days', note: 'last 7 days' },
   { value: '30d', label: '30 days', note: 'last 30 days' },
@@ -98,6 +102,8 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
   const activePeriod =
     FUNNEL_PERIOD_OPTIONS.find((option) => option.value === funnelPeriod) ?? FUNNEL_PERIOD_OPTIONS[1];
 
+  const periodNote = t(`analytics.rangeNote.${activePeriod.value}`) || activePeriod.note;
+
   return (
     <section className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -106,8 +112,8 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
             {t('analytics.howVisitorsBecomeBuyers') || 'How visitors become buyers'}
           </h2>
           <p className="text-[12px] text-[var(--ds-text-muted)]">
-            Where people drop off on the way from a first visit to a booked call ·{' '}
-            {activePeriod.note}
+            {t('analytics.funnelDescription', { period: periodNote }) ||
+              `Where people drop off on the way from a first visit to a booked call · ${periodNote}`}
           </p>
         </div>
         <div

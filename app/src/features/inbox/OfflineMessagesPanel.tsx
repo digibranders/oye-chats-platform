@@ -241,7 +241,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
               <EmptyState
                 icon={MousePointerClick}
                 title={t('inbox.selectAMessage') || 'Select a message'}
-                description="Choose a conversation on the left to read it and reply."
+                description={t('inbox.chooseAConversationOnThe') || 'Choose a conversation on the left to read it and reply.'}
               />
             </div>
           )}

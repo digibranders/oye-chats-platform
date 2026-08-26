@@ -63,7 +63,10 @@ import {
 import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 import { t as translateNow } from '../../i18n/i18n';
 import { useTranslation } from '../../i18n/useTranslation';
+import { formatNumber } from '../../i18n/formatters';
 
+// @i18n-exempt: resolved at the render site from the option value
+// (`leads.filter.<value>`); the English here is that lookup's fallback.
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
   { value: 'named', label: 'Named leads' },
   { value: 'anonymous', label: 'Anonymous only' },
@@ -71,6 +74,8 @@ const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: strin
 ];
 
 /** How the lead table is ordered. Exposed via the "Sort by" control. */
+// @i18n-exempt: resolved at the render site from the option value
+// (`leads.filter.<value>`); the English here is that lookup's fallback.
 const SORT_OPTIONS = [
   { value: 'recent', label: 'Latest activity' },
   { value: 'quality', label: 'BANT' },
@@ -478,7 +483,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'status',
-        header: <span className="text-[var(--ds-success)]">BANT</span>,
+        header: <span className="text-[var(--ds-success)]">{translateNow('leads.bant') || 'BANT'}</span>,
         // BANT scoring is a Standard+ feature (`hasFeature('bant')`). On Free
         // AND Starter the RAG pipeline skips extraction, so the dimension
         // pills would render as four blank neutrals. Worse than an honest
@@ -583,7 +588,7 @@ export function LeadsPage(): ReactElement {
         <EmptyState
           icon={Users}
           title={t('leads.noLeadsYet') || 'No leads yet'}
-          description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy."
+          description={t('leads.createYourFirstAiChatbot') || 'Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy.'}
         />
       </PageContainer>
     );
@@ -754,7 +759,10 @@ export function LeadsPage(): ReactElement {
           <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
             {filtered.length === leads.length
               ? `${leads.length.toLocaleString()} ${leads.length === 1 ? 'lead' : 'leads'}`
-              : `Showing ${filtered.length.toLocaleString()} of ${leads.length.toLocaleString()} leads`}
+              : t('leads.showingOfLeads', {
+                    shown: formatNumber(filtered.length),
+                    total: formatNumber(leads.length),
+                  }) || `Showing ${formatNumber(filtered.length)} of ${formatNumber(leads.length)} leads`}
           </p>
 
           {/* Bulk-action bar - appears only with a live selection. Exports the
@@ -762,7 +770,8 @@ export function LeadsPage(): ReactElement {
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-2.5">
               <span className="text-[13px] font-medium text-[var(--ds-accent-text)]">
-                {selectedIds.size} selected
+                {t('leads.selectedCount', { count: selectedIds.size }) ||
+                  `${selectedIds.size} selected`}
               </span>
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={handleExportSelected}>
@@ -782,7 +791,7 @@ export function LeadsPage(): ReactElement {
             columns={columns}
             rows={filtered}
             rowKey={(lead) => lead.session_id}
-            caption="Leads captured by your AI chatbots"
+            caption={t('leads.leadsCapturedByYourAi') || 'Leads captured by your AI chatbots'}
             pageSize={20}
             onRowClick={openLead}
             empty={

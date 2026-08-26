@@ -32,6 +32,11 @@ import { useTranslation } from '../../i18n/useTranslation';
  * a property of their session, not of the operator's UI. `label` is chrome and
  * is resolved at the render site.
  */
+// @i18n-exempt: the BODIES here are sent to the VISITOR, whose language is a
+// property of their session, not of the operator's dashboard - translating them
+// because the console is in Hindi would put Hindi in front of an English
+// visitor. The labels are dashboard chrome and are resolved at the render site
+// from `inbox.template.<label>`.
 const DEFAULT_TEMPLATES: ReadonlyArray<{ label: string; body: string }> = [
   {
     label: 'Will follow up',

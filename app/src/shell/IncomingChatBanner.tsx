@@ -5,6 +5,7 @@ import { Button } from '../design-system';
 import { useNotifications } from '../context/NotificationContext';
 import { playPing } from '../features/inbox/notifications';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /** How long the banner stays before auto-dismissing. */
 const AUTO_DISMISS_MS = 30_000;
@@ -61,7 +62,10 @@ export function IncomingChatBanner(): ReactElement | null {
   const title = incomingHandoff.title || t('shell.incomingChat.title') || 'New chat request';
   const body =
     incomingHandoff.body ||
-    (botName ? `A visitor on ${botName} wants to talk to a person.` : t('shell.incomingChat.body') || 'A visitor wants to talk to a person.');
+    (botName
+      ? translateNow('shell.incomingChat.bodyOnBot', { name: botName }) ||
+        `A visitor on ${botName} wants to talk to a person.`
+      : t('shell.incomingChat.body') || 'A visitor wants to talk to a person.');
 
   const openChat = (): void => {
     dismissIncomingHandoff();

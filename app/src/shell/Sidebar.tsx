@@ -218,7 +218,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           <>
             <img
               src="/new_dark.png"
-              // i18n-exempt: the product name is a brand mark, identical in every
+              // @i18n-exempt: the product name is a brand mark, identical in every
               // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}
@@ -226,7 +226,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
             />
             <img
               src="/new_white.png"
-              // i18n-exempt: the product name is a brand mark, identical in every
+              // @i18n-exempt: the product name is a brand mark, identical in every
               // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}

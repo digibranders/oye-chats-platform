@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { Languages } from 'lucide-react';
 import { cn } from '../../design-system';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The conversation's resolved language, shown in the session sidebar.
@@ -20,6 +21,7 @@ export function ConversationLanguageBadge({
   languageCode: string | null | undefined;
   className?: string;
 }): ReactElement | null {
+  const { t } = useTranslation();
   const { labelFor } = useLocaleCatalog();
   const label = labelFor(languageCode);
   if (!label) return null;
@@ -30,7 +32,7 @@ export function ConversationLanguageBadge({
         'text-[11px] text-[var(--ds-text-muted)]',
         className,
       )}
-      title={`Visitor is writing in ${label}`}
+      title={t('inbox.visitorWritingIn', { language: label }) || `Visitor is writing in ${label}`}
     >
       <Languages size={11} aria-hidden="true" />
       {label}

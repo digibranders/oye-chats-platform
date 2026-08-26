@@ -50,6 +50,8 @@ interface Outcome {
 }
 
 /** Palette (aligned with the flow diagram's palette for consistency). */
+// @i18n-exempt: resolved at the render site from the outcome key
+// (`analytics.outcome.<key>`); the labels here are that lookup's English fallback.
 const OUTCOME_STYLES: Record<OutcomeKey, Omit<Outcome, 'value'>> = {
   meeting_booked: {
     key: 'meeting_booked',
@@ -153,7 +155,7 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
         <EmptyState
           icon={Compass}
           title={t('analytics.pickAChatbotToSee') || 'Pick a chatbot to see outcomes'}
-          description="Journey outcomes are always per-chatbot. Use the chatbot switcher above to focus this view."
+          description={t('analytics.journeyOutcomesAreAlwaysPer') || 'Journey outcomes are always per-chatbot. Use the chatbot switcher above to focus this view.'}
         />
       </PanelShell>
     );
@@ -196,7 +198,7 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
         <EmptyState
           icon={BarChart3}
           title={t('analytics.noChatSessionsYet') || 'No chat sessions yet'}
-          description="Once visitors start opening the chatbot, their outcomes will land here."
+          description={t('analytics.onceVisitorsStartOpeningThe') || 'Once visitors start opening the chatbot, their outcomes will land here.'}
         />
       </PanelShell>
     );
@@ -254,7 +256,10 @@ function Header({
     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
-          {t('analytics.journeyOutcomes') || 'Journey Outcomes'} <span className="text-[var(--ds-text-muted)]">(After Chat)</span>
+          {t('analytics.journeyOutcomes') || 'Journey Outcomes'}{' '}
+            <span className="text-[var(--ds-text-muted)]">
+              {t('analytics.afterChat') || '(After Chat)'}
+            </span>
         </h3>
       </div>
       <div className="flex items-center gap-2">
@@ -400,7 +405,7 @@ function Legend({ outcomes }: { outcomes: readonly Outcome[] }): ReactElement {
             </div>
             <span className="shrink-0 tabular-nums text-[12.5px] font-semibold text-[var(--ds-text)]">
               {o.value.toLocaleString()}{' '}
-              <span className="text-[10.5px] font-normal text-[var(--ds-text-muted)]">users</span>
+              <span className="text-[10.5px] font-normal text-[var(--ds-text-muted)]">{t('analytics.users') || 'users'}</span>
             </span>
           </li>
         );

@@ -16,6 +16,7 @@ import {
 import type { BillingCycle } from './planPricing';
 import type { ActivationHint } from './usePlanActivation';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
+import { TaxNote } from './TaxNote';
 
 /** Compact "what you get" bullet list for the plan being confirmed. */
 function PlanHighlights({ plan }: { plan: PlanView }): ReactElement {
@@ -474,6 +475,12 @@ export function PlanConfirmModal({
               )}
             </div>
           )}
+          {/* The figure above is a base price. This is the last screen before
+              the Razorpay sheet, so the rail's tax treatment is stated here or
+              nowhere. Skipped where no figure is quoted: a free tier, a
+              contact-sales tier, and while the quote is still loading. */}
+          {plan.isPaid && !contactOnly && !quote.loading && <TaxNote className="mt-2" />}
+
           <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
             <PlanHighlights plan={plan} />
           </div>

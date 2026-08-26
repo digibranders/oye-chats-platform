@@ -69,6 +69,8 @@ const QUOTATION_STATUS_TONE: Record<QuotationSummary['status'], 'success' | 'war
   idle: 'neutral',
 };
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`leads.quotationStatus.<status>`); the English here is that lookup's fallback.
 const QUOTATION_STATUS_LABEL: Record<QuotationSummary['status'], string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
@@ -396,7 +398,12 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
         <div className="rounded-xl border border-[var(--ds-border)] p-4">
           <div className="mb-2.5 flex items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-              {t('leads.journeyBeforeChat') || 'Journey before chat ·'} {rows.length} {rows.length === 1 ? 'page' : 'pages'}
+              {t(
+                rows.length === 1
+                  ? 'leads.journeyBeforeChatCountOne'
+                  : 'leads.journeyBeforeChatCountMany',
+                { count: rows.length },
+              ) || `Journey before chat · ${rows.length} pages`}
             </p>
             <button
               type="button"
@@ -459,7 +466,9 @@ function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | n
         {visitCount > 1 && (
           <div className="flex items-center justify-between text-[12px]">
             <span className="font-medium text-[var(--ds-text)]">{t('leads.returnVisitor') || 'Return visitor'}</span>
-            <span className="text-[var(--ds-text)]">{visitCount} visits</span>
+            <span className="text-[var(--ds-text)]">
+            {t('leads.visitCount', { count: visitCount }) || `${visitCount} visits`}
+          </span>
           </div>
         )}
       </div>

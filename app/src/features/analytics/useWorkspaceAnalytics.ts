@@ -71,7 +71,7 @@ export interface UseWorkspaceAnalyticsResult {
 
 function errorMessage(cause: unknown): string {
   if (cause instanceof Error && cause.message) return cause.message;
-  return translateNow('analytics.weCouldntLoadYourAnalytics') || 'We couldn’t load your analytics. Please try again.';
+  return translateNow('analytics.analyticsLoadFailedRetry') || 'We couldn’t load your analytics. Please try again.';
 }
 
 /**

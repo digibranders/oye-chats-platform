@@ -113,6 +113,8 @@ const STATUS_META: Record<
   { label: string; tone: NonNullable<StatusBadgeProps['tone']>; icon: LucideIcon; spin?: boolean }
 > = {
   open: { label: 'Open', tone: 'warning', icon: Clock },
+  // @i18n-exempt: resolved at the render site from the status key; the labels
+  // here are that lookup's English fallback.
   in_progress: { label: 'In progress', tone: 'accent', icon: Loader2, spin: true },
   resolved: { label: 'Resolved', tone: 'success', icon: CheckCircle2 },
   closed: { label: 'Closed', tone: 'neutral', icon: Archive },
@@ -221,7 +223,7 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
       <EmptyState
         icon={Inbox}
         title={t('shell.feedbackModal.emptyTitle') || 'No feedback yet'}
-        description="Once you send feedback, you'll see its status and our response here."
+        description={t('shell.onceYouSendFeedbackYoull') || 'Once you send feedback, you\'ll see its status and our response here.'}
       />
     );
   }
@@ -350,7 +352,10 @@ export function FeedbackModal({
     setAttachments((prev) => {
       const slots = MAX_ATTACHMENTS - prev.length;
       if (slots <= 0) {
-        setFormError(`You can attach up to ${MAX_ATTACHMENTS} screenshots.`);
+        setFormError(
+        translateNow('shell.feedback.maxAttachments', { count: MAX_ATTACHMENTS }) ||
+          `You can attach up to ${MAX_ATTACHMENTS} screenshots.`,
+      );
         return prev;
       }
       const accepted: ComposeAttachment[] = [];
@@ -531,7 +536,7 @@ export function FeedbackModal({
         tabs={tabs}
         value={activeTab}
         onChange={(key) => setActiveTab(key as FeedbackTab)}
-        ariaLabel="Feedback"
+        ariaLabel={t('shell.feedback.label') || 'Feedback'}
         className="mb-5"
       />
 
@@ -593,7 +598,7 @@ export function FeedbackModal({
                 onChange={(next) => setArea(next as FeedbackAreaId | '')}
                 placeholder={t('shell.feedbackModal.areaUnset') || 'Not sure / unspecified'}
                 options={[
-                  { value: '', label: 'Not sure / unspecified' },
+                  { value: '', label: t('shell.notSureUnspecified') || 'Not sure / unspecified' },
                   ...AREAS.map((option) => ({
                     value: option.id,
                     label: t(`shell.feedbackModal.areas.${option.id}`) || option.label,

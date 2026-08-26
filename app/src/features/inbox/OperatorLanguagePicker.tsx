@@ -102,7 +102,10 @@ export function OperatorLanguagePicker({
         <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>
       ) : (
         <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          {value ? `Visitor messages are translated into ${labelFor(value)}.` : t('inbox.messagesShowInTheirOriginal') || 'Messages show in their original language.'}
+          {value
+            ? t('inbox.messagesTranslatedInto', { language: labelFor(value) }) ||
+              `Visitor messages are translated into ${labelFor(value)}.`
+            : t('inbox.messagesShowInTheirOriginal') || 'Messages show in their original language.'}
         </p>
       )}
     </div>

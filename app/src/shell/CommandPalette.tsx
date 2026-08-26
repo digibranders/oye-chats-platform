@@ -55,7 +55,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               className="h-12 w-full bg-transparent text-sm text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
             />
             <kbd className="hidden rounded border border-[var(--ds-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ds-text-subtle)] sm:inline">
-              ESC
+              {t('shell.esc') || 'ESC'}
             </kbd>
           </div>
 

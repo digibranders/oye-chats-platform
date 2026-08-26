@@ -77,7 +77,9 @@ export function TranslationToggle({
       )}
     >
       <Languages size={11} aria-hidden="true" />
-      {showOriginal ? t('inbox.viewTranslation') || 'View translation' : `View original${label ? ` (${label})` : ''}`}
+      {showOriginal ? t('inbox.viewTranslation') || 'View translation' : label
+            ? t('inbox.viewOriginalIn', { language: label }) || `View original (${label})`
+            : t('inbox.viewOriginal') || 'View original'}
     </button>
   );
 }

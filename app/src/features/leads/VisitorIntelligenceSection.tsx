@@ -40,7 +40,7 @@ function LockedTeaser(): ReactElement {
   const { openUpgradeModal } = useUpgradeModal();
   return (
     <section className="space-y-3">
-      <SectionTitle>Network &amp; risk</SectionTitle>
+      <SectionTitle>{t('leads.networkRisk') || 'Network & risk'}</SectionTitle>
       <button
         type="button"
         onClick={() => openUpgradeModal('view_visitor_intelligence')}
@@ -260,7 +260,7 @@ export function VisitorIntelligenceSection({
 
   return (
     <section className="space-y-3">
-      <SectionTitle>Network &amp; risk</SectionTitle>
+      <SectionTitle>{t('leads.networkRisk') || 'Network & risk'}</SectionTitle>
       <div className="space-y-3">
         {hasCompanySignal(intel) ? (
           <CompanySignal intel={intel} />

@@ -82,7 +82,7 @@ export function TransferDialog({
       onTransferred();
     } catch (err) {
       setError(
-        err instanceof Error ? `Transfer failed: ${err.message}` : t('inbox.transferFailedPleaseTryAgain') || 'Transfer failed. Please try again.',
+        err instanceof Error ? (translateNow('inbox.transferFailedDetail', { reason: err.message }) || `Transfer failed: ${err.message}`) : t('inbox.transferFailedPleaseTryAgain') || 'Transfer failed. Please try again.',
       );
       setSubmitting(false);
     }
@@ -96,7 +96,10 @@ export function TransferDialog({
       open
       onClose={onClose}
       title={t('inbox.transferConversation') || 'Transfer conversation'}
-      description={`Hand ${visitorName} to an operator or department.`}
+      description={
+          t('inbox.handToOperator', { name: visitorName }) ||
+          `Hand ${visitorName} to an operator or department.`
+        }
       size="sm"
       footer={
         <div className="flex items-center justify-end gap-2">
@@ -150,7 +153,8 @@ export function TransferDialog({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{op.name}</span>
                       <span className="block text-[11px] text-[var(--ds-text-muted)]">
-                        {op.active_chats ?? 0} active
+                        {t('inbox.activeChats', { count: op.active_chats ?? 0 }) ||
+                          `${op.active_chats ?? 0} active`}
                       </span>
                     </span>
                     <User size={14} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />

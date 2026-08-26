@@ -2,6 +2,7 @@ import { type ReactElement } from 'react';
 import { AlertCircle, EyeOff, Loader2 } from 'lucide-react';
 import { Button, Card, CardContent, StatusBadge } from '../../../design-system';
 import { useBrandingAddon } from './useBrandingAddon';
+import { TaxNote } from './TaxNote';
 
 export interface BrandingAddonCardProps {
   /** Agent whose subscription carries the add-on. `null` targets the account. */
@@ -81,6 +82,11 @@ export function BrandingAddonCard({
             ? 'This is a recurring charge on top of your plan, billed via Razorpay until you cancel. A secure checkout opens to authorise the payment mandate.'
             : 'The add-on rides on a paid subscription. Choose a plan first, then add it here.'}
         </p>
+
+        {/* Only where the card actually quotes a price. Without a paid plan, or
+            before the charge currency resolves, no figure is shown and a tax
+            note would qualify nothing. */}
+        {hasPaidPlan && priceReady && <TaxNote className="-mt-2" />}
 
         {/* Aria-live so the wait for the activation webhook is announced rather
             than leaving a customer who has just paid staring at a static card. */}

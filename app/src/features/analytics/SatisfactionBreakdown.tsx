@@ -28,7 +28,7 @@ export function SatisfactionBreakdown({ ratings }: SatisfactionBreakdownProps): 
       <EmptyState
         icon={Star}
         title={t('analytics.noRatingsYet') || 'No ratings yet'}
-        description="After a live chat, visitors can rate their experience. Those ratings will appear here."
+        description={t('analytics.afterALiveChatVisitors') || 'After a live chat, visitors can rate their experience. Those ratings will appear here.'}
       />
     );
   }

@@ -22,7 +22,7 @@ export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): Re
       <EmptyState
         icon={Languages}
         title={t('analytics.noConversationsYet') || 'No conversations yet'}
-        description="Once visitors start chatting, you'll see which languages they use and how well your chatbot handles each one."
+        description={t('analytics.onceVisitorsStartChattingYoull') || 'Once visitors start chatting, you\'ll see which languages they use and how well your chatbot handles each one.'}
       />
     );
   }

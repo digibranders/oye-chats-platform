@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 import { StatusBadge, type StatusBadgeProps } from '../primitives/Badge';
 
 export interface PlanBadgeProps {
@@ -13,12 +14,13 @@ export interface PlanBadgeProps {
  * cheap "are they paying?" visual cue anywhere a plan needs a one-glance label.
  */
 export function PlanBadge({ planName, className }: PlanBadgeProps): ReactElement {
+  const { t } = useTranslation();
   const label = planName?.trim() || 'Free';
   const tone: StatusBadgeProps['tone'] = label.toLowerCase() === 'free' ? 'neutral' : 'accent';
 
   return (
     <StatusBadge tone={tone} className={className}>
-      {label} plan
+      {t('ds.planBadge', { plan: label }) || `${label} plan`}
     </StatusBadge>
   );
 }

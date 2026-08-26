@@ -5,6 +5,7 @@ import type { BillingCycle } from './planPricing';
 import { CycleToggle } from './PlanMatrix';
 import { PlanCards } from './PlanCards';
 import { ComparePlans } from './ComparePlans';
+import { TaxNote } from './TaxNote';
 
 export interface PlansPanelProps {
   plans: PlanView[];
@@ -77,6 +78,10 @@ export function PlansPanel({
         allowSelectCurrent={allowSelectCurrent}
         selectionDisabled={selectionDisabled}
       />
+
+      {/* Every figure above and in the matrix below is a base price. One note
+          under the cards covers both, on Billing ▸ Plans and in Launch Studio. */}
+      <TaxNote />
 
       {/* Full feature-by-feature breakdown, in-app and one click away. */}
       <ComparePlans

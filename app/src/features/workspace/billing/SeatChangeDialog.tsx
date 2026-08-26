@@ -3,6 +3,7 @@ import { AlertCircle, Minus, Plus } from 'lucide-react';
 import { Button, Modal } from '../../../design-system';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { changeOperatorSeats, recordBillingEvent, verifyRazorpaySubscription } from '../../../services/api';
+import { TaxNote } from './TaxNote';
 
 export interface SeatChangeDialogProps {
   open: boolean;
@@ -151,6 +152,10 @@ export function SeatChangeDialog({
           <dd className="font-medium text-[var(--ds-text)]">{seatPriceLabel}</dd>
         </div>
       </dl>
+
+      {/* Adding a seat quotes a base price that will be charged. Removing one
+          charges nothing, so there is no tax treatment to disclose. */}
+      {isAdd && <TaxNote className="mt-3" />}
 
       <p className="mt-4 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
         {isAdd

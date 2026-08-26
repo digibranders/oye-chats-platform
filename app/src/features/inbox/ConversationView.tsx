@@ -33,6 +33,7 @@ import type { ActiveChat, OperatorMessage, VisitorPresence } from './liveChatPro
 import { clockTime, initials, isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
 import { TranslationToggle } from './TranslationToggle';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Maximum number of canned-response suggestions shown in the slash menu. */
 const MAX_CANNED_SUGGESTIONS = 8;
@@ -56,7 +57,10 @@ function slugify(value: string): string {
 
 /** Build the plain-text transcript body for a conversation. */
 function buildTranscript(chat: ActiveChat, messages: OperatorMessage[]): string {
-  const lines: string[] = [`Conversation with ${chat.visitor_name}`];
+  const lines: string[] = [
+      translateNow('inbox.conversationWith', { name: chat.visitor_name }) ||
+        `Conversation with ${chat.visitor_name}`,
+    ];
   if (chat.bot_name) lines.push(`Chatbot: ${chat.bot_name}`);
   lines.push('');
   for (const message of messages) {
@@ -179,7 +183,7 @@ function MessageBubble({
             type="button"
             onClick={() => onOpenImage(safeFileUrl, altText)}
             className="block cursor-zoom-in rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
-            aria-label={`Open image: ${altText}`}
+            aria-label={t('inbox.openImage', { name: altText }) || `Open image: ${altText}`}
           >
             <img src={safeFileUrl} alt={altText} className="max-h-56 max-w-full rounded-md" />
           </button>
@@ -571,7 +575,8 @@ export function ConversationView({
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--ds-text-subtle)] [animation-delay:-0.15s]" />
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--ds-text-subtle)]" />
             </span>
-            {chat.visitor_name} is typing…
+            {t('inbox.isTyping', { name: chat.visitor_name }) ||
+              `${chat.visitor_name} is typing…`}
           </div>
         )}
         {seen && !visitorTyping && (

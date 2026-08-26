@@ -49,7 +49,7 @@ export function JourneyPage(): ReactElement {
   const gated = !entitlementsLoading && !JOURNEY_PLAN_SLUGS.has(planSlug);
 
   return (
-    <PageContainer title={t('analytics.journey') || 'Journey'} description="Visitor journey flow.">
+    <PageContainer title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'}>
       {entitlementsLoading ? (
         <Skeleton className="h-[540px]" />
       ) : gated ? (

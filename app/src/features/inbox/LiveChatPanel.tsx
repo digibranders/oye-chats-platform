@@ -159,7 +159,9 @@ function TeamRoster({ roster }: { roster: RosterOperator[] }): ReactElement | nu
               aria-hidden="true"
             />
             <span className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{op.name || 'Operator'}</span>
-            <span className="text-[12px] text-[var(--ds-text-muted)]">{op.active_chats} active</span>
+            <span className="text-[12px] text-[var(--ds-text-muted)]">
+                    {t('inbox.activeChats', { count: op.active_chats }) || `${op.active_chats} active`}
+                  </span>
           </div>
         ))}
       </div>
@@ -387,7 +389,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         const isConflict =
           typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 409;
         if (!isConflict) {
-          setActionError(err instanceof Error ? `Couldn’t accept chat: ${err.message}` : translateNow('inbox.liveChat.acceptFailed') || 'Couldn’t accept chat.');
+          setActionError(err instanceof Error ? (translateNow('inbox.couldntAcceptChatDetail', { reason: err.message }) || `Couldn’t accept chat: ${err.message}`) : translateNow('inbox.liveChat.acceptFailed') || 'Couldn’t accept chat.');
         }
       } finally {
         setAcceptingId(null);
@@ -405,7 +407,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       // WS `chat_closed` removes it from the board + clears selection.
     } catch (err) {
       setActionError(
-        err instanceof Error ? `Couldn’t return chat to AI: ${err.message}` : translateNow('inbox.liveChat.returnFailed') || 'Couldn’t return chat to AI.',
+        err instanceof Error ? (translateNow('inbox.couldntReturnChatToDetail', { reason: err.message }) || `Couldn’t return chat to AI: ${err.message}`) : translateNow('inbox.liveChat.returnFailed') || 'Couldn’t return chat to AI.',
       );
     } finally {
       setClosingId(null);
@@ -420,7 +422,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       await resolveOperatorChat(selectedId);
       // WS `chat_closed` removes it from the board + clears selection.
     } catch (err) {
-      setActionError(err instanceof Error ? `Couldn’t resolve chat: ${err.message}` : translateNow('inbox.liveChat.resolveFailed') || 'Couldn’t resolve chat.');
+      setActionError(err instanceof Error ? (translateNow('inbox.couldntResolveChatDetail', { reason: err.message }) || `Couldn’t resolve chat: ${err.message}`) : translateNow('inbox.liveChat.resolveFailed') || 'Couldn’t resolve chat.');
     } finally {
       setResolvingId(null);
     }
@@ -436,7 +438,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         setAwaitingConnect((prev) => ({ ...prev, [sessionId]: true }));
       } catch (err) {
         setActionError(
-          err instanceof Error ? `Couldn’t send invite: ${err.message}` : translateNow('inbox.liveChat.inviteFailed') || 'Couldn’t send connect invite.',
+          err instanceof Error ? (translateNow('inbox.couldntSendInviteDetail', { reason: err.message }) || `Couldn’t send invite: ${err.message}`) : translateNow('inbox.liveChat.inviteFailed') || 'Couldn’t send connect invite.',
         );
       } finally {
         setConnectingId(null);
@@ -460,7 +462,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         });
       } catch (err) {
         setActionError(
-          err instanceof Error ? `Couldn’t cancel invite: ${err.message}` : translateNow('inbox.liveChat.cancelInviteFailed') || 'Couldn’t cancel connect invite.',
+          err instanceof Error ? (translateNow('inbox.couldntCancelInviteDetail', { reason: err.message }) || `Couldn’t cancel invite: ${err.message}`) : translateNow('inbox.liveChat.cancelInviteFailed') || 'Couldn’t cancel connect invite.',
         );
       } finally {
         setCancellingId(null);
@@ -478,7 +480,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       await operator.refresh();
     } catch (err) {
       setAddSelfError(
-        err instanceof Error ? `Couldn’t assign you as an operator: ${err.message}` : translateNow('inbox.liveChat.assignFailed') || 'Couldn’t assign you as an operator.',
+        err instanceof Error ? (translateNow('inbox.couldntAssignYouAsDetail', { reason: err.message }) || `Couldn’t assign you as an operator: ${err.message}`) : translateNow('inbox.liveChat.assignFailed') || 'Couldn’t assign you as an operator.',
       );
     } finally {
       setAddingSelf(false);
@@ -675,7 +677,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         <InsightCard
           tone="warning"
           title={t('inbox.liveChat.openInAnotherTabTitle') || 'Live chat is open in another tab'}
-          body="Only one live-chat session can run per operator. Close the other tab, then reload this one to take over here."
+          body={t('inbox.onlyOneLiveChatSession') || 'Only one live-chat session can run per operator. Close the other tab, then reload this one to take over here.'}
         />
       )}
 
@@ -685,7 +687,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           <div className="flex-1 space-y-1 p-3">
             <RailSection icon={<Inbox size={13} />} label={t('inbox.liveChat.waiting') || 'Waiting'} count={visibleQueue.length} />
             {visibleQueue.length === 0 ? (
-              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No one is waiting.</p>
+              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">{t('inbox.noOneIsWaiting') || 'No one is waiting.'}</p>
             ) : (
               visibleQueue.map((q) => (
                 <RailButton
@@ -707,7 +709,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
 
             <RailSection icon={<MessageSquare size={13} />} label={t('inbox.liveChat.active') || 'Active'} count={visibleActive.length} />
             {visibleActive.length === 0 ? (
-              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No active conversations.</p>
+              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">{t('inbox.noActiveConversations') || 'No active conversations.'}</p>
             ) : (
               visibleActive.map((c) => {
                 const unread = unreadBySession[c.session_id] ?? 0;
@@ -783,7 +785,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                         type="button"
                         onClick={() => openPreview(q)}
                         className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
-                        aria-label={`Preview conversation with ${q.name}`}
+                        aria-label={t('inbox.previewConversationWith', { name: q.name }) || `Preview conversation with ${q.name}`}
                       >
                         <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{q.name}</span>
                         <span className="block truncate text-[12px] text-[var(--ds-text-muted)]">
@@ -820,7 +822,8 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                     )}
                     {q.last_message_at && (
                       <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
-                        {relativeTime(q.last_message_at)} ago
+                        {t('inbox.timeAgo', { when: relativeTime(q.last_message_at) }) ||
+                          `${relativeTime(q.last_message_at)} ago`}
                       </p>
                     )}
                   </div>
@@ -876,7 +879,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               <EmptyState
                 icon={MessageSquare}
                 title={t('inbox.liveChat.noConversation') || 'No conversation selected'}
-                description="Accept a waiting visitor or pick an active conversation from the left to start chatting."
+                description={t('inbox.acceptAWaitingVisitorOr') || 'Accept a waiting visitor or pick an active conversation from the left to start chatting.'}
               />
             </div>
           )}
@@ -913,7 +916,10 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ds-overlay)] p-4"
           role="dialog"
           aria-modal="true"
-          aria-label={`Conversation preview - ${previewSession.name}`}
+          aria-label={
+                t('inbox.conversationPreviewFor', { name: previewSession.name }) ||
+                `Conversation preview - ${previewSession.name}`
+              }
         >
           <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-lg">
             {/* Header */}
@@ -926,7 +932,11 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <StatusBadge tone="accent">{previewSession.bant_tier}</StatusBadge>
                   <span className="text-[11px] text-[var(--ds-text-muted)]">
-                    {t('inbox.liveChat.score') || 'Score'} {previewSession.bant_score} · {previewSession.bant_dimensions_count}/4 signals
+                    {t('inbox.liveChat.scoreSignals', {
+                      score: previewSession.bant_score,
+                      signals: previewSession.bant_dimensions_count,
+                    }) ||
+                      `Score ${previewSession.bant_score} · ${previewSession.bant_dimensions_count}/4 signals`}
                   </span>
                 </div>
               </div>

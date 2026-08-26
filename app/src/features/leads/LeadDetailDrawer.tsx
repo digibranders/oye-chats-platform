@@ -52,6 +52,7 @@ import {
   scoreTone,
 } from './leadModel';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface LeadDetailDrawerProps {
   data: LeadDetailData;
@@ -106,7 +107,10 @@ function ScoreRing({ score }: { score: number }): ReactElement {
       height={size}
       viewBox={`0 0 ${size} ${size}`}
       role="img"
-      aria-label={`Qualification score ${clamped} out of 100`}
+      aria-label={
+        translateNow('leads.qualificationScoreOutOf', { score: clamped }) ||
+        `Qualification score ${clamped} out of 100`
+      }
     >
       <circle
         cx={size / 2}
@@ -352,7 +356,7 @@ function LeadAnnotationsSection({
                   {t('leads.saved') || 'Saved'}
                 </span>
               ) : note ? (
-                `Last edited ${formatDateTime(note.ts)}`
+                (t('leads.lastEdited', { when: formatDateTime(note.ts) }) || `Last edited ${formatDateTime(note.ts)}`)
               ) : (
                 t('leads.notSavedYet') || 'Not saved yet'
               )}

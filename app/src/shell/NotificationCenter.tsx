@@ -223,7 +223,7 @@ export function NotificationCenter() {
               <EmptyState
                 icon={Bell}
                 title={t('shell.notifications.empty') || "You're all caught up"}
-                description="Handoffs, new leads and billing alerts will appear here."
+                description={t('shell.handoffsNewLeadsAndBilling') || 'Handoffs, new leads and billing alerts will appear here.'}
                 className="border-0 px-2 py-8"
               />
             ) : (

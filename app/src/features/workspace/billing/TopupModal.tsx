@@ -11,6 +11,7 @@ import {
   recordBillingEvent,
 } from '../../../services/api';
 import { describeTopupExpiry, parseCreditBalance } from '../usage-model';
+import { TaxNote } from './TaxNote';
 
 interface TopupPack {
   /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
@@ -364,6 +365,12 @@ export function TopupModal({
             );
           })}
         </div>
+      )}
+
+      {/* Pack prices are base prices. Shown only once packs are on screen:
+          there is nothing to qualify while the grid is loading or empty. */}
+      {!loadingPacks && !currencyLoading && packs.length > 0 && (
+        <TaxNote className="mt-4 text-center" />
       )}
 
       <p className="mt-4 text-center text-[11px] text-[var(--ds-text-subtle)]">

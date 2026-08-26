@@ -324,7 +324,7 @@ export function buildActivity(
     entries.push({
       id: `message-${index}-${at}`,
       kind: 'message',
-      title: `New message from ${who}`,
+      title: translateNow('home.newMessageFrom', { who }) || `New message from ${who}`,
       meta: meta ?? null,
       at,
       iso: msg.createdAt,

@@ -4,6 +4,7 @@ import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-sy
 import { useJourneyAnalytics } from './useJourneyAnalytics';
 import type { JourneyTopPageRow } from '../../services/api';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 /**
  * PageInfluence. Ranked list of the actual pages visitors were on
@@ -155,8 +156,8 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title={t('analytics.pickAChatbotToSee') || 'Pick a chatbot to see which pages drive chats'}
-        description="Page Influence is scoped per chatbot. Use the chatbot switcher above to focus this view."
+        title={t('analytics.pickAChatbotForPages') || 'Pick a chatbot to see which pages drive chats'}
+        description={t('analytics.pageInfluenceIsScopedPer') || 'Page Influence is scoped per chatbot. Use the chatbot switcher above to focus this view.'}
       />
     );
   }
@@ -186,7 +187,7 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
       <EmptyState
         icon={BarChart3}
         title={t('analytics.noPageInfluenceDataYet') || 'No page influence data yet'}
-        description="Once visitors browse your site and open the chatbot, the pages that led them here will show up."
+        description={t('analytics.onceVisitorsBrowseYourSite') || 'Once visitors browse your site and open the chatbot, the pages that led them here will show up.'}
       />
     );
   }
@@ -307,17 +308,30 @@ function PageInfluenceHelp(): ReactElement {
             {t('analytics.whatIsPageInfluence') || 'What is Page Influence?'}
           </p>
           <p className="mb-2">
-            These are the pages people were reading right before they opened your chatbot.
-            The higher a page sits, the more visitors it sent into a chat.
+            {t('analytics.pageInfluenceIntro') ||
+              'These are the pages people were reading right before they opened your chatbot. The higher a page sits, the more visitors it sent into a chat.'}
           </p>
           <p className="mb-2">
             {t('analytics.pageInfluenceUse') ||
               'Use it to spot which pages spark the most conversations, then make sure your best answers and offers live on those pages.'}
           </p>
           <p>
-            <span className="font-medium text-[var(--ds-text)]">{t('analytics.visitors') || 'Visitors'}</span> is how many
-            people. <span className="font-medium text-[var(--ds-text)]">{t('analytics.visits') || 'Visits'}</span> is the
-            total page views, since one person can reload or come back more than once.
+            <Trans
+              k="analytics.visitorsVsVisits"
+              fallback="{visitors} is how many people. {visits} is the total page views, since one person can reload or come back more than once."
+              values={{
+                visitors: (
+                  <span className="font-medium text-[var(--ds-text)]">
+                    {t('analytics.visitors') || 'Visitors'}
+                  </span>
+                ),
+                visits: (
+                  <span className="font-medium text-[var(--ds-text)]">
+                    {t('analytics.visits') || 'Visits'}
+                  </span>
+                ),
+              }}
+            />
           </p>
         </div>
       )}

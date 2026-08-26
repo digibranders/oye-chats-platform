@@ -271,7 +271,7 @@ const EXIT_DESTINATION = { id: 'exit', label: 'Drop-off / Exit', tone: 'gray' as
 // left so the entry column sums to the center count instead of silently
 // under-counting these sessions. Sentinel, never a real URL path, so
 // clicking it is a no-op rather than a page filter.
-// i18n-exempt: sentinel VALUE, compared and filtered on, never chrome.
+// @i18n-exempt: sentinel VALUE, compared and filtered on, never chrome.
 // Translating it would break the comparison that identifies these sessions.
 const DIRECT_PATH = 'Direct (no prior page)';
 
@@ -1053,8 +1053,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title={t('analytics.pickAChatbotToSee') || 'Pick a chatbot to see its flow'}
-        description="Journey flows are always per-chatbot. Use the chatbot switcher above to focus this view."
+        title={t('analytics.pickAChatbotForFlow') || 'Pick a chatbot to see its flow'}
+        description={t('analytics.journeyFlowsAreAlwaysPer') || 'Journey flows are always per-chatbot. Use the chatbot switcher above to focus this view.'}
       />
     );
   }
@@ -1084,7 +1084,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       <EmptyState
         icon={UserCheck}
         title={t('analytics.noChatSessionsYetIn') || 'No chat sessions yet in this window'}
-        description="Once visitors start chatting with your chatbot, their journey through your pages will render here."
+        description={t('analytics.onceVisitorsStartChattingWith2') || 'Once visitors start chatting with your chatbot, their journey through your pages will render here.'}
       />
     );
   }
@@ -1507,10 +1507,13 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             type="button"
             onClick={() => setFilterOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-            aria-label={`Showing ${flowCountLabel} page flows. Click to change how many are shown.`}
+            aria-label={
+            translateNow('analytics.showingFlows', { count: flowCountLabel }) ||
+            `Showing ${flowCountLabel} page flows. Click to change how many are shown.`
+          }
             title={t('analytics.changeHowManyPageFlows') || 'Change how many page flows are shown'}
           >
-            <span className="text-[var(--ds-text-muted)]">Showing:</span>
+            <span className="text-[var(--ds-text-muted)]">{t('analytics.showing') || 'Showing:'}</span>
             <span>{flowCountLabel === 'All' ? t('analytics.allFlows') || 'All flows' : `${flowCountLabel} flows`}</span>
           </button>
           {startFilter && (
@@ -1518,7 +1521,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               type="button"
               onClick={() => setStartFilter(null)}
               className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-              aria-label={`Clear filter: journeys starting on ${startFilter}`}
+              aria-label={
+              translateNow('analytics.clearStartFilter', { page: startFilter }) ||
+              `Clear filter: journeys starting on ${startFilter}`
+            }
               title={t('analytics.clearFilter') || 'Clear filter'}
             >
               <span className="text-[var(--ds-text-muted)]">{t('analytics.startsOn') || 'Starts on:'}</span>
@@ -1531,8 +1537,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               type="button"
               onClick={() => setOutcomeFilter(null)}
               className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-              aria-label={`Clear outcome filter: ${outcomeFilter}`}
-              title={t('analytics.clearOutcomeFilter') || 'Clear outcome filter'}
+              aria-label={
+              translateNow('analytics.clearOutcomeFilter', { outcome: outcomeFilter }) ||
+              `Clear outcome filter: ${outcomeFilter}`
+            }
+              title={t('analytics.clearOutcomeFilterShort') || 'Clear outcome filter'}
             >
               <span className="text-[var(--ds-text-muted)]">{t('analytics.endsIn') || 'Ends in:'}</span>
               <span>{outcomeLabel(outcomeFilter)}</span>
@@ -1595,7 +1604,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         open={zoomOpen}
         onClose={() => setZoomOpen(false)}
         title={t('analytics.userJourneyFlow') || 'User Journey Flow'}
-        description="Drag to pan · scroll to zoom"
+        description={t('analytics.dragToPanScrollTo') || 'Drag to pan · scroll to zoom'}
         size="xl"
       >
         <ZoomableFlowCanvas vbH={flow.effVBH}>{diagramContent}</ZoomableFlowCanvas>

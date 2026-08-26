@@ -34,7 +34,7 @@ export interface TierMeta {
   readonly tone: NonNullable<StatusBadgeProps['tone']>;
 }
 
-// i18n-exempt: English fallbacks for a pure model module. LeadsPage and
+// @i18n-exempt: English fallbacks for a pure model module. LeadsPage and
 // LeadDetailDrawer resolve these at render with t(`leads.tier.${key}`); this
 // file must not resolve a locale itself (its unit tests keep React out).
 export const TIER_META: Record<TierKey, TierMeta> = {
@@ -175,7 +175,7 @@ interface FunnelStageDef {
 }
 
 /** The canonical visitor → meeting funnel, in order. */
-// i18n-exempt: as above -- English fallbacks resolved at the render site with
+// @i18n-exempt: as above -- English fallbacks resolved at the render site with
 // t(`leads.funnelStage.${key}`).
 const FUNNEL_STAGE_DEFS: readonly FunnelStageDef[] = [
   { key: 'total_visitors', label: 'Visitors', sublabel: 'Landed on your site' },

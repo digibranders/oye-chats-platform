@@ -366,8 +366,8 @@ export function SettingsPage(): ReactElement {
                       {t('settings.page.emailAddress') || 'Email address'}
                     </p>
                     <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                      Contact your workspace owner to change your email - operator accounts don’t have a
-                      self-serve email change today.
+                      {t('settings.operatorEmailChange') ||
+                        'Contact your workspace owner to change your email - operator accounts don’t have a self-serve email change today.'}
                     </p>
                   </div>
                   <StatusBadge tone="neutral" className="shrink-0">

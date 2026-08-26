@@ -11,6 +11,7 @@ import {
 } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 import { t as translateNow } from '../../i18n/i18n';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -257,7 +258,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
             />
             {confirmMismatch && (
               <p id="account-security-confirm-error" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
-                {t('settings.security.passwordsDoNotMatch') || 'Passwords do not match.'}
+                {t('settings.security.passwordsDoNotMatchShort') || 'Passwords do not match.'}
               </p>
             )}
           </div>
@@ -415,7 +416,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
       <div className="p-5 sm:p-6">
         <SectionHeader
           title={t('settings.security.emailAddress') || 'Email address'}
-          description="Changing your login email requires your current password and a code sent to the new address."
+          description={t('settings.changingYourLoginEmailRequires') || 'Changing your login email requires your current password and a code sent to the new address.'}
           actions={
             step === 'idle' ? (
               <Button variant="outline" size="sm" onClick={startRequest}>
@@ -453,7 +454,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
                 type="email"
                 required
                 autoComplete="email"
-                // i18n-exempt: an example address showing the expected FORMAT.
+                // @i18n-exempt: an example address showing the expected FORMAT.
                 // The shape is the same in every language.
                 placeholder="you@example.com"
                 value={newEmail}
@@ -498,9 +499,14 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
             <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-warning)]">
               <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
               <span>
-                {t('settings.security.verificationPendingFor') || 'Verification pending for'} <strong>{pendingEmail ?? newEmail}</strong>. Enter the code we
-                emailed there to finish the change - your login email stays{' '}
-                <strong>{user.email ?? 'unchanged'}</strong> until then.
+                <Trans
+                  k="settings.security.verificationPending"
+                  fallback="Verification pending for {pending}. Enter the code we emailed there to finish the change - your login email stays {current} until then."
+                  values={{
+                    pending: <strong>{pendingEmail ?? newEmail}</strong>,
+                    current: <strong>{user.email ?? 'unchanged'}</strong>,
+                  }}
+                />
               </span>
             </div>
             <div>
@@ -573,7 +579,7 @@ export function AccountSecuritySection({ user, onEmailChange }: AccountSecurityS
         title={
           <span id="account-security-heading">{t('settings.security.title') || 'Account security'}</span>
         }
-        description="Manage how you sign in."
+        description={t('settings.manageHowYouSignIn') || 'Manage how you sign in.'}
       />
       <div className="space-y-4">
         <ChangePasswordCard isOperator={isOperator} />

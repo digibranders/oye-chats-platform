@@ -19,6 +19,8 @@ import { t as translateNow } from '../../i18n/i18n';
 
 const LIMIT = 50;
 
+// @i18n-exempt: resolved at the render site from the option value
+// (`analytics.range.<value>`); the labels here are that lookup's fallback.
 const DAY_OPTIONS = [
   { value: '7', label: '7 days' },
   { value: '30', label: '30 days' },
@@ -46,6 +48,8 @@ function formatRelativeDate(iso?: string | null): string {
 // Module constant: evaluated at import, before a locale exists. Headers are
 // resolved at the render site from the column key; the English here is the
 // inline fallback.
+// @i18n-exempt: resolved at the render site from the column key
+// (`analytics.column.<key>`); the headers here are that lookup's fallback.
 const COLUMNS: Column<UnansweredQuestion>[] = [
   {
     key: 'question',
@@ -128,14 +132,14 @@ export function UnansweredQuestionsPanel({
       <CardHeader>
         <SectionHeader
           title={t('analytics.unansweredQuestions') || 'Unanswered questions'}
-          description="Questions visitors asked that your AI couldn't answer from its knowledge base, ranked by frequency."
+          description={t('analytics.questionsVisitorsAskedThatYour') || 'Questions visitors asked that your AI couldn\'t answer from its knowledge base, ranked by frequency.'}
           actions={
             <div className="flex items-center gap-2">
               <SegmentedControl
                 options={DAY_OPTIONS}
                 value={range}
                 onChange={(v) => setRange(v as DayRange)}
-                ariaLabel="Time range for unanswered questions"
+                ariaLabel={t('analytics.timeRangeForUnansweredQuestions') || 'Time range for unanswered questions'}
               />
               <Button
                 variant="outline"
@@ -173,7 +177,7 @@ export function UnansweredQuestionsPanel({
           <EmptyState
             icon={CheckCircle2}
             title={t('analytics.noUnansweredQuestions') || 'No unanswered questions'}
-            description="Your AI is answering everything visitors throw at it. Questions it can't answer will appear here so you know what content to add."
+            description={t('analytics.yourAiIsAnsweringEverything') || 'Your AI is answering everything visitors throw at it. Questions it can\'t answer will appear here so you know what content to add.'}
           />
         ) : (
           <DataTable
@@ -183,7 +187,7 @@ export function UnansweredQuestionsPanel({
             }))}
             rows={gaps}
             rowKey={(row) => row.question}
-            caption="Questions your AI couldn't answer from its knowledge base"
+            caption={t('analytics.questionsYourAiCouldntAnswer') || 'Questions your AI couldn\'t answer from its knowledge base'}
           />
         )}
       </CardContent>

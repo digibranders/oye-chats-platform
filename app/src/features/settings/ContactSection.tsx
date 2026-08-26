@@ -5,7 +5,7 @@ import { useTranslation } from '../../i18n/useTranslation';
 
 /** Where bespoke requests land. Mirrors the platform's published contact address. */
 const CONTACT_EMAIL = 'support@oyechats.com';
-// i18n-exempt: this subject line is read by OyeChats support when the mail
+// @i18n-exempt: this subject line is read by OyeChats support when the mail
 // lands, not by the operator who sends it. Localizing it would make inbox
 // triage depend on the sender's dashboard language.
 const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Custom request')}`;

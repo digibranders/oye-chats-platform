@@ -15,6 +15,8 @@ import { useTranslation } from '../../i18n/useTranslation';
 
 type InboxTab = 'messages' | 'live' | 'replies';
 
+// @i18n-exempt: resolved at the render site from the tab key
+// (`inbox.tab.<key>`); the labels here are that lookup's English fallback.
 const TABS: TabItem[] = [
   // Module constant: evaluated at import, before a locale exists. The label is
   // resolved at render from the tab key (`TabItem` is a design-system type and
@@ -58,7 +60,7 @@ export function InboxPage(): ReactElement {
     return (
       <PageContainer
         title={t('inbox.support') || 'Support'}
-        description="See what your visitors are saying and respond fast."
+        description={t('inbox.seeWhatYourVisitorsAre') || 'See what your visitors are saying and respond fast.'}
       >
         <div className="mx-auto w-full max-w-md py-12">
           <LockedFeatureCard intent="view_support" icon={InboxIcon} />
@@ -70,7 +72,7 @@ export function InboxPage(): ReactElement {
   return (
     <PageContainer
       title={t('inbox.support') || 'Support'}
-      description="See what your visitors are saying and respond fast."
+      description={t('inbox.seeWhatYourVisitorsAre') || 'See what your visitors are saying and respond fast.'}
     >
       <Tabs
         tabs={TABS.map((tab) => ({
@@ -79,7 +81,7 @@ export function InboxPage(): ReactElement {
         }))}
         value={tab}
         onChange={(key) => setTab(key as InboxTab)}
-        ariaLabel="Support sections"
+        ariaLabel={t('inbox.supportSections') || 'Support sections'}
       />
 
       <div

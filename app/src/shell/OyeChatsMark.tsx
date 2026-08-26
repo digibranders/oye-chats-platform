@@ -19,7 +19,7 @@ export function OyeChatsMark({ size = 32, className = '' }: OyeChatsMarkProps): 
   return (
     <div
       role="img"
-      // i18n-exempt: the product wordmark. A brand name is identical in every
+      // @i18n-exempt: the product wordmark. A brand name is identical in every
       // language, and this labels the logo rather than describing copy.
       aria-label="OyeChats"
       className={cn('relative shrink-0 overflow-hidden', className)}

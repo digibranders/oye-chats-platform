@@ -11,6 +11,7 @@ import {
   swapAgentInPath,
 } from './agentSwitcherModel';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * BotSwitcher - the TopBar control that scopes the whole dashboard to one
@@ -105,7 +106,10 @@ export function BotSwitcher() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label={`Current chatbot: ${label}. Switch chatbot`}
+          aria-label={
+            translateNow('shell.currentChatbotSwitch', { name: label }) ||
+            `Current chatbot: ${label}. Switch chatbot`
+          }
           className="flex h-9 max-w-[42vw] items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] md:max-w-[200px]"
         >
           <BotAvatar

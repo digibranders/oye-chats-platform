@@ -78,7 +78,7 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
       // know their availability change didn't save.
       setError(
         err instanceof Error
-          ? `Couldn’t update your availability: ${err.message}`
+          ? (translateNow('inbox.couldntUpdateYourAvailabilityDetail', { reason: err.message }) || `Couldn’t update your availability: ${err.message}`)
           : translateNow('inbox.couldntUpdateYourAvailabilityPlease') || 'Couldn’t update your availability. Please try again.',
       );
     } finally {

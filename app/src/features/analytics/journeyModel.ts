@@ -1,5 +1,8 @@
 
-import { t as translateNow } from '../../i18n/i18n';/**
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
+
+/**
  * Pure derivations behind the Journeys diagram's outcome column.
  *
  * Kept free of React so the arithmetic that reaches a customer's screen can be
@@ -115,11 +118,20 @@ export function deriveDropOffTotal(data: DropOffInput): DropOffTotal {
  * plans against it as if it were measured.
  */
 export function dropOffTooltip(total: DropOffTotal): string {
-  const sessions = `${total.count.toLocaleString()} ${total.count === 1 ? 'session' : 'sessions'}`;
+  const count = formatNumber(total.count);
+  const sessions =
+    translateNow(total.count === 1 ? 'analytics.sessionOne' : 'analytics.sessionMany', { count }) ||
+    `${count} session${total.count === 1 ? '' : 's'}`;
   if (total.basis === 'reported') {
-    return `${sessions} opened chat and then did nothing, no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`;
+    return (
+      translateNow('analytics.dropOffReported', { sessions }) ||
+      `${sessions} opened chat and then did nothing, no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`
+    );
   }
-  return `Estimate: ${sessions}. This API build doesn't report the exact drop-off count, so it's total sessions minus conversions minus post-chat browsing. Sessions that did both are subtracted twice, so the real figure may be higher.`;
+  return (
+    translateNow('analytics.dropOffEstimate', { sessions }) ||
+    `Estimate: ${sessions}. This API build doesn't report the exact drop-off count, so it's total sessions minus conversions minus post-chat browsing. Sessions that did both are subtracted twice, so the real figure may be higher.`
+  );
 }
 
 // ── Empty-state copy ────────────────────────────────────────────────────────
@@ -145,10 +157,18 @@ export function filterEmptyDescription(input: FilterEmptyInput): string {
     // "Attributed to", not "ended in": a conversion whose session had no
     // tracked pre-chat page still counts on the outcome card but has no path
     // to show here. Claiming none ended in it would be false.
-    return `No tracked journeys are attributed to ${outcomeLabel(input.outcome)} in this window${scope}.`;
+    return (
+      translateNow('analytics.noJourneysForOutcome', {
+        outcome: outcomeLabel(input.outcome),
+        scope,
+      }) || `No tracked journeys are attributed to ${outcomeLabel(input.outcome)} in this window${scope}.`
+    );
   }
   if (input.startPage) {
-    return `No tracked journeys started on ${input.startPage} in this window.`;
+    return (
+      translateNow('analytics.noJourneysFromPage', { page: input.startPage }) ||
+      `No tracked journeys started on ${input.startPage} in this window.`
+    );
   }
   return translateNow('analytics.noTrackedJourneysMatchThe') || 'No tracked journeys match the current filters.';
 }

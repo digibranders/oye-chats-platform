@@ -41,6 +41,8 @@ const QUOTATION_STATUS_TONE: Record<QuotationStatus, 'success' | 'warning' | 'ne
   idle: 'neutral',
 };
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`inbox.quotationStatus.<status>`); the English here is that lookup's fallback.
 const QUOTATION_STATUS_LABEL: Record<QuotationStatus, string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
@@ -157,7 +159,10 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
         />
         <div className="flex items-center justify-between gap-2">
           <span className="text-[11px] text-[var(--ds-text-subtle)]">
-            {note ? `Last edited ${relativeTime(note.ts)} ago` : t('inbox.notSavedYet') || 'Not saved yet'}
+            {note
+            ? t('inbox.lastEditedAgo', { when: relativeTime(note.ts) }) ||
+              `Last edited ${relativeTime(note.ts)} ago`
+            : t('inbox.notSavedYet') || 'Not saved yet'}
           </span>
           <Button size="sm" variant="outline" onClick={() => saveNote(noteDraft)} disabled={!noteChanged}>
             {t('inbox.saveNote') || 'Save note'}
@@ -301,7 +306,10 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
 
       {typeof details.visitor_rating === 'number' && (
         <Field label={t('inbox.satisfaction') || 'Satisfaction'}>
-          <div className="flex items-center gap-1" aria-label={`Rated ${details.visitor_rating} out of 5`}>
+          <div className="flex items-center gap-1" aria-label={
+                t('inbox.ratedOutOfFive', { rating: details.visitor_rating }) ||
+                `Rated ${details.visitor_rating} out of 5`
+              }>
             {[1, 2, 3, 4, 5].map((n) => (
               <Star
                 key={n}
@@ -331,7 +339,10 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
             {details.bot_name && <StatusBadge tone="neutral">{details.bot_name}</StatusBadge>}
             {details.department_name && <StatusBadge tone="neutral">{details.department_name}</StatusBadge>}
             {typeof details.message_count === 'number' && (
-              <StatusBadge tone="neutral">{details.message_count} messages</StatusBadge>
+              <StatusBadge tone="neutral">
+                  {t('inbox.messageCount', { count: details.message_count }) ||
+                    `${details.message_count} messages`}
+                </StatusBadge>
             )}
           </div>
         </div>

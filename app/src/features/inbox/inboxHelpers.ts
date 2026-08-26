@@ -30,7 +30,7 @@ export function statusBadge(status: string | null | undefined): { label: string;
 const SENTIMENT_META: Record<Sentiment, { label: string; tone: BadgeTone }> = {
   positive: { label: 'Positive', tone: 'success' },
   neutral: { label: 'Neutral', tone: 'neutral' },
-  // i18n-exempt: English fallback for a pure module; callers localize via
+  // @i18n-exempt: English fallback for a pure module; callers localize via
   // t(`inbox.sentiment.${sentiment}`) at the render site.
   negative: { label: 'Needs attention', tone: 'danger' },
 };

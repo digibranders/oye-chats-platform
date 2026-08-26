@@ -189,7 +189,7 @@ export type TrendRange = '7d' | '30d' | '90d' | 'all';
  */
 export type AnalyticsPeriod = TrendRange;
 
-// i18n-exempt: module constant evaluated at import, before a locale exists.
+// @i18n-exempt: module constant evaluated at import, before a locale exists.
 // The labels are English fallbacks; AnalyticsPage resolves them at render with
 // t(`analytics.range.${value}`).
 export const TREND_RANGES: ReadonlyArray<{ value: TrendRange; label: string }> = [

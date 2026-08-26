@@ -107,7 +107,12 @@ function buildRecommendations(data: HomeData, agentScoped: boolean): Recommendat
     recs.push({
       key: 'leads',
       icon: Target,
-      title: `Follow up on ${formatCount(data.totals.hotLeads)} hot lead${data.totals.hotLeads === 1 ? '' : 's'}`,
+      title:
+        translateNow(
+          data.totals.hotLeads === 1 ? 'home.followUpHotLeadOne' : 'home.followUpHotLeadMany',
+          { count: formatCount(data.totals.hotLeads) },
+        ) ||
+        `Follow up on ${formatCount(data.totals.hotLeads)} hot lead${data.totals.hotLeads === 1 ? '' : 's'}`,
       description: translateNow('home.highIntentVisitorsAreWaiting') || 'High-intent visitors are waiting. Review and reach out while they’re warm.',
       to: '/leads',
       cta: translateNow('home.viewLeads') || 'View leads',
@@ -217,7 +222,7 @@ function HomeEmpty(): ReactElement {
     <EmptyState
       icon={Sparkles}
       title={t('home.createYourFirstAiChatbot') || 'Create your first AI chatbot'}
-      description="Set up a chatbot, train it on your content and add it to your website. We’ll guide you through every step."
+      description={t('home.setUpAChatbotTrain') || 'Set up a chatbot, train it on your content and add it to your website. We’ll guide you through every step.'}
       action={
         <Link
           to="/launch"
@@ -265,7 +270,7 @@ function PlanUsageCard({
     <Card className="space-y-5 p-5">
       <SectionHeader
         title={t('home.planUsage') || 'Plan & usage'}
-        description={`Usage for ${selectedBot.name}`}
+        description={t('home.usageFor', { name: selectedBot.name }) || `Usage for ${selectedBot.name}`}
         actions={<PlanBadge planName={planName} />}
       />
 
@@ -289,6 +294,8 @@ function PlanUsageCard({
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+// @i18n-exempt: resolved at the render site from the column key
+// (`home.column.<key>`); the headers here are that lookup's English fallback.
 const TOP_QUESTION_COLUMNS: Column<TopQuestion>[] = [
   {
     key: 'question',
@@ -415,7 +422,7 @@ function HomeContent({
           <section aria-label={t('home.yourChatbots') || 'Your chatbots'} className="space-y-4">
             <SectionHeader
               title={t('home.yourChatbots') || 'Your chatbots'}
-              description="Health and activity across every AI chatbot in this workspace."
+              description={t('home.healthAndActivityAcrossEvery') || 'Health and activity across every AI chatbot in this workspace.'}
               actions={
                 <Link
                   to="/agents"
@@ -445,7 +452,7 @@ function HomeContent({
           <section aria-label={t('home.mostAskedQuestions') || 'Most asked questions'} className="space-y-4">
             <SectionHeader
               title={t('home.whatVisitorsAskMost') || 'What visitors ask most'}
-              description="The questions your chatbots hear the most, across all conversations."
+              description={t('home.theQuestionsYourChatbotsHear') || 'The questions your chatbots hear the most, across all conversations.'}
             />
             <DataTable
               columns={TOP_QUESTION_COLUMNS.map((col) => ({
@@ -454,7 +461,7 @@ function HomeContent({
               }))}
               rows={data.topQuestions}
               rowKey={(row) => row.question}
-              caption="Most frequently asked questions and how many times each was asked"
+              caption={t('home.mostFrequentlyAskedQuestionsAnd') || 'Most frequently asked questions and how many times each was asked'}
               empty={
                 <span className="text-[13px] text-[var(--ds-text-muted)]">
                   {t('home.noQuestionsYetTheyllAppear') || 'No questions yet - they’ll appear here once visitors start chatting.'}
@@ -508,7 +515,7 @@ function HomeContent({
               hides it, it returns when a single agent is selected. */}
           {selectedBot && (
             <section aria-label={t('home.recentActivity') || 'Recent activity'} className="space-y-4">
-              <SectionHeader title={t('home.recentActivity') || 'Recent activity'} description="Feedback and new messages." />
+              <SectionHeader title={t('home.recentActivity') || 'Recent activity'} description={t('home.feedbackAndNewMessages') || 'Feedback and new messages.'} />
               {activityItems.length > 0 ? (
                 <Card className="p-5">
                   <ActivityTimeline items={activityItems} />
