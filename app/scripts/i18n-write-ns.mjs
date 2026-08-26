@@ -20,14 +20,33 @@ if (!file || !ns || !jsonPath) {
 // --force lets an English correction land on top of a stale value; without it
 // an existing entry is left exactly as it is.
 const FORCE = rest.includes('--force');
+// Callers holding an already-parsed dictionary pass --nested; see nest().
+const NESTED = rest.includes('--nested');
 
 const flat = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 
-/** Keys arrive dotted ("table.range"); the dictionary is nested. */
-function nest(obj) {
+/**
+ * Keys arrive dotted ("table.range"); the dictionary is nested.
+ *
+ * `--nested` skips the splitting. Callers that already hold a parsed
+ * dictionary must pass it: re-splitting an existing key that legitimately
+ * CONTAINS a dot (the canned-response namespace is keyed by English labels,
+ * so "Sent the info." is a real key) silently restructures it into
+ * `{'Sent the info': {'': ...}}` and every lookup for it starts returning
+ * null. That is how a delete of one key corrupted its neighbours.
+ */
+function nest(obj, path = '') {
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (v && typeof v === 'object') { out[k] = nest(v); continue; }
+    const here = path ? `${path}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) { out[k] = nest(v, here); continue; }
+    if (typeof v !== 'string') {
+      // Writing a number or an array here produced `retries: {}` and
+      // `tags: {'0':'a'}` with no error at all.
+      console.error(`refusing to write a non-string value at "${here}": ${JSON.stringify(v)}`);
+      process.exit(1);
+    }
+    if (NESTED) { out[k] = v; continue; }
     const parts = k.split('.');
     let cur = out;
     for (const p of parts.slice(0, -1)) {
@@ -91,7 +110,29 @@ function merge(existing, incoming) {
   return { value: out, added, changed };
 }
 
-const q = (s) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+/**
+ * A single-quoted TS string literal.
+ *
+ * Escaping only `\` and `'` was not enough: a value containing a newline
+ * produced an UNTERMINATED string literal, so the whole dictionary stopped
+ * parsing. Canned-response bodies are multi-line, so this was reachable. Line
+ * and paragraph separators are escaped too because they terminate a string in
+ * some JS parsers even though they are not newlines.
+ */
+const q = (s) =>
+  `'${s
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+    // Any other C0 control character would be written raw and is never
+    // legitimate copy.
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, (c) =>
+      `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    )}'`;
 // Some keys are not identifiers - the canned-response namespace keys entries by
 // their English label, spaces included - so they have to be written quoted or
 // the file will not parse.
@@ -120,6 +161,12 @@ if (start !== -1) {
   tail = src.slice(end).replace(/^,/, '');
 } else {
   const anchor = src.lastIndexOf('\n} as const;');
+  if (anchor === -1) {
+    // `slice(0, -1)` silently appended the namespace after `export default`
+    // and still reported success.
+    console.error(`${file}: cannot find the "} as const;" anchor; refusing to guess where the namespace goes`);
+    process.exit(1);
+  }
   head = src.slice(0, anchor);
   tail = src.slice(anchor);
 }

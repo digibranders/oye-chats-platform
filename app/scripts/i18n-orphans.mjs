@@ -22,7 +22,10 @@ function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(e.name) && !full.includes(`${path.sep}locales${path.sep}`)) out.push(full);
+    // .jsx/.js too: 88 legacy files are still mid-migration, and the first one
+    // to call t() would otherwise make this report a LIVE key as dead - which
+    // i18n-remove-keys then deletes from every dictionary.
+    else if (/\.(tsx?|jsx?)$/.test(e.name) && !full.includes(`${path.sep}locales${path.sep}`)) out.push(full);
   }
   return out;
 }
@@ -34,7 +37,9 @@ const sources = walk(SRC).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 // on a nav item, `titleKey` on a nudge variant, `const quotaKey = ...` chosen
 // by a branch - and a `t(`-anchored scan reports every one of those as dead.
 const literal = new Set();
-for (const m of sources.matchAll(/['"`]([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_]+)+)['"`]/g)) {
+// Segments may contain '-' or spaces: the canned-response namespace is keyed
+// by free-form English labels ("inbox.template.Sent the info").
+for (const m of sources.matchAll(/['"`]([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_ -]+)+)['"`]/g)) {
   literal.add(m[1]);
 }
 
@@ -65,4 +70,6 @@ console.log(`dictionary keys: ${flat.length}`);
 console.log(`referenced literally: ${flat.length - orphans.length}`);
 console.log(`ORPHANS: ${orphans.length}`);
 for (const o of orphans) console.log('  ' + o);
-process.exitCode = orphans.length > 0 && process.argv.includes('--strict') ? 1 : 0;
+// Non-zero by DEFAULT. This report feeds a deleter, so "some orphans, exit 0"
+// is the wrong default: it invites a caller to act on it unreviewed.
+process.exitCode = orphans.length > 0 && !process.argv.includes('--allow-orphans') ? 1 : 0;

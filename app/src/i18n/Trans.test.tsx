@@ -8,7 +8,8 @@
  * These tests pin the property that makes that impossible: one key holds the
  * whole sentence, and the placeholder moves within it.
  */
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { useState, type ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { Trans } from './Trans';
@@ -67,5 +68,30 @@ describe('Trans', () => {
       <Trans k="does.not.exist" fallback="{x} and {x}" values={{ x: <b>one</b> }} />,
     );
     expect(screen.getAllByText('one')).toHaveLength(2);
+  });
+});
+
+describe('Trans element identity', () => {
+  it('keeps each value with its placeholder when the sentence reorders', () => {
+    function Counter({ tag }: { tag: string }): ReactElement {
+      const [n, setN] = useState(0);
+      return (
+        <button type="button" onClick={() => setN((v) => v + 1)}>
+          {tag}:{n}
+        </button>
+      );
+    }
+    const values = { a: <Counter tag="A" />, b: <Counter tag="B" /> };
+    const { rerender } = render(
+      <Trans k="does.not.exist" fallback="{a} then {b}" values={values} />,
+    );
+    fireEvent.click(screen.getByText(/^A:/));
+    fireEvent.click(screen.getByText(/^A:/));
+    expect(screen.getByText('A:2')).toBeTruthy();
+
+    // Same values, reordered sentence: A must still be A, still at 2.
+    rerender(<Trans k="does.not.exist" fallback="{b} फिर {a}" values={values} />);
+    expect(screen.getByText('A:2')).toBeTruthy();
+    expect(screen.getByText('B:0')).toBeTruthy();
   });
 });

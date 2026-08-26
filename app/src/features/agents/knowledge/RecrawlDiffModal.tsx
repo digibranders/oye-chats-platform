@@ -199,6 +199,7 @@ export function RecrawlDiffModal({
               {buckets.map((bucket) => {
                 const isActive = viewing === bucket.key;
                 const isEmpty = bucket.count === 0;
+                const bucketName = t(`agents.bucket.${bucket.key}`) || bucket.label;
                 return (
                   <div
                     key={bucket.key}
@@ -212,12 +213,8 @@ export function RecrawlDiffModal({
                       onClick={() => setViewing(isActive ? null : bucket.key)}
                       disabled={isEmpty}
                       aria-label={
-                        t('agents.viewBucketPages', {
-                          bucket: (
-                            t(`agents.bucket.${bucket.key}`) || bucket.label
-                          ).toLowerCase(),
-                        }) ||
-                        `View ${(t(`agents.bucket.${bucket.key}`) || bucket.label).toLowerCase()} pages`
+                        t('agents.viewBucketPages', { bucket: bucketName.toLowerCase() }) ||
+                        `View ${bucketName.toLowerCase()} pages`
                       }
                       aria-expanded={isActive}
                       className="absolute right-2 top-2 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-40"
@@ -230,7 +227,7 @@ export function RecrawlDiffModal({
                         bucket.toneClass,
                       )}
                     >
-                      {t(`agents.bucket.${bucket.key}`) || bucket.label}
+                      {bucketName}
                     </span>
                     <span className="my-1 text-2xl font-semibold tabular-nums text-[var(--ds-text)]">
                       {bucket.count.toLocaleString()}

@@ -35,6 +35,22 @@ const LOCALIZABLE_ATTRS = new Set([
   'aria-roledescription',
   'aria-valuetext',
   'aria-description',
+  // The design system renders most of its prose through PROPS, not children:
+  // PageContainer/SectionHeader/EmptyState/Card all take `description`, and
+  // Field takes `hint`. Omitting these is why a page could show a translated
+  // title and an English subtitle on the same line and still score clean.
+  'description',
+  'hint',
+  'body',
+  'caption',
+  'subtitle',
+  'sublabel',
+  'legend',
+  'help',
+  'helperText',
+  'emptyLabel',
+  'ariaLabel',
+  'srLabel',
 ]);
 
 /** Attributes that are markup/behaviour, never copy. */
@@ -161,14 +177,43 @@ function isSentenceShaped(text) {
  * the code to stay true. The marker carries its reason at the call site and is
  * greppable.
  */
+// `@i18n-exempt:` in annotation form, at the START of a comment.
+//
+// The bare words were reachable by accident: a doc comment that merely
+// DISCUSSED the marker ("the marker is i18n-exempt-file: followed by a
+// reason") disabled an entire module. Requiring a leading `@` and comment-start
+// position makes prose about the marker distinguishable from the marker, and a
+// reason is still required so the decision is recorded where it applies.
+const EXEMPT_MARKER = /^@i18n-exempt:\s*(\S[\s\S]{7,})/;
+
+/**
+ * Inline exemption: `// i18n-exempt: reason`, on the line or the one above.
+ *
+ * Three things are enforced, because each was reachable by accident:
+ *  - it must be in a COMMENT, not inside a string. A help constant reading
+ *    "Add i18n-exempt: above a line to skip it" used to exempt itself and its
+ *    neighbours.
+ *  - it must carry a real reason. A bare marker is not a decision.
+ *  - the window is the marker's own line and the ONE below it. The old window
+ *    ran three lines FORWARD, so one marker silently covered unrelated copy.
+ */
 function isExempt(sourceLines, lineIndex) {
-  // The marker's reason often runs to a second or third comment line, so scan
-  // a small window above rather than only the immediately preceding line.
-  for (let i = lineIndex; i >= Math.max(0, lineIndex - 3); i -= 1) {
-    if (/i18n-exempt:/.test(sourceLines[i] ?? '')) return true;
+  // Walk up through CONTIGUOUS comment lines and stop at the first line of
+  // code. That lets a marker's reason wrap over several lines (they usually
+  // do) while making it impossible for the window to reach past the comment
+  // block into unrelated statements, which a fixed line count could.
+  for (let i = lineIndex; i >= 0; i -= 1) {
+    const line = sourceLines[i] ?? '';
+    const comment = line.match(/(?:\/\/|\/\*|^\s*\*)\s*(.*)$/);
+    if (comment && EXEMPT_MARKER.test(comment[1])) return true;
+    if (i === lineIndex) continue; // the marker may be trailing on this line
+    const isCommentLine = /^\s*(\/\/|\/\*|\*|\{\s*\/\*)/.test(line);
+    if (!isCommentLine) return false;
   }
   return false;
 }
+
+
 
 /**
  * File exemption: `i18n-exempt-file: reason` in the module's own header.
@@ -180,10 +225,21 @@ function isExempt(sourceLines, lineIndex) {
  * and API instructions, and translating it would degrade what the agent acts
  * on. Only the header counts, so it cannot be smuggled in halfway down a file.
  */
-function isFileExempt(source) {
-  const header = source.split('\n').slice(0, 60).join('\n');
-  return /i18n-exempt-file:/.test(header);
+function isFileExempt(source, ts, sf) {
+  // Only a marker in a genuine comment token in the module header counts, and
+  // it must carry a reason. A bare substring match let a doc comment that
+  // merely DISCUSSED the marker disable an entire module.
+  const first = sf.statements[0];
+  const end = first ? first.getStart(sf) : Math.min(source.length, 4000);
+  const header = source.slice(0, end);
+  for (const m of header.matchAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g)) {
+    // Same annotation form, and it must open a line of the comment.
+    const match = m[0].match(/(?:^|\n)\s*(?:\*|\/\/)?\s*@i18n-exempt-file:\s*(\S[\s\S]{7,})/);
+    if (match) return true;
+  }
+  return false;
 }
+
 
 /**
  * Block exemption: the marker on a declaration covers everything inside it.
@@ -197,14 +253,10 @@ function isFileExempt(source) {
  */
 function isExemptBlock(node, ts, sf, source) {
   for (let cur = node; cur; cur = cur.parent) {
-    if (
-      !ts.isVariableStatement(cur) &&
-      !ts.isFunctionDeclaration(cur) &&
-      !ts.isPropertyDeclaration(cur) &&
-      !ts.isMethodDeclaration(cur)
-    ) {
-      continue;
-    }
+    // A VariableStatement only. Anchoring on a FunctionDeclaration meant one
+    // marker above a component exempted every string inside it - a whole
+    // screen, not a range.
+    if (!ts.isVariableStatement(cur)) continue;
     const ranges = ts.getLeadingCommentRanges(source, cur.getFullStart()) ?? [];
     for (const r of ranges) {
       if (source.slice(r.pos, r.end).includes('i18n-exempt:')) return true;
@@ -213,13 +265,59 @@ function isExemptBlock(node, ts, sf, source) {
   return false;
 }
 
-const LOOKBEHIND = 220;
-function isLocalized(source, start) {
-  const preceding = source.slice(Math.max(0, start - LOOKBEHIND), start);
-  // `translateNow` is the same function imported directly, used inside
-  // callbacks where the hook's per-locale identity would break memoization.
-  return /\b(?:t|translateNow)\(\s*['"`]/.test(preceding);
+/**
+ * Whether an ATTRIBUTE value is already served through `t()`.
+ *
+ * `attr={t('k') || 'English'}` is the idiom; `attr="English"` is not. This is
+ * an exact check on the initializer, replacing a 220-character textual
+ * lookbehind that marked any value as done merely for sitting near a `t(`
+ * call. That false positive covered whole components.
+ */
+function isAttrLocalized(node, ts) {
+  const init = node.initializer;
+  if (!init || !ts.isJsxExpression(init) || !init.expression) return false;
+  return isTranslationFallback(init.expression, ts) || callsTranslate(init.expression, ts);
 }
+
+/**
+ * Text rendered inside JSX is copy because of WHERE it is, not how it looks.
+ *
+ * Only things that cannot be prose are excluded: punctuation, bare numbers,
+ * separators, units and single non-letter tokens.
+ */
+function isRenderedText(text) {
+  const t = decodeForShape(text).trim();
+  if (!t) return false;
+  if (!/[A-Za-z]/.test(t)) return false;
+  // A lone letter, or an ASCII-art separator.
+  if (t.replace(/[^A-Za-z]/g, '').length < 2) return false;
+  // Tailwind-ish class soup that ended up in a text position.
+  if (/^[a-z-]+(\s+[a-z0-9:[\]/.#()-]+)+$/.test(t)) return false;
+  if (/\b(flex|grid|rounded|border|text-|bg-|px-|py-|w-\d|h-\d)\b/.test(t)) return false;
+  return true;
+}
+
+/**
+ * Whether an attribute VALUE is copy rather than a machine token.
+ *
+ * The attribute path used to gate on `/[A-Za-z]{2}/` alone, so `label="en-IN"`,
+ * `alt="bot-6a427d4529b9"` and `title="POST /bots/{id}/documents"` were all
+ * reported as remaining work. Noise in the number trains people to skim it.
+ */
+function isAttrCopy(value) {
+  const v = value.trim();
+  if (!/[A-Za-z]{2}/.test(v)) return false;
+  if (/^[a-z]{2}(-[A-Za-z0-9]{2,8})+$/.test(v)) return false;      // BCP-47 tag
+  if (/^bot-[0-9a-f]+$/i.test(v)) return false;                     // bot key
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return false;           // email
+  if (/^(GET|POST|PUT|PATCH|DELETE)\s/.test(v)) return false;       // route
+  if (/^\//.test(v) && !/\s/.test(v)) return false;                 // path
+  if (/^https?:\/\//.test(v)) return false;                         // url
+  if (/^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9_]+)+$/.test(v)) return false; // dotted key
+  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return false;                  // colour
+  return true;
+}
+
 
 /**
  * Exactly the `t('key') || 'English'` idiom, checked on the AST.
@@ -305,31 +403,49 @@ function isInFunction(node, ts) {
   return false;
 }
 
-function isKeyedConstant(node, ts, source) {
+function isKeyedConstant(node, ts, source, templatePrefixes) {
   for (let p = node.parent; p; p = p.parent) {
     if (ts.isObjectLiteralExpression(p)) {
+      // Which property does this literal belong to?
+      let owner = null;
+      for (const prop of p.properties) {
+        if (ts.isPropertyAssignment(prop) && prop.initializer === node) owner = prop.name?.getText?.() ?? null;
+      }
       const names = p.properties.map((prop) => prop.name?.getText?.() ?? '');
-      // Explicit sibling key: `{ label, labelKey }`.
-      if (names.some((n) => /Key$/.test(n))) return true;
-      // Id-keyed table: `{ id, label }` resolved at the render site with a
-      // template key built from the id -- t(`ns.area.${option.id}`) || label.
-      // Adding a `labelKey` to every row would restate the id for no gain, so
-      // the presence of a template-literal t() call in the file is the signal.
-      // `{ id, label }` rows, and `Record<Id, { label }>` tables where the
-      // object KEY is the id and there is no `id` property to match on.
-      if (names.includes('label') && /\b(?:t|translateNow)\(\s*`/.test(source)) return true;
-      // `Record<Status, string>` tables have no `label` property at all -- the
-      // object KEY is the id and the value is the copy. A module-scope table
-      // cannot call t() in place, so the only correct pattern is a template key
-      // resolved at the render site, and a template t() in the file is the
-      // evidence that is what happens.
-      if (!isInFunction(node, ts) && /\b(?:t|translateNow)\(\s*`/.test(source)) return true;
+
+      // Explicit sibling key, for THIS property: `{ label, labelKey }`.
+      // Matching any `*Key` sibling exempted every table with a `botKey`,
+      // `apiKey` or `sortKey` on it - which is most of them.
+      if (owner && names.includes(`${owner}Key`)) return true;
+
+      // Id-keyed table resolved at the render site with a template key. The
+      // evidence must NAME this object's namespace: "the file contains a
+      // backtick t() somewhere" exempted 24 files wholesale.
+      const covered = templatePrefixes.some((prefix) => {
+        const leaf = prefix.replace(/\.$/, '').split('.').pop();
+        return leaf && (names.includes(leaf) || owner === leaf || names.includes('id'));
+      });
+      if (!covered) return false;
+      if (names.includes('label') || names.includes('id')) return true;
+      // `Record<Status, string>`: the object KEY is the id and the value is the
+      // copy, so there is no `label` property to match on.
+      if (!isInFunction(node, ts)) return true;
       return false;
     }
     if (ts.isJsxElement(p) || ts.isFunctionDeclaration(p)) return false;
   }
   return false;
 }
+
+/** `t(`ns.area.${x}`)` -> "ns.area." — the prefixes a file resolves dynamically. */
+function templatePrefixesIn(source) {
+  const out = [];
+  for (const m of source.matchAll(/(?:\bt|\btranslateNow)\(\s*`([A-Za-z0-9_.]*?)\$\{/g)) {
+    if (m[1]) out.push(m[1]);
+  }
+  return out;
+}
+
 
 /**
  * Strings that stay English on purpose. Every entry carries its reason.
@@ -410,6 +526,9 @@ function scanFile(file) {
   const relPath = rel(file);
   const source = fs.readFileSync(file, 'utf8');
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Namespaces this file resolves through a template key. Used as the evidence
+  // that a keyed constant really is resolved at its render site.
+  const tmplPrefixes = templatePrefixesIn(source);
   const hits = [];
   const formatSites = [];
   let tCalls = 0;
@@ -450,7 +569,13 @@ function scanFile(file) {
     // --- JSX text nodes (incl. multi-line) ---
     if (ts.isJsxText(node)) {
       const text = node.text.replace(/\s+/g, ' ').trim();
-      if (text && /[A-Za-z]/.test(text) && (isSentenceShaped(text) || isSingleWordLabel(text))) {
+      // Text sitting in JSX is copy BY POSITION. The old shape tests demanded
+      // two words and an initial capital, which dropped "credits / month",
+      // "times asked", "(optional)" and every lowercase continuation of a
+      // sentence split across elements - 47 live fragments in directories this
+      // guard scored 0. Only a deny-list of things that cannot be prose is
+      // excluded now.
+      if (isRenderedText(text)) {
         hits.push({
           node,
           file: relPath,
@@ -459,11 +584,9 @@ function scanFile(file) {
           text,
           attr: null,
           inFunction: isInFunction(node, ts),
-          localized:
-            isLocalized(source, node.getStart(sf)) ||
-            isKeyedConstant(node, ts, source) ||
-            isTransFallback(node, ts),
-          inFunction: isInFunction(node, ts),
+          // JSX text is never the right operand of a `||`, so the only ways it
+          // can be localized are a <Trans> fallback or a keyed constant.
+          localized: isKeyedConstant(node, ts, source, tmplPrefixes) || isTransFallback(node, ts),
         });
       }
     }
@@ -481,7 +604,7 @@ function scanFile(file) {
         ) {
           value = node.initializer.expression.text;
         }
-        if (value && LOCALIZABLE_ATTRS.has(attr) && /[A-Za-z]{2}/.test(value)) {
+        if (value && LOCALIZABLE_ATTRS.has(attr) && isAttrCopy(value)) {
           hits.push({
             node,
             file: relPath,
@@ -490,9 +613,38 @@ function scanFile(file) {
             text: value,
             attr,
             inFunction: isInFunction(node, ts),
-            localized: isLocalized(source, node.getStart(sf)) || isTransFallback(node, ts),
+            localized: isAttrLocalized(node, ts) || isTransFallback(node, ts),
           });
         }
+      }
+    }
+
+    // --- template literals WITH substitutions ---
+    // `ts.isStringLiteral || ts.isNoSubstitutionTemplateLiteral` never reaches a
+    // TemplateExpression, so every interpolated sentence was invisible - which
+    // is exactly the population most at risk of fragment assembly and of
+    // English plurals baked into the markup.
+    if (ts.isTemplateExpression(node)) {
+      const joined = [node.head.text, ...node.templateSpans.map((sp) => sp.literal.text)]
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (isSentenceShaped(joined) || isSingleWordLabel(joined)) {
+        hits.push({
+          node,
+          file: relPath,
+          line: lineOf(node),
+          kind: 'literal',
+          text: joined,
+          attr: null,
+          inConsole: false,
+          inThrow: false,
+          localized:
+            isTranslationFallback(node, ts) ||
+            isKeyedConstant(node, ts, source, tmplPrefixes) ||
+            isTransFallback(node, ts),
+          inFunction: isInFunction(node, ts),
+        });
       }
     }
 
@@ -525,7 +677,7 @@ function scanFile(file) {
           inThrow,
           localized:
             isTranslationFallback(node, ts) ||
-            isKeyedConstant(node, ts, source) ||
+            isKeyedConstant(node, ts, source, tmplPrefixes) ||
             isTransFallback(node, ts),
           inFunction: isInFunction(node, ts),
         });
@@ -537,7 +689,7 @@ function scanFile(file) {
   visit(sf);
 
   const srcLines = source.split('\n');
-  const fileExempt = isFileExempt(source);
+  const fileExempt = isFileExempt(source, ts, sf);
   for (const h of hits) {
     h.exempt =
       fileExempt ||
@@ -620,6 +772,12 @@ if (wantJson) {
 } else if (listMode === 'bare') {
   for (const h of allHits.filter((x) => x.class === CLASSES.UI_TEXT || x.class === CLASSES.A11Y)) {
     console.log(`${h.file}:${h.line} [${h.phase}] (${h.kind}${h.attr ? ':' + h.attr : ''}) ${JSON.stringify(h.text).slice(0, 100)}`);
+  }
+} else if (listMode === 'exemptions') {
+  // Every exemption with its reason, so review can see what was skipped and
+  // why rather than trusting a number that silently excludes them.
+  for (const h of allHits.filter((x) => x.exempt)) {
+    console.log(`${h.file}:${h.line} (${h.kind}) ${JSON.stringify(h.text).slice(0, 80)}`);
   }
 } else if (listMode === 'format') {
   for (const f of allFormat) {

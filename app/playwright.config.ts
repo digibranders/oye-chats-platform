@@ -65,7 +65,11 @@ export default defineConfig({
       'VITE_API_URL=http://oyechats-admin-e2e.test npx vite build --outDir dist-e2e ' +
       '&& npx vite preview --outDir dist-e2e --port 4175 --host 127.0.0.1',
     url: 'http://127.0.0.1:4175',
-    reuseExistingServer: !process.env.CI,
+    // NOT reused. Playwright only probes that the URL answers, never that the
+    // bundle is current, so an orphaned preview from a Ctrl-C'd run made the
+    // whole suite assert against a stale build - it passed green with the
+    // source dictionary deliberately broken.
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

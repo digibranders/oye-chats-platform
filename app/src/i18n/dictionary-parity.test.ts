@@ -96,14 +96,12 @@ describe('dictionary parity', () => {
   });
 
   it.each(DICTIONARIES)('%s is actually translated, not copied English', (_name, dict) => {
-    // A dictionary that merely mirrors English passes every structural check
-    // above while delivering nothing. Latin-script values are legitimate for
-    // product nouns, so this only requires that the dictionary is
-    // predominantly non-Latin rather than that every value is.
-    const values = Object.entries(dict)
-      .filter(([key]) => key in flatEn)
-      .map(([, v]) => v);
-    const identical = values.filter((v, i) => v === Object.values(flatEn)[i]);
-    expect(identical.length / Math.max(values.length, 1)).toBeLessThan(0.5);
+    // Compared BY KEY. The previous version compared `Object.values(dict)[i]`
+    // against `Object.values(flatEn)[i]`, which only lined up because both
+    // files happen to render in the same sorted order; any hand edit that
+    // reordered one file made this silently stop measuring anything.
+    const shared = Object.keys(dict).filter((k) => k in flatEn);
+    const identical = shared.filter((k) => dict[k] === flatEn[k]);
+    expect(identical.length / shared.length).toBeLessThan(0.5);
   });
 });

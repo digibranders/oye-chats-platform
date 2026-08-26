@@ -10,8 +10,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e:build": "VITE_API_URL=http://oyechats-admin-e2e.test vite build",
-    "e2e": "npm run e2e:build && playwright test",
+    "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium webkit",
     "test:watch": "vitest",
     "size": "size-limit"

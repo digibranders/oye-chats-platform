@@ -9,6 +9,7 @@
  * Usage: node scripts/i18n-extract-pairs.mjs <ns> <dir> [<dir>...]
  */
 import fs from 'node:fs';
+import ts from 'typescript';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,10 +37,27 @@ const files = dirs.flatMap((d) => {
 
 const esc = ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // t('ns.key') || 'English'  /  ... || "English"  /  ... || `English`
-const CALL = new RegExp(
-  `(?:t|translateNow)\\(\\s*'(${esc}\\.[A-Za-z0-9_.]+)'\\s*(?:,\\s*(\\{[^}]*\\})\\s*)?\\)\\s*\\|\\|\\s*(['"\`])((?:\\\\.|(?!\\3)[\\s\\S])*?)\\3`,
-  'g',
-);
+// Opening of a call; the params object and the fallback are then read by
+// balance-matching, because `\{[^}]*\}` cannot span a NESTED params object and
+// silently dropped every call that had one.
+const CALL_OPEN = new RegExp(`(?:\\bt|\\btranslateNow)\\(\\s*'(${esc}\\.[A-Za-z0-9_.]+)'`, 'g');
+
+/** Index just past the balanced `{...}` (or `(...)`) starting at `i`. */
+function matchBrace(src, i, open = '{', close = '}') {
+  let depth = 0;
+  for (let j = i; j < src.length; j += 1) {
+    const c = src[j];
+    if (c === "'" || c === '"' || c === '`') {
+      const quote = c;
+      j += 1;
+      while (j < src.length && src[j] !== quote) j += src[j] === '\\' ? 2 : 1;
+      continue;
+    }
+    if (c === open) depth += 1;
+    else if (c === close) { depth -= 1; if (depth === 0) return j + 1; }
+  }
+  return -1;
+}
 
 /**
  * A parameterised call's fallback is a template literal, so its English reads
@@ -68,28 +86,111 @@ function canonicalise(text, paramsSrc) {
     return name ? `{${name}}` : whole;
   });
 }
-// <Trans k="ns.key" fallback="English" />, either attribute order
-const TRANS_K = new RegExp(`k="(${esc}\\.[A-Za-z0-9_.]+)"`, 'g');
 
 const pairs = new Map();
 const conflicts = [];
+// Every key ever SEEN, whether or not an English fallback was recovered. The
+// difference between this and `pairs` is the completeness check below.
+const seen = new Set();
+
+/** One recording path, so <Trans> gets the same conflict check as t(). */
+function record(key, text) {
+  if (pairs.has(key) && pairs.get(key) !== text) {
+    conflicts.push(`${key}\n    A: ${pairs.get(key)}\n    B: ${text}`);
+  }
+  pairs.set(key, text);
+}
 for (const file of files) {
   const src = fs.readFileSync(file, 'utf8');
-  for (const m of src.matchAll(CALL)) {
+  for (const m of src.matchAll(CALL_OPEN)) {
     const key = m[1];
-    const raw = m[4].replace(/\\'/g, "'").replace(/\\"/g, '"').replace(/\\`/g, '`').replace(/\\\\/g, '\\');
-    const text = canonicalise(raw, m[2]);
-    if (pairs.has(key) && pairs.get(key) !== text) {
-      conflicts.push(`${key}\n    A: ${pairs.get(key)}\n    B: ${text}`);
+    seen.add(key);
+    let i = m.index + m[0].length;
+    let paramsSrc = null;
+    // optional `, { ... }`
+    const comma = src.slice(i).match(/^\s*,\s*/);
+    if (comma) {
+      const braceAt = i + comma[0].length;
+      if (src[braceAt] === '{') {
+        const end = matchBrace(src, braceAt);
+        if (end === -1) continue;
+        paramsSrc = src.slice(braceAt, end);
+        i = end;
+      }
     }
-    pairs.set(key, text);
+    const close = src.slice(i).match(/^\s*\)/);
+    if (!close) continue;
+    i += close[0].length;
+    const or = src.slice(i).match(/^\s*\|\|\s*/);
+    if (!or) continue; // a call with no inline fallback carries no English
+    i += or[0].length;
+    const quote = src[i];
+    if (quote !== "'" && quote !== '"' && quote !== '`') continue;
+    let j = i + 1;
+    while (j < src.length && src[j] !== quote) j += src[j] === '\\' ? 2 : 1;
+    const raw = src
+      .slice(i + 1, j)
+      .replace(/\\'/g, "'")
+      .replace(/\\"/g, '"')
+      .replace(/\\`/g, '`')
+      .replace(/\\\\/g, '\\');
+    record(key, canonicalise(raw, paramsSrc));
   }
-  for (const m of src.matchAll(TRANS_K)) {
-    const key = m[1];
-    const after = src.slice(m.index);
-    const fb = after.match(/fallback="([^"]*)"/);
-    if (fb) pairs.set(key, fb[1]);
+
+  // <Trans k="..." fallback="..." /> read from the AST, not by scanning
+  // forward: the old scan took the first `fallback=` ANYWHERE after the `k=`,
+  // so a Trans whose fallback was braced stole the NEXT element's sentence,
+  // and `fallback` before `k` never matched at all.
+  if (/<Trans[\s>]/.test(src)) {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const visit = (node) => {
+      const opening = ts.isJsxSelfClosingElement(node)
+        ? node
+        : ts.isJsxElement(node)
+          ? node.openingElement
+          : null;
+      if (opening && opening.tagName.getText(sf) === 'Trans') {
+        let key = null;
+        let fallback = null;
+        for (const attr of opening.attributes.properties) {
+          if (!ts.isJsxAttribute(attr) || !attr.initializer) continue;
+          const name = attr.name.getText(sf);
+          const init = attr.initializer;
+          const literal = ts.isStringLiteral(init)
+            ? init.text
+            : ts.isJsxExpression(init) &&
+                init.expression &&
+                (ts.isStringLiteral(init.expression) ||
+                  ts.isNoSubstitutionTemplateLiteral(init.expression))
+              ? init.expression.text
+              : null;
+          if (name === 'k' && literal !== null) key = literal;
+          if (name === 'fallback' && literal !== null) fallback = literal;
+        }
+        // A ternary `k=` resolves to two keys and cannot be read statically;
+        // it is reported by the completeness check below rather than guessed.
+        if (key !== null && key.startsWith(`${ns}.`)) {
+          seen.add(key);
+          if (fallback !== null) record(key, fallback);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
   }
+}
+
+// Every key the scan SAW must have produced an English pair. A key that was
+// seen and dropped is the worst outcome: it never reaches en.ts, never reaches
+// a translator, and renders English forever with every guard green. The old
+// regex dropped any call whose params held a nested object, silently and with
+// exit 0.
+const dropped = [...seen].filter((k) => !pairs.has(k));
+if (dropped.length) {
+  console.error(`KEYS SEEN BUT NOT EXTRACTED (${dropped.length}):`);
+  for (const k of dropped) console.error(`  ${k}`);
+  console.error('\n  Each needs an inline `|| \'English\'` fallback the scanner can read.');
+  process.exit(1);
 }
 
 // A fallback that still holds `${...}` after canonicalisation is one the

@@ -114,9 +114,10 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   // The API ORIGIN is not settable here: `import.meta.env.VITE_API_URL` is
   // inlined at build time (services/api.js, useOperatorSocket.ts). The suite
   // therefore builds with `VITE_API_URL` pointed at `API` below - see the
-  // `e2e` script in package.json. If that env is missing the app talks to
-  // production instead of the mocks, so `assertApiOrigin` fails the run loudly
-  // rather than letting a spec pass against nothing.
+  // `webServer.command` in playwright.config.ts, which builds its own bundle
+  // into `dist-e2e/` on every run. If that env were missing the app would talk
+  // to production instead of the mocks, so the origin assertions below fail
+  // the run loudly rather than letting a spec pass against nothing.
   await page.addInitScript(
     ({ botId }) => {
       window.localStorage.setItem('admin_token', 'e2e-token');
@@ -292,6 +293,30 @@ export async function assertApiOrigin(socket: OperatorSocket): Promise<void> {
     throw new Error(
       `The app made no request to ${API}. Rebuild with VITE_API_URL=${API} ` +
         '(npm run e2e does this) or the specs are testing against production.',
+    );
+  }
+}
+
+/**
+ * The page-level twin of `assertApiOrigin`, for specs that never open a socket.
+ *
+ * Three of the four spec files exercise the language surfaces and had no origin
+ * assertion at all, so a bundle built against the wrong host would have failed
+ * them with "element not found" rather than naming the cause.
+ */
+export async function assertPageHitMock(page: Page): Promise<void> {
+  let hits = 0;
+  page.on('request', (req) => {
+    if (req.url().startsWith(API)) hits += 1;
+  });
+  const deadline = Date.now() + 15_000;
+  while (hits === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (hits === 0) {
+    throw new Error(
+      `The app made no request to ${API}. The Playwright webServer builds with ` +
+        `VITE_API_URL=${API}; if that changed, the specs are testing against nothing.`,
     );
   }
 }

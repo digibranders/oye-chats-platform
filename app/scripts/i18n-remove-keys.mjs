@@ -65,14 +65,25 @@ for (const file of fs.readdirSync(LOCALES).filter((f) => /\.ts$/.test(f))) {
         cur = cur[part];
       }
       const leaf = parts[parts.length - 1];
-      if (cur && leaf in cur) { delete cur[leaf]; removed += 1; }
+      // `leaf in cur` also sees the prototype chain, so `toString` and
+      // `constructor` "existed" and triggered a needless rewrite of the block.
+      if (cur && Object.prototype.hasOwnProperty.call(cur, leaf)) {
+        delete cur[leaf];
+        removed += 1;
+      }
     }
     if (removed === 0) continue;
 
     fs.writeFileSync(full, src.slice(0, start) + src.slice(i + 1).replace(/^,/, ''));
     const tmp = path.join(HERE, `.remove-${ns}.json`);
     fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
-    execFileSync('node', [path.join(HERE, 'i18n-write-ns.mjs'), full, ns, tmp], { stdio: 'ignore' });
+    // --nested: the object below is ALREADY the parsed dictionary. Without it
+    // `nest()` re-splits every key on '.', and a canned-response key like
+    // "Sent the info." becomes {'Sent the info': {'': ...}} - a silent
+    // corruption of a key this delete was not asked to touch.
+    execFileSync('node', [path.join(HERE, 'i18n-write-ns.mjs'), full, ns, tmp, '--nested'], {
+      stdio: 'inherit',
+    });
     fs.unlinkSync(tmp);
     console.log(`${file}: ${ns} -${removed}`);
   }

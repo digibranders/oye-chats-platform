@@ -137,7 +137,16 @@ for (const [file, fileHits] of byFile) {
     // text we MATCH against the source line is not, because the source still
     // holds the entity.
     const decoded = h.kind === 'jsx-text' ? decodeEntities(text) : text;
-    const key = `${NS}.${keyFor(decoded)}`;
+    let key = `${NS}.${keyFor(decoded)}`;
+    // Two different sentences can truncate to the same five words. Silently
+    // overwriting gave two call sites one key and two different inline
+    // English strings, so one of them renders the other's sentence.
+    if (usedKeys.has(key) && usedKeys.get(key) !== decoded) {
+      let n = 2;
+      while (usedKeys.has(`${key}${n}`) && usedKeys.get(`${key}${n}`) !== decoded) n += 1;
+      console.log(`  key collision: ${key} -> ${key}${n} (${JSON.stringify(decoded).slice(0, 50)})`);
+      key = `${key}${n}`;
+    }
     usedKeys.set(key, decoded);
     const call = `${FN}(${jsQuote(key)})`;
     // `a ?? t('k') || 'b'` is a TS5076 error: ?? cannot be mixed with || without

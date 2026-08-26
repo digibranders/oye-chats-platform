@@ -186,10 +186,11 @@ jobs:
         working-directory: app
         run: npm run e2e:install
 
-      # `npm run e2e` rebuilds against the mock origin first, so this does not
-      # disturb the production build above.
+      # The Playwright webServer builds its own bundle into `dist-e2e/` with its
+      # own mock API origin, so the production build above is untouched. The
+      # comment here used to claim that while `e2e:build` wrote into `dist/`
+      # and clobbered it. No VITE_API_URL is set for this step on purpose: the
+      # suite must not be able to inherit a real API origin.
       - name: Browser tests
         working-directory: app
         run: npm run e2e
-        env:
-          VITE_API_URL: https://api.oyechats.com

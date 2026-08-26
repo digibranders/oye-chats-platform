@@ -53,7 +53,13 @@ export function Trans({ k, fallback, values }: TransProps): ReactElement {
   return (
     <>
       {parts.map((part, i) => (
-        <Fragment key={i}>{part}</Fragment>
+        // Placeholder slots are keyed by NAME, not by position. Keying by
+        // index means React reconciles a value to wherever it landed in the
+        // sentence, so when a translation reorders two placeholders their
+        // element state migrates to the wrong one - a counter reading 2 comes
+        // back as 0, or worse, shows the other value's state. Reordering is
+        // the entire reason this component exists.
+        <Fragment key={i % 2 === 0 ? `text-${i}` : `slot-${segments[i]}`}>{part}</Fragment>
       ))}
     </>
   );
