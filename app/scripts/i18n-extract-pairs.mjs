@@ -92,6 +92,20 @@ for (const file of files) {
   }
 }
 
+// A fallback that still holds `${...}` after canonicalisation is one the
+// params could not explain - usually a template literal spanning lines, where
+// the expression is not a plain identifier the params map back to. Emitting it
+// writes unparseable text into the dictionary, so refuse and name the key.
+const unresolved = [...pairs].filter(([, text]) => text.includes('${'));
+if (unresolved.length) {
+  console.error(`UNRESOLVED PLACEHOLDERS (${unresolved.length}):`);
+  for (const [key, text] of unresolved) {
+    console.error(`  ${key}\n    ${text.replace(/\n/g, ' ').slice(0, 120)}`);
+  }
+  console.error('\n  Give the call a plain identifier for each param, or precompute the value.');
+  process.exit(1);
+}
+
 if (conflicts.length) {
   // Two call sites disagreeing on the English for one key is a real bug: one of
   // them will silently render the other's sentence once the key resolves.

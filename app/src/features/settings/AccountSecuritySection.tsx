@@ -11,6 +11,7 @@ import {
 } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,10 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
       return;
     }
     if (!isStrongPassword(form.next)) {
-      setError('New password must be at least 8 characters and include a letter and a number.');
+      setError(
+        translateNow('settings.security.passwordRule') ||
+          'New password must be at least 8 characters and include a letter and a number.',
+      );
       return;
     }
 
@@ -394,7 +398,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
       setStep('idle');
       setSuccess(t('settings.security.emailUpdated') || 'Email address updated.');
     } catch (err) {
-      setError(toMessage(err, 'Failed to confirm the email change.'));
+      setError(
+        toMessage(
+          err,
+          translateNow('settings.security.emailConfirmFailed') ||
+            'Failed to confirm the email change.',
+        ),
+      );
     } finally {
       setBusy(false);
     }

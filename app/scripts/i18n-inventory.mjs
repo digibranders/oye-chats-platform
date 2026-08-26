@@ -207,6 +207,61 @@ function isLocalized(source, start) {
 }
 
 /**
+ * Exactly the `t('key') || 'English'` idiom, checked on the AST.
+ *
+ * The textual lookbehind below cannot tell "this literal IS the fallback" from
+ * "this literal happens to sit near a t() call", so a sibling object property
+ * on the next line reads as localized when it is not. That false negative hid
+ * three rendered labels in the re-crawl diff. A literal counts here only when
+ * it is the right operand of a `||`/`??` whose left side actually calls t().
+ */
+function isTranslationFallback(node, ts) {
+  let cur = node;
+  while (cur.parent && ts.isBinaryExpression(cur.parent)) {
+    const bin = cur.parent;
+    const op = bin.operatorToken.kind;
+    const isOr =
+      op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken;
+    if (isOr && bin.right === cur && callsTranslate(bin.left, ts)) return true;
+    cur = bin;
+  }
+  return false;
+}
+
+function callsTranslate(node, ts) {
+  let found = false;
+  const walk = (n) => {
+    if (found) return;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
+      const name = n.expression.text;
+      if (name === 't' || name === 'translateNow') { found = true; return; }
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(node);
+  return found;
+}
+
+/**
+ * `<Trans k="..." fallback="English" />` is the `t('k') || 'English'` idiom in
+ * element form, for a sentence with an element inside it.
+ *
+ * Matched on the AST, not by looking backwards through the source: the
+ * fallback is often a ternary, which puts the `k=` further back than any
+ * fixed window reaches, and widening the window would exempt unrelated
+ * literals that merely sit near a Trans.
+ */
+function isTransFallback(node, ts) {
+  for (let cur = node; cur; cur = cur.parent) {
+    if (ts.isJsxAttribute(cur)) {
+      return cur.name.getText() === 'fallback';
+    }
+    if (ts.isJsxElement(cur) || ts.isJsxSelfClosingElement(cur) || ts.isBlock(cur)) return false;
+  }
+  return false;
+}
+
+/**
  * Whether a literal is the English fallback of a KEYED CONSTANT.
  *
  * Module-level tables (PRIMARY_NAV and friends) cannot call `t()` at all: they
@@ -382,7 +437,9 @@ function scanFile(file) {
           attr: null,
           inFunction: isInFunction(node, ts),
           localized:
-            isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
+            isLocalized(source, node.getStart(sf)) ||
+            isKeyedConstant(node, ts, source) ||
+            isTransFallback(node, ts),
           inFunction: isInFunction(node, ts),
         });
       }
@@ -410,7 +467,7 @@ function scanFile(file) {
             text: value,
             attr,
             inFunction: isInFunction(node, ts),
-            localized: isLocalized(source, node.getStart(sf)),
+            localized: isLocalized(source, node.getStart(sf)) || isTransFallback(node, ts),
           });
         }
       }
@@ -444,7 +501,9 @@ function scanFile(file) {
           inConsole,
           inThrow,
           localized:
-            isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
+            isTranslationFallback(node, ts) ||
+            isKeyedConstant(node, ts, source) ||
+            isTransFallback(node, ts),
           inFunction: isInFunction(node, ts),
         });
       }

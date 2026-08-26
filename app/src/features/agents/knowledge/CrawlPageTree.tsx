@@ -10,6 +10,7 @@ import {
   Minus,
 } from 'lucide-react';
 import { cn, Modal } from '../../../design-system';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A node in the discovered-page route tree. A node can be a folder (has
@@ -316,6 +317,7 @@ export function CrawlPageTree({
   onSelectionChange,
   disabled = false,
 }: CrawlPageTreeProps): ReactElement {
+  const { t } = useTranslation();
   const tree = useMemo(() => buildTree(urls), [urls]);
   const allUrls = tree.urls;
   const selectedSet = useMemo(() => new Set(selected), [selected]);
@@ -412,7 +414,7 @@ export function CrawlPageTree({
             <CheckBox
               state={allSelected ? 'checked' : selectedCount > 0 ? 'indeterminate' : 'unchecked'}
             />
-            {allSelected ? 'Clear all' : 'Select all'}
+            {allSelected ? t('agents.clearAll') || 'Clear all' : t('agents.selectAll') || 'Select all'}
           </button>
           <span className="text-[12px] text-[var(--ds-text-muted)]">
             <span className="font-semibold tabular-nums text-[var(--ds-text)]">{selectedCount}</span>
@@ -426,7 +428,7 @@ export function CrawlPageTree({
             onClick={() => setAllExpanded(true)}
             className="rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
           >
-            Expand all
+            {t('agents.expandAll') || 'Expand all'}
           </button>
           <span className="text-[var(--ds-border-strong)]">·</span>
           <button
@@ -434,7 +436,7 @@ export function CrawlPageTree({
             onClick={() => setAllExpanded(false)}
             className="rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
           >
-            Collapse all
+            {t('agents.collapseAll') || 'Collapse all'}
           </button>
           {showMaximize && (
             <>
@@ -442,12 +444,12 @@ export function CrawlPageTree({
               <button
                 type="button"
                 onClick={() => setMaximized(true)}
-                aria-label="Maximize page list"
-                title="Maximize"
+                aria-label={t('agents.maximizePageList') || 'Maximize page list'}
+                title={t('agents.maximize') || 'Maximize'}
                 className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 <Maximize2 size={13} aria-hidden="true" />
-                Maximize
+                {t('agents.maximize') || 'Maximize'}
               </button>
             </>
           )}
@@ -456,7 +458,7 @@ export function CrawlPageTree({
 
       {/* The tree itself */}
       <div className={cn('overflow-y-auto py-1.5 pr-1', bodyMaxHeight)}>
-        <ul role="tree" aria-label="Discovered pages">
+        <ul role="tree" aria-label={t('agents.discoveredPages') || 'Discovered pages'}>
           <TreeRow
             node={tree}
             depth={0}
@@ -477,7 +479,7 @@ export function CrawlPageTree({
       <Modal
         open={maximized}
         onClose={() => setMaximized(false)}
-        title="Discovered pages"
+        title={t('agents.discoveredPages') || 'Discovered pages'}
         description="Pick the pages to add to your knowledge base."
         size="xl"
       >

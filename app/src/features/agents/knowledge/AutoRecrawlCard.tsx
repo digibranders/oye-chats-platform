@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { Button, Card, IconTile, Skeleton, cn } from '../../../design-system';
 import { fetchRecrawlStatus, setAutoRecrawl, type RecrawlStatus } from './recrawl-api';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface AutoRecrawlCardProps {
   /** The agent whose weekly auto-recrawl is configured. */
@@ -28,6 +30,7 @@ export interface AutoRecrawlCardProps {
  * on every write, so a stale client cache can't grant the feature.
  */
 export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecrawlCardProps): ReactElement {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<RecrawlStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -48,7 +51,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         if (!cancelled && activeBotRef.current === botId) setStatus(data);
       } catch (err) {
         if (!cancelled && activeBotRef.current === botId) {
-          setLoadError(err instanceof Error ? err.message : "We couldn't load auto-retrain.");
+          setLoadError(err instanceof Error ? err.message : translateNow('agents.weCouldntLoadAutoRetrain') || 'We couldn\'t load auto-retrain.');
         }
       }
     };
@@ -76,11 +79,11 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         setStatus(updated);
         setFlash(
           next
-            ? 'Auto-retrain on. We’ll check for changes every week.'
-            : 'Auto-retrain off. Turn it back on any time to resume the weekly refresh.',
+            ? translateNow('agents.autoRetrainOnWellCheck') || 'Auto-retrain on. We’ll check for changes every week.'
+            : translateNow('agents.autoRetrainOffTurnIt') || 'Auto-retrain off. Turn it back on any time to resume the weekly refresh.',
         );
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : "We couldn't update auto-retrain.");
+        setActionError(err instanceof Error ? err.message : translateNow('agents.weCouldntUpdateAutoRetrain') || 'We couldn\'t update auto-retrain.');
       } finally {
         setSaving(false);
       }
@@ -139,8 +142,8 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             <div>
               <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Auto-retrain</h3>
               <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                Refresh every trained website once a week. We only re-learn pages whose content
-                actually changed.
+                {t('agents.weeklyRefreshHint') ||
+                  'Refresh every trained website once a week. We only re-learn pages whose content actually changed.'}
               </p>
             </div>
           </div>
@@ -150,8 +153,8 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             disabled={saving}
             label={
               locked
-                ? 'Upgrade to Standard to enable weekly auto-retrain'
-                : 'Toggle weekly auto-retrain'
+                ? t('agents.upgradeToStandardToEnable') || 'Upgrade to Standard to enable weekly auto-retrain'
+                : t('agents.toggleWeeklyAutoRetrain') || 'Toggle weekly auto-retrain'
             }
             onToggle={handleToggle}
           />
@@ -160,25 +163,25 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         {locked && (
           <div className="flex items-center gap-2 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-2.5 text-[12px] text-[var(--ds-warning)]">
             <Lock size={14} aria-hidden="true" />
-            Weekly auto-retrain is a Standard plan feature.
+            {t('agents.weeklyAutoRetrainIsA') || 'Weekly auto-retrain is a Standard plan feature.'}
           </div>
         )}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <StatusTile
             icon={<CalendarClock size={14} aria-hidden="true" />}
-            label="Cadence"
+            label={t('agents.cadence') || 'Cadence'}
             value={toggleOn ? `Every ${data.cadenceDays} days` : 'Off'}
           />
           <StatusTile
             icon={<Clock size={14} aria-hidden="true" />}
-            label="Last checked"
+            label={t('agents.lastChecked') || 'Last checked'}
             value={data.lastRecrawlAt ? formatRelative(data.lastRecrawlAt) : '-'}
             sub={data.lastRecrawlStatus ? capitalize(data.lastRecrawlStatus) : null}
           />
           <StatusTile
             icon={<CalendarClock size={14} aria-hidden="true" />}
-            label="Next check"
+            label={t('agents.nextCheck') || 'Next check'}
             value={toggleOn && data.nextRecrawlAt ? formatRelative(data.nextRecrawlAt) : '-'}
             sub={toggleOn && data.nextRecrawlAt ? formatDate(data.nextRecrawlAt) : null}
           />
@@ -186,18 +189,18 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
 
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
           {data.sourcesCount === 0
-            ? 'No trained websites yet. Add a website above to build the retrain set.'
+            ? t('agents.noTrainedWebsitesYetAdd') || 'No trained websites yet. Add a website above to build the retrain set.'
             : `${data.sourcesCount} website${data.sourcesCount === 1 ? '' : 's'} in the retrain set.`}
         </p>
 
         {confirmingDisable && (
           <div
             role="group"
-            aria-label="Confirm turning off auto-retrain"
+            aria-label={t('agents.confirmTurningOffAutoRetrain') || 'Confirm turning off auto-retrain'}
             className="space-y-3 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3"
           >
             <div className="text-[13px] text-[var(--ds-text)]">
-              <p className="font-medium">Turn off auto-retrain?</p>
+              <p className="font-medium">{t('agents.turnOffAutoRetrain') || 'Turn off auto-retrain?'}</p>
               <p className="mt-0.5 text-[var(--ds-text-muted)]">
                 Your chatbot stops refreshing crawled pages automatically. Turning it back on later
                 starts a fresh 7-day countdown.
@@ -205,10 +208,10 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             </div>
             <div className="flex items-center gap-2">
               <Button variant="danger" size="sm" onClick={() => void commit(false)} disabled={saving}>
-                {saving ? 'Turning off…' : 'Turn off'}
+                {saving ? t('agents.turningOff') || 'Turning off…' : t('agents.turnOff') || 'Turn off'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setConfirmingDisable(false)}>
-                Keep it on
+                {t('agents.keepItOn') || 'Keep it on'}
               </Button>
             </div>
           </div>
@@ -238,7 +241,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
           <div className="space-y-2 border-t border-[var(--ds-border)] pt-4">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
               <History size={13} aria-hidden="true" />
-              Recent retrains
+              {t('agents.recentRetrains') || 'Recent retrains'}
             </div>
             <ul className="space-y-1">
               {data.history.map((entry, i) => (

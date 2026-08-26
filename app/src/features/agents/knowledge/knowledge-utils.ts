@@ -1,4 +1,46 @@
 import type { KnowledgeSource } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
+import { formatNumber } from '../../../i18n/formatters';
+
+/**
+ * "12 pages" / "1 page" / "500+ pages", in the active language.
+ *
+ * English forms the plural by appending "s", so the markup used to do that
+ * inline. Hindi does not, and neither do most languages, so the two forms are
+ * separate keys. The "+" marks a capped discovery and is not copy.
+ */
+export function pageCountLabel(total: number, capped = false): string {
+  const count = `${formatNumber(total)}${capped ? '+' : ''}`;
+  const one = total === 1 && !capped;
+  return (
+    translateNow(one ? 'agents.pageOne' : 'agents.pageMany', { count }) ||
+    `${count} page${one ? '' : 's'}`
+  );
+}
+
+/** "Showing first 20 of 480 pages." */
+export function showingFirstLabel(shown: number, total: number): string {
+  const a = formatNumber(shown);
+  const b = formatNumber(total);
+  return translateNow('agents.showingFirstOf', { shown: a, total: b }) ||
+    `Showing first ${a} of ${b} pages.`;
+}
+
+/** "Finished - your AI learned 12 pages." */
+export function crawlFinishedLabel(pages: number): string {
+  const label = pageCountLabel(pages);
+  return translateNow('agents.crawlFinished', { pages: label }) ||
+    `Finished - your AI learned ${label}.`;
+}
+
+/** "1 credit" / "250 credits", same plural rule as pageCountLabel. */
+export function creditCountLabel(total: number): string {
+  const count = formatNumber(total);
+  return (
+    translateNow(total === 1 ? 'agents.creditOne' : 'agents.creditMany', { count }) ||
+    `${count} credit${total === 1 ? '' : 's'}`
+  );
+}
 
 /** True when a source name is a crawled website (vs an uploaded file). */
 export function isUrlSource(name: string): boolean {

@@ -5,6 +5,8 @@ import { DataTable, type Column } from '../../../design-system/components/DataTa
 import { getUnansweredQuestions } from '../../../services/api';
 import type { UnansweredQuestion } from '../../../types/domain';
 import { formatRelativeDate } from './knowledge-utils';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 // The panel is a nudge, not a report: cap it to the highest-frequency gaps so
 // it stays scannable and the "add content" action below stays the focus.
@@ -27,6 +29,7 @@ export function KnowledgeGapsPanel({
   agentId: number | null;
   reloadToken?: number;
 }): ReactElement | null {
+  const { t } = useTranslation();
   const [gaps, setGaps] = useState<UnansweredQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeAgentIdRef = useRef<number | null>(agentId);
@@ -43,7 +46,7 @@ export function KnowledgeGapsPanel({
         if (!cancelled && activeAgentIdRef.current === agentId) setGaps(data ?? []);
       } catch (err) {
         if (!cancelled && activeAgentIdRef.current === agentId) {
-          setError(err instanceof Error ? err.message : "We couldn't load your knowledge gaps.");
+          setError(err instanceof Error ? err.message : translateNow('agents.couldntLoadKnowledgeGaps') || 'We couldn\'t load your knowledge gaps.');
         }
       }
     };
@@ -73,7 +76,7 @@ export function KnowledgeGapsPanel({
     },
     {
       key: 'count',
-      header: 'Times asked',
+      header: t('agents.timesAsked') || 'Times asked',
       width: '8rem',
       render: (row) => (
         <span className="tabular-nums font-medium text-[var(--ds-text)]">
@@ -83,7 +86,7 @@ export function KnowledgeGapsPanel({
     },
     {
       key: 'last_asked',
-      header: 'Last asked',
+      header: t('agents.lastAsked') || 'Last asked',
       width: '9rem',
       render: (row) => (
         <span className="text-[var(--ds-text-subtle)]">
@@ -96,7 +99,9 @@ export function KnowledgeGapsPanel({
   return (
     <section aria-labelledby="knowledge-gaps-heading" className="space-y-4">
       <SectionHeader
-        title={<span id="knowledge-gaps-heading">Knowledge gaps</span>}
+        title={
+          <span id="knowledge-gaps-heading">{t('agents.knowledgeGaps') || 'Knowledge gaps'}</span>
+        }
         description="Questions visitors asked that your AI couldn't answer. Add a matching website or document below to close them."
       />
       {error !== null ? (
@@ -111,7 +116,7 @@ export function KnowledgeGapsPanel({
       ) : gaps.length === 0 ? (
         <EmptyState
           icon={CheckCircle2}
-          title="No gaps recorded yet"
+          title={t('agents.noGapsRecordedYet') || 'No gaps recorded yet'}
           description="Questions your AI can't answer from its knowledge will show up here as visitors ask them - so you always know what to add next."
         />
       ) : (
