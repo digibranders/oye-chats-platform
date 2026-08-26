@@ -339,10 +339,10 @@ function isKeyedConstant(node, ts, source) {
  * inconvenient to translate does NOT belong here.
  */
 const ALLOWED_ENGLISH = new Map([
-  ['you@example.com', 'example address in a placeholder, not prose'],
-  ['Custom request', 'mailto subject line, read by an English-speaking support team'],
-  ['OyeChats', 'brand name; never translated'],
-  ['Wix', 'third-party product name; never translated'],
+  // These four moved to inline `i18n-exempt:` markers at their call sites. A
+  // text-keyed entry here exempts that word EVERYWHERE, which is the weakness
+  // the inline marker exists to avoid: a future "OyeChats ran into a problem"
+  // would have been silently exempt by matching a brand-name rule.
   // Canned operator replies are SENT TO THE VISITOR. Translating them because
   // the operator's console is in Hindi would put Hindi in front of an
   // English-speaking visitor. The visitor's language is a property of their
