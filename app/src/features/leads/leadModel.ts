@@ -13,6 +13,7 @@
  */
 import { type StatusBadgeProps } from '../../design-system';
 import { type Lead, type LeadContact } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Tiers ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,9 @@ export interface TierMeta {
   readonly tone: NonNullable<StatusBadgeProps['tone']>;
 }
 
+// i18n-exempt: English fallbacks for a pure model module. LeadsPage and
+// LeadDetailDrawer resolve these at render with t(`leads.tier.${key}`); this
+// file must not resolve a locale itself (its unit tests keep React out).
 export const TIER_META: Record<TierKey, TierMeta> = {
   unqualified: {
     label: 'Just exploring',
@@ -171,6 +175,8 @@ interface FunnelStageDef {
 }
 
 /** The canonical visitor → meeting funnel, in order. */
+// i18n-exempt: as above -- English fallbacks resolved at the render site with
+// t(`leads.funnelStage.${key}`).
 const FUNNEL_STAGE_DEFS: readonly FunnelStageDef[] = [
   { key: 'total_visitors', label: 'Visitors', sublabel: 'Landed on your site' },
   { key: 'engaged', label: 'Engaged', sublabel: 'Started a chat' },
@@ -328,7 +334,7 @@ export function formatDateTime(iso: string | null | undefined): string {
 
 /** A short display name for a lead - real name, else "Anonymous visitor". */
 export function leadDisplayName(lead: Lead): string {
-  return hasContactName(lead) ? (lead.contact?.name as string) : 'Anonymous visitor';
+  return hasContactName(lead) ? (lead.contact?.name as string) : translateNow('leads.anonymousVisitor') || 'Anonymous visitor';
 }
 
 /** Up-to-two-letter initials for an avatar chip. */

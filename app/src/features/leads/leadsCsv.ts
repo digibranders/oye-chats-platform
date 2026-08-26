@@ -18,6 +18,7 @@ import {
   formatLocation,
   normalizeTier,
 } from './leadModel';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Drop the table's absence placeholder, which must not reach the file.
@@ -70,12 +71,12 @@ export function buildSelectedLeadsCsv(
     'Email',
     'Phone',
     'Company',
-    'Company domain',
+    translateNow('leads.companyDomain') || 'Company domain',
     'Quality',
     'Score',
     'Location',
     'Tags',
-    'Last active',
+    translateNow('leads.lastActive') || 'Last active',
   ];
   const rows = leads.map((lead) => {
     const tier = TIER_META[normalizeTier(lead.status)];

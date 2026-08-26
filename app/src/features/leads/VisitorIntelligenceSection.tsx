@@ -15,6 +15,7 @@ import { Button, StatusBadge } from '../../design-system';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { sendLeadFollowUp } from '../../services/api';
 import { type LeadDetail } from './useLeadDetail';
+import { useTranslation } from '../../i18n/useTranslation';
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -35,6 +36,7 @@ function SectionTitle({ children }: { children: string }): ReactElement {
 
 /** Compact locked teaser shown in place of the section on non-Professional plans. */
 function LockedTeaser(): ReactElement {
+  const { t } = useTranslation();
   const { openUpgradeModal } = useUpgradeModal();
   return (
     <section className="space-y-3">
@@ -49,10 +51,10 @@ function LockedTeaser(): ReactElement {
         </span>
         <span className="min-w-0">
           <span className="block text-[13px] font-medium text-[var(--ds-text)]">
-            Network signal & email validity are locked
+            {t('leads.networkSignalEmailValidityAre') || 'Network signal & email validity are locked'}
           </span>
           <span className="block text-[12px] text-[var(--ds-text-subtle)]">
-            Upgrade to Professional to see this and send a manual follow-up.
+            {t('leads.upgradeToProfessionalToSee') || 'Upgrade to Professional to see this and send a manual follow-up.'}
           </span>
         </span>
       </button>
@@ -81,6 +83,7 @@ function hasCompanySignal(intel: Record<string, unknown>): boolean {
 }
 
 function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElement | null {
+  const { t } = useTranslation();
   const companyName = asString(intel.company_name);
   const companyDomain = asString(intel.company_domain);
   const asnOrg = asString(intel.asn_org);
@@ -111,20 +114,20 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
               <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
             )}
             <span className="mt-1 block text-[11px] text-[var(--ds-text-subtle)]">
-              Derived from the visitor&rsquo;s network &mdash; not a confirmed employer.
+              {t('leads.derivedFromTheVisitorRsquo') || 'Derived from the visitor&rsquo;s network &mdash; not a confirmed employer.'}
             </span>
           </span>
         </div>
       ) : asnOrg ? (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          Connecting via <span className="text-[var(--ds-text)]">{asnOrg}</span>
+          {t('leads.connectingVia') || 'Connecting via'} <span className="text-[var(--ds-text)]">{asnOrg}</span>
         </p>
       ) : null}
       {isVpn && (
         <div className="flex items-start gap-2 text-[12px]">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
           <span className="text-[var(--ds-warning)]">
-            Connecting via VPN/proxy. Company signal is unreliable
+            {t('leads.connectingViaVpnProxyCompany') || 'Connecting via VPN/proxy. Company signal is unreliable'}
           </span>
         </div>
       )}
@@ -133,11 +136,12 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
 }
 
 function EmailValidityBadge({ isValid, score }: { isValid: boolean | null | undefined; score: number | null | undefined }): ReactElement | null {
+  const { t } = useTranslation();
   if (isValid === null || isValid === undefined) {
     return (
       <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-subtle)]">
         <Mail size={13} aria-hidden="true" />
-        Email not yet validated
+        {t('leads.emailNotYetValidated') || 'Email not yet validated'}
       </div>
     );
   }
@@ -146,12 +150,12 @@ function EmailValidityBadge({ isValid, score }: { isValid: boolean | null | unde
       {isValid ? (
         <StatusBadge tone="success">
           <CheckCircle2 size={12} aria-hidden="true" className="mr-1 inline" />
-          Deliverable{typeof score === 'number' ? ` · ${score}/100` : ''}
+          {t('leads.deliverable') || 'Deliverable'}{typeof score === 'number' ? ` · ${score}/100` : ''}
         </StatusBadge>
       ) : (
         <StatusBadge tone="danger">
           <XCircle size={12} aria-hidden="true" className="mr-1 inline" />
-          Not confirmed deliverable
+          {t('leads.notConfirmedDeliverable') || 'Not confirmed deliverable'}
         </StatusBadge>
       )}
     </div>
@@ -178,6 +182,7 @@ interface FollowUpActionProps {
  * 409 (cooldown, or an unvalidated address) offers a one-click confirmed
  * retry; 400/403/423 are terminal and surface as a plain error. */
 function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): ReactElement {
+  const { t } = useTranslation();
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error' | 'confirm'>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -190,7 +195,7 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
       await sendLeadFollowUp(sessionId, confirmOverride);
       setState('sent');
     } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Could not send the follow-up.';
+      const detail = err instanceof Error ? err.message : t('leads.couldNotSendTheFollow') || 'Could not send the follow-up.';
       const status = (err as { status?: number } | undefined)?.status;
       // 409 is the server's "are you sure?", a cooldown that hasn't elapsed,
       // or an address Reoon never got to validate. Both are recoverable with
@@ -209,17 +214,17 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
         onClick={() => void send(false)}
       >
         <Send size={14} aria-hidden="true" />
-        {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Follow-up sent' : 'Send follow-up email'}
+        {state === 'sending' ? 'Sending…' : state === 'sent' ? t('leads.followUpSent') || 'Follow-up sent' : t('leads.sendFollowUpEmail') || 'Send follow-up email'}
       </Button>
 
       {blockedByValidation && (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          This address failed email validation, so it can&rsquo;t be contacted.
+          {t('leads.thisAddressFailedEmailValidation') || 'This address failed email validation, so it can&rsquo;t be contacted.'}
         </p>
       )}
       {!blockedByValidation && isValidEmail !== true && state === 'idle' && (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          This address hasn&rsquo;t been validated. You&rsquo;ll be asked to confirm.
+          {t('leads.thisAddressHasnRsquoT') || 'This address hasn&rsquo;t been validated. You&rsquo;ll be asked to confirm.'}
         </p>
       )}
 
@@ -227,7 +232,7 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
         <div className="space-y-1.5">
           <p className="text-[12px] text-[var(--ds-warning)]">{message}</p>
           <Button size="sm" variant="ghost" onClick={() => void send(true)}>
-            Send anyway
+            {t('leads.sendAnyway') || 'Send anyway'}
           </Button>
         </div>
       )}
@@ -243,6 +248,7 @@ export function VisitorIntelligenceSection({
   detail: LeadDetail;
   unlocked: boolean;
 }): ReactElement {
+  const { t } = useTranslation();
   if (!unlocked) return <LockedTeaser />;
 
   // IP intel lives under a namespaced key. `visitor_metadata` itself is a
@@ -260,7 +266,7 @@ export function VisitorIntelligenceSection({
           <CompanySignal intel={intel} />
         ) : (
           <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
-            No network details resolved for this visitor.
+            {t('leads.noNetworkDetailsResolvedFor') || 'No network details resolved for this visitor.'}
           </p>
         )}
         {email && <EmailValidityBadge isValid={isValidEmail} score={emailScore} />}

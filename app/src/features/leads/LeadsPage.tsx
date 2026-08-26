@@ -61,6 +61,8 @@ import {
   normalizeTier,
 } from './leadModel';
 import { planIncludesVisitorIntelligence } from '../../lib/planGates';
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
   { value: 'named', label: 'Named leads' },
@@ -118,6 +120,7 @@ function bantOrderIndex(key: string): number {
  * and the detail drawer's verdict).
  */
 function BantSignal({ lead }: { lead: Lead }): ReactElement {
+  const { t } = useTranslation();
   const dimensions = Object.entries(lead.bant ?? {}).sort(
     ([a], [b]) => bantOrderIndex(a) - bantOrderIndex(b),
   );
@@ -125,14 +128,14 @@ function BantSignal({ lead }: { lead: Lead }): ReactElement {
     return <span className="text-[12px] text-[var(--ds-text-subtle)]">-</span>;
   }
   return (
-    <div className="flex items-center gap-1" role="group" aria-label="Qualification signals">
+    <div className="flex items-center gap-1" role="group" aria-label={t('leads.qualificationSignals') || 'Qualification signals'}>
       {dimensions.map(([key, dim]) => {
         const accepted = (dim?.score ?? 0) > 0;
         const label = humanizeDimension(key);
         return (
           <span
             key={key}
-            title={`${label}: ${dim?.value || 'Not captured'}`}
+            title={`${label}: ${dim?.value || t('leads.notCaptured') || 'Not captured'}`}
             aria-label={`${label}: ${accepted ? 'captured' : 'not captured'}`}
             className={cn(
               'flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold uppercase',
@@ -158,11 +161,12 @@ function BantSignal({ lead }: { lead: Lead }): ReactElement {
  * a mark, so the column never implies a judgement the backend didn't make.
  */
 function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElement | null {
+  const { t } = useTranslation();
   if (isValid === true) {
     return (
       <BadgeCheck
         size={12}
-        aria-label="Email verified as deliverable"
+        aria-label={t('leads.emailVerifiedAsDeliverable') || 'Email verified as deliverable'}
         className="shrink-0 text-[var(--ds-success)]"
       />
     );
@@ -171,7 +175,7 @@ function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElem
     return (
       <AlertCircle
         size={12}
-        aria-label="Email failed validation - cannot be contacted"
+        aria-label={t('leads.emailFailedValidationCannotBe') || 'Email failed validation - cannot be contacted'}
         className="shrink-0 text-[var(--ds-danger)]"
       />
     );
@@ -186,11 +190,12 @@ function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElem
  * upgrade modal instead of the real data.
  */
 function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
-      title="Upgrade to unlock"
-      aria-label="Upgrade to unlock"
+      title={t('leads.upgradeToUnlock') || 'Upgrade to unlock'}
+      aria-label={t('leads.upgradeToUnlock') || 'Upgrade to unlock'}
       onClick={(event) => {
         event.stopPropagation();
         onUpgrade();
@@ -198,13 +203,14 @@ function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
       className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)]"
     >
       <Lock size={12} aria-hidden="true" />
-      Locked
+      {t('leads.locked') || 'Locked'}
     </button>
   );
 }
 
 /** The metric row; only shown once stats resolve. */
 export function LeadsPage(): ReactElement {
+  const { t } = useTranslation();
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
   const { isFree, hasFeature } = useEntitlements();
@@ -339,7 +345,7 @@ export function LeadsPage(): ReactElement {
     try {
       await exportLeadsCsv(botId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Export failed. Please try again.');
+      setActionError(err instanceof Error ? err.message : t('leads.exportFailedPleaseTryAgain') || 'Export failed. Please try again.');
     } finally {
       setIsExporting(false);
     }
@@ -353,7 +359,7 @@ export function LeadsPage(): ReactElement {
       await markAllLeadsViewed(botId);
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : 'Could not mark leads as read. Refreshing…',
+        err instanceof Error ? err.message : t('leads.couldNotMarkLeadsAs') || 'Could not mark leads as read. Refreshing…',
       );
       reload();
     }
@@ -369,7 +375,7 @@ export function LeadsPage(): ReactElement {
             type="checkbox"
             checked={allFilteredSelected}
             onChange={toggleSelectAll}
-            aria-label="Select all leads in view"
+            aria-label={translateNow('leads.selectAllLeadsInView') || 'Select all leads in view'}
             className="h-4 w-4 cursor-pointer accent-[var(--ds-accent)] align-middle"
           />
         ),
@@ -404,7 +410,7 @@ export function LeadsPage(): ReactElement {
                   {lead.unread && (
                     <span
                       className="h-2 w-2 shrink-0 rounded-full bg-[var(--ds-accent)]"
-                      aria-label="New lead"
+                      aria-label={translateNow('leads.newLead') || 'New lead'}
                     />
                   )}
                   <span
@@ -423,7 +429,7 @@ export function LeadsPage(): ReactElement {
                   </p>
                 )}
                 {tags.length > 0 && (
-                  <ul className="mt-1 flex flex-wrap gap-1" aria-label="Tags">
+                  <ul className="mt-1 flex flex-wrap gap-1" aria-label={translateNow('leads.tags') || 'Tags'}>
                     {tags.slice(0, 3).map((tag) => (
                       <li
                         key={tag}
@@ -499,7 +505,7 @@ export function LeadsPage(): ReactElement {
             className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ds-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:border-[var(--ds-border-strong)] hover:text-[var(--ds-text)]"
           >
             <MessageSquare size={13} aria-hidden="true" />
-            View chat
+            {translateNow('leads.viewChat') || 'View chat'}
           </button>
         ),
       },
@@ -515,7 +521,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'last_active_at',
-        header: 'Last active',
+        header: translateNow('leads.lastActive') || 'Last active',
         render: (lead) => (
           <span className="whitespace-nowrap text-[12px] text-[var(--ds-text-subtle)]">
             {formatDateTime(lead.last_active_at)}
@@ -560,7 +566,7 @@ export function LeadsPage(): ReactElement {
   // (`openChat`) instead of the full lead-intelligence drawer.
   if (botsLoading && bots.length === 0) {
     return (
-      <PageContainer title="Leads">
+      <PageContainer title={t('leads.leads') || 'Leads'}>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full" />
@@ -573,10 +579,10 @@ export function LeadsPage(): ReactElement {
 
   if (!botsLoading && bots.length === 0) {
     return (
-      <PageContainer title="Leads">
+      <PageContainer title={t('leads.leads') || 'Leads'}>
         <EmptyState
           icon={Users}
-          title="No leads yet"
+          title={t('leads.noLeadsYet') || 'No leads yet'}
           description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy."
         />
       </PageContainer>
@@ -592,18 +598,18 @@ export function LeadsPage(): ReactElement {
       <Download size={16} aria-hidden="true" />
       {/* Export ignores the active table filters - it always emits the full
           server-side lead set for the agent, so the label says so explicitly. */}
-      {isExporting ? 'Exporting…' : 'Export all leads'}
+      {isExporting ? 'Exporting…' : t('leads.exportAllLeads') || 'Export all leads'}
     </Button>
   );
 
   return (
     <PageContainer
-      title="Leads"
+      title={t('leads.leads') || 'Leads'}
       actions={
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
             <Bell size={16} aria-hidden="true" />
-            Mark all read
+            {t('leads.markAllRead') || 'Mark all read'}
           </Button>
           {exportAction}
         </div>
@@ -633,11 +639,11 @@ export function LeadsPage(): ReactElement {
       {status === 'error' && (
         <EmptyState
           icon={AlertCircle}
-          title="We couldn't load your leads"
-          description={error ?? 'Something went wrong. Please try again.'}
+          title={t('leads.weCouldntLoadYourLeads') || 'We couldn\'t load your leads'}
+          description={error ?? (t('leads.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.')}
           action={
             <Button variant="outline" onClick={reload}>
-              Try again
+              {t('leads.tryAgain') || 'Try again'}
             </Button>
           }
         />
@@ -649,7 +655,7 @@ export function LeadsPage(): ReactElement {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div
               role="group"
-              aria-label="Filter by lead quality"
+              aria-label={t('leads.filterByLeadQuality') || 'Filter by lead quality'}
               className="flex flex-wrap items-center gap-1.5"
             >
               <button
@@ -663,7 +669,7 @@ export function LeadsPage(): ReactElement {
                     : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
                 )}
               >
-                All
+                {t('leads.all') || 'All'}
               </button>
               {TIER_ORDER.map((key) => {
                 // Without BANT (Free / Starter) the whole tier axis is moot:
@@ -696,7 +702,7 @@ export function LeadsPage(): ReactElement {
                     {locked && (
                       <Lock size={11} strokeWidth={1.75} aria-hidden="true" />
                     )}
-                    {TIER_META[key].label}
+                    {t(`leads.tier.${key}`) || TIER_META[key].label}
                   </button>
                 );
               })}
@@ -704,18 +710,18 @@ export function LeadsPage(): ReactElement {
 
             <div className="flex flex-1 items-center gap-2 sm:justify-end">
               <label htmlFor="lead-search" className="sr-only">
-                Search leads
+                {t('leads.searchLeads') || 'Search leads'}
               </label>
               <input
                 id="lead-search"
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search name, email, company…"
+                placeholder={t('leads.searchNameEmailCompany') || 'Search name, email, company…'}
                 className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] sm:max-w-xs"
               />
               <label htmlFor="lead-contact-filter" className="sr-only">
-                Filter by lead type
+                {t('leads.filterByLeadType') || 'Filter by lead type'}
               </label>
               <Select
                 id="lead-contact-filter"
@@ -724,11 +730,11 @@ export function LeadsPage(): ReactElement {
                 className="h-9 w-auto shrink-0 text-[13px]"
                 options={CONTACT_FILTER_OPTIONS.map((option) => ({
                   value: option.value,
-                  label: option.label,
+                  label: t(`leads.filter.${option.value}`) || option.label,
                 }))}
               />
               <label htmlFor="lead-sort" className="sr-only">
-                Sort leads by
+                {t('leads.sortLeadsBy') || 'Sort leads by'}
               </label>
               <Select
                 id="lead-sort"
@@ -737,7 +743,7 @@ export function LeadsPage(): ReactElement {
                 className="h-9 w-auto shrink-0 text-[13px]"
                 options={SORT_OPTIONS.map((option) => ({
                   value: option.value,
-                  label: option.label,
+                  label: t(`leads.filter.${option.value}`) || option.label,
                 }))}
               />
             </div>
@@ -761,11 +767,11 @@ export function LeadsPage(): ReactElement {
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={handleExportSelected}>
                   <Download size={15} aria-hidden="true" />
-                  Export selected
+                  {t('leads.exportSelected') || 'Export selected'}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={clearSelection}>
                   <X size={15} aria-hidden="true" />
-                  Clear
+                  {t('leads.clear') || 'Clear'}
                 </Button>
               </div>
             </div>
@@ -782,15 +788,15 @@ export function LeadsPage(): ReactElement {
             empty={
               leads.length === 0 ? (
                 <div className="space-y-1 py-6">
-                  <p className="text-[14px] font-medium text-[var(--ds-text)]">No leads yet</p>
+                  <p className="text-[14px] font-medium text-[var(--ds-text)]">{t('leads.noLeadsYet') || 'No leads yet'}</p>
                   <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    As soon as visitors start chatting with your AI, they'll show up here.
+                    {t('leads.asSoonAsVisitorsStart') || 'As soon as visitors start chatting with your AI, they\'ll show up here.'}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2 py-6">
                   <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    No leads match these filters.
+                    {t('leads.noLeadsMatchTheseFilters') || 'No leads match these filters.'}
                   </p>
                   <Button
                     variant="ghost"
@@ -801,7 +807,7 @@ export function LeadsPage(): ReactElement {
                       setQuery('');
                     }}
                   >
-                    Clear filters
+                    {t('leads.clearFilters') || 'Clear filters'}
                   </Button>
                 </div>
               )

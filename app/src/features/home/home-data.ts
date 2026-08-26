@@ -10,6 +10,7 @@
  */
 import type { Bot, TopQuestion } from '../../types/domain';
 import type { FeedbackItem } from '../feedback/types';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Primitive coercion helpers ───────────────────────────────────────────────
 
@@ -88,12 +89,12 @@ export function deriveAgentHealth(bot: Bot): AgentHealth {
   // failed recrawl report a fully-trained live agent as "Needs attention".
   if (!trained) {
     if (bot.last_crawl_status === 'failed') {
-      return { label: 'Needs attention', tone: 'danger', needsAttention: true };
+      return { label: translateNow('home.needsAttention') || 'Needs attention', tone: 'danger', needsAttention: true };
     }
-    return { label: 'Not trained yet', tone: 'warning', needsAttention: true };
+    return { label: translateNow('home.notTrainedYet') || 'Not trained yet', tone: 'warning', needsAttention: true };
   }
   if (!installed) {
-    return { label: 'Ready to deploy', tone: 'info', needsAttention: false };
+    return { label: translateNow('home.readyToDeploy') || 'Ready to deploy', tone: 'info', needsAttention: false };
   }
   return { label: 'Live', tone: 'success', needsAttention: false };
 }
@@ -307,7 +308,7 @@ export function buildActivity(
       entries.push({
         id: `feedback-${bucket.botName}-${index}-${at}`,
         kind: positive ? 'positive-feedback' : 'negative-feedback',
-        title: positive ? 'Answer marked helpful' : 'Answer marked unhelpful',
+        title: positive ? translateNow('home.answerMarkedHelpful') || 'Answer marked helpful' : translateNow('home.answerMarkedUnhelpful') || 'Answer marked unhelpful',
         meta: question ? `“${question}” · ${bucket.botName}` : bucket.botName,
         at,
         iso,
@@ -338,9 +339,9 @@ export function buildActivity(
 /** Time-of-day greeting for the page header. */
 export function greeting(date: Date): string {
   const hour = date.getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return translateNow('home.goodMorning') || 'Good morning';
+  if (hour < 18) return translateNow('home.goodAfternoon') || 'Good afternoon';
+  return translateNow('home.goodEvening') || 'Good evening';
 }
 
 /**
