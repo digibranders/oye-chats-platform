@@ -51,7 +51,7 @@ export function SaveFooter({
         )}
       </p>
       <Button size="sm" onClick={onSave} disabled={!dirty || status.saving}>
-        {status.saving ? 'Saving…' : label}
+        {status.saving ? t('agents.saving') || 'Saving…' : label}
       </Button>
     </div>
   );

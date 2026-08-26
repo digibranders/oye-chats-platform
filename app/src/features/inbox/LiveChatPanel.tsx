@@ -49,6 +49,8 @@ export interface LiveChatPanelProps {
 
 // ── Presentational helpers (non-exported; component file exports only LiveChatPanel) ──
 
+// @i18n-exempt: resolved at the render site from the connection status
+// (`inbox.connection.<status>`); the English here is that lookup's fallback.
 const CONNECTION_META: Record<ConnectionStatus, { label: string; tone: 'success' | 'warning' | 'neutral' | 'danger' }> =
   {
     idle: { label: 'Offline', tone: 'neutral' },
@@ -63,7 +65,7 @@ function ConnectionPill({ status }: { status: ConnectionStatus }): ReactElement 
   return (
     <StatusBadge tone={meta.tone} dot>
       {status === 'connected' ? <Wifi size={12} aria-hidden="true" /> : <WifiOff size={12} aria-hidden="true" />}
-      {meta.label}
+      {translateNow(`inbox.connection.${status}`) || meta.label}
     </StatusBadge>
   );
 }
@@ -158,7 +160,7 @@ function TeamRoster({ roster }: { roster: RosterOperator[] }): ReactElement | nu
               )}
               aria-hidden="true"
             />
-            <span className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{op.name || 'Operator'}</span>
+            <span className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{op.name || t('inbox.operator') || 'Operator'}</span>
             <span className="text-[12px] text-[var(--ds-text-muted)]">
                     {t('inbox.activeChats', { count: op.active_chats }) || `${op.active_chats} active`}
                   </span>
@@ -178,7 +180,7 @@ function parseQualifiedSessions(raw: Record<string, unknown>): QualifiedSession[
     session_id: String(s.session_id ?? ''),
     bot_id: typeof s.bot_id === 'number' ? s.bot_id : null,
     bot_name: str(s.bot_name),
-    name: str(s.name) ?? 'Anonymous',
+    name: str(s.name) ?? (translateNow('inbox.anonymous') || 'Anonymous'),
     email: str(s.email),
     phone: str(s.phone),
     company: str(s.company),
@@ -196,13 +198,13 @@ function parseQualifiedSessions(raw: Record<string, unknown>): QualifiedSession[
 function previewRoleLabel(role: OperatorMessage['role']): string {
   switch (role) {
     case 'user':
-      return 'Visitor';
+      return translateNow('inbox.visitor') || 'Visitor';
     case 'bot':
       return 'AI';
     case 'operator':
-      return 'Operator';
+      return translateNow('inbox.operator') || 'Operator';
     default:
-      return 'System';
+      return translateNow('inbox.system') || 'System';
   }
 }
 
@@ -601,10 +603,10 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           <div className="flex items-center gap-3">
             {enabled && status !== 'connected' && <ConnectionPill status={status} />}
             <StatusBadge tone={isOnline ? 'success' : 'neutral'} dot>
-              {isOnline ? 'Online' : 'Offline'}
+              {isOnline ? t('inbox.online') || 'Online' : t('inbox.offline') || 'Offline'}
             </StatusBadge>
             <Button variant="outline" size="sm" onClick={() => void toggle()} disabled={saving}>
-              {saving ? 'Saving…' : isOnline ? t('inbox.liveChat.goOffline') || 'Go offline' : t('inbox.liveChat.goOnline') || 'Go online'}
+              {saving ? t('inbox.saving') || 'Saving…' : isOnline ? t('inbox.liveChat.goOffline') || 'Go offline' : t('inbox.liveChat.goOnline') || 'Go online'}
             </Button>
           </div>
         </div>
@@ -694,12 +696,12 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                   key={q.session_id}
                   active={false}
                   onClick={() => void handleAccept(q.session_id)}
-                  title={q.name || 'Anonymous'}
+                  title={q.name || t('inbox.anonymous') || 'Anonymous'}
                   subtitle={q.reason || q.bot_name || t('inbox.liveChat.waitingForOperator') || 'Waiting for an operator'}
                   right={
                     <span className="shrink-0">
                       <StatusBadge tone="accent">
-                        {acceptingId === q.session_id ? 'Accepting…' : 'Accept'}
+                        {acceptingId === q.session_id ? t('inbox.accepting') || 'Accepting…' : t('inbox.accept') || 'Accept'}
                       </StatusBadge>
                     </span>
                   }
@@ -722,7 +724,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                     subtitle={
                       typingBySession[c.session_id]
                         ? 'typing…'
-                        : c.bot_name || (presenceBySession[c.session_id] === 'disconnected' ? 'Disconnected' : 'Live')
+                        : c.bot_name || (presenceBySession[c.session_id] === 'disconnected' ? t('inbox.disconnected') || 'Disconnected' : t('inbox.live') || 'Live')
                     }
                     badge={unread > 0 ? String(unread) : undefined}
                     online={presenceBySession[c.session_id] !== 'disconnected'}
@@ -800,7 +802,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                           disabled={cancelling}
                         >
                           <X size={13} aria-hidden="true" />
-                          {cancelling ? 'Cancelling…' : 'Cancel'}
+                          {cancelling ? t('inbox.cancelling') || 'Cancelling…' : t('inbox.cancel') || 'Cancel'}
                         </Button>
                       ) : (
                         <Button
@@ -810,7 +812,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                           disabled={pending || resolution?.outcome === 'accepted'}
                         >
                           <UserPlus size={13} aria-hidden="true" />
-                          {pending ? 'Inviting…' : 'Invite'}
+                          {pending ? t('inbox.inviting') || 'Inviting…' : t('inbox.invite') || 'Invite'}
                         </Button>
                       )}
                     </div>
@@ -995,7 +997,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                   disabled={previewCancelling}
                 >
                   <X size={14} aria-hidden="true" />
-                  {previewCancelling ? 'Cancelling…' : t('inbox.liveChat.cancelInvite') || 'Cancel invite'}
+                  {previewCancelling ? t('inbox.cancelling') || 'Cancelling…' : t('inbox.liveChat.cancelInvite') || 'Cancel invite'}
                 </Button>
               ) : (
                 <Button
@@ -1004,7 +1006,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                   disabled={previewPending || previewResolution?.outcome === 'accepted'}
                 >
                   <UserPlus size={14} aria-hidden="true" />
-                  {previewPending ? 'Inviting…' : t('inbox.liveChat.inviteToChat') || 'Invite to chat'}
+                  {previewPending ? t('inbox.inviting') || 'Inviting…' : t('inbox.liveChat.inviteToChat') || 'Invite to chat'}
                 </Button>
               )}
             </div>

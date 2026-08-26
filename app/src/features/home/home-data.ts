@@ -97,7 +97,7 @@ export function deriveAgentHealth(bot: Bot): AgentHealth {
   if (!installed) {
     return { label: translateNow('home.readyToDeploy') || 'Ready to deploy', tone: 'info', needsAttention: false };
   }
-  return { label: 'Live', tone: 'success', needsAttention: false };
+  return { label: translateNow('home.live') || 'Live', tone: 'success', needsAttention: false };
 }
 
 /** An agent counts as trained once it has indexed knowledge or a finished crawl. */

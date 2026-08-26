@@ -364,7 +364,7 @@ function LiveChatCard({
 
             <div className="space-y-1.5">
               <label htmlFor={delayId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-                {t('agents.handoffDelay') || 'Handoff delay'}
+                {t('agents.handoffDelayLabel') || 'Handoff delay'}
               </label>
               <Select
                 id={delayId}
@@ -372,7 +372,7 @@ function LiveChatCard({
                 onChange={(next) => onChange((prev) => ({ ...prev, handoffDelaySeconds: parseInt10(next) }))}
                 options={HANDOFF_DELAY_OPTIONS.map((option) => ({
                   value: String(option.value),
-                  label: option.label,
+                  label: t(`agents.handoffDelay.${option.value}`) || option.label,
                 }))}
               />
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
@@ -503,10 +503,13 @@ function LeadFormCard({
                       <Toggle
                         checked={enabled}
                         onChange={(next) => toggleField(name, next)}
-                        label={`Collect ${LEAD_FIELD_LABELS[name]}`}
+                        label={
+                          t('agents.collectField', { field: leadFieldLabel(name) }) ||
+                          `Collect ${leadFieldLabel(name)}`
+                        }
                       />
                       <span className="text-[13px] font-medium text-[var(--ds-text)]">
-                        {LEAD_FIELD_LABELS[name]}
+                        {leadFieldLabel(name)}
                       </span>
                     </div>
                     {enabled && (
@@ -850,6 +853,12 @@ function WidgetCopyCard({
       </Card>
     </section>
   );
+}
+
+
+/** A lead-form field's label in the active language. */
+function leadFieldLabel(name: LeadFieldName): string {
+  return translateNow(`agents.leadField.${name}`) || LEAD_FIELD_LABELS[name];
 }
 
 function LoadingState(): ReactElement {

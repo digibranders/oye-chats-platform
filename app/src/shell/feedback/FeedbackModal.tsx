@@ -109,13 +109,14 @@ const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPES.map((t) => 
 const AREA_LABELS: Record<string, string> = Object.fromEntries(AREAS.map((a) => [a.id, a.label]));
 const SEVERITY_LABELS: Record<string, string> = Object.fromEntries(SEVERITIES.map((s) => [s.id, s.label]));
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`shell.feedbackModal.statuses.<status>`); the English here is that
+// lookup's fallback.
 const STATUS_META: Record<
   PlatformFeedbackItem['status'],
   { label: string; tone: NonNullable<StatusBadgeProps['tone']>; icon: LucideIcon; spin?: boolean }
 > = {
   open: { label: 'Open', tone: 'warning', icon: Clock },
-  // @i18n-exempt: resolved at the render site from the status key; the labels
-  // here are that lookup's English fallback.
   in_progress: { label: 'In progress', tone: 'accent', icon: Loader2, spin: true },
   resolved: { label: 'Resolved', tone: 'success', icon: CheckCircle2 },
   closed: { label: 'Closed', tone: 'neutral', icon: Archive },
@@ -158,7 +159,7 @@ function AttachmentThumbs({
           href={att.url}
           target="_blank"
           rel="noopener noreferrer"
-          title={att.name || 'Attachment'}
+          title={att.name || translateNow('shell.attachment') || 'Attachment'}
           className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]"
         >
           <img src={att.url} alt={att.name || 'attachment'} className="h-full w-full object-cover" loading="lazy" />
@@ -521,7 +522,7 @@ export function FeedbackModal({
                   {t('shell.feedback.sending') || 'Sending…'}
                 </>
               ) : uploading ? (
-                'Uploading…'
+                t('shell.uploading') || 'Uploading…'
               ) : (
                 <>
                   {t('shell.feedbackModal.submit') || 'Send feedback'}

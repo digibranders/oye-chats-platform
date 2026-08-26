@@ -341,6 +341,17 @@ function isComparisonOperand(node, ts) {
 function isTemplateProse(text) {
   const t = decodeForShape(text).trim();
   if (t.length < 3) return false;
+  // CSS built by interpolation - `radial-gradient(circle at 38% 34%, ...)`,
+  // `circle(0px at px px)`. A template is the natural way to write it and the
+  // leftover literal spans read like lowercase prose.
+  if (/\b(radial-gradient|linear-gradient|conic-gradient|circle|ellipse|translate|rotate|scale|calc|rgba?|hsla?|var)\s*\(/.test(t)) {
+    return false;
+  }
+  if (/\b\d*(px|rem|em|vh|vw|deg|%)\b/.test(t) && !/[.!?]/.test(t)) return false;
+  // KNOWN LIMIT: a template whose literal spans total ONE word - `${n} used`,
+  // `${n} left` - cannot be told apart from an interpolated identifier or unit
+  // by shape alone, so it is not reported. Those are found by reading the
+  // screen, which is how `QuotaMeter`'s "3 used" was caught.
   if (!/[A-Za-z]{2,}(\s|\u00a0)+[A-Za-z]/.test(t)) return false;
   if (isClassSoup(t)) return false;
   return true;
@@ -612,6 +623,15 @@ function classify({ relPath, kind, text, ctx }) {
   if (kind === 'attr') return LOCALIZABLE_ATTRS.has(ctx.attr) && /^aria-|^title$|^alt$/.test(ctx.attr)
     ? CLASSES.A11Y
     : CLASSES.UI_TEXT;
+  // A template hit was already shape-tested by `isTemplateProse` when it was
+  // collected. Re-deriving it here with the plain-literal rules is what made
+  // the collector and the classifier disagree: the hit was gathered and then
+  // silently dropped from the count for starting lowercase, which a template's
+  // first span usually does.
+  if (kind === 'template') {
+    if (ctx.inConsole || ctx.inThrow) return CLASSES.INTERNAL;
+    return CLASSES.UI_TEXT;
+  }
   if (kind === 'literal') {
     if (ctx.inConsole || ctx.inThrow) return CLASSES.INTERNAL;
     if (ctx.inImport) return CLASSES.CODE;
@@ -741,7 +761,7 @@ function scanFile(file) {
           node,
           file: relPath,
           line: lineOf(node),
-          kind: 'literal',
+          kind: 'template',
           text: joined,
           attr: null,
           inConsole: false,

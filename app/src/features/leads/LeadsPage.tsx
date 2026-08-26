@@ -399,7 +399,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'contact',
-        header: 'Lead',
+        header: translateNow('leads.lead') || 'Lead',
         render: (lead) => {
           const tags = annotations.tagsFor(lead.session_id);
           return (
@@ -457,7 +457,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'company',
-        header: 'Company',
+        header: translateNow('leads.company') || 'Company',
         // The domain is derived free of charge from the lead's email
         // (`email_domain_service.extract_company_domain`). Personal-provider
         // addresses correctly yield nothing, so an em-dash here means
@@ -497,7 +497,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'view_chat',
-        header: 'Chat',
+        header: translateNow('leads.chat') || 'Chat',
         render: (lead) => (
           <button
             type="button"
@@ -516,7 +516,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'location',
-        header: 'Location',
+        header: translateNow('leads.location') || 'Location',
         render: (lead) =>
           isFree ? (
             <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
@@ -603,7 +603,7 @@ export function LeadsPage(): ReactElement {
       <Download size={16} aria-hidden="true" />
       {/* Export ignores the active table filters - it always emits the full
           server-side lead set for the agent, so the label says so explicitly. */}
-      {isExporting ? 'Exporting…' : t('leads.exportAllLeads') || 'Export all leads'}
+      {isExporting ? t('leads.exporting') || 'Exporting…' : t('leads.exportAllLeads') || 'Export all leads'}
     </Button>
   );
 

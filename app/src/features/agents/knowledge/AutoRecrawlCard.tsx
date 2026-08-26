@@ -196,7 +196,10 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
           {data.sourcesCount === 0
             ? t('agents.noTrainedWebsitesYetAdd') || 'No trained websites yet. Add a website above to build the retrain set.'
-            : `${data.sourcesCount} website${data.sourcesCount === 1 ? '' : 's'} in the retrain set.`}
+            : t(
+                data.sourcesCount === 1 ? 'agents.retrainSetOne' : 'agents.retrainSetMany',
+                { count: formatNumber(data.sourcesCount) },
+              ) || `${formatNumber(data.sourcesCount)} websites in the retrain set.`}
         </p>
 
         {confirmingDisable && (

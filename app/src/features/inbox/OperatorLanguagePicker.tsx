@@ -4,6 +4,7 @@ import { Select, type SelectOption } from '../../design-system';
 import { setMyLanguage } from '../../services/api';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Sets the operator's own live-chat working language.
@@ -55,7 +56,12 @@ export function OperatorLanguagePicker({
     // written is the default, not an opt-out hidden at the bottom of a list.
     const rows: SelectOption[] = [{ value: '', label: 'Don\u2019t translate' }];
     if (orphaned && value !== null) {
-      rows.push({ value, label: `${localeNameFor(value)} \u2014 no longer offered` });
+      rows.push({
+        value,
+        label:
+          translateNow('inbox.localeNoLongerOffered', { language: localeNameFor(value) }) ||
+          `${localeNameFor(value)} (no longer offered)`,
+      });
     }
     for (const locale of availableLocales) {
       rows.push({ value: locale, label: localeNameFor(locale) ?? locale });

@@ -427,23 +427,23 @@ export function KnowledgePage(): ReactElement {
     () => [
       {
         key: 'name',
-        header: 'Source',
+        header: translateNow('agents.source') || 'Source',
         render: (row) => <SourceCell source={row} />,
       },
       {
         // Display-only column - the real field is unused; `render` supplies the cell.
         key: 'doc_page_count',
-        header: 'Type',
+        header: translateNow('agents.type') || 'Type',
         width: '8rem',
         render: (row) => (
           <span className="text-[var(--ds-text-muted)]">
-            {isUrlSource(row.name) ? 'Website' : 'Document'}
+            {isUrlSource(row.name) ? translateNow('agents.website') || 'Website' : translateNow('agents.document') || 'Document'}
           </span>
         ),
       },
       {
         key: 'page_count',
-        header: 'Size',
+        header: translateNow('agents.size') || 'Size',
         width: '8rem',
         render: (row) => (
           <span className="tabular-nums text-[var(--ds-text-muted)]">{unitLabelOf(row)}</span>
@@ -451,7 +451,7 @@ export function KnowledgePage(): ReactElement {
       },
       {
         key: 'ingested_at',
-        header: 'Added',
+        header: translateNow('agents.added') || 'Added',
         width: '9rem',
         render: (row) => (
           <span className="text-[var(--ds-text-subtle)]">{formatRelativeDate(row.ingested_at)}</span>
@@ -460,7 +460,7 @@ export function KnowledgePage(): ReactElement {
       {
         // Display-only column for row actions.
         key: 'chunk_count',
-        header: 'Actions',
+        header: translateNow('agents.actions') || 'Actions',
         align: 'right',
         width: '13rem',
         render: (row) =>
@@ -477,7 +477,7 @@ export function KnowledgePage(): ReactElement {
                 onClick={() => void handleDelete(row.name)}
                 disabled={deleting === row.name}
               >
-                {deleting === row.name ? 'Removing…' : 'Remove'}
+                {deleting === row.name ? translateNow('agents.removing') || 'Removing…' : translateNow('agents.remove') || 'Remove'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => cancelConfirm(row.name)}>
                 {translateNow('agents.cancel') || 'Cancel'}

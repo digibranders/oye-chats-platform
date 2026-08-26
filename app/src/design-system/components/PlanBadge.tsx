@@ -15,7 +15,7 @@ export interface PlanBadgeProps {
  */
 export function PlanBadge({ planName, className }: PlanBadgeProps): ReactElement {
   const { t } = useTranslation();
-  const label = planName?.trim() || 'Free';
+  const label = planName?.trim() || t('ds.free') || 'Free';
   const tone: StatusBadgeProps['tone'] = label.toLowerCase() === 'free' ? 'neutral' : 'accent';
 
   return (

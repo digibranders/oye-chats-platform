@@ -2,6 +2,7 @@ import type { CSSProperties, ReactElement } from 'react';
 import { Progress } from '../primitives/Progress';
 import { cn } from '../lib/cn';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 import { formatNumber } from '../../i18n/formatters';
 
 /** Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`. */
@@ -51,7 +52,8 @@ export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): 
         <span className="font-medium text-[var(--ds-text)]">{label}</span>
         <span className={cn('font-medium tabular-nums', valueTone)}>
           {isUnlimited
-            ? `${formatNumber(used)} used`
+            ? translateNow('ds.quota.usedCount', { count: formatNumber(used) }) ||
+              `${formatNumber(used)} used`
             : `${formatNumber(used)} / ${formatNumber(limit)}`}
         </span>
       </div>
@@ -61,7 +63,16 @@ export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): 
         </p>
       ) : (
         <div style={fillOverride}>
-          <Progress value={percent} label={`${label}: ${used} of ${limit} used`} />
+          <Progress
+              value={percent}
+              label={
+                translateNow('ds.quota.meterLabel', {
+                  label,
+                  used: formatNumber(used),
+                  limit: formatNumber(limit),
+                }) || `${label}: ${formatNumber(used)} of ${formatNumber(limit)} used`
+              }
+            />
         </div>
       )}
       {over && (

@@ -54,6 +54,8 @@ import { useTranslation } from '../../i18n/useTranslation';
 
 type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'language' | 'feedback' | 'uaq';
 
+// @i18n-exempt: resolved at the render site from the tab key
+// (`analytics.tab.<key>`); the English here is that lookup's fallback.
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'leads', label: 'Leads' },
@@ -68,6 +70,8 @@ const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
  * insight, and on the "All agents" scope there is no single language config to
  * report against. Inserted before Feedback, beside the other per-agent views.
  */
+// @i18n-exempt: resolved at the render site from the tab key
+// (`analytics.tab.<key>`); the English here is that lookup's fallback.
 const LANGUAGE_TAB: { key: AnalyticsTab; label: string } = { key: 'language', label: 'Languages' };
 
 /**
@@ -220,7 +224,7 @@ export function AnalyticsPage(): ReactElement {
         const locked =
           (item.key === 'leads' && !leadsUnlocked) ||
           (item.key === 'satisfaction' && !satisfactionUnlocked);
-        if (!locked) return { key: item.key, label: item.label };
+        if (!locked) return { key: item.key, label: translateNow(`analytics.tab.${item.key}`) || item.label };
         return {
           key: item.key,
           label: (
@@ -231,7 +235,7 @@ export function AnalyticsPage(): ReactElement {
                 aria-hidden="true"
                 className="text-[var(--ds-text-subtle)]"
               />
-              {item.label}
+              {translateNow(`analytics.tab.${item.key}`) || item.label}
             </span>
           ),
         };
@@ -255,7 +259,7 @@ export function AnalyticsPage(): ReactElement {
           aria-hidden="true"
           className={refreshing ? 'animate-spin' : undefined}
         />
-        {refreshing ? 'Refreshing…' : 'Refresh'}
+        {refreshing ? t('analytics.refreshing') || 'Refreshing…' : t('analytics.refresh') || 'Refresh'}
       </Button>
     ) : undefined;
 

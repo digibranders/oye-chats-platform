@@ -128,7 +128,7 @@ export function DeleteAgentDialog({
           onClick={onConfirm}
         >
           {busy && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-          {busy ? 'Deleting…' : t('agents.deleteThisChatbot') || 'Delete this chatbot'}
+          {busy ? t('agents.deleting') || 'Deleting…' : t('agents.deleteThisChatbot') || 'Delete this chatbot'}
         </Button>
       </div>
     </Modal>

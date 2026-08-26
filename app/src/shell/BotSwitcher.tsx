@@ -91,7 +91,7 @@ export function BotSwitcher() {
   // an empty control.
   if (bots.length < 2 || !activeBot) return null;
 
-  const label = activeBot.name || 'Chatbot';
+  const label = activeBot.name || translateNow('shell.chatbot') || 'Chatbot';
 
   return (
     <Popover

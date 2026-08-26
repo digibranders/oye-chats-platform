@@ -22,13 +22,13 @@ function NotificationsCard(): ReactElement {
   const badge = ((): { tone: 'neutral' | 'success' | 'warning'; label: string } => {
     switch (phase.status) {
       case 'subscribed':
-        return { tone: 'success', label: 'Enabled' };
+        return { tone: 'success', label: t('settings.enabled') || 'Enabled' };
       case 'denied':
-        return { tone: 'warning', label: 'Blocked' };
+        return { tone: 'warning', label: t('settings.blocked') || 'Blocked' };
       case 'unsupported':
-        return { tone: 'neutral', label: 'Unavailable' };
+        return { tone: 'neutral', label: t('settings.unavailable') || 'Unavailable' };
       default:
-        return { tone: 'neutral', label: 'Off' };
+        return { tone: 'neutral', label: t('settings.off') || 'Off' };
     }
   })();
 

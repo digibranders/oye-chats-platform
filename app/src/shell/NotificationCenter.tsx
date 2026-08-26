@@ -168,7 +168,12 @@ export function NotificationCenter() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label={hasUnread ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+          aria-label={
+            hasUnread
+              ? t('shell.notifications.unreadCount', { count: unreadCount }) ||
+                `Notifications (${unreadCount} unread)`
+              : t('shell.notifications.label') || 'Notifications'
+          }
           className={cn(
             'relative flex h-9 w-9 items-center justify-center rounded-lg text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
             triggerProps['aria-expanded'] && 'bg-[var(--ds-bg-hover)] text-[var(--ds-text)]',

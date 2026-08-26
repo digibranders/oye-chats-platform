@@ -8,6 +8,7 @@ import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import type { UpgradeIntentKey } from '../../context/upgradeIntents';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 interface AgentTab {
   /** URL segment under `/agents/:agentId/`. */
@@ -33,6 +34,8 @@ interface AgentTab {
  * timing, developer access) - all paid features - so it's Free-plan-gated as
  * a whole via `gateIntent: 'advanced_settings'`.
  */
+// @i18n-exempt: resolved at the render site from the tab path
+// (`agents.tab.<path>`); the English here is that lookup's fallback.
 const AGENT_TABS: readonly AgentTab[] = [
   { path: 'overview', label: 'Overview' },
   { path: 'knowledge', label: 'Knowledge' },
@@ -62,7 +65,7 @@ function LockedTab({ label, onClick }: LockedTabProps): ReactElement {
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label}. Upgrade to unlock`}
+      aria-label={translateNow('agents.upgradeToUnlockTab', { tab: label }) || `${label}. Upgrade to unlock`}
       className={cn(
         TAB_BASE_CLASS,
         'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
@@ -154,7 +157,7 @@ function AgentShell(): ReactElement {
                 <li key={tab.path}>
                   {locked ? (
                     <LockedTab
-                      label={tab.label}
+                      label={t(`agents.tab.${tab.path}`) || tab.label}
                       onClick={() => openUpgradeModal(tab.gateIntent!)}
                     />
                   ) : (
@@ -169,7 +172,7 @@ function AgentShell(): ReactElement {
                         )
                       }
                     >
-                      {tab.label}
+                      {t(`agents.tab.${tab.path}`) || tab.label}
                     </NavLink>
                   )}
                 </li>

@@ -17,6 +17,8 @@ export interface ExperiencePreviewProps {
 /** The visitor-facing states the mock can render, mapped to WidgetChatPreview. */
 type PreviewState = 'chat' | 'waiting' | 'unavailable';
 
+// @i18n-exempt: resolved at the render site from the state key
+// (`agents.previewState.<key>`); the English here is that lookup's fallback.
 const STATE_TABS: { key: PreviewState; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'waiting', label: 'Waiting' },
@@ -112,10 +114,11 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
     <div className="flex flex-col items-center gap-3">
       <div
         role="group"
-        aria-label={t('agents.previewState') || 'Preview state'}
+        aria-label={t('agents.previewStateLabel') || 'Preview state'}
         className="flex w-full max-w-[380px] gap-1 rounded-lg bg-[var(--ds-bg-surface)] p-1"
       >
-        {STATE_TABS.map(({ key, label }) => {
+        {STATE_TABS.map(({ key, label: fallbackLabel }) => {
+          const label = t(`agents.previewState.${key}`) || fallbackLabel;
           const active = state === key;
           return (
             <button

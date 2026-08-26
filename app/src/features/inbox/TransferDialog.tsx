@@ -108,7 +108,7 @@ export function TransferDialog({
           </Button>
           <Button size="sm" onClick={() => void submit()} disabled={!target || submitting}>
             <ArrowRightLeft size={14} aria-hidden="true" />
-            {submitting ? 'Transferring…' : 'Transfer'}
+            {submitting ? t('inbox.transferring') || 'Transferring…' : t('inbox.transfer') || 'Transfer'}
           </Button>
         </div>
       }

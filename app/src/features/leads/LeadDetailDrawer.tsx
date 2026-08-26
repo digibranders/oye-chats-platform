@@ -251,7 +251,7 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
   const { t } = useTranslation();
   const text = message.content ?? message.message ?? '';
   const isVisitor = message.role === 'user';
-  const roleLabel = isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
+  const roleLabel = isVisitor ? t('leads.visitor') || 'Visitor' : message.role === 'operator' ? t('leads.operator') || 'Operator' : t('leads.chatbot') || 'Chatbot';
   const time = formatClock(messageTime(message));
   return (
     <div className={cn('flex', isVisitor ? 'justify-end' : 'justify-start')}>
@@ -515,7 +515,7 @@ export function LeadDetailDrawer({
       >
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-5 py-4">
           <h2 id={headingId} className="text-base font-bold text-[var(--ds-text)]">
-            {view === 'chat' ? 'Conversation' : t('leads.leadDetails') || 'Lead details'}
+            {view === 'chat' ? t('leads.conversation') || 'Conversation' : t('leads.leadDetails') || 'Lead details'}
           </h2>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('leads.close') || 'Close'}>
             <X size={18} aria-hidden="true" />

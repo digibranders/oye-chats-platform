@@ -1,4 +1,5 @@
 import { Check } from 'lucide-react';
+import { t as translateNow } from '../../i18n/i18n';
 import { cn } from '../lib/cn';
 
 export interface StepperItem {
@@ -39,7 +40,7 @@ export function ProgressStepper({
   currentIndex,
   maxReachedIndex,
   onStepClick,
-  ariaLabel = 'Progress',
+  ariaLabel = translateNow('ds.progress') || 'Progress',
   className,
 }: ProgressStepperProps) {
   return (

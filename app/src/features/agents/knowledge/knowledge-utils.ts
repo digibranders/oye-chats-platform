@@ -114,9 +114,12 @@ export function formatRelativeDate(iso?: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '-';
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 30) return `${days} days ago`;
+  if (days <= 0) return translateNow('agents.today') || 'Today';
+  if (days === 1) return translateNow('agents.yesterday') || 'Yesterday';
+  if (days < 30) {
+    const count = formatNumber(days);
+    return translateNow('agents.daysAgo', { count }) || `${count} days ago`;
+  }
   return formatDate(new Date(then), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -157,11 +160,17 @@ export function filterUploadFiles(fileList: FileList | File[]): FileFilterResult
       SUPPORTED_MIME_TYPES.has(file.type) ||
       (SUPPORTED_EXTENSIONS as readonly string[]).includes(ext);
     if (!supported) {
-      rejected.push(`${file.name} - unsupported file type`);
+      rejected.push(
+      translateNow('agents.rejectedUnsupported', { name: file.name }) ||
+        `${file.name} - unsupported file type`,
+    );
       continue;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      rejected.push(`${file.name} - larger than 10 MB`);
+      rejected.push(
+      translateNow('agents.rejectedTooLarge', { name: file.name }) ||
+        `${file.name} - larger than 10 MB`,
+    );
       continue;
     }
     accepted.push(file);

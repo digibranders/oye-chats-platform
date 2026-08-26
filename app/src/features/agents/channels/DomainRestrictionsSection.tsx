@@ -233,7 +233,7 @@ export function DomainRestrictionsSection({
               : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]',
           )}
         >
-          {enabled ? 'On' : 'Off'}
+          {enabled ? 'On' : t('agents.off') || 'Off'}
         </button>
       </div>
 
@@ -318,7 +318,7 @@ export function DomainRestrictionsSection({
       {/* Save row */}
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={saving || !dirty} size="sm">
-          {saving ? 'Saving…' : t('agents.saveDomains') || 'Save domains'}
+          {saving ? t('agents.saving') || 'Saving…' : t('agents.saveDomains') || 'Save domains'}
         </Button>
         {saved && !dirty && (
           <span className="flex items-center gap-1 text-[12px] text-[var(--ds-success)]">

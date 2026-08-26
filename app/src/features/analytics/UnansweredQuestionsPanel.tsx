@@ -35,9 +35,12 @@ function formatRelativeDate(iso?: string | null): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '-';
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 30) return `${days} days ago`;
+  if (days <= 0) return translateNow('analytics.today') || 'Today';
+  if (days === 1) return translateNow('analytics.yesterday') || 'Yesterday';
+  if (days < 30) {
+    const count = formatNumber(days);
+    return translateNow('analytics.daysAgo', { count }) || `${count} days ago`;
+  }
   return formatDate(new Date(then), {
     month: 'short',
     day: 'numeric',

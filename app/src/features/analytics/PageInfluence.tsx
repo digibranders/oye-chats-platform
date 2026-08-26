@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useRef, useState } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { formatNumber } from '../../i18n/formatters';
 import { BarChart3, Compass, Info, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
@@ -43,7 +44,7 @@ interface InfluenceRow {
  */
 function prettyLabel(path: string): string {
   const clean = path.split(/[?#]/, 1)[0];
-  if (!clean || clean === '/' || clean.toLowerCase() === '/home') return 'Home';
+  if (!clean || clean === '/' || clean.toLowerCase() === '/home') return translateNow('analytics.home') || 'Home';
   const segments = clean.split('/').filter(Boolean);
   const last = segments[segments.length - 1] ?? clean;
   const decoded = safeDecode(last);

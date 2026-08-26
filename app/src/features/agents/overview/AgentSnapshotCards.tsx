@@ -46,7 +46,7 @@ export function AgentSnapshotCards({
     knowledgeTone = 'info';
   } else if (chunkCount > 0) {
     const lastAttemptFailed = crawlStatus === 'failed' || crawlStatus === 'no_content';
-    knowledgeStatusText = lastAttemptFailed ? t('agents.readyLastTrainingFailed') || 'Ready. Last training failed' : 'Ready';
+    knowledgeStatusText = lastAttemptFailed ? t('agents.readyLastTrainingFailed') || 'Ready. Last training failed' : t('agents.ready') || 'Ready';
     knowledgeTone = lastAttemptFailed ? 'warning' : 'success';
   } else if (crawlStatus === 'failed' || crawlStatus === 'no_content') {
     knowledgeStatusText = t('agents.needsAttention') || 'Needs attention';
@@ -112,7 +112,7 @@ export function AgentSnapshotCards({
               description={t('agents.activeChannelsAndWebsiteWidget') || 'Active channels and website widget.'}
             />
             <StatusBadge tone={isInstalled ? 'success' : 'neutral'} dot>
-              {isInstalled ? 'Live' : t('agents.notInstalled') || 'Not installed'}
+              {isInstalled ? t('agents.live') || 'Live' : t('agents.notInstalled') || 'Not installed'}
             </StatusBadge>
           </div>
 

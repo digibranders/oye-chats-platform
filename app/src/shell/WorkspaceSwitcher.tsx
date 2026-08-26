@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { t as translateNow } from '../i18n/i18n';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Check, ChevronsUpDown, Headphones } from 'lucide-react';
 import { cn, Popover } from '../design-system';
@@ -8,7 +9,7 @@ import { useTranslation } from '../i18n/useTranslation';
 
 /** Human-readable seat role for a workspace entry. */
 function roleLabel(ws: Workspace): string {
-  if (ws.role === 'owner') return 'Owner';
+  if (ws.role === 'owner') return translateNow('shell.owner') || 'Owner';
   const seat = ws.operator_role || 'operator';
   return seat.charAt(0).toUpperCase() + seat.slice(1);
 }
@@ -56,7 +57,7 @@ export function WorkspaceSwitcher() {
   if (!hasMultipleWorkspaces) return null;
 
   const current = workspaces.find((w) => w.id === currentWorkspaceId) ?? null;
-  const currentName = current?.name || currentWorkspaceName || 'Workspace';
+  const currentName = current?.name || currentWorkspaceName || t('shell.workspace') || 'Workspace';
 
   return (
     <Popover

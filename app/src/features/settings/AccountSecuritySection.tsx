@@ -267,7 +267,7 @@ export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): Rea
         <div className="mt-5">
           <Button type="submit" disabled={!canSubmit}>
             {saving ? (
-              'Saving…'
+              t('settings.saving') || 'Saving…'
             ) : (
               <>
                 <KeyRound size={16} aria-hidden="true" />
@@ -478,7 +478,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={busy}>
                 {busy ? (
-                  'Sending…'
+                  t('settings.sending') || 'Sending…'
                 ) : (
                   <>
                     <Mail size={16} aria-hidden="true" />
@@ -534,7 +534,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={busy}>
                 {busy ? (
-                  'Confirming…'
+                  t('settings.confirming') || 'Confirming…'
                 ) : (
                   <>
                     <Check size={16} aria-hidden="true" />

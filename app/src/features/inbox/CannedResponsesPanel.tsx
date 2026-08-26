@@ -291,7 +291,7 @@ export function CannedResponsesPanel(): ReactElement {
                       disabled={rowBusyId === response.id}
                       onClick={() => void handleDelete(response)}
                     >
-                      {rowBusyId === response.id ? 'Deleting…' : 'Delete'}
+                      {rowBusyId === response.id ? t('inbox.deleting') || 'Deleting…' : t('inbox.delete') || 'Delete'}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setRemovingId(null)}>
                       {t('inbox.cancel') || 'Cancel'}
@@ -340,7 +340,7 @@ export function CannedResponsesPanel(): ReactElement {
               {t('inbox.cancel') || 'Cancel'}
             </Button>
             <Button type="submit" form="canned-response-form" disabled={submitting}>
-              {submitting ? 'Saving…' : editing ? 'Update' : 'Create'}
+              {submitting ? t('inbox.saving') || 'Saving…' : editing ? t('inbox.update') || 'Update' : t('inbox.create') || 'Create'}
             </Button>
           </>
         }

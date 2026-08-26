@@ -235,9 +235,9 @@ function dayBucket(ts: string | null): { key: string; label: string } {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
   const label = sameDay(d, today)
-    ? 'Today'
+    ? translateNow('leads.today') || 'Today'
     : sameDay(d, yesterday)
-      ? 'Yesterday'
+      ? translateNow('leads.yesterday') || 'Yesterday'
       : formatDate(d, { day: 'numeric', month: 'short', year: 'numeric' });
   return { key, label };
 }
@@ -425,7 +425,11 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
           open
           onClose={() => setJourneyOpen(false)}
           title={t('leads.journeyBeforeChat') || 'Journey before chat'}
-          description={`${rows.length} ${rows.length === 1 ? 'page' : 'pages'} visited before this visitor opened the chat`}
+          description={
+            t(rows.length === 1 ? 'leads.pagesBeforeChatOne' : 'leads.pagesBeforeChatMany', {
+              count: rows.length,
+            }) || `${rows.length} pages visited before this visitor opened the chat`
+          }
           size="lg"
         >
           <JourneyList rows={rows} maxHeightClass="max-h-[65vh]" />

@@ -67,7 +67,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
   if (agent.last_crawl_status === 'running') {
     return {
       id: 'knowledge',
-      label: 'Knowledge',
+      label: translateNow('agents.knowledge') || 'Knowledge',
       status: 'pending',
       detail: trained
         ? translateNow('agents.trainedOnLearning', { passages: formatPassages(chunks) }) ||
@@ -79,7 +79,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
   if (trained) {
     return {
       id: 'knowledge',
-      label: 'Knowledge',
+      label: translateNow('agents.knowledge') || 'Knowledge',
       status: agent.last_crawl_status === 'failed' ? 'warn' : 'pass',
       detail:
         agent.last_crawl_status === 'failed'
@@ -93,7 +93,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
   if (agent.last_crawl_status === 'failed') {
     return {
       id: 'knowledge',
-      label: 'Knowledge',
+      label: translateNow('agents.knowledge') || 'Knowledge',
       status: 'fail',
       detail: translateNow('agents.theLastTrainingRunFailed') || 'The last training run failed. Try training again.',
     };
@@ -101,7 +101,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
 
   return {
     id: 'knowledge',
-    label: 'Knowledge',
+    label: translateNow('agents.knowledge') || 'Knowledge',
     status: 'fail',
     detail: translateNow('agents.nothingLearnedYetAddA') || 'Nothing learned yet - add a website or documents.',
   };

@@ -152,7 +152,9 @@ export function filterEmptyDescription(input: FilterEmptyInput): string {
   if (!input.hasTrackedJourneys) {
     return translateNow('analytics.noPageJourneysWereTracked') || 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
   }
-  const scope = input.startPage ? ` starting on ${input.startPage}` : '';
+  const scope = input.startPage
+    ? ` ${translateNow('analytics.scopeStartingOn', { page: input.startPage }) || `starting on ${input.startPage}`}`
+    : '';
   if (input.outcome) {
     // "Attributed to", not "ended in": a conversion whose session had no
     // tracked pre-chat page still counts on the outcome card but has no path

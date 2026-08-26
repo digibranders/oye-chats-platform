@@ -341,7 +341,7 @@ export function ExperiencePage(): ReactElement {
                   {saveError ? (
                     <span className="text-[var(--ds-danger)]">{saveError}</span>
                   ) : saving ? (
-                    'Saving…'
+                    t('agents.saving') || 'Saving…'
                   ) : justSaved && !dirty ? (
                     t('agents.allChangesSaved') || 'All changes saved'
                   ) : (
@@ -363,7 +363,7 @@ export function ExperiencePage(): ReactElement {
                     disabled={saveDisabled}
                     aria-label={t('agents.saveChanges') || 'Save changes'}
                   >
-                    {saving ? 'Saving…' : t('agents.saveChanges') || 'Save changes'}
+                    {saving ? t('agents.saving') || 'Saving…' : t('agents.saveChanges') || 'Save changes'}
                   </Button>
                 </div>
               </div>

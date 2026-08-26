@@ -15,6 +15,8 @@ import { MessageDetail } from './MessageDetail';
 import { relativeTime, statusBadge, type OfflineStatus } from './inboxHelpers';
 import { useTranslation } from '../../i18n/useTranslation';
 
+// @i18n-exempt: resolved at the render site from the filter key
+// (`inbox.offlineFilter.<key>`); the English here is that lookup's fallback.
 const FILTER_OPTIONS: ReadonlyArray<{ key: StatusFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'new', label: 'New' },
@@ -286,7 +288,7 @@ function StatusFilterBar({ value, onChange }: StatusFilterBarProps): ReactElemen
                 : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
             )}
           >
-            {opt.label}
+            {t(`inbox.offlineFilter.${opt.key}`) || opt.label}
           </button>
         );
       })}

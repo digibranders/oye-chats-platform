@@ -268,7 +268,7 @@ export function PersonalitySection({
               ) : (
                 <Sparkles size={14} />
               )}
-              {detecting ? 'Detecting…' : t('agents.detectFromWebsite') || 'Detect from website'}
+              {detecting ? t('agents.detecting') || 'Detecting…' : t('agents.detectFromWebsite') || 'Detect from website'}
             </Button>
           }
         />
@@ -335,7 +335,7 @@ export function PersonalitySection({
             disabled={previewing || botId === null}
           >
             {previewing ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
-            {previewing ? 'Generating…' : t('agents.previewASampleReply') || 'Preview a sample reply'}
+            {previewing ? t('agents.generating') || 'Generating…' : t('agents.previewASampleReply') || 'Preview a sample reply'}
           </Button>
           {sampleReply && (
             <div className="flex items-start gap-2">

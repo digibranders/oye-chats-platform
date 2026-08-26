@@ -16,7 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES = path.resolve(HERE, '..', 'src', 'i18n', 'locales');
-const keys = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const FORCE = argv.includes('--force');
+const keys = argv.filter((a) => a !== '--force');
 if (keys.length === 0) {
   console.error('usage: i18n-remove-keys.mjs <dotted.key> [...]');
   process.exit(2);
@@ -68,6 +70,16 @@ for (const file of fs.readdirSync(LOCALES).filter((f) => /\.ts$/.test(f))) {
       // `leaf in cur` also sees the prototype chain, so `toString` and
       // `constructor` "existed" and triggered a needless rewrite of the block.
       if (cur && Object.prototype.hasOwnProperty.call(cur, leaf)) {
+        if (typeof cur[leaf] === 'object' && cur[leaf] !== null && !FORCE) {
+          // Deleting a nested OBJECT removes every key under it. The
+          // whole-namespace guard above did not cover this, and one careless
+          // `agents.previewState` took three live keys with it.
+          console.error(
+            `refusing to delete "${ns}.${p}": it is an object holding ` +
+              `${Object.keys(cur[leaf]).length} keys. Pass --force if that is really intended.`,
+          );
+          process.exit(1);
+        }
         delete cur[leaf];
         removed += 1;
       }

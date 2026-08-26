@@ -189,7 +189,7 @@ export function SubdomainSessionSection({
             whether it is running on auto-detect or a pinned override. Uses
             the shared StatusBadge so it matches every other pill in the
             admin (quiet chip, tone carried by the dot). */}
-        <StatusBadge tone="success">{hasOverride ? 'Custom' : 'Automatic'}</StatusBadge>
+        <StatusBadge tone="success">{hasOverride ? t('agents.custom') || 'Custom' : t('agents.automatic') || 'Automatic'}</StatusBadge>
       </div>
 
       <InsightCard tone={status.tone} icon={StatusIcon} title={status.title} body={status.body} />
@@ -283,7 +283,7 @@ export function SubdomainSessionSection({
       {/* Save row */}
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={saving || !dirty} size="sm">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('agents.saving') || 'Saving…' : t('agents.save') || 'Save'}
         </Button>
         {saved && !dirty && (
           <span className="flex items-center gap-1 text-[12px] text-[var(--ds-success)]">

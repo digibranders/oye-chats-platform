@@ -31,6 +31,10 @@ interface Option<T extends string> {
  * only registry; the endonyms below are the pre-catalogue fallback, and a
  * language's own name is the one string that must never be translated.
  */
+// @i18n-exempt: an ENDONYM is a language's name in its own language, so it is
+// identical whatever the interface language is - English stays "English" on a
+// Hindi dashboard, and हिन्दी stays हिन्दी on an English one. Translating one
+// would defeat the purpose of showing it.
 const UI_LOCALE_FOR_LANGUAGE: Readonly<Record<string, { locale: string; endonym: string }>> = {
   en: { locale: 'en-IN', endonym: 'English' },
   hi: { locale: 'hi-IN', endonym: 'हिन्दी' },

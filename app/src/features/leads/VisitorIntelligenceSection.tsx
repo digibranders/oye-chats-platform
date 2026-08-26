@@ -214,7 +214,7 @@ function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): React
         onClick={() => void send(false)}
       >
         <Send size={14} aria-hidden="true" />
-        {state === 'sending' ? 'Sending…' : state === 'sent' ? t('leads.followUpSent') || 'Follow-up sent' : t('leads.sendFollowUpEmail') || 'Send follow-up email'}
+        {state === 'sending' ? t('leads.sending') || 'Sending…' : state === 'sent' ? t('leads.followUpSent') || 'Follow-up sent' : t('leads.sendFollowUpEmail') || 'Send follow-up email'}
       </Button>
 
       {blockedByValidation && (

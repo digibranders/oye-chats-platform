@@ -17,6 +17,8 @@ export interface MessagesSectionProps {
   onChange: (patch: Partial<ExperienceDraft>) => void;
 }
 
+// @i18n-exempt: resolved at the render site from the option id
+// (`agents.layout.<id>`); the English here is that lookup's fallback.
 const LAYOUT_OPTIONS: { id: SuggestionsLayout; label: string; icon: typeof AlignHorizontalDistributeCenter }[] = [
   { id: 'horizontal', label: 'Horizontal', icon: AlignHorizontalDistributeCenter },
   { id: 'vertical', label: 'Vertical', icon: AlignVerticalDistributeCenter },
@@ -145,7 +147,8 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
               aria-label={t('agents.quickActionLayout') || 'Quick-action layout'}
               className="inline-flex overflow-hidden rounded-lg border border-[var(--ds-border)]"
             >
-              {LAYOUT_OPTIONS.map(({ id, label, icon: Icon }) => {
+              {LAYOUT_OPTIONS.map(({ id, label: fallbackLabel, icon: Icon }) => {
+                const label = t(`agents.layout.${id}`) || fallbackLabel;
                 const active = suggestionsLayout === id;
                 return (
                   <button

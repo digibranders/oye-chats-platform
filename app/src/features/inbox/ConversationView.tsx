@@ -39,6 +39,8 @@ import { t as translateNow } from '../../i18n/i18n';
 const MAX_CANNED_SUGGESTIONS = 8;
 
 /** Human-readable transcript labels for each message role. */
+// @i18n-exempt: resolved at the render site from the message role
+// (`inbox.transcriptRole.<role>`); the English here is that lookup's fallback.
 const TRANSCRIPT_ROLE_LABELS: Readonly<Record<OperatorMessage['role'], string>> = {
   user: 'Visitor',
   operator: 'You',
@@ -64,7 +66,8 @@ function buildTranscript(chat: ActiveChat, messages: OperatorMessage[]): string 
   if (chat.bot_name) lines.push(`Chatbot: ${chat.bot_name}`);
   lines.push('');
   for (const message of messages) {
-    const role = TRANSCRIPT_ROLE_LABELS[message.role];
+    const role =
+      translateNow(`inbox.transcriptRole.${message.role}`) || TRANSCRIPT_ROLE_LABELS[message.role];
     let body: string;
     if (message.fileUrl) {
       body = `[file] ${message.filename ?? message.fileUrl} (${message.fileUrl})`;
@@ -194,7 +197,7 @@ function MessageBubble({
             rel="noreferrer noopener"
             className="underline underline-offset-2"
           >
-            {message.filename ?? 'Attachment'}
+            {message.filename ?? (t('inbox.attachment') || 'Attachment')}
           </a>
         ) : display.isTranslated ? (
           // PLAIN TEXT, NOT MARKDOWN, and deliberately so. This string is model
@@ -497,7 +500,7 @@ export function ConversationView({
                   )}
                   aria-hidden="true"
                 />
-                {presence === 'online' ? 'Online' : 'Disconnected'}
+                {presence === 'online' ? t('inbox.online') || 'Online' : t('inbox.disconnected') || 'Disconnected'}
               </span>
               {chat.bot_name && <span className="truncate">· {chat.bot_name}</span>}
             </div>
@@ -514,11 +517,11 @@ export function ConversationView({
           </Button>
           <Button variant="outline" size="sm" onClick={onClose} disabled={closing || resolving}>
             <CornerUpLeft size={14} aria-hidden="true" />
-            {closing ? 'Returning…' : t('inbox.returnToAi') || 'Return to AI'}
+            {closing ? t('inbox.returning') || 'Returning…' : t('inbox.returnToAi') || 'Return to AI'}
           </Button>
           <Button variant="danger" size="sm" onClick={onResolve} disabled={closing || resolving}>
             <CheckCircle2 size={14} aria-hidden="true" />
-            {resolving ? 'Resolving…' : 'Resolve'}
+            {resolving ? t('inbox.resolving') || 'Resolving…' : t('inbox.resolve') || 'Resolve'}
           </Button>
         </div>
       </header>
@@ -667,7 +670,7 @@ export function ConversationView({
         <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[var(--ds-text-subtle)]">
           {connected ? <Wifi size={12} aria-hidden="true" /> : <WifiOff size={12} aria-hidden="true" />}
           <StatusBadge tone={connected ? 'success' : 'warning'} dot>
-            {connected ? 'Live' : 'Offline'}
+            {connected ? t('inbox.live') || 'Live' : t('inbox.offline') || 'Offline'}
           </StatusBadge>
         </div>
       </div>

@@ -359,6 +359,8 @@ const TRIE_MAX_LEAVES = 25;
 const DEFAULT_MAX_FLOWS = 5;
 /** Options for the "Page flows shown" control in the filter popover. `All`
  *  maps to the hard ceiling so it shows every fetched flow. */
+// @i18n-exempt: resolved where it is rendered, keyed by the option value
+// (`analytics.flowCount.<value>`); the English here is that lookup's fallback.
 const FLOW_COUNT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: 'Top 5', value: 5 },
   { label: 'Top 10', value: 10 },
@@ -758,7 +760,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // the filter popover. Falls back defensively if maxFlows ever holds a
   // value outside FLOW_COUNT_OPTIONS.
   const flowCountLabel = useMemo(
-    () => FLOW_COUNT_OPTIONS.find((o) => o.value === maxFlows)?.label ?? `Top ${maxFlows}`,
+    () =>
+      translateNow(`analytics.flowCount.${maxFlows}`) ||
+      FLOW_COUNT_OPTIONS.find((o) => o.value === maxFlows)?.label ||
+      `Top ${maxFlows}`,
     [maxFlows],
   );
 

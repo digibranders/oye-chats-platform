@@ -90,7 +90,7 @@ function AvatarCircle({ name, size, online = false, imageUrl }: AvatarCircleProp
 export function ProfileMenu() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const fallbackName = getAuthItem('admin_name') ?? 'Admin';
+  const fallbackName = getAuthItem('admin_name') ?? (t('shell.admin') || 'Admin');
   const [profile, setProfile] = useState<CurrentUser | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);

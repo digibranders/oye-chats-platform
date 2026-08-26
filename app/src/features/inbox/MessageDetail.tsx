@@ -263,7 +263,7 @@ export function MessageDetail({
                 {t('inbox.cancel') || 'Cancel'}
               </Button>
               <Button variant="danger" size="sm" onClick={onDelete} disabled={deleting}>
-                {deleting ? 'Deleting…' : 'Delete'}
+                {deleting ? t('inbox.deleting') || 'Deleting…' : t('inbox.delete') || 'Delete'}
               </Button>
             </>
           ) : (

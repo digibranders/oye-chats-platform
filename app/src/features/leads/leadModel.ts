@@ -275,6 +275,9 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
  * a table cell, and non-table consumers have to be able to recognise it and
  * substitute their own representation of absence. The CSV export blanks it.
  */
+// @i18n-exempt: a SENTINEL value, compared against by non-table consumers
+// (`leadsCsv` blanks it) rather than only rendered. Localizing it would break
+// that comparison. The render sites show a translated absence marker.
 export const UNKNOWN_LOCATION = 'Unknown';
 
 /**

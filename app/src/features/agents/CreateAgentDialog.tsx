@@ -438,7 +438,7 @@ export function CreateAgentDialog({
                   ) : limitNotice ? (
                     t('agents.continueToPlans') || 'Continue to plans'
                   ) : (
-                    'Continue'
+                    t('agents.continue') || 'Continue'
                   )}
                 </Button>
               </div>

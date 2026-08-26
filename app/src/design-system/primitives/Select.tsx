@@ -5,6 +5,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -61,7 +62,7 @@ export function Select({
   value,
   onChange,
   options,
-  placeholder = 'Select…',
+  placeholder = translateNow('ds.selectPlaceholder') || 'Select…',
   searchable = false,
   disabled = false,
   name,

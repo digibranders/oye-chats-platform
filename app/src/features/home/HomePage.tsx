@@ -136,7 +136,11 @@ function buildHealthInsight(data: HomeData): {
     return {
       icon: Radio,
       tone: 'info',
-      title: `${readyToDeploy} chatbot${readyToDeploy === 1 ? ' is' : 's are'} ready to go live`,
+      title:
+        translateNow(
+          readyToDeploy === 1 ? 'home.readyToGoLiveOne' : 'home.readyToGoLiveMany',
+          { count: formatCount(readyToDeploy) },
+        ) || `${formatCount(readyToDeploy)} chatbots are ready to go live`,
       body: translateNow('home.addTheWidgetToYour') || 'Add the widget to your website to start capturing real conversations.',
     };
   }
@@ -362,7 +366,10 @@ export function HomePage(): ReactElement {
           </span>
         </>
       }
-      description={`${formatToday(now)} · Here’s how your workspace is doing today.`}
+      description={
+        t('home.headerSubtitle', { date: formatToday(now) }) ||
+        `${formatToday(now)} · Here’s how your workspace is doing today.`
+      }
       actions={headerActions}
       width="wide"
     >
@@ -442,8 +449,8 @@ function HomeContent({
                   status={{ label: agent.health.label, tone: agent.health.tone }}
                   to={`/agents/${agent.bot.id}/overview`}
                   metrics={[
-                    { label: 'Conversations', value: formatCount(agent.conversations) },
-                    { label: 'Leads', value: formatCount(agent.leads) },
+                    { label: t('home.conversations') || 'Conversations', value: formatCount(agent.conversations) },
+                    { label: t('home.leads') || 'Leads', value: formatCount(agent.leads) },
                   ]}
                 />
               ))}

@@ -118,7 +118,7 @@ export function WebsitePreviewPanel({
               className="shrink-0"
             >
               {loadedUrl ? <RefreshCw size={15} /> : <Globe size={15} />}
-              {loadedUrl ? 'Reload' : t('agents.loadPreview') || 'Load preview'}
+              {loadedUrl ? t('agents.reload') || 'Reload' : t('agents.loadPreview') || 'Load preview'}
             </Button>
           </div>
 

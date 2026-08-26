@@ -65,7 +65,7 @@ export function RecrawlDiffModal({
     () => [
       {
         key: 'unchanged',
-        label: 'Unchanged',
+        label: t('agents.bucket.unchanged') || 'Unchanged',
         sublabel: translateNow('agents.pagesUnchanged') || 'Pages unchanged',
         count: diff.unchanged,
         urls: diff.unchangedUrls,
@@ -73,7 +73,7 @@ export function RecrawlDiffModal({
       },
       {
         key: 'new',
-        label: 'New',
+        label: t('agents.new') || 'New',
         sublabel: translateNow('agents.newPagesFound') || 'New pages found',
         count: diff.newPages,
         urls: diff.newUrls,
@@ -81,7 +81,7 @@ export function RecrawlDiffModal({
       },
       {
         key: 'removed',
-        label: 'Removed',
+        label: t('agents.removed') || 'Removed',
         sublabel: translateNow('agents.pagesRemoved') || 'Pages removed',
         count: diff.removedPages,
         urls: diff.removedUrls,
@@ -143,7 +143,7 @@ export function RecrawlDiffModal({
             disabled={starting || emptyDiscovery}
           >
             {starting ? (
-              'Starting…'
+              t('agents.starting') || 'Starting…'
             ) : (
               <>
                 {isDelta ? (

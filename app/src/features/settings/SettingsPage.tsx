@@ -323,7 +323,7 @@ export function SettingsPage(): ReactElement {
                       ) : (
                         <Upload size={14} aria-hidden="true" />
                       )}
-                      {user.avatar_url ? 'Replace' : t('settings.page.uploadImage') || 'Upload image'}
+                      {user.avatar_url ? t('settings.replace') || 'Replace' : t('settings.page.uploadImage') || 'Upload image'}
                       <input
                         type="file"
                         accept="image/png,image/jpeg,image/jpg,image/webp"

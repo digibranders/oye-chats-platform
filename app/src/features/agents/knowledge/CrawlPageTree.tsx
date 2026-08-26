@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { t as translateNow } from '../../../i18n/i18n';
 import {
   Check,
   ChevronRight,
@@ -53,7 +54,7 @@ function rootHost(urls: readonly string[]): string {
       continue;
     }
   }
-  return 'Website';
+  return translateNow('agents.website') || 'Website';
 }
 
 /**

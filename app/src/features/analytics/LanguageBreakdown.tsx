@@ -53,7 +53,11 @@ export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): Re
                 <p className="text-[12px] text-[var(--ds-text-subtle)]">
                   {isResidual
                     ? t('analytics.chatsFromBeforeMultilingualWas') || 'Chats from before multilingual was on, or with no language detected'
-                    : `${formatNumber(row.resolved)} resolved · ${formatNumber(row.liveChat)} reached a human`}
+                    : t('analytics.resolvedAndHuman', {
+                    resolved: formatNumber(row.resolved),
+                    human: formatNumber(row.liveChat),
+                  }) ||
+                  `${formatNumber(row.resolved)} resolved · ${formatNumber(row.liveChat)} reached a human`}
                 </p>
               </div>
               <p className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-text-muted)]">

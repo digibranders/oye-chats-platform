@@ -131,8 +131,8 @@ export function SatisfactionBreakdown({
                   <PieChart>
                     <Pie
                       data={[
-                        { name: 'Resolved', value: resolution.resolved },
-                        { name: 'Unresolved', value: resolution.unresolved },
+                        { name: t('agents.resolved') || 'Resolved', value: resolution.resolved },
+                        { name: t('agents.unresolved') || 'Unresolved', value: resolution.unresolved },
                       ]}
                       cx="50%"
                       cy="50%"

@@ -63,7 +63,7 @@ export function KnowledgeGapsPanel({
   const columns: Column<UnansweredQuestion>[] = [
     {
       key: 'question',
-      header: 'Question',
+      header: t('agents.question') || 'Question',
       render: (row) => (
         <div className="flex items-center gap-3">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">

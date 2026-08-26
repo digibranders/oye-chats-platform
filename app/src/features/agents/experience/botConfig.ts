@@ -127,6 +127,8 @@ export const IDLE: SliceStatus = { saving: false, error: null, saved: false };
 // ── Constants ─────────────────────────────────────────────────────────────────
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
 
+// @i18n-exempt: resolved at the render site from the field name
+// (`agents.leadField.<name>`); the English here is that lookup's fallback.
 export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   name: 'Name',
   email: 'Email',
@@ -134,6 +136,8 @@ export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   company: 'Company',
 };
 
+// @i18n-exempt: resolved at the render site from the option value
+// (`agents.handoffDelay.<value>`); the English here is that lookup's fallback.
 export const HANDOFF_DELAY_OPTIONS: readonly { value: number; label: string }[] = [
   { value: 0, label: 'Immediately' },
   { value: 2, label: 'After 2 seconds' },

@@ -169,7 +169,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
                 className="flex items-center gap-1 rounded px-1 text-[11px] font-semibold uppercase text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {keyCopied ? <Check size={12} /> : <Copy size={12} />}
-                {keyCopied ? 'Copied' : 'Copy'}
+                {keyCopied ? t('agents.copied') || 'Copied' : t('agents.copy') || 'Copy'}
               </button>
               <span role="status" aria-live="polite" className="sr-only">
                 {keyCopied ? t('agents.embedKeyCopied') || 'Embed key copied' : ''}
@@ -209,7 +209,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               ) : (
                 <Link2 size={14} aria-hidden="true" />
               )}
-              {demoCopied ? 'Copied' : t('agents.copyDemoLink') || 'Copy demo link'}
+              {demoCopied ? t('agents.copied') || 'Copied' : t('agents.copyDemoLink') || 'Copy demo link'}
             </button>
             <button
               type="button"
@@ -232,7 +232,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               ) : (
                 <Bot size={14} aria-hidden="true" />
               )}
-              {promptCopied ? 'Copied' : t('agents.copyPromptForAiAgent') || 'Copy prompt for AI agent'}
+              {promptCopied ? t('agents.copied') || 'Copied' : t('agents.copyPromptForAiAgent') || 'Copy prompt for AI agent'}
             </button>
             <span role="status" aria-live="polite" className="sr-only">
               {demoCopied ? t('agents.demoLinkCopied') || 'Demo link copied' : ''}

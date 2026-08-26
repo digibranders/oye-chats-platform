@@ -423,8 +423,8 @@ export function AddKnowledgePanel({
         >
           {(
             [
-              { key: 'website', label: 'Website', icon: Globe },
-              { key: 'files', label: 'Documents', icon: FileText },
+              { key: 'website', label: t('agents.website') || 'Website', icon: Globe },
+              { key: 'files', label: t('agents.documents') || 'Documents', icon: FileText },
             ] as const
           ).map((tab) => {
             const selected = mode === tab.key;
@@ -1009,7 +1009,7 @@ function UploadCostPanel({
                     : 'text-[var(--ds-text-subtle)]',
                 )}
               >
-                {f.credits > 0 ? `${f.credits} credits` : 'Free'}
+                {f.credits > 0 ? `${f.credits} credits` : t('agents.free') || 'Free'}
               </span>
             </li>
           );

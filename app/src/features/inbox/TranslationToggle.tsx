@@ -57,7 +57,7 @@ export function TranslationToggle({
           className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-[var(--ds-text)] disabled:opacity-60"
         >
           {retrying ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : null}
-          {retrying ? 'Translating' : 'Retry'}
+          {retrying ? t('inbox.translating') || 'Translating' : t('inbox.retry') || 'Retry'}
         </button>
       </span>
     );

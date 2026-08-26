@@ -304,7 +304,7 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
         const sid = msg.session_id;
         const chat: ActiveChat = {
           session_id: sid,
-          visitor_name: msg.visitor_name || 'Anonymous',
+          visitor_name: msg.visitor_name || translateNow('inbox.anonymous') || 'Anonymous',
           reason: msg.reason ?? null,
           bot_id: msg.bot_id ?? null,
           bot_name: msg.bot_name ?? null,
@@ -354,7 +354,7 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
           for (const c of chats) {
             next[c.session_id] = {
               session_id: c.session_id,
-              visitor_name: c.visitor_name || 'Anonymous',
+              visitor_name: c.visitor_name || translateNow('inbox.anonymous') || 'Anonymous',
               reason: c.reason ?? null,
               bot_id: c.bot_id ?? null,
               bot_name: c.bot_name ?? null,

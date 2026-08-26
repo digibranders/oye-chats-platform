@@ -298,7 +298,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
     <div className="space-y-5 overflow-y-auto p-4">
       <Field label={t('inbox.visitor') || 'Visitor'}>
         <div className="space-y-1.5">
-          <Row icon={<User size={14} />} value={lead?.name || 'Anonymous'} />
+          <Row icon={<User size={14} />} value={lead?.name || t('inbox.anonymous') || 'Anonymous'} />
           {lead?.email && <Row icon={<Mail size={14} />} value={lead.email} />}
           {lead?.phone && <Row icon={<Phone size={14} />} value={lead.phone} />}
           {lead?.company && <Row icon={<Building2 size={14} />} value={lead.company} />}

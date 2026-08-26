@@ -30,6 +30,8 @@ import { formatNumber } from '../../../i18n/formatters';
 
 type PanelKey = 'engagement' | 'questions' | 'leads' | 'satisfaction' | 'feedback';
 
+// @i18n-exempt: resolved at the render site from the panel key
+// (`agents.panel.<key>`); the English here is that lookup's fallback.
 const PANELS: readonly TabItem[] = [
   { key: 'engagement', label: 'Engagement' },
   { key: 'questions', label: 'Questions' },
@@ -168,7 +170,8 @@ export function AgentAnalyticsPage(): ReactElement {
 
   const panels = useMemo<readonly TabItem[]>(
     () =>
-      PANELS.map((tab) => {
+      PANELS.map((raw) => {
+        const tab = { ...raw, label: translateNow(`agents.panel.${raw.key}`) || raw.label };
         const locked =
           (tab.key === 'leads' && !leadsUnlocked) ||
           (tab.key === 'satisfaction' && !satisfactionUnlocked);
