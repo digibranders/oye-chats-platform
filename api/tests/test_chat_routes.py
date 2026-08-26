@@ -199,6 +199,21 @@ class TestLeadCapture:
 
 
 class TestValidateEmail:
+    @pytest.fixture(autouse=True)
+    def _no_verdict_cache(self, monkeypatch):
+        """Take the Reoon verdict cache out of the picture for this class.
+
+        These tests assert what the endpoint DECIDES, but it caches verdicts in
+        a live Redis keyed only on the address, with a 24h TTL and no test
+        namespace. Without this, an earlier case here caches a verdict for an
+        address a later case reuses, and the later one reads the cache instead
+        of its own mock, passing on a clean Redis and failing for the rest of
+        the day. The cache's own behaviour is covered in
+        test_reoon_verdict_cache.py.
+        """
+        monkeypatch.setattr("app.core.cache.cache_get", lambda _key: None)
+        monkeypatch.setattr("app.core.cache.cache_set", lambda *_a, **_k: True)
+
     def test_bad_syntax_blocked_without_calling_reoon(self):
         bot = _default_bot()
         app = _build_app(bot_override=bot)
@@ -333,7 +348,9 @@ class TestValidateEmail:
             )
 
         assert response.status_code == 200
-        assert response.json() == {"valid": True}
+        # 200 with an explicit "we did not verify this", never an error status:
+        # the widget must not have to read a verdict out of a status code.
+        assert response.json() == {"valid": True, "unverified": True}
 
 
 # ── Feedback ─────────────────────────────────────────────────────────────────

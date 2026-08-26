@@ -92,3 +92,22 @@ test('the cache evicts its oldest entry instead of growing without bound', async
 
     assert.equal(cache.size(), 2);
 });
+
+test('an explicitly unverified answer is not retained', async () => {
+    // The server marks its own fail-open paths (vendor budget spent, Reoon
+    // unreachable) with unverified:true. That describes our state, not the
+    // address, so holding it would freeze the address as unchecked for the
+    // whole visit.
+    const cache = createEmailVerdictCache();
+    let calls = 0;
+    const fetcher = () => {
+        calls += 1;
+        return calls === 1
+            ? Promise.resolve({ verdict: { valid: true, unverified: true }, cacheable: false })
+            : Promise.resolve({ verdict: { valid: false, reason: 'nope' } });
+    };
+
+    assert.equal((await cache.resolve('y@example.com', fetcher)).unverified, true);
+    assert.deepEqual(await cache.resolve('y@example.com', fetcher), { valid: false, reason: 'nope' });
+    assert.equal(calls, 2);
+});

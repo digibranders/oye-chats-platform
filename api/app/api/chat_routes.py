@@ -28,7 +28,7 @@ from app.api.auth import (
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
-from app.core.rate_limit import key_from_bot_key, limiter
+from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatSession
@@ -1653,9 +1653,24 @@ _REOON_VERDICT_TTL_S = 24 * 60 * 60
 # See `validate_email_endpoint` for why the two are not symmetric.
 _REOON_BLOCKED_TTL_S = 5 * 60
 
+# Two different ceilings, because this route has two different costs.
+#
+# The decorator below bounds REQUESTS from one visitor (the limit key is
+# ``<bot-key>:<client-ip>``). It is a flood guard for the DB gate checks and
+# the cache read, set far above anything a person filling a form can reach.
+#
+# ``_REOON_BUDGET`` bounds the only expensive thing here, the vendor call, and
+# is spent in the handler at the point we are about to make one. A cached
+# answer costs nothing and must not consume it. Keeping them separate is what
+# stops a visitor who re-checks addresses we already hold verdicts for from
+# exhausting the budget that guards our Reoon bill, and then having their next
+# address let through unchecked.
+_REOON_REQUEST_LIMIT = "60/minute"
+_REOON_BUDGET = "20/minute"
+
 
 @router.post("/chat/validate-email")
-@limiter.limit("20/minute", key_func=key_from_bot_key)
+@limiter.limit(_REOON_REQUEST_LIMIT, key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Real-time check the widget calls on email-field blur, before the
     visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
@@ -1675,6 +1690,13 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     plan doesn't include this feature, an infra hiccup or a lower tier
     must never block a real visitor from talking to a human. See
     docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
+
+    Every fail-open path returns ``200`` with ``unverified: true`` rather than
+    an error status. The widget must never have to infer a verdict from a
+    status code: a ``429`` says something about our budget, nothing about the
+    address, and a client that reads one as "valid" turns every throttled
+    moment into a validation hole. Saying so explicitly also makes the skips
+    countable in logs instead of invisible.
     """
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
@@ -1693,7 +1715,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
             or not credit_service.is_feature_enabled(session, "email_verification")
             or not _agent_enrichment_opt_in(bot.id, "email_verification")
         ):
-            return {"valid": True}
+            return {"valid": True, "unverified": True}
 
     from app.core.cache import cache_get, cache_set
     from app.services.reoon_service import is_obviously_undeliverable, verify_email
@@ -1701,11 +1723,11 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     # CACHED, because this call is UNMETERED and the endpoint is public.
     #
     # It is authenticated only by the widget's bot key (embedded in customer
-    # pages) and rate-limited at 20/min per key, so it was 20 free Reoon calls
-    # a minute per widget, on OyeChats' account, with no ledger row anywhere.
-    # Metering it would be the wrong fix: this is a pre-submit UX helper that
-    # fires on field blur, and charging a customer because a visitor tabbed
-    # through a form twice is indefensible.
+    # pages), so every Reoon call it makes lands on OyeChats' account with no
+    # ledger row anywhere. Metering it would be the wrong fix: this is a
+    # pre-submit UX helper that fires on field blur, and charging a customer
+    # because a visitor tabbed through a form twice is indefensible. The cache
+    # plus ``_REOON_BUDGET`` bound the spend instead.
     #
     # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
     # directions. A "deliverable" answer is safe to hold for a day: the worst
@@ -1730,12 +1752,22 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     if isinstance(cached, dict) and "undeliverable" in cached:
         undeliverable = bool(cached["undeliverable"])
     else:
+        # About to spend money. This is the point the budget is for, and the
+        # only path that reaches it, so a visitor re-checking addresses we
+        # already have verdicts for can never exhaust it.
+        if not consume_vendor_budget("reoon_verify", key_from_bot_key(request), _REOON_BUDGET):
+            logger.warning(
+                "reoon_budget_exhausted | bot=%s. Returning unverified",
+                bot.id,
+            )
+            return {"valid": True, "unverified": True}
+
         validation = verify_email(email)
         if validation is None:
             # Reoon unreachable. Fail OPEN. A visitor must never be blocked
             # from submitting because our vendor is down. Not cached: the next
             # attempt should retry rather than inherit an outage.
-            return {"valid": True}
+            return {"valid": True, "unverified": True}
         undeliverable = is_obviously_undeliverable(validation)
         ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
         cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
