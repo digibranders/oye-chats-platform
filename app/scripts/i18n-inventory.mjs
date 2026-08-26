@@ -142,17 +142,25 @@ function phaseFor(relPath) {
 }
 
 /**
- * Modules reachable from the app entry, by walking real imports.
+ * Modules reachable from the app entry, by walking static and dynamic imports.
  *
- * 412 of the "remaining" strings turned out to live in Admin 1.0 components
- * that the `features/` rebuild replaced and nothing imports any more -
- * `components/AutoRecrawlCard.jsx` beside `features/agents/knowledge/
- * AutoRecrawlCard.tsx`, and a dozen more pairs like it. Translating them would
- * spend a translator's time on strings no user can reach and add their weight
- * to a lazily-loaded dictionary.
+ * This bucket existed because 412 of the "remaining" strings lived in Admin 1.0
+ * modules the `features/` rebuild had replaced - duplicate pairs like the old
+ * top-level components beside their `features/` successors. Translating them
+ * would have spent a translator's time on strings no user could reach. Those 72
+ * modules have since been deleted, so the bucket reads 0; it stays as a guard,
+ * because the next unreachable module should be noticed while it is still one
+ * file rather than ninety.
  *
- * Reported as their own bucket rather than silently dropped: dead code that
- * nobody deletes is still a problem, just a different one.
+ * Two blind spots, both found by deleting against this walk and checking the
+ * result. Do not treat "unreachable" as "safe to delete" without them:
+ *
+ *   - A `.d.ts` is NEVER reachable here. `resolveSpec` answers `./services/api`
+ *     with `api.js`, so the type shim beside it has no inbound edge and reads
+ *     as dead. TypeScript consumes it by adjacency instead. A `.d.ts` is live
+ *     whenever its implementation sibling is.
+ *   - Config-referenced files have no importer at all. `src/test/setup.ts` is
+ *     named only by `vite.config.js` (`test.setupFiles`).
  */
 function reachableFromEntry() {
   const entry = path.join(SRC, 'main.jsx');
