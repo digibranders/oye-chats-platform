@@ -398,10 +398,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineError, setOfflineError] = useState(false);
     // Real-time email check on blur. 'idle' | 'checking' | 'valid' | 'invalid'.
+    // PRESENTATION ONLY: it drives the spinner and the disabled state. The
+    // submit gate is keyed on the address in the field, never on this flag,
+    // which describes whichever address was checked last.
     const [offlineEmailCheckState, setOfflineEmailCheckState] = useState('idle');
     const [offlineEmailError, setOfflineEmailError] = useState('');
-    const offlineEmailCheckPromiseRef = useRef(null);
-    const offlineLastCheckedEmailRef = useRef('');
+    // Latest value in the field, so an in-flight check can tell whether its
+    // verdict still applies to what the visitor has typed.
+    const offlineEmailValueRef = useRef('');
 
     // WS function handles exposed by LiveChatMode via onWsReady
     const wsSendRef = useRef(null);
@@ -2190,6 +2194,31 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     };
 
+    // ── Offline form shape ───────────────────────────────────────────────────
+    //
+    // Derived from EXTERNAL sources only (never from ``offlineForm`` state) so
+    // typing into the message field can't flip the gate and unmount inputs
+    // mid-keystroke. Hoisted out of the render branch below because the submit
+    // handler needs the same answer: whether the email input is on screen is
+    // exactly what decides whether the visitor's address gets validated.
+    const offlineExternalName = (
+        liveChatState?.capturedName?.trim() ||
+        existingLeadInfo?.name?.trim() ||
+        ''
+    );
+    const offlineExternalEmail = (
+        liveChatState?.capturedEmail?.trim() ||
+        existingLeadInfo?.email?.trim() ||
+        ''
+    );
+    const offlineExternalPhone = existingLeadInfo?.phone?.trim() || '';
+    const isOfflineFormCompact = Boolean(offlineExternalName && offlineExternalEmail);
+
+    const offlineEmailValue = offlineForm.email || '';
+    useEffect(() => {
+        offlineEmailValueRef.current = offlineEmailValue;
+    }, [offlineEmailValue]);
+
     // ── Offline message submit ───────────────────────────────────────────────────
     const offlineLooksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -2197,17 +2226,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // fills in the remaining fields, same pattern as HandoffForm.
     const handleOfflineEmailBlur = () => {
         const email = offlineForm.email.trim();
-        if (!email || email === offlineLastCheckedEmailRef.current) return;
+        if (!email) return;
         if (!offlineLooksLikeEmail(email)) {
             setOfflineEmailCheckState('invalid');
             setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
-        offlineLastCheckedEmailRef.current = email;
         setOfflineEmailCheckState('checking');
-        const promise = checkEmailWithServer(email).then((result) => {
-            if (offlineLastCheckedEmailRef.current !== email) return result;
+        checkEmailWithServer(email).then((result) => {
+            // A newer edit may have superseded this check. Only show the
+            // verdict while it still describes what's in the field.
+            if (offlineEmailValueRef.current.trim() !== email) return;
             if (result.valid) {
                 setOfflineEmailCheckState('valid');
                 setOfflineEmailError('');
@@ -2217,44 +2247,40 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
                 );
             }
-            return result;
         });
-        offlineEmailCheckPromiseRef.current = promise;
     };
 
     const handleOfflineSubmit = async (e) => {
         e.preventDefault();
 
-        // Skip the check entirely when the email is already known/trusted
-        // from an earlier step (compact form never even shows this input).
-        // Only a freshly-typed email in the full form needs validating.
-        const hasKnownEmail = Boolean(
-            liveChatState?.capturedEmail?.trim() || existingLeadInfo?.email?.trim()
-        );
-        if (!hasKnownEmail) {
+        // Validate whenever the visitor can actually see and edit the email
+        // input, which is the full form. The compact form renders no email
+        // input at all: its address comes from an earlier step and the
+        // visitor has no way to correct one we reject, so blocking there
+        // would be a dead end.
+        //
+        // Gated on the address that is IN THE FIELD right now, resolved by
+        // value rather than by reading the mode flag. Keying on "we already
+        // know an email for this visitor" was the bug: once any address had
+        // been captured this session, every later one the visitor typed
+        // skipped the check outright.
+        if (!isOfflineFormCompact) {
             const email = offlineForm.email.trim();
             if (!offlineLooksLikeEmail(email)) {
                 setOfflineEmailCheckState('invalid');
                 setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
                 return;
             }
-            if (offlineEmailCheckState === 'checking' && offlineEmailCheckPromiseRef.current) {
-                const result = await offlineEmailCheckPromiseRef.current;
-                if (!result.valid) return;
-            } else if (offlineEmailCheckState === 'invalid') {
-                return;
-            } else if (offlineEmailCheckState === 'idle') {
-                setOfflineEmailCheckState('checking');
-                const result = await checkEmailWithServer(email);
-                if (!result.valid) {
-                    setOfflineEmailCheckState('invalid');
-                    setOfflineEmailError(
+            setOfflineEmailCheckState('checking');
+            const result = await checkEmailWithServer(email);
+            if (!result.valid) {
+                setOfflineEmailCheckState('invalid');
+                setOfflineEmailError(
                     result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
                 );
-                    return;
-                }
-                setOfflineEmailCheckState('valid');
+                return;
             }
+            setOfflineEmailCheckState('valid');
         }
         setOfflineEmailError('');
 
@@ -3129,26 +3155,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             // If we already captured name + email upstream
                             // (handoff form or an existing lead row), skip
                             // the redundant contact fields and show only
-                            // the message textarea. The compact gate is
-                            // derived from EXTERNAL sources only (never
-                            // from offlineForm state) so typing into the
-                            // message field can't flip the gate and
-                            // unmount inputs mid-keystroke.
-                            const externalName = (
-                                liveChatState?.capturedName?.trim() ||
-                                existingLeadInfo?.name?.trim() ||
-                                ''
-                            );
-                            const externalEmail = (
-                                liveChatState?.capturedEmail?.trim() ||
-                                existingLeadInfo?.email?.trim() ||
-                                ''
-                            );
-                            const externalPhone = (
-                                existingLeadInfo?.phone?.trim() ||
-                                ''
-                            );
-                            const isCompact = Boolean(externalName && externalEmail);
+                            // the message textarea. See the derivation of
+                            // these values above handleOfflineSubmit, which
+                            // gates validation on the same answer.
+                            const externalName = offlineExternalName;
+                            const externalEmail = offlineExternalEmail;
+                            const externalPhone = offlineExternalPhone;
+                            const isCompact = isOfflineFormCompact;
 
                             const primary = sanitizeColor(settings.primary_color, '#3A0CA3');
 

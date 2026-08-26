@@ -3,6 +3,7 @@
 // See sentinelStripper.test.js for regression coverage.
 import { createSentinelStripper } from './sentinelStripper.js';
 import { readSessionId } from './storage-keys.js';
+import { createEmailVerdictCache } from './emailVerdictCache.js';
 
 const getApiUrl = () => {
     if (typeof window !== 'undefined' && window.OYECHATS_API_URL) {
@@ -243,27 +244,43 @@ export const submitFeedback = async (messageId, feedbackValue) => {
     }
 };
 
+// Verdicts are memoized per address for the life of the page: the same
+// address is asked about twice (once on blur, once at submit) and the
+// endpoint is public and rate-limited at 20/min per bot key. A 429 fails
+// OPEN, which would turn a busy form into a validation hole. See
+// emailVerdictCache.js for why the key is the address and nothing else.
+const emailVerdicts = createEmailVerdictCache();
+
 /**
- * Real-time check called on email-field blur, before the visitor can
- * submit the handoff or offline-message form. Fails open ({valid: true})
- * on any network/HTTP error, an outage on our side must never block a
- * real visitor from talking to a human. See
+ * Real-time check called on email-field blur and again at submit, before the
+ * visitor can send the handoff, pre-chat or offline-message form. Fails open
+ * ({valid: true}) on any network/HTTP error, an outage on our side must never
+ * block a real visitor from talking to a human. Fail-open answers are not
+ * memoized, so the next attempt retries. See
  * api/app/api/chat_routes.py validate_email_endpoint for the server-side
  * (lenient) blocking rule.
  */
-export const validateEmail = async (email) => {
-    try {
-        const response = await fetch(`${API_URL}/chat/validate-email`, {
-            method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({ email }),
-        });
-        if (!response.ok) return { valid: true };
-        return await response.json();
-    } catch (error) {
-        console.warn('[OyeChats] Email validation check failed (failing open):', error);
-        return { valid: true };
-    }
+export const validateEmail = (email) => {
+    const key = String(email || '').trim().toLowerCase();
+    if (!key) return Promise.resolve({ valid: true });
+
+    return emailVerdicts.resolve(key, async () => {
+        try {
+            const response = await fetch(`${API_URL}/chat/validate-email`, {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify({ email: key }),
+            });
+            if (!response.ok) {
+                return { verdict: { valid: true }, cacheable: false };
+            }
+            const result = await response.json();
+            return { verdict: { valid: result?.valid !== false, reason: result?.reason } };
+        } catch (error) {
+            console.warn('[OyeChats] Email validation check failed (failing open):', error);
+            return { verdict: { valid: true }, cacheable: false };
+        }
+    });
 };
 
 export const submitLeadCapture = async (sessionId, formData) => {
