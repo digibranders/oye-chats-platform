@@ -1,5 +1,24 @@
 # Launch Offer — Edge-Case Catalog
 
+> ## ⚠️ Swept before the 26 Aug 2026 switch to GST-EXCLUSIVE pricing
+>
+> This catalog is left unedited. Every published price is now a base price, exclusive of GST, and a
+> domestic customer is debited base + GST at charge time. International customers are an export and
+> pay the listed USD price.
+>
+> That does not change any verdict below, but it does change two rows and opens one question:
+> - **8.2** ("Confirm modal price with promo"). The "then ₹X" figure must be the **gross** for a
+>   domestic customer, from `gross_display` on `GET /subscriptions/checkout/quote`. Re-verify it.
+> - **4.3** ("Plan price changes while a promo sub is in its free window"). Unchanged in mechanism,
+>   but a GST **rate** change is now a price change too, because each Razorpay plan is minted at base
+>   + GST and is immutable.
+> - **Open:** whether the month-4 charge on a `start_at` mandate authorised under the old
+>   GST-inclusive plans debits the old amount. It should, since a mandate is locked to the plan it was
+>   authorised against, but no one has verified it against a re-minted plan. Related to 5.6.
+>
+> Current source of truth: `api/app/core/tax.py` and
+> [`api-reference.md`](./api-reference.md#billing-and-pricing-routes).
+
 Systematic sweep of the "sign up via link, 3 months free" feature before production.
 Grounded in the actual implementation on branch `steve`.
 

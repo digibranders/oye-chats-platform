@@ -22,6 +22,7 @@ import {
 } from '../../../services/api';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { CHARGE_CURRENCY, errorMessage, formatMoneyMinor } from '../billingModel';
+import { TaxNote } from '../billing/TaxNote';
 import { describeTopupExpiry, type CreditBalance } from '../usage-model';
 
 interface TopupPack {
@@ -325,6 +326,11 @@ export function TopupDialog({
             })}
           </Grid>
         )}
+
+        {/* The pack prices above are BASE prices; Razorpay debits the gross.
+            This is the last screen before the payment sheet, so it is the last
+            place the difference can be disclosed. */}
+        <TaxNote />
       </div>
     </Dialog>
   );

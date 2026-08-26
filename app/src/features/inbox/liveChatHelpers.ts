@@ -4,7 +4,9 @@
  */
 
 import type { ChatMessage } from '../../types/domain';
-import type { OperatorMessage } from './liveChatProtocol';
+import { formatDate, formatTime } from '../../i18n/formatters';
+import type { OperatorMessage, TranslationEntry } from './liveChatProtocol';
+import { baseLanguage, directionForLocale as directionFor } from '../../services/localeCatalog';
 
 const FILE_RE = /^\[File: (.+?)\]\((https?:\/\/[^\s)]+)\)$/;
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
@@ -38,7 +40,7 @@ export function relativeTime(iso: string | null | undefined): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }
 
 /** Clock time (HH:MM) for message bubbles. */
@@ -46,7 +48,7 @@ export function clockTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '';
-  return new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return formatTime(new Date(t), { hour: '2-digit', minute: '2-digit' });
 }
 
 let fileKeySeq = 0;
@@ -64,6 +66,11 @@ export function parseHistoryMessage(m: ChatMessage): OperatorMessage {
     role: m.role,
     content,
     timestamp: m.created_at ?? null,
+    // Carried through so a page refresh does not drop every translation. The
+    // socket delivers these live, but history is what rebuilds the thread on
+    // reload and on reconnect, so both paths must produce the same view model.
+    sourceLanguage: m.source_language ?? null,
+    translations: m.translations ?? undefined,
   };
   const match = content.match(FILE_RE);
   if (match && isSafeFileUrl(match[2])) {
@@ -98,6 +105,73 @@ export function mergeHistoryWithLive(
   }
   const extras = live.filter((m) => m.dbId == null || !knownDbIds.has(m.dbId));
   return extras.length === 0 ? history : [...history, ...extras];
+}
+
+/**
+ * Locale naming and direction come from the backend catalogue
+ * (`services/localeCatalog`, filled by `GET /locales`), not from a table in
+ * this file. Re-exported here so every existing caller keeps its import, and
+ * so `resolveDisplay` below can use them directly.
+ *
+ * A component that RENDERS one of these names must also call
+ * `useLocaleCatalog()`, otherwise it will not re-render when the catalogue
+ * lands and will keep showing the uppercased-tag fallback.
+ */
+export {
+  baseLanguage,
+  directionForLocale as directionFor,
+  labelForLanguage as languageLabel,
+} from '../../services/localeCatalog';
+
+/**
+ * Decide what a message bubble should show.
+ *
+ * The original is always available and is what `content` holds. A translation
+ * is shown only when one exists for the reader's language, succeeded, and the
+ * message was not already written in that language. `showOriginal` (the
+ * operator's per-message toggle) always wins.
+ *
+ * Returns the text plus the direction it must render in, because a translated
+ * Arabic message inside an English conversation still needs `dir="rtl"`.
+ */
+export function resolveDisplay(
+  message: OperatorMessage,
+  readerLanguage: string | null | undefined,
+  showOriginal: boolean,
+): { text: string; language: string | null; isTranslated: boolean; direction: 'ltr' | 'rtl' } {
+  const original = {
+    text: message.content,
+    language: message.sourceLanguage ?? null,
+    isTranslated: false,
+    direction: directionFor(message.sourceLanguage),
+  };
+  if (showOriginal) return original;
+
+  const target = baseLanguage(readerLanguage);
+  const source = baseLanguage(message.sourceLanguage);
+  if (!target || !source || target === source) return original;
+
+  const entry: TranslationEntry | undefined = message.translations?.[target];
+  if (!entry || entry.status !== 'ok' || typeof entry.content !== 'string' || !entry.content) {
+    return original;
+  }
+  return { text: entry.content, language: target, isTranslated: true, direction: directionFor(target) };
+}
+
+/**
+ * True when a translation was expected for this reader but is not usable -
+ * either it failed or it has not arrived yet. Drives the
+ * "Translation unavailable" affordance and its retry.
+ */
+export function translationMissing(
+  message: OperatorMessage,
+  readerLanguage: string | null | undefined,
+): boolean {
+  const target = baseLanguage(readerLanguage);
+  const source = baseLanguage(message.sourceLanguage);
+  if (!target || !source || target === source) return false;
+  const entry = message.translations?.[target];
+  return !entry || entry.status !== 'ok' || !entry.content;
 }
 
 /** Highest DB id among the visitor's messages - the read-receipt high-water mark. */

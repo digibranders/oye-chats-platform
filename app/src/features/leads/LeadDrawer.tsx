@@ -6,6 +6,7 @@ import {
   Alert,
   Badge,
   Button,
+  DayDivider,
   Disclosure,
   Drawer,
   ErrorState,
@@ -26,11 +27,13 @@ import {
   type PropertyItem,
 } from '../../ui';
 import { getSessionAuditTrail } from '../../services/api';
+import { formatDayLabel, isNewDay } from '../../lib/messageDay';
 import type { Lead } from '../../types/domain';
 import { LeadJourney } from './LeadInsights';
 import { asRecord, asText, engagementBand, truncate } from './leadSource';
 import { LeadSection } from './LeadSection';
 import { LeadQualification } from './LeadQualification';
+import { LeadQuotation } from './LeadQuotation';
 import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
 import { TRANSCRIPT_PAGE_SIZE, useLeadDetail, type TranscriptMessage } from './useLeadDetail';
 import type { LeadAnnotationController, LeadAnnotationsStore } from './useLeadAnnotations';
@@ -202,6 +205,16 @@ function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
       <p className="mt-2 text-xs text-text-secondary">{tier.hint}</p>
     </div>
   );
+}
+
+/**
+ * When a message was sent, whichever field carried it.
+ *
+ * `GET /chat/history/{id}` sends `timestamp` and the lead endpoint sends
+ * `created_at`, and this drawer renders pages from both.
+ */
+function sentAt(message: TranscriptMessage | undefined): string | null {
+  return message?.timestamp ?? message?.created_at ?? null;
 }
 
 function Bubble({ message }: { message: TranscriptMessage }) {
@@ -449,6 +462,8 @@ export function LeadDrawer({
 
             {hasIntelligence(detail) ? <LeadQualification lead={detail} /> : null}
 
+            <LeadQuotation lead={detail} />
+
             <LeadJourney lead={detail} />
 
             <VisitorIntelligenceSection lead={detail} unlocked={visitorIntelligence} />
@@ -491,8 +506,17 @@ export function LeadDrawer({
                   </p>
                 )}
                 <ul className="space-y-2.5">
-                  {transcript.messages.map((message) => (
-                    <Bubble key={message.id} message={message} />
+                  {transcript.messages.map((message, index) => (
+                    <li key={message.id} className="contents">
+                      {/* A widget session survives in the visitor's browser, so
+                          one conversation can span days while every bubble
+                          shows only a clock time. Without this marker, "14:32"
+                          could be an hour ago or last Tuesday. */}
+                      {isNewDay(sentAt(message), sentAt(transcript.messages[index - 1])) ? (
+                        <DayDivider label={formatDayLabel(sentAt(message))} className="pt-1" />
+                      ) : null}
+                      <Bubble message={message} />
+                    </li>
                   ))}
                 </ul>
               </>

@@ -93,6 +93,13 @@ class StoppedTypingFrame(_Frame):
 
 
 class MessageFrame(_Frame):
+    """Shared shape for a chat message on either socket.
+
+    Kept as the common base so both sockets stay in lockstep on the fields
+    that ARE shared (content bounds, correlation id). It is no longer
+    registered directly: each socket gets its own subclass below.
+    """
+
     type: Literal["message"]
     content: str = Field(..., min_length=1, max_length=MAX_WS_MESSAGE_CHARS)
     # Client-generated correlation id echoed back in ``message_ack`` so the
@@ -100,6 +107,34 @@ class MessageFrame(_Frame):
     client_msg_id: Identifier | None = None
     # Operator socket only, which conversation the message is for.
     session_id: SessionId | None = None
+
+
+class VisitorMessageFrame(MessageFrame):
+    """A message from the widget.
+
+    Carries NO language metadata, deliberately. Phase 4 translates live chat,
+    and it would be natural to let the widget declare the language it believes
+    it is writing in. It must not: the widget is a public, attacker-editable
+    surface, and the server already knows the answer. ``ChatSession.locale`` /
+    ``language_code`` were resolved in Phase 2 through the full precedence
+    chain and are the only source of truth for the visitor side.
+
+    A declared-but-untrusted field is worse than no field. ``_Frame`` ignores
+    unknown keys, so a widget that sends one is already harmless; declaring it
+    here would instead invite later code to read it, which is exactly the
+    trust boundary this phase must not blur.
+    """
+
+
+class OperatorMessageFrame(MessageFrame):
+    """A message from the operator console.
+
+    Identical to the visitor frame in V1. It exists so that when an
+    operator-only field is eventually needed (a per-send target override, say),
+    it lands here and cannot be submitted on the public visitor socket. The two
+    sockets previously shared one class, so any field added for one was
+    silently accepted from the other.
+    """
 
 
 class FileFrame(_Frame):
@@ -172,7 +207,7 @@ class SubmitOfflineFormFrame(_Frame):
 #: Frames the visitor socket accepts.
 VISITOR_FRAMES: dict[str, type[_Frame]] = {
     "ping": PingFrame,
-    "message": MessageFrame,
+    "message": VisitorMessageFrame,
     "file": FileFrame,
     "typing": TypingFrame,
     "stopped_typing": StoppedTypingFrame,
@@ -189,7 +224,7 @@ OPERATOR_FRAMES: dict[str, type[_Frame]] = {
     "ping": PingFrame,
     "heartbeat": HeartbeatFrame,
     "set_availability": SetAvailabilityFrame,
-    "message": MessageFrame,
+    "message": OperatorMessageFrame,
     "file": FileFrame,
     "typing": TypingFrame,
     "stopped_typing": StoppedTypingFrame,

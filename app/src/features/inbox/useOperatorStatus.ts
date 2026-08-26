@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getMyOperatorStatus, toggleOperatorStatus } from '../../services/api';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface OperatorStatusState {
   /** True when this operator is accepting live chats. */
@@ -77,8 +78,8 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
       // know their availability change didn't save.
       setError(
         err instanceof Error
-          ? `Couldn’t update your availability: ${err.message}`
-          : 'Couldn’t update your availability. Please try again.',
+          ? (translateNow('inbox.couldntUpdateYourAvailabilityDetail', { reason: err.message }) || `Couldn’t update your availability: ${err.message}`)
+          : translateNow('inbox.couldntUpdateYourAvailabilityPlease') || 'Couldn’t update your availability. Please try again.',
       );
     } finally {
       setSaving(false);

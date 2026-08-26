@@ -61,6 +61,8 @@ export const keys = {
       ['analytics', 'journey', agentId, period] as const,
     funnel: (agentId: number | null, period: string) =>
       ['analytics', 'funnel', agentId, period] as const,
+    language: (agentId: number | null, period: string) =>
+      ['analytics', 'language', agentId, period] as const,
   },
 
   billing: {

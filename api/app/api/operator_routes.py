@@ -5,13 +5,15 @@ import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.api.bot_routes import BusinessHours
 from app.api.invite_routes import _map_invite_error
+from app.api.quotation_routes import build_quotation_summary
+from app.core.rate_limit import key_from_operator_credential, limiter
 from app.core.security import get_password_hash
 from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
 from app.db.models import (
@@ -38,7 +40,13 @@ from app.schemas.validators import (
     ShortText,
 )
 from app.services import invite_service, plan_entitlements_service
+
+# Imported as a MODULE, not by value. The gate/charge/persist helpers and the
+# service singleton are all swapped in tests, and `from x import y` binds a
+# separate name that a monkeypatch on the module would never reach.
+from app.services import translation_service as translation_svc
 from app.services.invite_service import InviteError
+from app.services.language_service import language_from_locale, normalize_locale
 from app.services.live_chat_service import manager
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -150,6 +158,15 @@ class UpdateOperatorRequest(BaseModel):
     # ``transition_service.enforce_operator_ceiling`` (downgrade) and
     # ``invite_service.accept_invite`` (re-invite) already use.
     is_active: bool | None = None
+    # ── Multilingual (Phase 4) ──
+    # Languages this operator can handle unaided. A routing CAPABILITY that
+    # decides which conversations Phase 5 will hand them, so it belongs on this
+    # team-management route. The operator's own working language
+    # (``preferred_locale``) deliberately does NOT live here: this whole
+    # endpoint is gated behind ``_require_team_management_access``, so a plain
+    # operator could never reach it to set their own. That one is self-service
+    # at ``PUT /operators/me/language``.
+    supported_languages: list[ShortText] | None = Field(None, max_length=20)
 
 
 class CreateDepartmentRequest(BaseModel):
@@ -346,6 +363,13 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
                     "is_online": a.is_online,
                     "is_active": a.is_active,
                     "avatar_url": a.avatar_url,
+                    # The operator's own live-chat working language, and the
+                    # languages they can handle. Read-only in the team list:
+                    # ``preferred_locale`` is self-service (Support -> Live
+                    # chat), and ``supported_languages`` has no editor until
+                    # language-aware routing needs one.
+                    "preferred_locale": a.preferred_locale,
+                    "supported_languages": list(a.supported_languages or []),
                     "max_concurrent_chats": a.max_concurrent_chats,
                     "active_chats": active_count,
                     "last_seen_at": a.last_seen_at.isoformat() if a.last_seen_at else None,
@@ -565,7 +589,27 @@ async def update_operator(
                 department_changed = True
                 new_department_id = request.department_id
             operator.department_id = request.department_id
+        if request.supported_languages is not None:
+            # The route is already team-gated at the top, so no extra check
+            # here. Normalized on write so Phase 5's routing filter can compare
+            # against a bot's supported_locales without re-parsing.
+            normalized_list: list[str] = []
+            for raw in request.supported_languages:
+                normalized = normalize_locale(raw)
+                if not normalized:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"supported_languages contains an invalid locale: {raw[:32]!r}",
+                    )
+                if normalized not in normalized_list:
+                    normalized_list.append(normalized)
+            operator.supported_languages = normalized_list
         if request.avatar_url is not None:
+            if not is_self_edit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the operator themselves can change their profile picture.",
+                )
             operator.avatar_url = request.avatar_url
         if request.max_concurrent_chats is not None:
             operator.max_concurrent_chats = request.max_concurrent_chats
@@ -662,6 +706,75 @@ async def update_operator(
             )
 
     return {"success": True, "message": f"Operator '{operator_name}' updated."}
+
+
+def _resolve_self_operator(session, auth: dict) -> Operator | None:
+    """Look up the Operator row for the calling identity: an operator-key login
+    resolves directly by id; a client login resolves via the row it is linked
+    to (``Operator.linked_client_id``). Returns None if the caller has no
+    operator profile at all (e.g. a client who has never added themselves as
+    an operator)."""
+    caller_op_id = auth.get("operator_id") if auth["type"] == "operator" else None
+    if caller_op_id is not None:
+        return session.execute(select(Operator).where(Operator.id == caller_op_id)).scalar_one_or_none()
+
+    caller_client_id = (
+        auth.get("linked_client_id")
+        if auth["type"] == "operator"
+        else (auth["client_id"] if auth["type"] == "client" else None)
+    )
+    if caller_client_id is None:
+        return None
+    return session.execute(
+        select(Operator).where(Operator.linked_client_id == caller_client_id, Operator.client_id == auth["client_id"])
+    ).scalar_one_or_none()
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(file: UploadFile = File(...), auth: dict = Depends(get_current_client_or_operator)):
+    """Upload (or replace) the caller's own profile picture.
+
+    Purely optional self-personalization for the operator workspace — an
+    operator without one just shows initials (see ``AvatarCircle`` on the
+    frontend), so there is no server-side requirement to ever call this.
+    """
+    from app.core.upload_guard import IMAGE_UPLOAD_TYPES, MAX_LOGO_BYTES, ensure_allowed_type, read_bounded
+    from app.services.r2_service import UnsupportedImage, _build_public_url, upload_to_r2
+
+    ensure_allowed_type(file, IMAGE_UPLOAD_TYPES)
+    file_data = await read_bounded(file, MAX_LOGO_BYTES)
+
+    try:
+        file_key = upload_to_r2(file_data, file.filename, file.content_type)
+    except UnsupportedImage as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Operator avatar upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload profile picture.") from e
+
+    avatar_url = _build_public_url(file_key)
+
+    with get_session() as session:
+        operator = _resolve_self_operator(session, auth)
+        if not operator:
+            raise HTTPException(status_code=404, detail="No operator profile is linked to this account.")
+        operator.avatar_url = avatar_url
+        session.commit()
+
+    return {"avatar_url": avatar_url}
+
+
+@router.delete("/me/avatar")
+def remove_my_avatar(auth: dict = Depends(get_current_client_or_operator)):
+    """Remove the caller's own profile picture, reverting to initials."""
+    with get_session() as session:
+        operator = _resolve_self_operator(session, auth)
+        if not operator:
+            raise HTTPException(status_code=404, detail="No operator profile is linked to this account.")
+        operator.avatar_url = None
+        session.commit()
+
+    return {"success": True}
 
 
 @router.delete("/{operator_id}")
@@ -907,6 +1020,24 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             }
         fire_webhook(bot.id, "handoff_requested", webhook_data)
 
+        # Email the team. Operators may not be watching the dashboard when a
+        # visitor queues (that's exactly when this matters most), so this is
+        # the notification path for "come look, someone's waiting" - same
+        # email_on_* / notification_emails machinery as the qualified-lead
+        # notification. Never blocks the handoff response on send failure.
+        if getattr(db_bot, "email_on_handoff", True):
+            from app.services.email_service import get_notification_recipients, send_handoff_request_email
+
+            recipients = get_notification_recipients(db_bot, "handoff_requested")
+            if recipients:
+                contact = {"name": lead_info.name, "email": lead_info.email} if lead_info else None
+                reply_to = getattr(db_bot, "reply_to_email", None)
+                for recipient in recipients:
+                    try:
+                        send_handoff_request_email(recipient, db_bot.name, request.reason, contact, reply_to=reply_to)
+                    except Exception:
+                        logger.warning("handoff_request_email_failed | bot=%s session=%s", bot.id, request.session_id)
+
         # Cache queue timeout for the response. Read BEFORE the session
         # closes so the value travels out cleanly.
         queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
@@ -1076,19 +1207,22 @@ def get_session_live_status(session_id: SessionId, bot: Bot = Depends(get_curren
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id == bot.id)
         ).scalar_one_or_none()
         if not chat_session:
-            return {"status": "bot", "operator_name": None}
+            return {"status": "bot", "operator_name": None, "operator_avatar": None}
 
         operator_name = None
+        operator_avatar = None
         if chat_session.assigned_operator_id:
             operator = session.execute(
                 select(Operator).where(Operator.id == chat_session.assigned_operator_id)
             ).scalar_one_or_none()
             if operator:
                 operator_name = operator.name
+                operator_avatar = operator.avatar_url
 
         return {
             "status": chat_session.status,
             "operator_name": operator_name,
+            "operator_avatar": operator_avatar,
         }
 
 
@@ -1236,16 +1370,26 @@ async def accept_chat(
         session.commit()
         operator_name = operator.name
         operator_id = operator.id
+        operator_avatar = operator.avatar_url
 
     # DB already committed status='live', the in-memory manager is secondary.
     # If accept_chat returns False (already assigned in memory to another operator),
     # that means DB and memory diverged. Force-sync memory to match DB truth.
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted:
         logger.warning(
             f"DB accepted chat {session_id} for operator {operator_id} but in-memory "
             f"state shows a different assignee. DB is authoritative. Proceeding."
         )
+
+    # Translate the pre-handoff transcript for this operator (Phase 4).
+    # Deliberately AFTER the accept has committed and been broadcast, and
+    # fire-and-forget: picking up a chat must stay instant, and the operator
+    # already has the originals in front of them. Without this they inherit the
+    # entire AI conversation in a language they may not read, with only messages
+    # sent after the handoff translated - and that transcript is exactly the
+    # context explaining why the visitor asked for a human.
+    translation_svc.spawn_transcript_backfill(session_id)
 
     return {"success": True, "status": "live", "operator_name": operator_name}
 
@@ -1656,6 +1800,142 @@ def set_my_notification_preferences(
         return normalized
 
 
+def _language_target(session, auth):
+    """Resolve the Operator row whose working language governs *this* caller.
+
+    Unlike ``_prefs_target``, this can only ever be an Operator: a Client row
+    has no ``preferred_locale``, because the preference is about reading live
+    chat, which is an operator activity. For a client-authenticated owner we
+    resolve the same row the WebSocket path would (``_resolve_operator_from_key``):
+    the invite-linked operator first, then the workspace's owner row. If those
+    disagreed, the console and the socket would translate into different
+    languages for the same human.
+    """
+    if auth["type"] == "operator":
+        return session.execute(
+            select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
+        ).scalar_one_or_none()
+
+    client_id = auth["client_id"]
+    linked = (
+        session.execute(
+            select(Operator).where(
+                Operator.client_id == client_id,
+                Operator.linked_client_id == client_id,
+                Operator.is_active.is_(True),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if linked is not None:
+        return linked
+    return session.execute(
+        select(Operator).where(Operator.client_id == client_id, Operator.role == "owner").limit(1)
+    ).scalar_one_or_none()
+
+
+class OperatorLanguageRequest(BaseModel):
+    """The caller's own working language. Empty string clears it."""
+
+    preferred_locale: ShortText | None = None
+
+
+def _available_locales_for(session, operator) -> list[str]:
+    """The locales this operator's bot can hold a conversation in.
+
+    These are what the Support translation picker offers. Translating into a
+    language no visitor of this bot can write in produces nothing to read, so
+    the picker is scoped to the bot's ``supported_locales`` rather than to the
+    whole platform catalogue.
+
+    Not gated on ``language_config.enabled``: a customer configuring a bot has
+    a supported list before they flip multilingual on, and emptying every
+    operator's picker in the meantime would look broken. Whether translation
+    actually runs is decided by ``translation_service.is_translation_enabled``,
+    which checks both flags.
+
+    ``Operator.bot_id`` is NOT NULL, so this is a single row lookup.
+    """
+    bot = session.get(Bot, operator.bot_id) if operator.bot_id else None
+    config = bot.language_config or {} if bot is not None else {}
+    if not isinstance(config, dict):
+        return []
+
+    locales: list[str] = []
+    raw = config.get("supported_locales")
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            normalized = normalize_locale(item)
+            if normalized and normalized not in locales:
+                locales.append(normalized)
+
+    if not locales:
+        # A bot with a default but no explicit supported list still offers that
+        # one language, rather than nothing at all.
+        fallback = config.get("default_locale")
+        normalized = normalize_locale(fallback) if isinstance(fallback, str) else None
+        if normalized:
+            locales.append(normalized)
+
+    return locales
+
+
+@router.get("/me/language")
+def get_my_language(auth=Depends(get_current_client_or_operator)):
+    """Return the caller's own live-chat working language.
+
+    ``available_locales`` is what the picker may offer. It is derived per
+    request from live bot config, so a locale an admin adds in the bot's
+    Language settings shows up on the operator's next load with no extra
+    invalidation.
+    """
+    with get_session() as session:
+        target = _language_target(session, auth)
+        if target is None:
+            raise HTTPException(status_code=404, detail="No operator profile for this account")
+        return {
+            "preferred_locale": target.preferred_locale,
+            "supported_languages": list(target.supported_languages or []),
+            "available_locales": _available_locales_for(session, target),
+        }
+
+
+@router.put("/me/language")
+def set_my_language(
+    request: OperatorLanguageRequest,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Set the caller's OWN live-chat working language.
+
+    Self-service by design. ``PATCH /operators/{id}`` is gated behind
+    ``_require_team_management_access``, so a plain operator can never reach
+    it; routing their own language preference through there would have made
+    the setting unreachable for exactly the people who need it. An admin
+    setting someone else's reading language would also silently change what
+    that person sees on every conversation.
+    """
+    with get_session() as session:
+        target = _language_target(session, auth)
+        if target is None:
+            raise HTTPException(status_code=404, detail="No operator profile for this account")
+
+        raw = request.preferred_locale
+        if raw is None or not raw.strip():
+            # Clearing the preference turns translation off for this operator:
+            # they read every message in the language it was written in.
+            target.preferred_locale = None
+        else:
+            normalized = normalize_locale(raw)
+            if not normalized:
+                raise HTTPException(status_code=422, detail="preferred_locale is not a valid BCP-47 locale.")
+            target.preferred_locale = normalized
+        session.commit()
+        return {"preferred_locale": target.preferred_locale}
+
+
 class SetStatusRequest(BaseModel):
     # Both fields optional so callers can:
     #   * ``{}`` or no body    → pure toggle (legacy, backward compat).
@@ -1816,6 +2096,10 @@ def get_session_details(session_id: SessionId, auth=Depends(get_current_client_o
             "referrer": chat_session.referrer,
             "visitor_rating": chat_session.visitor_rating,
             "handoff_reason": chat_session.handoff_reason,
+            # Phase 4. Drives the conversation language badge in the operator
+            # sidebar and tells the console which translation key to render.
+            "language_code": chat_session.language_code,
+            "locale": chat_session.locale,
             "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
             "last_active_at": chat_session.last_active_at.isoformat() if chat_session.last_active_at else None,
             "bant": {
@@ -1836,6 +2120,7 @@ def get_session_details(session_id: SessionId, auth=Depends(get_current_client_o
             "bot_name": bot.name,
             "department_name": dept_name,
             "operator_name": operator_name,
+            "quotation": build_quotation_summary(bot, chat_session),
         }
 
 
@@ -2501,6 +2786,7 @@ async def takeover_bot_session(
         session.commit()
         operator_id = operator.id
         operator_name = operator.name
+        operator_avatar = operator.avatar_url
         department_id = target.department_id
 
     # Register session metadata in the in-memory manager so subsequent WS
@@ -2512,7 +2798,7 @@ async def takeover_bot_session(
     if department_id is not None:
         manager._session_departments[session_id] = department_id
 
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted:
         logger.warning(
             "Takeover for %s succeeded in DB but manager.accept_chat reported "
@@ -2529,6 +2815,142 @@ async def takeover_bot_session(
         "status": "live",
         "operator_name": operator_name,
         "visitor_name": visitor_name,
+    }
+
+
+# ── Translation preview / on-demand backfill (Phase 4) ───────────────────────
+
+
+class TranslateRequest(BaseModel):
+    """Translate one string in the context of a conversation the caller owns.
+
+    ``session_id`` is REQUIRED and ownership-checked. Without it this endpoint
+    would be an authenticated, unmetered LLM proxy: any tenant could post
+    arbitrary text and get model output back on the platform's bill.
+
+    There is deliberately no ``target_locale`` field. The target is derived
+    server-side from the session (previewing an outgoing reply) or from the
+    caller's own ``preferred_locale`` (backfilling an incoming message).
+    Accepting a caller-supplied target would let one workspace drive
+    translation into arbitrary languages for cost, and would contradict the
+    rule that the server owns every language decision.
+    """
+
+    session_id: SessionId
+    text: MediumText
+    # When present, the result is persisted into that row's ``translations``.
+    # This is the bounded backfill path used after a transfer between
+    # operators working in different languages. Absent means preview only.
+    message_id: RowId | None = None
+
+
+@router.post("/translate")
+@limiter.limit("30/minute", key_func=key_from_operator_credential)
+async def translate_for_session(
+    request: Request,
+    body: TranslateRequest,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Translate text for a conversation, for preview or backfill.
+
+    Auth is ``get_current_client_or_operator``, matching every other inbox
+    route: workspace owners reach the console with ``X-API-Key`` and team
+    members with ``X-Operator-Key``, and an operator-only dependency here would
+    401 the most common persona.
+    """
+    with get_session() as session:
+        chat_session = session.execute(
+            select(ChatSession).where(ChatSession.id == body.session_id)
+        ).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot or bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+        if not translation_svc.is_translation_enabled(bot):
+            raise HTTPException(status_code=403, detail="Translation is not enabled for this bot.")
+
+        session_language = chat_session.language_code
+        if not session_language:
+            raise HTTPException(status_code=409, detail="This conversation has no resolved language yet.")
+
+        operator_row = _language_target(session, auth)
+        operator_language = language_from_locale(operator_row.preferred_locale) if operator_row else None
+
+        # Two distinct jobs behind one endpoint, distinguished by message_id:
+        #
+        #   backfill (message_id present) - an existing message, written in
+        #       whatever language it was written in, rendered INTO the reading
+        #       operator's language. Used after a transfer between operators
+        #       working in different languages.
+        #   preview  (message_id absent)  - a draft the operator is about to
+        #       send, in THEIR language, rendered INTO the visitor's.
+        if body.message_id is not None:
+            stored_message = session.execute(
+                select(ChatMessage).where(
+                    ChatMessage.id == body.message_id,
+                    ChatMessage.session_id == body.session_id,
+                )
+            ).scalar_one_or_none()
+            if stored_message is None:
+                raise HTTPException(status_code=404, detail="Message not found in this session.")
+            source_language = stored_message.source_language
+            target_language = operator_language
+        else:
+            source_language = operator_language
+            target_language = language_from_locale(session_language)
+
+        bot_id = bot.id
+        bot_client_id = bot.client_id
+        session.expunge(bot)
+
+    if not source_language or not target_language:
+        raise HTTPException(status_code=409, detail="Source or target language is unknown for this request.")
+
+    source_base = language_from_locale(source_language) or source_language
+    if source_base == target_language:
+        # Zero provider calls, and an honest response rather than a fake one.
+        return {
+            "translated": body.text,
+            "target_locale": target_language,
+            "cached": True,
+            "status": "same_language",
+        }
+
+    if not translation_svc.charge_for_translation(bot, body.message_id, target_language):
+        raise HTTPException(status_code=402, detail="Translation is unavailable on this plan or balance.")
+
+    try:
+        result = await translation_svc.translation_service.translate(
+            body.text, source_base, target_language, bot_id=bot_id
+        )
+    except translation_svc.TranslationUnavailable:
+        if body.message_id is not None:
+            translation_svc.store_translation(body.message_id, target_language, status="failed")
+        raise HTTPException(status_code=503, detail="Translation provider is unavailable. Try again.") from None
+
+    if body.message_id is not None:
+        translation_svc.store_translation(
+            body.message_id,
+            target_language,
+            content=result.content,
+            provider=result.provider,
+            model=result.model,
+        )
+
+    logger.info(
+        "translation_preview | client_id=%s bot_id=%s target=%s cached=%s",
+        bot_client_id,
+        bot_id,
+        target_language,
+        result.cached,
+    )
+    return {
+        "translated": result.content,
+        "target_locale": target_language,
+        "cached": result.cached,
+        "status": "ok",
     }
 
 

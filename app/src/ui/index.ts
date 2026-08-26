@@ -180,6 +180,8 @@ export type {
   StateSize,
   StateAlign,
 } from './data/States';
+export { DayDivider } from './data/DayDivider';
+export type { DayDividerProps } from './data/DayDivider';
 export { StatTile, StatRow, FigureRow, FigureList, DefinitionList } from './data/Figures';
 export type {
   StatTileProps,

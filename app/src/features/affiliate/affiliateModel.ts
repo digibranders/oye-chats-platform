@@ -13,6 +13,8 @@
  * here is INR paise; format with `formatInrMinor`.
  */
 
+import { formatCurrency, formatNumber } from '../../i18n/formatters';
+
 // ── Coercion helpers (loose record → strict primitive) ───────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -216,14 +218,14 @@ export function toReferralDetail(raw: unknown): ReferralDetailView {
 export function formatInrMinor(minorUnits: number): string {
   const major = toNumber(minorUnits) / 100;
   try {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    // The CURRENCY stays INR because the money is INR; only the number's
+    // presentation follows the dashboard's locale.
+    return formatCurrency(major, 'INR', {
       minimumFractionDigits: Number.isInteger(major) ? 0 : 2,
       maximumFractionDigits: 2,
-    }).format(major);
+    });
   } catch {
-    return `₹${major.toLocaleString('en-IN')}`;
+    return `₹${formatNumber(major)}`;
   }
 }
 

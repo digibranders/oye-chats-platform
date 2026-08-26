@@ -51,6 +51,12 @@ import {
   type PlatformFeedbackAttachment,
   type PlatformFeedbackItem,
 } from '../../services/api';
+// `translateNow` rather than the hook's `t` inside callbacks: the hook's
+// identity changes per locale, which both breaks the compiler's memoization
+// analysis and adds a dependency for no gain. The module-level function is
+// stable AND resolves against the current locale when it is called.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
@@ -168,6 +174,7 @@ interface MyFeedbackListProps {
 
 /** The "My feedback" tab body: fetches and renders the caller's own submissions. */
 function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
+  const { t } = useTranslation();
   const [items, setItems] = useState<PlatformFeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -179,7 +186,7 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
       const data = await getMyFeedback();
       setItems(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load your feedback.');
+      setError(err instanceof Error ? err.message : translateNow('shell.feedbackModal.loadFailed') || 'Failed to load your feedback.');
     } finally {
       setLoading(false);
     }
@@ -208,8 +215,8 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
       <EmptyState
         size="panel"
         icon={Inbox}
-        title="No feedback yet"
-        description="Once you send feedback, you'll see its status and our response here."
+        title={t('shell.feedbackModal.emptyTitle') || 'No feedback yet'}
+        description={t('shell.onceYouSendFeedbackYoull') || 'Once you send feedback, you\'ll see its status and our response here.'}
       />
     );
   }
@@ -406,6 +413,7 @@ export function FeedbackModal({
   defaultTab = 'send',
   highlightId = null,
 }: FeedbackModalProps): ReactElement | null {
+  const { t } = useTranslation();
   const location = useLocation();
   const { planName } = useEntitlements();
 
@@ -434,13 +442,16 @@ export function FeedbackModal({
     setAttachments((prev) => {
       const slots = MAX_ATTACHMENTS - prev.length;
       if (slots <= 0) {
-        setFormError(`You can attach up to ${MAX_ATTACHMENTS} screenshots.`);
+        setFormError(
+        translateNow('shell.feedback.maxAttachments', { count: MAX_ATTACHMENTS }) ||
+          `You can attach up to ${MAX_ATTACHMENTS} screenshots.`,
+      );
         return prev;
       }
       const accepted: ComposeAttachment[] = [];
       for (const file of incoming.slice(0, slots)) {
         if (file.size > MAX_ATTACHMENT_SIZE) {
-          setFormError('Each file must be 10MB or smaller.');
+          setFormError(translateNow('shell.feedbackModal.fileTooLarge') || 'Each file must be 10MB or smaller.');
           continue;
         }
         const id = (uidRef.current += 1);
@@ -540,7 +551,7 @@ export function FeedbackModal({
       setActiveTab('mine');
     } catch (err) {
       console.error('Failed to submit feedback:', err);
-      setFormError('Failed to submit feedback. Please try again.');
+      setFormError(translateNow('shell.feedbackModal.submitFailed') || 'Failed to submit feedback. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -548,8 +559,8 @@ export function FeedbackModal({
 
   const description =
     activeTab === 'send'
-      ? "We'd love to hear your thoughts and help us improve OyeChats."
-      : 'Track the status of feedback you’ve sent and read our responses.';
+      ? t('shell.feedbackModal.descSend') || "We'd love to hear your thoughts and help us improve OyeChats."
+      : t('shell.feedbackModal.descMine') || 'Track the status of feedback you’ve sent and read our responses.';
 
   return (
     <Dialog
@@ -564,7 +575,7 @@ export function FeedbackModal({
         activeTab === 'send' ? (
           <>
             <Button variant="ghost" onClick={onClose}>
-              Cancel
+              {t('common.cancel') || 'Cancel'}
             </Button>
             <Button onClick={() => void handleSubmit()} disabled={!canSubmit} loading={isSubmitting}>
               {uploading && !isSubmitting ? (
@@ -616,7 +627,10 @@ export function FeedbackModal({
                 <Textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="What happened or what would you like to see? Paste a screenshot anywhere in this dialog to attach it."
+                  placeholder={
+                  t('shell.feedbackModal.describePlaceholder') ||
+                  'What happened or what would you like to see? Paste a screenshot anywhere in this dialog to attach it.'
+                }
                   className="h-32 rounded-none border-0 shadow-none focus-visible:shadow-none"
                   autoFocus
                 />
@@ -695,7 +709,8 @@ export function FeedbackModal({
               <p className="text-xs leading-relaxed text-text-secondary">
                 Don&apos;t include passwords, API keys, or any sensitive information.
                 <br />
-                We attach your current page, app version, plan, and browser to help us triage.
+                {t('shell.feedbackModal.weAttach') ||
+                'We attach your current page, app version, plan, and browser to help us triage.'}
               </p>
             </div>
           </div>

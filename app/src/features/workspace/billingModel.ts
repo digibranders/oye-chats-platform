@@ -15,6 +15,7 @@
  * TODO(multi-currency): switch the price source once the USD rail ships.
  */
 
+
 /**
  * Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`.
  * Plan rows serialize it raw (`included_operator_seats: -1`, `limits.bots: -1`),
@@ -559,23 +560,17 @@ export function buildBillingDetails(raw: unknown): BillingDetailsView {
  * amounts to keep plan prices clean ("₹949" not "₹949.00").
  */
 export function formatMoneyMinor(minorUnits: number, currency = 'INR'): string {
-  const major = minorUnits / 100;
+  // `safeCurrency` is a real ISO code carried by the data, never inferred from
+  // the UI language: a workspace billed in INR is billed in INR whatever
+  // language the dashboard is read in. The design-system formatter is what
+  // makes the digits and grouping follow the chosen locale, and it already
+  // degrades to a plain decimal on a code `Intl` refuses.
   const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : 'INR';
-  try {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: safeCurrency,
-      minimumFractionDigits: Number.isInteger(major) ? 0 : 2,
-      maximumFractionDigits: 2,
-    }).format(major);
-  } catch {
-    // Unknown currency code → fall back to a plain number with the code.
-    return `${safeCurrency} ${major.toLocaleString('en-IN')}`;
-  }
+  return formatMoney(minorUnits, safeCurrency);
 }
 
 export function formatCredits(count: number): string {
-  return count.toLocaleString('en-IN');
+  return formatNumber(count);
 }
 
 /**
@@ -685,7 +680,7 @@ export function maxAnnualSavingPercent(plans: readonly PlanView[]): number {
  * dash everywhere else - and rule 10 is that every absent value is the same
  * mark.
  */
-import { formatDate } from '../../ui/lib/formatters';
+import { formatDate, formatMoney, formatNumber } from '../../ui/lib/formatters';
 export { formatDate };
 
 export interface RenewalDisplay {

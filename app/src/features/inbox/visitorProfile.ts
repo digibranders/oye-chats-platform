@@ -35,6 +35,16 @@ export interface VisitorProfile {
     authority: string | null;
     budget: string | null;
   } | null;
+  /**
+   * The language this conversation settled into, as a base code ("hi").
+   *
+   * Null for every single-language chatbot and for a session recorded before
+   * multilingual shipped, which is why the badge that renders it disappears
+   * rather than saying "Unknown".
+   */
+  languageCode: string | null;
+  /** The itemised quote the visitor built before asking for a person, if any. */
+  quotation: SessionDetails['quotation'];
 }
 
 /**
@@ -65,5 +75,7 @@ export function profileFromSession(details: SessionDetails, fallbackName: string
     rating: details.visitor_rating,
     handoffReason: details.handoff_reason,
     bant: details.bant,
+    languageCode: details.language_code,
+    quotation: details.quotation,
   };
 }

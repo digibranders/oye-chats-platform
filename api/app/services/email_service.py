@@ -1,5 +1,6 @@
-"""Email notification service. Transport is Brevo (HTTP API) or AWS SES (SMTP),
-selected per-environment by ``EMAIL_PROVIDER`` — see ``_send_raw_email``.
+"""Email notification service. Transport is Brevo (HTTP API) or AWS SES (HTTP
+API via boto3), selected per-environment by ``EMAIL_PROVIDER`` — see
+``_send_raw_email``.
 
 Every email is rendered from the shared design system in ``email_design`` (monochrome +
 single-indigo-accent, dark-mode hardened for Outlook). All 19 senders build raw HTML in
@@ -14,7 +15,6 @@ import contextlib
 import json
 import logging
 import re
-import smtplib
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -22,6 +22,9 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import (
     APP_URL,
@@ -31,10 +34,9 @@ from app.config import (
     EMAIL_FROM_ADDRESS,
     EMAIL_FROM_NAME,
     EMAIL_PROVIDER,
-    SES_SMTP_HOST,
-    SES_SMTP_PASSWORD,
-    SES_SMTP_PORT,
-    SES_SMTP_USERNAME,
+    SES_AWS_ACCESS_KEY_ID,
+    SES_AWS_REGION,
+    SES_AWS_SECRET_ACCESS_KEY,
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
@@ -245,17 +247,20 @@ def _send_brevo_template(
         return False
 
 
-# ── AWS SES transport (SMTP) ─────────────────────────────────────────────────
+# ── AWS SES transport (HTTPS API via boto3) ──────────────────────────────────
+# Not SMTP: DigitalOcean (and most hosts) block outbound ports 25/465/587 by
+# default, which broke a working SES-over-SMTP integration the moment it hit
+# production (2026-08-22). The API rides port 443, same as Brevo — see the
+# EMAIL_PROVIDER comment in config.py.
 
 
-def _extract_smtp_error(exc: Exception) -> str:
-    """Extract a human-readable reason from an SES SMTP failure."""
-    if isinstance(exc, smtplib.SMTPResponseException):
-        return f"SMTP {exc.smtp_code} {exc.smtp_error!r}"
-    if isinstance(exc, smtplib.SMTPException):
+def _extract_ses_error(exc: Exception) -> str:
+    """Extract a human-readable reason from an SES API failure."""
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        return f"SES {error.get('Code', 'Unknown')}: {error.get('Message', str(exc))}"
+    if isinstance(exc, BotoCoreError):
         return f"{type(exc).__name__}: {exc}"
-    if isinstance(exc, OSError):
-        return f"network error: {exc}"
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -268,17 +273,20 @@ def _send_ses_email(
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    """Send an email via AWS SES over SMTP using raw HTML. Returns True on success.
+    """Send an email via the AWS SES HTTPS API (``send_raw_email``). Returns True on success.
 
     Same signature and return contract as ``_send_brevo_email`` so callers (and
     ``_send_raw_email`` below) don't need to know which transport is active.
     ``attachments`` stays in the Brevo shape (``{"content": <base64>, "name": <filename>}``)
     since that's what every existing sender already builds; only this function
-    knows it needs to become a MIME part instead of a JSON field.
+    knows it needs to become a MIME part instead of a JSON field. The message is
+    built as a standard MIME document and handed to SES as raw bytes — SES parses
+    it itself, so this is the same message shape a raw SMTP send would have used,
+    just delivered over HTTPS instead of an SMTP socket.
     """
     if not EMAIL_ENABLED:
         logger.warning(
-            "Email skipped. EMAIL_ENABLED=False (no SES SMTP credentials) | to=%s subject=%s",
+            "Email skipped. EMAIL_ENABLED=False (no SES API credentials) | to=%s subject=%s",
             redact_email(to_email),
             subject,
         )
@@ -300,14 +308,17 @@ def _send_ses_email(
         msg.attach(part)
 
     try:
-        with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SES_SMTP_USERNAME, SES_SMTP_PASSWORD)
-            server.sendmail(EMAIL_FROM_ADDRESS, [to_email], msg.as_string())
+        client = boto3.client(
+            "ses",
+            region_name=SES_AWS_REGION,
+            aws_access_key_id=SES_AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=SES_AWS_SECRET_ACCESS_KEY,
+        )
+        client.send_raw_email(Source=EMAIL_FROM_ADDRESS, Destinations=[to_email], RawMessage={"Data": msg.as_bytes()})
         logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | provider=ses")
         return True
     except Exception as e:
-        reason = _extract_smtp_error(e)
+        reason = _extract_ses_error(e)
         logger.warning("SES email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
         return False
@@ -858,6 +869,147 @@ def send_visitor_confirmation_email(
         ),
         reply_to=reply_to,
         sender_name=_branded_sender_name(company_name or BRAND_NAME),
+    )
+
+
+# ── Quotation emails ─────────────────────────────────────────────────────────
+
+_CURRENCY_SYMBOLS = {
+    "INR": "₹",
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "AUD": "A$",
+    "CAD": "C$",
+    "SGD": "S$",
+    "AED": "د.إ",
+}
+
+
+def _format_money(currency: str, value: object) -> str:
+    """Render a money amount with its currency symbol. Whole numbers drop the
+    decimals (₹200, not ₹200.00); fractional amounts keep two places."""
+    symbol = _CURRENCY_SYMBOLS.get((currency or "").upper(), f"{(currency or '').upper()} ")
+    try:
+        rounded = round(float(value), 2)
+    except (TypeError, ValueError):
+        rounded = 0.0
+    if rounded == int(rounded):
+        return f"{symbol}{int(rounded):,}"
+    return f"{symbol}{rounded:,.2f}"
+
+
+def send_quotation_visitor_email(
+    to_email: str,
+    company_name: str,
+    visitor_name: str | None,
+    service_names: list[str],
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Confirm to the visitor that their quote request was received.
+
+    Deliberately carries NO pricing: the widget never shows visitors prices, so
+    neither does this email. It just acknowledges the request and sets the
+    expectation that the team will follow up with the actual quote.
+    """
+    safe_company = esc(company_name) if company_name else esc(BRAND_NAME)
+    names = [esc(s) for s in (service_names or []) if s]
+    services_line = ", ".join(names) if names else "the services you selected"
+    inner = (
+        h1("Your quote request is in")
+        + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
+        + p(
+            f"Thanks for your interest in {strong(safe_company)}. We&rsquo;ve received your "
+            f"request for a quote on {strong(services_line)}."
+        )
+        + ed.alert("Our team is preparing your quotation and will be in touch by email shortly.", "success")
+        + p("You can reply directly to this email if you&rsquo;d like to add any details.")
+    )
+    send_email_async(
+        to_email,
+        f"Your quote request with {company_name or BRAND_NAME}",
+        shell(
+            subject=f"Your quote request with {company_name or BRAND_NAME}",
+            preheader=f"Thanks {visitor_name or 'there'}. We&rsquo;re preparing your quote.",
+            inner=inner,
+            visitor=True,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(company_name or BRAND_NAME),
+    )
+
+
+def send_quotation_client_email(
+    notification_email: str,
+    bot_name: str,
+    contact: dict | None,
+    currency: str,
+    line_items: list[dict],
+    total: object,
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Notify the client that a visitor completed a quote request.
+
+    Unlike the visitor email, this one carries the full itemised quote (line
+    items + quantities + subtotals + total), the per-service question answers
+    the visitor gave, and the visitor's contact info so the client can follow
+    up. ``reply_to`` should be the visitor's email so a reply lands straight in
+    their inbox.
+    """
+    safe_bot = esc(bot_name)
+    contact = contact or {}
+
+    # Money table: one row per service (name × qty → subtotal) + a bold total.
+    quote_rows: list[tuple[str, str]] = []
+    for item in line_items or []:
+        qty = item.get("quantity")
+        label = esc(item.get("name") or "Service")
+        if qty:
+            label = f"{label} &times; {esc(qty)}"
+        quote_rows.append((label, _format_money(currency, item.get("subtotal", 0))))
+    quote_rows.append(("Total", strong(_format_money(currency, total))))
+
+    # Per-service Q&A: only for services that actually collected answers, so a
+    # simple pick-and-quantity service adds no empty section.
+    answer_sections = ""
+    for item in line_items or []:
+        answer_rows = [
+            (esc(ans.get("question_text") or ans.get("question_id") or "Question"), esc(ans.get("answer")))
+            for ans in item.get("answers") or []
+            if (ans.get("answer") or "").strip()
+        ]
+        if answer_rows:
+            answer_sections += ed.section_label(esc(item.get("name") or "Service")) + info_table(answer_rows)
+
+    inner = (
+        h1("New quote request")
+        + p(f"A visitor on {strong(safe_bot)} just completed a quote request. Here&rsquo;s what they asked for.")
+        + ed.section_label("Quote")
+        + info_table(quote_rows, right=True)
+        + (ed.section_label("Their answers") + answer_sections if answer_sections else "")
+        + ed.section_label("Contact")
+        + info_table(
+            [
+                ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
+                ("Email", _mailto(contact.get("email"))),
+                ("Phone", esc(contact.get("phone"))),
+                ("Company", esc(contact.get("company"))),
+            ]
+        )
+        + button("View lead in dashboard", f"{APP_URL}/leads")
+    )
+    send_email_async(
+        notification_email,
+        f"New quote request from {bot_name}",
+        shell(
+            subject=f"New quote request from {bot_name}",
+            preheader=f"A visitor completed a quote request on {bot_name}.",
+            inner=inner,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 

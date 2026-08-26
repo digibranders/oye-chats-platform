@@ -8,6 +8,7 @@ import {
   UNLIMITED_LIMIT,
   type PlanView,
 } from '../billingModel';
+import { TaxNote } from './TaxNote';
 
 export interface SeatDialogProps {
   open: boolean;
@@ -130,6 +131,11 @@ export function SeatDialog({
               : 'Removing seats applies straight away and reduces your next charge. You are not refunded for the current period.'}
           </Alert>
         ) : null}
+
+        {/* Only where a seat charge is actually quoted. Removing seats and
+            staying inside the plan allowance both name no figure, and a tax
+            note there would qualify nothing. */}
+        {valid && delta > 0 && monthlyExtraMinor > 0 ? <TaxNote /> : null}
 
         {error ? (
           <Alert tone="danger" live>

@@ -510,6 +510,12 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
             if wanted_seats > 0:
                 sub.seat_addon_pending_quantity = wanted_seats
 
+    # The branding add-on is a third mandate on this row and must be retired
+    # with the plan, or it keeps debiting a customer who has cancelled. Unlike
+    # seats it carries nothing forward: re-buying is one click, and a carried
+    # entitlement that nothing has charged for is the worse failure.
+    razorpay_service.retire_branding_addon_quietly(session, sub, context="the deferred plan cancellation")
+
     if seat_cancel_failed:
         # Do NOT stamp the marker: it is what makes the sweep skip this row, and
         # skipping it would abandon a live seat mandate that keeps debiting with
@@ -678,6 +684,13 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
             carried_seats = (
                 0  # unknown gateway state. Don't compound it by re-creating a seat count we can't confirm was cleared
             )
+
+    # The branding add-on hangs off the OLD subscription and would survive the
+    # cutover as an orphan, still debiting the now-defunct mandate forever.
+    # Retire it here. Nothing carries it onto the new subscription on purpose:
+    # re-creating an add-on whose mandate has not been re-authorized would hand
+    # out the entitlement unbilled, and the customer can re-buy in one click.
+    razorpay_service.retire_branding_addon_quietly(session, sub, context="scheduled-downgrade promotion")
 
     # Mark the old sub finalized first so the partial-unique index on
     # (client_id, status in active|trialing|past_due) doesn't trip when

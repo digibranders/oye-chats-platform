@@ -1,8 +1,9 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Avatar,
+  Button,
   Input,
   SaveBar,
   SettingBand,
@@ -11,7 +12,17 @@ import {
   toast,
   validateEmail,
 } from '../../ui';
-import { updateClientProfile, updateOperator } from '../../services/api';
+import {
+  removeOperatorAvatar,
+  updateClientProfile,
+  updateOperator,
+  uploadOperatorAvatar,
+} from '../../services/api';
+import {
+  AVATAR_ACCEPT,
+  AVATAR_HINT,
+  validateAvatarFile,
+} from '../agents/experience/avatarRules';
 import { keys } from '../../query/keys';
 import type { CurrentUser } from '../../types/domain';
 import { describeDirty, useDraft } from '../workspace/draft';
@@ -51,6 +62,8 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   // and then fill in, and a background refetch must never overwrite an edit in
   // progress. See React's "adjust state when a prop changes".
   const [adoptedFor, setAdoptedFor] = useState<number | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   if (adoptedFor !== user.id) {
     setAdoptedFor(user.id);
     draft.commit({
@@ -83,6 +96,34 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
     },
   });
 
+  /**
+   * The picture is saved the moment it is chosen, not with the form.
+   *
+   * It is a separate endpoint from the profile PATCH, and pairing it with the
+   * save bar would mean a dirty form the user cannot discard back — the file is
+   * already uploaded by then. Immediate is also what every product does with an
+   * avatar, and it is undoable in one click.
+   */
+  const avatar = useMutation({
+    mutationFn: async (file: File | null) =>
+      file ? (await uploadOperatorAvatar(file)).avatar_url : (await removeOperatorAvatar(), null),
+    onSuccess: (avatar_url) => {
+      void queryClient.invalidateQueries({ queryKey: keys.session.me() });
+      toast.success(avatar_url ? 'Picture updated' : 'Picture removed');
+    },
+  });
+
+  function chooseFile(file: File | undefined) {
+    if (!file) return;
+    const reason = validateAvatarFile(file);
+    if (reason) {
+      setAvatarError(reason);
+      return;
+    }
+    setAvatarError(null);
+    avatar.mutate(file);
+  }
+
   function submit() {
     const errors: Record<string, string> = {};
     if (!draft.values.name.trim()) {
@@ -114,11 +155,56 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
 
       <SettingRow
         label="Picture"
-        description="From the account you signed in with."
+        description={
+          isOperator
+            ? 'Optional. Teammates and visitors see it beside your messages; without one they see your initials.'
+            : 'From the account you signed in with.'
+        }
         controlWidth="auto"
+        error={avatarError ?? undefined}
       >
-        <Avatar name={draft.values.name || user.email || 'You'} size="lg" src={user.avatar_url} />
+        <span className="flex items-center gap-3">
+          <Avatar name={draft.values.name || user.email || 'You'} size="lg" src={user.avatar_url} />
+          {isOperator ? (
+            <>
+              {/* A hidden input driven by real buttons: a styled `<label>`
+                  wrapping a file input is not in the tab order as a button and
+                  announces as a label, so the keyboard path to it is guesswork. */}
+              <input
+                ref={fileInput}
+                type="file"
+                accept={AVATAR_ACCEPT.join(',')}
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Cleared so choosing the same file twice still fires.
+                  event.target.value = '';
+                  chooseFile(file);
+                }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={avatar.isPending}
+                onClick={() => fileInput.current?.click()}
+              >
+                {user.avatar_url ? 'Replace' : 'Upload'}
+              </Button>
+              {user.avatar_url ? (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={avatar.isPending}
+                  onClick={() => avatar.mutate(null)}
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+        </span>
       </SettingRow>
+      {isOperator ? <SettingBand>{AVATAR_HINT}</SettingBand> : null}
 
       <SettingRow
         label="Name"

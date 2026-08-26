@@ -44,6 +44,7 @@ export const LEGACY_AGENT_SEGMENTS: ReadonlyArray<readonly [from: string, segmen
   ['agents/:agentId/experience', 'experience'],
   ['agents/:agentId/channels', 'deploy'],
   ['agents/:agentId/advanced', 'behaviour'],
+  ['agents/:agentId/quotation', 'quotation'],
   // Not a rename: the per-chatbot analytics tab was folded into Overview, so
   // this one changes what the link *means*, not only where it points.
   ['agents/:agentId/analytics', 'overview'],

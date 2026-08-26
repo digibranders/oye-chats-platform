@@ -48,6 +48,7 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
+from app.services.language_service import is_multilingual_enabled
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
 # (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
@@ -379,6 +380,66 @@ def _require_bot_management_access(auth: dict) -> None:
         raise HTTPException(status_code=403, detail="You do not have permission to manage bots.")
 
 
+# The badge's stock copy. A bot row that still holds these values has never
+# been customised, so a PATCH resending them is a no-op and must not trip the
+# add-on guard: the Experience page saves its whole draft, unchanged fields
+# included.
+DEFAULT_BRANDING_TEXT = "Powered by OyeChats"
+DEFAULT_BRANDING_URL = "https://www.oyechats.com"
+
+
+def _branding_fields_requiring_addon(bot: Bot, update_data: dict) -> list[str]:
+    """Which fields in this PATCH need the branding-removal add-on.
+
+    Three writes are gated, and only when they actually change something:
+
+    * ``feature_flags.show_branding`` set to False. Turning the badge back ON
+      is always allowed, including after the add-on lapses, so a customer is
+      never stuck holding a setting they can no longer switch off.
+    * ``branding_text`` / ``branding_url`` moved off the stock values. These
+      re-label and re-target the badge, which is the same paid capability
+      wearing a different hat.
+
+    Returns the offending field names (dotted for the nested flag) for the
+    error payload, or an empty list when the PATCH touches nothing gated.
+    """
+    offending: list[str] = []
+
+    flags = update_data.get("feature_flags")
+    if isinstance(flags, dict) and flags.get("show_branding") is False:
+        offending.append("feature_flags.show_branding")
+
+    for field, default in (
+        ("branding_text", DEFAULT_BRANDING_TEXT),
+        ("branding_url", DEFAULT_BRANDING_URL),
+    ):
+        if field not in update_data:
+            continue
+        incoming = update_data[field]
+        if incoming is None:
+            continue  # Clearing back to the default is a downgrade, always allowed.
+        if str(incoming) != str(getattr(bot, field, None) or default):
+            offending.append(field)
+
+    return offending
+
+
+def _bot_has_branding_addon(session, bot_id: int) -> bool:
+    """True iff the subscription funding this bot holds the branding add-on.
+
+    Denies on any resolver error, matching ``plan_entitlements_service``'s
+    deny-by-default policy: a transient failure must never let an unpaid write
+    through, and the customer can retry.
+    """
+    from app.services import plan_entitlements_service
+
+    try:
+        return plan_entitlements_service.get_bot_entitlements(bot_id, session).has_feature("branding_removable")
+    except Exception:
+        logger.warning("branding add-on check failed for bot=%s. Denying", bot_id, exc_info=True)
+        return False
+
+
 def _record_growth_event(session, bot_id: int, event_type: str) -> None:
     if event_type not in DEMO_EVENT_TYPES:
         raise ValueError(f"Unsupported growth event type: {event_type}")
@@ -616,6 +677,7 @@ class UpdateBotRequest(BaseModel):
     # not unbounded: each is held to the default object budget (64 KB, 6
     # levels, 200 keys) so a JSONB column cannot be used as free storage.
     feature_flags: BoundedJsonObject | None = None
+    language_config: BoundedJsonObject | None = None
     widget_messages: BoundedJsonObject | None = None
     widget_config: BoundedJsonObject | None = None
     # Branding customization
@@ -766,6 +828,7 @@ class BotResponse(BaseModel):
     followup_sending_paused: bool = False
     business_hours: dict | None = None
     feature_flags: dict = {}
+    language_config: dict = {}
     widget_messages: dict = {}
     widget_config: dict = {}
     branding_text: str = "Powered by OyeChats"
@@ -906,6 +969,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         followup_sending_paused=bool(bot.followup_sending_paused),
         business_hours=bot.business_hours,
         feature_flags=bot.feature_flags or {},
+        language_config=bot.language_config or {},
         widget_messages=bot.widget_messages or {},
         widget_config=bot.widget_config or {},
         branding_text=bot.branding_text or "Powered by OyeChats",
@@ -968,6 +1032,25 @@ def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | 
 
 # IMPORTANT: Static sub-paths MUST be defined before /{bot_id} dynamic routes
 # to prevent FastAPI from trying to parse "settings" as an integer bot_id.
+
+
+def _effective_language_config(bot) -> dict:
+    """The bot's language config as the WIDGET should see it right now.
+
+    Identical to the stored value except when the platform-wide
+    ``feature.multilingual_chat_enabled`` switch is off, in which case
+    ``enabled`` (and, with it, ``operator_translation_enabled``) is reported as
+    false. The stored configuration is never mutated: flipping the switch back
+    on restores exactly what the customer configured.
+    """
+    cfg = dict(bot.language_config or {})
+    if not cfg.get("enabled", False):
+        return cfg
+    if is_multilingual_enabled(bot):
+        return cfg
+    cfg["enabled"] = False
+    cfg["operator_translation_enabled"] = False
+    return cfg
 
 
 @router.get("/settings/public")
@@ -1116,17 +1199,18 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
             }
         )
     elif not _plan_branding_removable:
-        # Non-free plans that don't include branding removal (e.g. Starter)
-        # must also force show_branding=True. The admin UI locks the toggle
-        # for these plans but stored feature_flags may have show_branding=False
-        # left over from a previous paid tier. Enforce server-side so the
-        # widget always reflects the plan entitlement.
+        # No authorized branding add-on → force show_branding=True. Branding
+        # removal is sold only as a standalone add-on, so a stored
+        # show_branding=False is always stale here: left over from before the
+        # add-on model, or from a mandate that has since been cancelled.
+        # ``update_bot`` now rejects the write outright, but this stays as the
+        # boundary that governs what the widget actually renders.
         effective_feature_flags["show_branding"] = True
 
-    # Mirror the show_branding lock: a plan without branding removal must also
-    # not be able to re-label or re-target the badge by PATCHing the fields
-    # directly. The admin UI hides these inputs for such plans, but the API is
-    # the real boundary.
+    # Mirror the show_branding lock: a subscription without the branding add-on
+    # must also not be able to re-label or re-target the badge by PATCHing the
+    # fields directly. The admin UI hides these inputs without the add-on, but
+    # the API is the real boundary.
     effective_branding_text = bot.branding_text or "Powered by OyeChats"
     effective_branding_url = bot.branding_url or "https://www.oyechats.com"
     if not _plan_branding_removable:
@@ -1153,6 +1237,12 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": effective_feature_flags,
+        # Reported as DISABLED when the platform switch is off, not merely
+        # ignored server-side. The widget decides from this whether to resolve a
+        # locale and whether to offer the language selector at all, so leaving
+        # `enabled: true` here would show visitors a selector whose choice the
+        # pipeline then discards.
+        "language_config": _effective_language_config(bot),
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
         "branding_text": effective_branding_text,
@@ -1864,6 +1954,7 @@ def list_bots(
                     followup_sending_paused=bool(b.followup_sending_paused),
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
+                    language_config=b.language_config or {},
                     widget_messages=b.widget_messages or {},
                     widget_config=b.widget_config or {},
                     branding_text=b.branding_text or "Powered by OyeChats",
@@ -2854,6 +2945,32 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                     is_active_transition = requested_active
                     if requested_active:
                         _require_reactivation_allowed(session, bot, auth["client_id"])
+            # Branding-removal add-on guard. Hiding or re-labelling the
+            # "Powered by OyeChats" badge is a paid add-on, not a plan
+            # inclusion. ``GET /settings/public`` already forces the badge back
+            # on for an unentitled bot, but accepting the write anyway left the
+            # row asserting something the customer had not bought, which every
+            # other reader of ``Bot`` (the dashboard, the bot list, the embed
+            # snippet) would surface as if it were true. Reject at the door
+            # instead, so the stored state and the entitlement agree.
+            _branding_writes = _branding_fields_requiring_addon(bot, update_data)
+            if _branding_writes and not _bot_has_branding_addon(session, bot.id):
+                logger.warning(
+                    "Bot %s branding write rejected, no branding add-on: %s",
+                    bot_id,
+                    _branding_writes,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "branding_addon_required",
+                        "message": (
+                            "Removing or customising the 'Powered by OyeChats' badge "
+                            "requires the branding removal add-on."
+                        ),
+                        "fields": _branding_writes,
+                    },
+                )
 
             # Sync logos
             if "bot_logo" in update_data:
@@ -2870,6 +2987,29 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 current_flags = dict(bot.feature_flags or {})
                 current_flags.update(update_data.pop("feature_flags"))
                 bot.feature_flags = current_flags
+
+            # Merge language_config. Partial updates must not wipe existing language config
+            if "language_config" in update_data and update_data["language_config"] is not None:
+                current_lang = dict(bot.language_config or {})
+                current_lang.update(update_data.pop("language_config"))
+                # Operator translation (Phase 4) depends on the multilingual
+                # feature being on: the session language it translates to and
+                # from is written only by the language resolver, which returns
+                # early when ``enabled`` is false. Validate the MERGED result,
+                # not the request body, because this is a partial update: a
+                # call sending only ``{"enabled": false}`` would otherwise
+                # leave a stale ``operator_translation_enabled: true`` behind
+                # and produce a bot that thinks translation is on with no
+                # language to translate.
+                if current_lang.get("operator_translation_enabled") and not current_lang.get("enabled"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "operator_translation_enabled requires language_config.enabled to be true. "
+                            "Enable multilingual for this bot first."
+                        ),
+                    )
+                bot.language_config = current_lang
 
             # Merge widget_messages. Partial updates must not wipe existing messages
             if "widget_messages" in update_data and update_data["widget_messages"] is not None:

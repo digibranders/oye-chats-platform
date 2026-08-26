@@ -16,11 +16,13 @@ import {
   Tooltip,
   cn,
   formatDateTime,
+  formatMoney,
   formatNumber,
   formatRelative,
   toast,
   type PropertyItem,
 } from '../../ui';
+import { ConversationLanguageBadge } from './ConversationLanguageBadge';
 import { useLeadAnnotations } from '../leads/useLeadAnnotations';
 import type { VisitorProfile } from './visitorProfile';
 
@@ -332,7 +334,13 @@ export function VisitorPanel({
         <div className="flex items-center gap-3">
           <Avatar size="lg" name={profile.name} />
           <div className="min-w-0">
-            <p className="truncate text-base font-semibold text-text-primary">{profile.name}</p>
+            <p className="flex items-center gap-2 truncate text-base font-semibold text-text-primary">
+              {profile.name}
+              {/* Beside the name, not down in the fact list: which language
+                  someone is writing in changes how the operator reads every
+                  line above it. */}
+              <ConversationLanguageBadge languageCode={profile.languageCode} />
+            </p>
             {profile.email ? (
               <a
                 href={`mailto:${profile.email}`}
@@ -371,6 +379,33 @@ export function VisitorPanel({
           <div>
             <Eyebrow>What the AI learned</Eyebrow>
             <PropertyGrid layout="stacked" density="compact" items={bant} className="mt-1" />
+          </div>
+        ) : null}
+
+        {profile.quotation && profile.quotation.line_items.length > 0 ? (
+          <div>
+            <Eyebrow>What they priced up</Eyebrow>
+            <PropertyGrid
+              layout="stacked"
+              density="compact"
+              className="mt-1"
+              items={profile.quotation.line_items.map((line) => ({
+                label: line.name,
+                value: `${formatNumber(line.quantity)} × ${formatMoney(
+                  Math.round(line.price_per_unit * 100),
+                  profile.quotation?.currency ?? 'INR',
+                )}`,
+              }))}
+            />
+            <p className="mt-1 text-xs text-text-secondary">
+              Estimated total{' '}
+              <span className="figure text-text-primary">
+                {formatMoney(
+                  Math.round(profile.quotation.total * 100),
+                  profile.quotation.currency,
+                )}
+              </span>
+            </p>
           </div>
         ) : null}
 

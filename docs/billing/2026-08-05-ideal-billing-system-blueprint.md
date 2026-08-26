@@ -1,5 +1,20 @@
 # OyeChats — Ideal Production-Ready Billing System (Target State)
 
+> ## ⚠️ One assumption changed: pricing became GST-EXCLUSIVE on 26 Aug 2026
+>
+> This blueprint is dated 2026-08-05 and is left unedited. §6.1's bullet "INR pricing is
+> **GST-inclusive** (sticker price is what the customer pays)" is no longer true. Every published
+> price is now a **base** price, exclusive of GST. A domestic customer is debited base + GST
+> (`core/tax.py::gross_charge_minor`); the USD rail is unchanged, since an export carries no Indian
+> GST and the listed price is the full charge.
+>
+> Everything else in §6.1, including the supply classification tree and the blank-country invariant,
+> still holds. So does the document model in §6.2: the invoicing engine was not changed, because the
+> charge is `base + tax` and the carve-out therefore recovers the advertised base exactly.
+>
+> Current source of truth: `api/app/core/tax.py` and
+> [`razorpay-plan-ids.md`](./razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+
 **Date:** 2026-08-05
 **Scope:** Payments, subscriptions, credits, invoicing (GST + export), reconciliation, ops.
 **Status:** Target-state blueprint. A parallel line-by-line code review of the current

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 import { ConversationList } from './ConversationList';
+import { formatDayLabel } from '../../lib/messageDay';
 import { Transcript } from './Transcript';
 import {
   byRecency,
@@ -285,7 +286,15 @@ describe('Transcript', () => {
     );
     // Two days, two dividers — the version that accumulated the boundary in a
     // variable mutated during render produced one, on a re-render.
-    expect(screen.getAllByRole('presentation')).toHaveLength(2);
+    //
+    // `separator`, not `presentation`: the marker carries the day as its
+    // accessible name now, so a screen-reader user reading a multi-day
+    // transcript gets the boundaries a sighted reader does.
+    const dividers = screen.getAllByRole('separator');
+    expect(dividers).toHaveLength(2);
+    // The newer day is the second one, and today's is named as such rather
+    // than as a date the reader has to work out.
+    expect(dividers[1]).toHaveAccessibleName(formatDayLabel('2026-08-19T09:00:00Z'));
   });
 
   it('names each voice, so the thread survives colour being stripped', () => {

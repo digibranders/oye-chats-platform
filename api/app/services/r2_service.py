@@ -378,6 +378,11 @@ def upload_to_r2(file_data, filename, content_type):
         # Return the key, the backend will construct full URLs via signed/public URL helpers.
         return unique_filename
 
+    except UnsupportedImage:
+        # A caller-facing 400 (bad file), not a 500 - must reach the route as
+        # the distinct type it is, not get folded into the generic Exception
+        # below.
+        raise
     except ClientError as e:
         error_msg = (
             f"R2 upload failed (ClientError): {e.response['Error']['Message'] if 'Error' in e.response else str(e)}"

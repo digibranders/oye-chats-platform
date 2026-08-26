@@ -125,6 +125,19 @@ jobs:
           VITE_API_URL: https://api.oyechats.com
           VITE_WIDGET_BASE: https://cdn.oyechats.com/
 
+      # The Playwright suites were in the repo but never wired into CI, so the
+      # widget's WebKit project had never actually run anywhere. Installs both
+      # browsers the config declares (chromium + the iPhone 14 WebKit profile)
+      # so neither project is silently skipped.
+      - name: Install browsers
+        working-directory: widget
+        run: npm run e2e:install
+
+      # Serves the build produced above, so this is the shipped bundle.
+      - name: Browser tests (chromium + WebKit)
+        working-directory: widget
+        run: npm run e2e
+
       - name: Bundle size check
         working-directory: widget
         run: npm run size
@@ -168,5 +181,16 @@ jobs:
       - name: Build
         working-directory: app
         run: npm run build
-        env:
-          VITE_API_URL: https://api.oyechats.com
+
+      - name: Install browsers
+        working-directory: app
+        run: npm run e2e:install
+
+      # The Playwright webServer builds its own bundle into `dist-e2e/` with its
+      # own mock API origin, so the production build above is untouched. The
+      # comment here used to claim that while `e2e:build` wrote into `dist/`
+      # and clobbered it. No VITE_API_URL is set for this step on purpose: the
+      # suite must not be able to inherit a real API origin.
+      - name: Browser tests
+        working-directory: app
+        run: npm run e2e

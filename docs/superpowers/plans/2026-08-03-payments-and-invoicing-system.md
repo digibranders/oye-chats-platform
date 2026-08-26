@@ -1,5 +1,28 @@
 # Payments & Invoicing System Implementation Plan
 
+> ## ⚠️ Written before the 26 Aug 2026 switch to GST-EXCLUSIVE pricing
+>
+> This plan is dated 2026-08-03 and is left unedited. Its audit findings, its architecture and its
+> task list all still stand: the invoicing engine was **not** changed by the pricing switch.
+>
+> What changed is what the gateway is told to collect. Every published price is now a **base** price,
+> exclusive of GST. `Plan.monthly_price_cents` and friends hold the base, and the tax is added at
+> charge time by `core/tax.py::gross_charge_minor`. A domestic customer is debited base + GST; an
+> international customer is an export, carries no Indian GST, and pays the listed USD price. Every
+> INR Razorpay plan is therefore minted at base + GST, because Razorpay Subscriptions have no tax
+> layer of their own.
+>
+> Two consequences for anyone executing tasks from this plan:
+> - **A quote is not a price column.** Any surface quoting an amount payable must use the gross the
+>   billing endpoints now return, not the plan's base.
+> - **`price_inclusive` stays pinned `true`.** The charge is `base + tax`, so the captured amount is
+>   tax-inclusive of the base and the existing carve-out recovers the advertised base exactly. Do not
+>   "fix" it to match the new pricing model.
+>
+> Current source of truth: `api/app/core/tax.py`,
+> [`razorpay-plan-ids.md`](../../billing/razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing),
+> and [`api-reference.md`](../../api-reference.md#billing-and-pricing-routes).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn OyeChats' payment stack from "a working charge path with no customer identity" into a complete, industry-standard billing system — durable buyer identity, RBI-compliant saved payment instruments, involuntary-churn recovery, and GST/export invoices that actually reach the customer — on Razorpay alone, serving both Indian and international buyers.

@@ -308,3 +308,53 @@ But 235 closed defects is a 7. The rest is experience, and it gets measured too:
 - **Activation funnel** — the events in §3, each with a target median, because
   the previous onboarding shipped without the one metric that would have told
   anyone whether it worked.
+
+---
+
+## 7. What arrived from `development`, and where it went
+
+The rebuild forked before the multilingual, quotation and billing work landed,
+and the two lines ran in parallel for a week. That work is now merged in. The
+backend, the widget and the docs merged as themselves; `app/` could not, because
+both branches had rebuilt the console against different design systems. Every
+console-side change below is a **re-implementation against `src/ui`**, not a
+textual merge, and the old `src/design-system` tree is gone along with the
+surfaces that were only ever written for it.
+
+Where the two branches had each solved the same problem, the rebuild's answer
+stands and the incoming one is folded into it:
+
+- **Formatting.** `development` routed every figure through a locale-aware
+  layer; the rebuild had centralised formatting but pinned it to `en-US` and
+  `en-GB`. Both were trying to stop formatting following the *browser*.
+  `ui/lib/formatters` now builds its `Intl` formatters against `getLocale()`,
+  keyed per locale so a language switch cannot serve a stale one. Under the
+  `en-IN` default this means Indian digit grouping throughout.
+- **Plan gates.** The incoming quotation gate was a bare
+  `Set(['professional','enterprise'])` — the exact bug `lib/planGates` exists to
+  prevent, where a bespoke contract is refused a feature the server grants it.
+  It goes through `planIncludesQuotations` instead.
+- **Unanswered questions.** `development` added a UAQ tab on Analytics; the
+  rebuild already had `KnowledgeGapsPanel`, range-scoped. The rebuild's stands.
+- **Design-system fixes.** The incoming tab-overflow and case-insensitive-search
+  fixes were already true of `ui/layout/Tabs` and `ui/primitives/Combobox`.
+
+New surfaces, in the rebuild's idiom:
+
+| What | Where |
+|---|---|
+| Dashboard language | `settings/LanguageSection` — the control the i18n programme had no way to reach |
+| Chatbot languages | `agents/experience/LanguageSection`, a fifth Experience tab |
+| Operator translation | `inbox/OperatorLanguagePicker`, `TranslationToggle`, `ConversationLanguageBadge` |
+| Language analytics | `analytics/LanguagesTab`, a conditional route-tab |
+| Quotation | `agents/quotation/` — model, `ServiceEditor`, page; its own chatbot tab |
+| Quote on the record | `leads/LeadQuotation`, and the inbox visitor panel |
+| Branding add-on | `workspace/billing/BrandingAddonCard` — an add-on, never a plan inclusion |
+| Tax disclosure | `billing/TaxNote`, under every base price shown before checkout |
+| Day dividers | `ui/data/DayDivider`, on both transcripts |
+| Chatbot avatar | `agents/AgentAvatar`, honouring the customer's own avatar choice |
+
+**Still open.** The four Playwright suites under `tests/e2e/` were authored
+against the previous information architecture. Their routes, tab labels and
+copy have been re-pointed at this one, but they have not been run against a
+build — CI is where that first happens.

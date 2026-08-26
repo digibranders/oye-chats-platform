@@ -24,6 +24,16 @@ const razorpay = vi.hoisted(() => ({ openRazorpayCheckout: vi.fn() }));
 vi.mock('../../../services/api', () => api);
 vi.mock('../../../lib/razorpay', () => razorpay);
 
+/**
+ * The dialog carries the tax disclosure, which reads the charge currency from
+ * `CurrencyProvider` (mounted for real in `ProtectedLayout`). Stubbed rather
+ * than provided so these tests stay about the purchase path: what the note
+ * itself says on each rail is pinned in `TaxNote.test.tsx`.
+ */
+vi.mock('../../../context/CurrencyContext', () => ({
+  useCurrency: () => ({ isInr: true, loading: false, taxRateBps: 1800 }),
+}));
+
 const PACKS = [
   { inr: 1000, usd: 13, credits: 1000, bonus_pct: 0 },
   { inr: 4000, usd: 50, credits: 5000, bonus_pct: 20, badge: 'Best value' },

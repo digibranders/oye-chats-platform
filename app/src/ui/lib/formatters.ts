@@ -9,23 +9,65 @@
  * `Intl` formatters are expensive to construct, so a 500-row invoice table that
  * builds one per cell is measurably slower than one that does not.
  *
- * **Locale and timezone are deliberately explicit.** Dates render in `en-GB`
- * order (19 Aug 2026) because `08/19` and `19/08` are indistinguishable to the
- * reader and wrong half the time. Times render in the workspace's timezone when
- * the caller supplies one — an audit trail, a billing period and a business-hours
- * schedule are all facts about the workspace, not about whichever machine is
- * looking at them.
+ * **Locale follows the dashboard, never the browser.** Every `Intl` formatter
+ * here is built against `getLocale()` — the language the user chose in the
+ * console — so a dashboard read in Hindi does not print its dates in whatever
+ * the machine happens to prefer. Field ORDER is still day-first everywhere
+ * (19 Aug 2026), because `08/19` and `19/08` are indistinguishable to the
+ * reader and wrong half the time; the locale decides the month's name and the
+ * digits, not the order.
+ *
+ * **Timezone stays explicit and untouched.** Times render in the workspace's
+ * timezone when the caller supplies one — an audit trail, a billing period and
+ * a business-hours schedule are all facts about the workspace, not about
+ * whichever machine is looking at them.
  */
+
+import { getLocale, t as translateNow } from '../../i18n/i18n';
 
 /** The console's placeholder for a value that is not there. */
 export const ABSENT = '—';
 
-const NUMBER = new Intl.NumberFormat('en-US');
-const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
-const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-
-/** Built once per currency, not once per cell. */
+/**
+ * Caches are keyed by locale as well as by shape.
+ *
+ * The active locale changes at runtime when the user switches language, and a
+ * cache keyed only by options would keep serving the formatter built for the
+ * previous one — the whole screen re-renders in Hindi with English numerals.
+ * Keying on `getLocale()` lets both live side by side, and the map stays tiny
+ * because the locale set is the shipped dictionary list, not user input.
+ */
+const numberCache = new Map<string, Intl.NumberFormat>();
+const relativeCache = new Map<string, Intl.RelativeTimeFormat>();
 const moneyCache = new Map<string, Intl.NumberFormat>();
+const dateCache = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Never throws: `Intl` raises a `RangeError` on a malformed locale tag, and a
+ * throw inside a cell takes out the whole table around it. A bad tag degrades
+ * to the runtime default rather than propagating.
+ */
+function safeIntl<T>(build: (locale: string) => T, fallback: () => T): T {
+  try {
+    return build(getLocale());
+  } catch {
+    return fallback();
+  }
+}
+
+function numberFormatter(options: Intl.NumberFormatOptions): Intl.NumberFormat {
+  const locale = getLocale();
+  const key = `${locale}:${JSON.stringify(options)}`;
+  let formatter = numberCache.get(key);
+  if (!formatter) {
+    formatter = safeIntl(
+      (tag) => new Intl.NumberFormat(tag, options),
+      () => new Intl.NumberFormat(undefined, options),
+    );
+    numberCache.set(key, formatter);
+  }
+  return formatter;
+}
 
 /**
  * Never throws.
@@ -37,27 +79,31 @@ const moneyCache = new Map<string, Intl.NumberFormat>();
  * without claiming a denomination nobody recorded.
  */
 function moneyFormatter(currency: string, decimals: boolean): Intl.NumberFormat {
-  const key = `${currency}:${decimals}`;
+  const locale = getLocale();
+  const key = `${locale}:${currency}:${decimals}`;
   let formatter = moneyCache.get(key);
   if (!formatter) {
     const digits = { minimumFractionDigits: decimals ? 2 : 0, maximumFractionDigits: decimals ? 2 : 0 };
     try {
-      formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency, ...digits });
+      formatter = new Intl.NumberFormat(locale, { style: 'currency', currency, ...digits });
     } catch {
-      formatter = new Intl.NumberFormat('en-US', digits);
+      formatter = numberFormatter(digits);
     }
     moneyCache.set(key, formatter);
   }
   return formatter;
 }
 
-const dateCache = new Map<string, Intl.DateTimeFormat>();
-
 function dateFormatter(options: Intl.DateTimeFormatOptions, timeZone?: string): Intl.DateTimeFormat {
-  const key = `${JSON.stringify(options)}:${timeZone ?? ''}`;
+  const locale = getLocale();
+  const key = `${locale}:${JSON.stringify(options)}:${timeZone ?? ''}`;
   let formatter = dateCache.get(key);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-GB', timeZone ? { ...options, timeZone } : options);
+    const resolved = timeZone ? { ...options, timeZone } : options;
+    formatter = safeIntl(
+      (tag) => new Intl.DateTimeFormat(tag, resolved),
+      () => new Intl.DateTimeFormat(undefined, resolved),
+    );
     dateCache.set(key, formatter);
   }
   return formatter;
@@ -65,12 +111,14 @@ function dateFormatter(options: Intl.DateTimeFormatOptions, timeZone?: string): 
 
 /** A plain integer with thousands separators. */
 export function formatNumber(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? ABSENT : NUMBER.format(value);
+  return value == null || !Number.isFinite(value) ? ABSENT : numberFormatter({}).format(value);
 }
 
 /** `12.4K`, for a figure that has to fit in a stat tile or an axis tick. */
 export function formatCompact(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? ABSENT : COMPACT.format(value);
+  return value == null || !Number.isFinite(value)
+    ? ABSENT
+    : numberFormatter({ notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
 /**
@@ -100,7 +148,7 @@ export function formatPercent(
   fractionDigits = 0,
 ): string {
   if (fraction == null || !Number.isFinite(fraction)) return ABSENT;
-  return new Intl.NumberFormat('en-US', {
+  return numberFormatter({
     style: 'percent',
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
@@ -167,6 +215,19 @@ export function formatTime(
     : ABSENT;
 }
 
+function relativeFormatter(): Intl.RelativeTimeFormat {
+  const locale = getLocale();
+  let formatter = relativeCache.get(locale);
+  if (!formatter) {
+    formatter = safeIntl(
+      (tag) => new Intl.RelativeTimeFormat(tag, { numeric: 'auto' }),
+      () => new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }),
+    );
+    relativeCache.set(locale, formatter);
+  }
+  return formatter;
+}
+
 const RELATIVE_STEPS: [limit: number, divisor: number, unit: Intl.RelativeTimeFormatUnit][] = [
   [60, 1, 'second'],
   [3600, 60, 'minute'],
@@ -190,10 +251,10 @@ export function formatRelative(
   if (!date) return ABSENT;
   const seconds = (date.getTime() - now.getTime()) / 1000;
   const magnitude = Math.abs(seconds);
-  if (magnitude < 30) return 'just now';
+  if (magnitude < 30) return translateNow('common.justNow') || 'just now';
   const [, divisor, unit] =
     RELATIVE_STEPS.find(([limit]) => magnitude < limit) ?? RELATIVE_STEPS[RELATIVE_STEPS.length - 1];
-  return RELATIVE.format(Math.round(seconds / divisor), unit);
+  return relativeFormatter().format(Math.round(seconds / divisor), unit);
 }
 
 /**

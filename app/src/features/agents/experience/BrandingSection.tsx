@@ -59,6 +59,8 @@ export interface BrandingSectionProps {
   meta: ExperienceMeta;
   errors: DraftErrors;
   readOnly: boolean;
+  /** The chatbot whose subscription the branding add-on would ride on. */
+  agentId: number | null;
   onChange: (patch: Partial<ExperienceDraft>) => void;
 }
 
@@ -67,6 +69,7 @@ export function BrandingSection({
   meta,
   errors,
   readOnly,
+  agentId,
   onChange,
 }: BrandingSectionProps): ReactElement {
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
@@ -285,14 +288,25 @@ export function BrandingSection({
           ) : !canRemoveBranding ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="min-w-0 text-prose text-text-secondary">
-                Standard and above lets you reword or remove it. It currently reads{' '}
+                {/* An ADD-ON, not a plan inclusion. No tier grants it, so
+                    "Standard and above" sent customers to compare plans for
+                    something no plan on that page would give them. */}
+                Rewording or removing it is a paid add-on on any plan. It currently reads{' '}
                 <span className="font-medium text-text-primary">
                   {meta.brandingText || 'Powered by OyeChats'}
                 </span>
                 .
               </p>
-              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                Compare plans
+              {/* A link, not an inline checkout. Buying it needs the charge
+                  currency and the Razorpay mandate, and wiring those in here
+                  would make a chatbot-settings tab refuse to render without
+                  the billing context. The add-on card on Billing owns the
+                  money path; this surface explains why it is worth it. */}
+              <Link
+                to={agentId === null ? '/billing' : `/billing?scope=${agentId}`}
+                className={buttonClass('primary', 'sm')}
+              >
+                Add it in Billing
               </Link>
             </div>
           ) : (

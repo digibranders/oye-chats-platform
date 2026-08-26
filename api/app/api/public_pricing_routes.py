@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.core.pricing import annual_saving_percent
 from app.db.session import get_session
 from app.services.plan_service import get_active_plans, get_pricing_content
+from app.services.seller_profile_service import charge_tax_rate_bps
 
 router = APIRouter(prefix="/public", tags=["public-pricing"])
 
@@ -21,6 +22,14 @@ def pricing_catalog():
         content = get_pricing_content(session)
         return {
             "currency": "USD",
+            # Every price in this payload is a BASE price. Indian customers are
+            # charged ``tax_rate_bps`` on top at checkout; other jurisdictions
+            # are an export and pay the listed figure. Published so the
+            # marketing site renders its disclosure FROM the same rate the
+            # charge path uses, instead of hardcoding a second 18% that can
+            # silently disagree.
+            "prices_exclude_tax": True,
+            "tax_rate_bps": charge_tax_rate_bps(session),
             "plans": [
                 {
                     "id": p.id,

@@ -75,7 +75,7 @@ Run only the checks relevant to the files you changed:
 oye-chats/
 ├── platform/                     # Main platform repo (this CLAUDE.md is here)
 │   ├── api/                     # FastAPI REST + WebSocket + ARQ worker
-│   ├── widget/                  # Embeddable chat widget IIFE (oyechats-widget.js)
+│   ├── widget/                  # Embeddable chat widget (loader IIFE + code-split ESM app)
 │   ├── app/                     # React admin dashboard SPA
 │   ├── docs/                    # Markdown + interactive system-design site
 │   └── docker-compose.yml       # Local dev: db + api with hot-reload
@@ -85,20 +85,45 @@ oye-chats/
 | App | Directory | Port | Stack | Purpose |
 |-----|-----------|------|-------|---------|
 | Backend API | `api/` | 8000 | FastAPI · SQLAlchemy 2.0 · pgvector · LiteLLM · ARQ | REST + SSE + WebSocket; RAG; auth; ingestion; billing |
-| Chat Widget | `widget/` | 5173 (dev) / 4173 (preview) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget for customer websites (IIFE bundle) |
+| Chat Widget | `widget/` | 5173 (dev) / 4173 (preview) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget for customer websites (loader IIFE + lazy ESM app) |
 | Admin Dashboard | `app/` | 5174 | React 19 · Vite 8 · React Router 7 · Recharts | Bot mgmt, knowledge base, leads, billing, live chat operator console |
 | Landing Page | `../oyechats-website/` | 3000 | Next.js 16 · React 19 · Tailwind v4 | Marketing site at oyechats.com (separate repo) |
 
 ## Widget Embedding — How It Works
 
-The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) that:
+The embed is a **two-stage load**: a tiny loader IIFE that customers script-tag, plus a
+code-split ESM app it pulls in at runtime. The customer-facing file
+(`oyechats-widget.js`, ~3KB) ships on every page view, so it is kept deliberately small;
+the React app only downloads when it is actually needed.
 
-1. Finds its own `<script>` tag and reads `data-bot-key`
-2. Sets `window.OYECHATS_BOT_KEY` globally
-3. Auto-injects its sibling CSS file (`oyechats-widget.css`) in production
-4. Creates a `<div id="oyechats-widget-root">` in the DOM
-5. Renders a React app (its own bundled React, isolated from the host page)
-6. Communicates with the backend via `X-Bot-Key` header
+**Stage 1, the loader** (`widget/src/loader.js`, built by `vite.loader.config.js`):
+
+1. Finds its own `<script>` tag and reads `data-bot-key` / `data-api-key` / `data-api-url`
+2. Sets `window.OYECHATS_BOT_KEY` (or `OYECHATS_API_KEY`) globally
+3. Exposes `window.OyeChats` as a **stub-and-queue** API, so host-page code can call
+   `OyeChats.on('ready', cb)`, `.open()`, `.identify()` before the app exists; queued calls
+   replay once the app registers
+4. Honors `window.OYECHATS_ASYNC_INIT` for consent-gated (GDPR) installs
+5. Fetches `<base>/app/manifest.json`, resolves the hashed entry chunk and stylesheet, and
+   validates both filenames against a strict pattern, so a tampered manifest cannot point
+   the widget at anything outside `cdn.oyechats.com`
+6. Dynamic-imports the entry chunk and calls its `init()`
+
+**Stage 2, the app** (`widget/src/app-entry.jsx`, built by `vite.app.config.js`):
+
+1. Creates `<div id="oyechats-widget-root">` and attaches an **open shadow root**, isolating
+   widget styles from the host page in both directions
+2. Injects the hashed stylesheet the loader resolved
+3. Renders React (its own bundled copy) inside the shadow root
+4. Communicates with the backend via the `X-Bot-Key` header
+
+Chunks are split so a visitor who never opens the widget pays only for the launcher. Chat,
+live chat, markdown rendering, the lead/handoff/quotation forms, Sentry, and each non-English
+locale are all lazy. Budgets are enforced by `size-limit` (`npm run size`): the loader is
+capped at 8KB gzipped and the eager path (loader + entry + vendor) at roughly 90KB gzipped.
+
+> If the loader's boot fails (CORS, CDN blip, a manifest 404 mid-deploy) it clears its cached
+> promise so a later `OyeChats.init()` can retry without a full page reload.
 
 **Works on any platform**: Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag. Same pattern as Intercom, Crisp, Drift.
 
@@ -176,7 +201,7 @@ User Question
 - **BotGrowthEvent** — Per-bot business events
 
 **Billing (Razorpay, INR — single rail)**
-- **Plan** — Tier definition (price, credits_per_month, included seats, feature_flags, provider IDs)
+- **Plan** — Tier definition (base price exclusive of GST, credits_per_month, included seats, feature_flags, provider IDs)
 - **Subscription** — status: trialing|active|past_due|canceled|paused|expired
 - **UsageRecord** — Per-period counters
 - **Invoice** — Issued by OyeChats (Razorpay-triggered)
@@ -184,6 +209,15 @@ User Question
 - **CreditLedger** — Append-only event-sourced credit balance; FIFO topup expiry via self-FK `grant_id`
 - **PricingConfig** — Super-admin tunable key/value (credit costs, kill switch)
 - **ProcessedWebhook** — Idempotency for inbound provider webhooks
+
+> **Pricing is GST-exclusive.** Every price the product publishes is a base price. For an Indian
+> customer the GST is added at charge time by `api/app/core/tax.py::gross_charge_minor`, so ₹1,199
+> listed is ₹1,414.82 debited. For an international customer the sale is an export of services, no
+> Indian GST applies, and the listed USD price is the full charge. Because the charge is `base + tax`,
+> the invoicing engine was not changed: the captured amount is tax-inclusive of the base, so the
+> existing carve-out recovers the advertised base exactly, and `SellerProfile.price_inclusive` stays
+> pinned `true`. Razorpay Subscriptions have no tax layer, so every INR plan is minted at base + GST.
+> See `docs/billing/razorpay-plan-ids.md`.
 
 **Outbound webhooks**
 - **Webhook** — Customer registration (URL, secret, event_filter)
@@ -206,7 +240,9 @@ Resolved via FastAPI dependencies in `api/app/api/auth.py`: `get_current_bot`, `
 
 | Item | Name |
 |------|------|
-| Widget bundle | `oyechats-widget.js` / `oyechats-widget.css` |
+| Widget loader (customer script tag) | `oyechats-widget.js` |
+| Widget app chunks | `app/oyechats-*.[hash].js` / `app/oyechats-app.[hash].css` |
+| Chunk manifest | `app/manifest.json` |
 | DOM container | `oyechats-widget-root` |
 | Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
 | Console prefix | `[OyeChats]` |
@@ -282,7 +318,8 @@ conda run -n oye --no-capture-output bash -c "cd api && uv run uvicorn app.main:
 ```bash
 cd widget
 npm install && npm run dev       # Dev server (localhost:5173) — for widget development only
-npm run build                    # Build oyechats-widget.js
+npm run build                    # Build loader + app chunks into dist/ (app config, then loader config)
+npm run size                     # Enforce per-chunk gzipped size budgets
 npx vite preview --port 4173     # Serve built widget for embedding tests
 ```
 
@@ -335,11 +372,14 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Nginx config | `api/nginx/oyechats-api.conf` · `oyechats-locations.conf` |
 | DB backup script | `api/scripts/backup.sh` |
 | Standard plan seed | `api/scripts/seed_standard_plus_10k.py` |
-| Widget entry point (IIFE) | `widget/src/main.jsx` |
+| Widget loader (customer entry) | `widget/src/loader.js` |
+| Widget app entry (shadow root + React mount) | `widget/src/app-entry.jsx` |
+| Widget dev-server entry | `widget/src/main.jsx` |
+| Widget prod build configs | `widget/vite.loader.config.js` · `widget/vite.app.config.js` |
 | Widget API client | `widget/src/services/api.js` |
 | Widget chat UI | `widget/src/components/ChatWindow.jsx` |
 | Widget live-chat UI | `widget/src/components/LiveChatMode.jsx` |
-| Vite build config | `widget/vite.config.js` |
+| Vite dev-server config | `widget/vite.config.js` (prod uses the two configs above) |
 | Admin app router | `app/src/App.jsx` |
 | Admin embed UI | `app/src/pages/Chatbot.jsx` (was `Interface.jsx`, now a tab) |
 | Admin bot settings tabs | `app/src/pages/Settings.jsx` (+ BrandingTab/MessagesTab/AdvancedSettingsTab) |
@@ -361,7 +401,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(768)` + `TSVECTOR` |
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
 | Background queue | ARQ on Redis | `oyechats-worker.service` |
-| Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = IIFE; Admin = SPA |
+| Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = loader IIFE + lazy ESM chunks in a shadow root; Admin = SPA |
 | Web Scraping | Spider.cloud (primary) + Jina Reader (fallback) | URL ingestion, HTTP-only (no local browser) |
 | File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
 | Email | Brevo (Sendinblue) | Transactional |

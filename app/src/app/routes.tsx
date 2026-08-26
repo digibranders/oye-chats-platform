@@ -55,6 +55,7 @@ const OverviewPage = named(() => import('../features/agents/overview/OverviewPag
 const KnowledgePage = named(() => import('../features/agents/knowledge/KnowledgePage'), 'KnowledgePage');
 const ExperiencePage = named(() => import('../features/agents/experience/ExperiencePage'), 'ExperiencePage');
 const ChannelsPage = named(() => import('../features/agents/channels/ChannelsPage'), 'ChannelsPage');
+const QuotationPage = named(() => import('../features/agents/quotation/QuotationPage'), 'QuotationPage');
 const QualificationPage = named(() => import('../features/agents/advanced/QualificationPage'), 'QualificationPage');
 const BehaviourPage = named(() => import('../features/agents/advanced/BehaviourPage'), 'BehaviourPage');
 const InboxPage = named(() => import('../features/inbox/InboxPage'), 'InboxPage');
@@ -186,6 +187,10 @@ export const router = createBrowserRouter([
                           // Qualification is promoted out of the technical tab:
                           // it is a revenue surface, not a configuration corner.
                           { path: 'qualification', element: <Route><QualificationPage /></Route> },
+                          // Quotation is a revenue surface too, and sits beside
+                          // Qualification for the same reason it was promoted
+                          // out of the technical tab.
+                          { path: 'quotation', element: <Route><QuotationPage /></Route> },
                           { path: 'behaviour', element: <Route><BehaviourPage /></Route> },
                         ],
                       },

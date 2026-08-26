@@ -193,3 +193,18 @@ def test_read_path_clamps_corrupt_prefix_and_state(db, admin_id):
     profile = get_seller_profile(db)
     assert profile.invoice_prefix == "DB"  # clamped to default, not "OYEC"
     assert profile.state_code == "07"  # zero-padded on read
+
+
+def test_charge_rate_is_zero_until_a_gstin_is_configured(db):
+    """Do not collect a tax you are not registered to collect.
+
+    ``tax_rate_bps`` defaults to 18% even on a profile nobody configured, which
+    is fine for reading an invoice and wrong for setting a price: without a
+    GSTIN, ``invoice_service`` issues a plain receipt with no tax breakup, so an
+    18% uplift would be collected and documented nowhere.
+    """
+    from app.services.seller_profile_service import charge_tax_rate_bps, get_seller_profile
+
+    assert get_seller_profile(db).tax_rate_bps == 1800  # still reported
+    assert get_seller_profile(db).gst_enabled is False
+    assert charge_tax_rate_bps(db) == 0  # but not charged

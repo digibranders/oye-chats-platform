@@ -18,11 +18,14 @@ import { useOperatorSocket } from './useOperatorSocket';
  */
 export function InboxSocketProvider({
   enabled,
+  isOperator,
   children,
 }: {
   enabled: boolean;
+  /** The caller holds an operator seat, whether or not they are on duty. */
+  isOperator: boolean;
   children: ReactNode;
 }) {
-  const socket = useOperatorSocket({ enabled });
+  const socket = useOperatorSocket({ enabled, isOperator });
   return <InboxSocketContext.Provider value={socket}>{children}</InboxSocketContext.Provider>;
 }

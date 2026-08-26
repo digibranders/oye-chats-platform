@@ -1,5 +1,21 @@
 # OyeChats — Billing & Invoice System: Architecture & Current Status
 
+> ## ⚠️ Snapshot of 2026-07-09. Pricing became GST-EXCLUSIVE on 26 Aug 2026
+>
+> This is a dated architecture snapshot and is left unedited. One statement in it no longer holds:
+> **the checkout no longer charges the sticker price.** Every published price is now a **base** price,
+> exclusive of GST. A domestic customer is debited base + GST, added at charge time by
+> `core/tax.py::gross_charge_minor`; an international customer is an export and pays the listed USD
+> price with no Indian GST.
+>
+> The tax-engine description in §"Inclusive pricing" is still accurate as a description of the
+> **invoicing** side, which was not changed. The charge is `base + tax`, so the captured amount is
+> tax-inclusive of the base and the carve-out recovers the advertised base exactly. What changed is
+> only what the gateway is told to collect.
+>
+> Current source of truth: `api/app/core/tax.py` and
+> [`razorpay-plan-ids.md`](./razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+
 > **Audience:** Engineers · CTO · Finance/CA · **Scope:** Payments, subscriptions, plans, entitlements, credits, GST invoicing
 > **Codebase snapshot:** `development` @ `e594f6d` (2026-07-09) · **Author:** system architecture review
 > **Primary source of truth:** `api/app/services/razorpay_service.py`, `api/app/api/subscription_routes.py`, `api/app/services/invoice_service.py`, `api/app/db/models.py`

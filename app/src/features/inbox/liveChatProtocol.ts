@@ -1,3 +1,5 @@
+import type { LeadQuotation } from '../../types/domain';
+
 /**
  * liveChatProtocol - the operator ⇄ backend WebSocket contract.
  *
@@ -60,6 +62,18 @@ export interface RosterOperator {
 /** Visitor presence within a live chat. */
 export type VisitorPresence = 'online' | 'disconnected';
 
+/**
+ * One derived translation of a message, keyed by target language.
+ *
+ * `content` is absent when `status` is `'failed'` - the provider was
+ * unavailable and the original is all there is. The original itself always
+ * lives in `OperatorMessage.content` and is never replaced by any of this.
+ */
+export interface TranslationEntry {
+  content?: string;
+  status: 'ok' | 'failed';
+}
+
 /** A single rendered message in a conversation thread. */
 export interface OperatorMessage {
   /** Stable client key for React lists. */
@@ -67,11 +81,16 @@ export interface OperatorMessage {
   /** Server DB id when known - drives read-receipt high-water mark + dedupe. */
   dbId: number | null;
   role: 'user' | 'bot' | 'operator' | 'system';
+  /** The canonical original, exactly as it was written. Never overwritten. */
   content: string;
   timestamp: string | null;
   fileUrl?: string;
   filename?: string;
   contentType?: string;
+  /** Language `content` is written in, when the server knows it. */
+  sourceLanguage?: string | null;
+  /** Derived translations by target language code. Never replaces `content`. */
+  translations?: Record<string, TranslationEntry>;
 }
 
 /** Outcome pushed back when a proactive connect-request resolves. */
@@ -115,6 +134,9 @@ export interface SessionDetails {
   referrer: string | null;
   /** Post-chat satisfaction rating (1 to 5), or null when not rated. */
   visitor_rating: number | null;
+  /** Resolved conversation language (Phase 2 state), null when unresolved. */
+  language_code: string | null;
+  locale: string | null;
   bant: { need: string | null; timeline: string | null; authority: string | null; budget: string | null } | null;
   lead_info: {
     name: string | null;
@@ -122,6 +144,14 @@ export interface SessionDetails {
     phone: string | null;
     company: string | null;
   } | null;
+  /**
+   * The quotation the visitor built with the chatbot before this handoff.
+   *
+   * The same shape the lead record carries, and deliberately the same TYPE:
+   * it is one server payload, built by one helper in `lead_routes.py`, and two
+   * hand-maintained copies of it would drift the moment a field is added.
+   */
+  quotation: LeadQuotation | null;
 }
 
 // ── Inbound WS messages (discriminated union on `type`) ───────────────────────
@@ -148,6 +178,25 @@ export interface WsMessage {
   content: string;
   timestamp: string | null;
   id?: number;
+  /** Server-resolved language of `content`. Never client-supplied. */
+  source_language?: string | null;
+}
+
+/**
+ * A translation arriving separately from the message it belongs to.
+ *
+ * Visitor messages are delivered and acknowledged before any translation is
+ * attempted, so the translation follows as its own frame keyed by
+ * `message_id`. `status: 'unavailable'` means the provider failed and the
+ * original is all the operator gets.
+ */
+export interface WsMessageTranslation {
+  type: 'message_translation';
+  session_id: string;
+  message_id: number;
+  language: string;
+  content?: string;
+  status: 'ok' | 'unavailable';
 }
 export interface WsFile {
   type: 'file';
@@ -232,6 +281,7 @@ export type InboundMessage =
   | WsQueueUpdate
   | WsOperatorsUpdate
   | WsMessage
+  | WsMessageTranslation
   | WsFile
   | WsVisitorTyping
   | WsVisitorStoppedTyping

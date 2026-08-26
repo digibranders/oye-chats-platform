@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, Menu as MenuIcon, Search } from 'lucide-react';
 import { Button, Kbd, Skeleton, Tooltip, cn, modifierKey } from '../ui';
 import { useBreadcrumbs } from './useBreadcrumbs';
+import { useTranslation } from '../i18n/useTranslation';
 import { NotificationBell } from './NotificationBell';
 
 export interface TopBarProps {
@@ -40,6 +41,7 @@ export interface TopBarProps {
  */
 export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true }: TopBarProps) {
   const crumbs = useBreadcrumbs();
+  const { t } = useTranslation();
 
   return (
     <header
@@ -53,7 +55,7 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
           size="icon-sm"
           variant="ghost"
           onClick={onToggleRail}
-          aria-label="Open navigation"
+          aria-label={t('shell.openNavigation') || 'Open navigation'}
           className="-ml-1.5"
         >
           <MenuIcon aria-hidden />
@@ -105,18 +107,18 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
         {searchable ? (
           // The tooltip only earns its place where the trigger is a bare icon.
           // Above `sm` the control already reads "Search ⌘ K".
-          <Tooltip content="Search chatbots and pages" disabled={!isMobile}>
+          <Tooltip content={t('shell.searchChatbotsAndPages') || 'Search chatbots and pages'} disabled={!isMobile}>
             <button
               type="button"
               onClick={onOpenSearch}
-              aria-label="Search chatbots and pages"
+              aria-label={t('shell.searchChatbotsAndPages') || 'Search chatbots and pages'}
               className={cn(
                 'flex h-control-sm items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5',
                 'text-xs text-text-tertiary transition-colors hover:border-text-tertiary hover:text-text-secondary',
               )}
             >
               <Search aria-hidden className="h-3.5 w-3.5 shrink-0" />
-              <span className="hidden sm:inline">Search</span>
+              <span className="hidden sm:inline">{t('common.search') || 'Search'}</span>
               {/* Two keys, two glyphs — and the modifier resolved per platform.
                   The previous bar hardcoded a single "⌘K" chip and showed it to
                   Windows and Linux users, naming a key they do not have. */}
