@@ -34,6 +34,12 @@ import {
   updateCannedResponse,
 } from '../../services/api';
 import { type CannedResponse } from '../../types/domain';
+// `translateNow` inside effects and async handlers: the hook's `t` changes
+// identity per locale, so capturing it there adds a dependency that would
+// re-run a data load on every language change. The module-level function is
+// stable and still resolves against the current locale when called.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface ReplyForm {
   title: string;
@@ -51,6 +57,7 @@ function toMessage(error: unknown, fallback: string): string {
 }
 
 export function CannedResponsesPanel(): ReactElement {
+  const { t } = useTranslation();
   const [responses, setResponses] = useState<CannedResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -79,7 +86,7 @@ export function CannedResponsesPanel(): ReactElement {
         const data = await getCannedResponses(categoryFilter || null);
         if (!cancelled) setResponses(data.responses ?? []);
       } catch (error) {
-        if (!cancelled) setLoadError(toMessage(error, 'We couldn’t load your quick replies.'));
+        if (!cancelled) setLoadError(toMessage(error, translateNow('inbox.weCouldntLoadYourQuick') || 'We couldn’t load your quick replies.'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -131,7 +138,7 @@ export function CannedResponsesPanel(): ReactElement {
     const title = form.title.trim();
     const content = form.content.trim();
     if (!title || !content) {
-      setFormError('Title and content are both required.');
+      setFormError(t('inbox.titleAndContentAreBoth') || 'Title and content are both required.');
       return;
     }
     setSubmitting(true);
@@ -147,10 +154,10 @@ export function CannedResponsesPanel(): ReactElement {
         await createCannedResponse({ title, content, category, ...(shortcut ? { shortcut } : {}) });
       }
       setModalOpen(false);
-      notify({ tone: 'success', message: editing ? 'Quick reply updated.' : 'Quick reply created.' });
+      notify({ tone: 'success', message: editing ? t('inbox.quickReplyUpdated') || 'Quick reply updated.' : t('inbox.quickReplyCreated') || 'Quick reply created.' });
       reload();
     } catch (error) {
-      setFormError(toMessage(error, 'Failed to save the quick reply.'));
+      setFormError(toMessage(error, t('inbox.failedToSaveTheQuick') || 'Failed to save the quick reply.'));
     } finally {
       setSubmitting(false);
     }
@@ -165,7 +172,7 @@ export function CannedResponsesPanel(): ReactElement {
       notify({ tone: 'success', message: `“${response.title}” deleted.` });
       reload();
     } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to delete the quick reply.') });
+      notify({ tone: 'error', message: toMessage(error, t('inbox.failedToDeleteTheQuick') || 'Failed to delete the quick reply.') });
     } finally {
       setRowBusyId(null);
     }
@@ -174,12 +181,12 @@ export function CannedResponsesPanel(): ReactElement {
   return (
     <div className="space-y-5">
       <SectionHeader
-        title="Quick replies"
+        title={t('inbox.quickReplies') || 'Quick replies'}
         description="Reusable canned responses your team can insert during a conversation."
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus size={15} aria-hidden="true" />
-            Add reply
+            {t('inbox.addReply') || 'Add reply'}
           </Button>
         }
       />
@@ -197,20 +204,20 @@ export function CannedResponsesPanel(): ReactElement {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search replies…"
+            placeholder={t('inbox.searchReplies') || 'Search replies…'}
             className="pl-9"
-            aria-label="Search quick replies"
+            aria-label={t('inbox.searchQuickReplies') || 'Search quick replies'}
           />
         </div>
         {categories.length > 0 && (
           <Select
             value={categoryFilter}
             onChange={setCategoryFilter}
-            aria-label="Filter by category"
-            placeholder="All categories"
+            aria-label={t('inbox.filterByCategory') || 'Filter by category'}
+            placeholder={t('inbox.allCategories') || 'All categories'}
             className="sm:w-48"
             options={[
-              { value: '', label: 'All categories' },
+              { value: '', label: t('inbox.allCategories') || 'All categories' },
               ...categories.map((cat) => ({ value: cat, label: cat })),
             ]}
           />
@@ -227,28 +234,28 @@ export function CannedResponsesPanel(): ReactElement {
       ) : loadError ? (
         <EmptyState
           icon={MessageSquareText}
-          title="Couldn’t load quick replies"
+          title={t('inbox.couldntLoadQuickReplies') || 'Couldn’t load quick replies'}
           description={loadError}
           action={
             <Button variant="outline" onClick={reload}>
-              Try again
+              {t('inbox.tryAgain') || 'Try again'}
             </Button>
           }
         />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={MessageSquareText}
-          title={responses.length === 0 ? 'No quick replies yet' : 'No replies match your search'}
+          title={responses.length === 0 ? t('inbox.noQuickRepliesYet') || 'No quick replies yet' : t('inbox.noRepliesMatchYourSearch') || 'No replies match your search'}
           description={
             responses.length === 0
-              ? 'Create reusable replies your team can drop into a conversation in one click.'
-              : 'Try a different search term or category.'
+              ? t('inbox.createReusableRepliesYourTeam') || 'Create reusable replies your team can drop into a conversation in one click.'
+              : t('inbox.tryADifferentSearchTerm') || 'Try a different search term or category.'
           }
           action={
             responses.length === 0 ? (
               <Button onClick={openCreate}>
                 <Plus size={15} aria-hidden="true" />
-                Add your first reply
+                {t('inbox.addYourFirstReply') || 'Add your first reply'}
               </Button>
             ) : undefined
           }
@@ -287,7 +294,7 @@ export function CannedResponsesPanel(): ReactElement {
                       {rowBusyId === response.id ? 'Deleting…' : 'Delete'}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setRemovingId(null)}>
-                      Cancel
+                      {t('inbox.cancel') || 'Cancel'}
                     </Button>
                   </div>
                 ) : (
@@ -325,12 +332,12 @@ export function CannedResponsesPanel(): ReactElement {
         onClose={() => setModalOpen(false)}
         dismissible={!submitting}
         size="lg"
-        title={editing ? 'Edit quick reply' : 'New quick reply'}
+        title={editing ? t('inbox.editQuickReply') || 'Edit quick reply' : t('inbox.newQuickReply') || 'New quick reply'}
         description="Saved replies are shared with everyone on your team."
         footer={
           <>
             <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={submitting}>
-              Cancel
+              {t('inbox.cancel') || 'Cancel'}
             </Button>
             <Button type="submit" form="canned-response-form" disabled={submitting}>
               {submitting ? 'Saving…' : editing ? 'Update' : 'Create'}
@@ -340,27 +347,27 @@ export function CannedResponsesPanel(): ReactElement {
       >
         <form id="canned-response-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           <label className="block">
-            <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">Title</span>
+            <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">{t('inbox.title') || 'Title'}</span>
             <Input
               value={form.title}
               onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-              placeholder="e.g. Greeting"
+              placeholder={t('inbox.eGGreeting') || 'e.g. Greeting'}
               autoFocus
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">Content</span>
+            <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">{t('inbox.content') || 'Content'}</span>
             <Textarea
               value={form.content}
               onChange={(e) => setForm((prev) => ({ ...prev, content: e.target.value }))}
-              placeholder="The message that gets inserted…"
+              placeholder={t('inbox.theMessageThatGetsInserted') || 'The message that gets inserted…'}
               rows={4}
             />
           </label>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">
-                Shortcut
+                {t('inbox.shortcut') || 'Shortcut'}
               </span>
               <div className="flex items-center">
                 <span className="flex h-10 items-center rounded-l-[var(--ds-radius-lg)] border border-r-0 border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-2.5 text-sm text-[var(--ds-text-subtle)]">
@@ -371,19 +378,19 @@ export function CannedResponsesPanel(): ReactElement {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, shortcut: e.target.value.replace(/\s/g, '') }))
                   }
-                  placeholder="greeting"
+                  placeholder={t('inbox.greeting') || 'greeting'}
                   className="rounded-l-none"
                 />
               </div>
             </label>
             <label className="block">
               <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">
-                Category
+                {t('inbox.category') || 'Category'}
               </span>
               <Input
                 value={form.category}
                 onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
-                placeholder="e.g. Sales, Support"
+                placeholder={t('inbox.eGSalesSupport') || 'e.g. Sales, Support'}
               />
             </label>
           </div>

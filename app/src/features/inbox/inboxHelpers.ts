@@ -30,6 +30,8 @@ export function statusBadge(status: string | null | undefined): { label: string;
 const SENTIMENT_META: Record<Sentiment, { label: string; tone: BadgeTone }> = {
   positive: { label: 'Positive', tone: 'success' },
   neutral: { label: 'Neutral', tone: 'neutral' },
+  // i18n-exempt: English fallback for a pure module; callers localize via
+  // t(`inbox.sentiment.${sentiment}`) at the render site.
   negative: { label: 'Needs attention', tone: 'danger' },
 };
 
@@ -81,7 +83,14 @@ export function detectSentiment(text: string | null | undefined): Sentiment {
   return 'neutral';
 }
 
-/** Presentation descriptor for a sentiment value. */
+/**
+ * Presentation descriptor for a sentiment value.
+ *
+ * The label is the ENGLISH fallback. This module is pure and importable from
+ * anywhere (its unit tests deliberately avoid dragging React in), so it must
+ * not resolve a locale itself. Callers render
+ * `t(\`inbox.sentiment.${sentiment}\`) || badge.label`.
+ */
 export function sentimentBadge(sentiment: Sentiment): { label: string; tone: BadgeTone } {
   return SENTIMENT_META[sentiment];
 }

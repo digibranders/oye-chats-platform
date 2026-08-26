@@ -32,6 +32,7 @@ import type { CannedResponse } from '../../types/domain';
 import type { ActiveChat, OperatorMessage, VisitorPresence } from './liveChatProtocol';
 import { clockTime, initials, isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
 import { TranslationToggle } from './TranslationToggle';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Maximum number of canned-response suggestions shown in the slash menu. */
 const MAX_CANNED_SUGGESTIONS = 8;
@@ -132,6 +133,7 @@ function MessageBubble({
   /** Backfill a missing translation for this message. */
   onRetryTranslation?: (messageId: number) => Promise<void> | void;
 }): ReactElement {
+  const { t } = useTranslation();
   const { role } = message;
   const [showOriginal, setShowOriginal] = useState(false);
 
@@ -155,7 +157,7 @@ function MessageBubble({
 
   const safeFileUrl = isSafeFileUrl(message.fileUrl) ? message.fileUrl : null;
   const isImage = Boolean(message.contentType?.startsWith('image/') && safeFileUrl);
-  const altText = message.filename ?? 'Shared image';
+  const altText = message.filename ?? (t('inbox.sharedImage') || 'Shared image');
 
   const display = resolveDisplay(message, operatorLanguage, showOriginal);
   const missingTranslation = !showOriginal && translationMissing(message, operatorLanguage);
@@ -258,6 +260,7 @@ export function ConversationView({
   operatorLanguage,
   onRetryTranslation,
 }: ConversationViewProps): ReactElement {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState('');
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -436,7 +439,7 @@ export function ConversationView({
       if (trimmedCaption) onSend(trimmedCaption);
       closePreview();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Couldn’t send the file. Please try again.');
+      setUploadError(err instanceof Error ? err.message : t('inbox.couldntSendTheFilePlease') || 'Couldn’t send the file. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -499,15 +502,15 @@ export function ConversationView({
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleExport} disabled={messages.length === 0}>
             <Download size={14} aria-hidden="true" />
-            Export
+            {t('inbox.export') || 'Export'}
           </Button>
           <Button variant="outline" size="sm" onClick={onTransfer} disabled={!connected}>
             <ArrowRightLeft size={14} aria-hidden="true" />
-            Transfer
+            {t('inbox.transfer') || 'Transfer'}
           </Button>
           <Button variant="outline" size="sm" onClick={onClose} disabled={closing || resolving}>
             <CornerUpLeft size={14} aria-hidden="true" />
-            {closing ? 'Returning…' : 'Return to AI'}
+            {closing ? 'Returning…' : t('inbox.returnToAi') || 'Return to AI'}
           </Button>
           <Button variant="danger" size="sm" onClick={onResolve} disabled={closing || resolving}>
             <CheckCircle2 size={14} aria-hidden="true" />
@@ -518,7 +521,7 @@ export function ConversationView({
 
       {chat.reason && (
         <div className="border-b border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-1.5 text-[12px] text-[var(--ds-text-muted)]">
-          Handed off: {chat.reason}
+          {t('inbox.handedOff', { reason: chat.reason }) || `Handed off: ${chat.reason}`}
         </div>
       )}
 
@@ -533,14 +536,14 @@ export function ConversationView({
                   Loading…
                 </>
               ) : (
-                'Load earlier messages'
+                t('inbox.loadEarlierMessages') || 'Load earlier messages'
               )}
             </Button>
           </div>
         )}
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[13px] text-[var(--ds-text-subtle)]">
-            No messages yet - say hello.
+            {t('inbox.noMessagesYetSayHello') || 'No messages yet - say hello.'}
           </div>
         ) : (
           messages.map((m, index, all) => {
@@ -574,7 +577,7 @@ export function ConversationView({
         {seen && !visitorTyping && (
           <div className="flex items-center justify-end gap-1 px-1 text-[11px] text-[var(--ds-text-subtle)]">
             <CheckCheck size={13} aria-hidden="true" />
-            Seen
+            {t('inbox.seen') || 'Seen'}
           </div>
         )}
       </div>
@@ -584,7 +587,7 @@ export function ConversationView({
         {!connected && (
           <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--ds-warning-soft)] px-2.5 py-1.5 text-[12px] text-[var(--ds-warning)]">
             <WifiOff size={13} aria-hidden="true" />
-            Reconnecting - messages can’t be sent until the connection is restored.
+            {t('inbox.reconnectingMessagesCantBeSent') || 'Reconnecting - messages can’t be sent until the connection is restored.'}
           </div>
         )}
         <div className="relative flex items-end gap-2">
@@ -632,7 +635,7 @@ export function ConversationView({
             size="md"
             onClick={() => fileInputRef.current?.click()}
             disabled={!connected}
-            aria-label="Attach file"
+            aria-label={t('inbox.attachFile') || 'Attach file'}
           >
             <Paperclip size={16} aria-hidden="true" />
           </Button>
@@ -644,7 +647,7 @@ export function ConversationView({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             rows={1}
-            placeholder={connected ? 'Type a reply… (Enter to send, / for canned)' : 'Waiting for connection…'}
+            placeholder={connected ? t('inbox.typeAReplyEnterTo') || 'Type a reply… (Enter to send, / for canned)' : t('inbox.waitingForConnection') || 'Waiting for connection…'}
             disabled={!connected}
             className={cn(
               'max-h-32 min-h-[40px] flex-1 resize-none rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2.5 text-[14px] leading-relaxed text-[var(--ds-text)] outline-none transition-colors',
@@ -652,7 +655,7 @@ export function ConversationView({
               'disabled:cursor-not-allowed disabled:opacity-60',
             )}
           />
-          <Button size="md" onClick={submit} disabled={!connected || !draft.trim()} aria-label="Send message">
+          <Button size="md" onClick={submit} disabled={!connected || !draft.trim()} aria-label={t('inbox.sendMessage') || 'Send message'}>
             <Send size={15} aria-hidden="true" />
           </Button>
         </div>
@@ -669,8 +672,8 @@ export function ConversationView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ds-overlay)] p-4">
           <div className="w-full max-w-md rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-lg">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <p className="text-[14px] font-semibold text-[var(--ds-text)]">Send attachment</p>
-              <Button variant="ghost" size="sm" onClick={closePreview} disabled={uploading} aria-label="Cancel">
+              <p className="text-[14px] font-semibold text-[var(--ds-text)]">{t('inbox.sendAttachment') || 'Send attachment'}</p>
+              <Button variant="ghost" size="sm" onClick={closePreview} disabled={uploading} aria-label={t('inbox.cancel') || 'Cancel'}>
                 <X size={15} aria-hidden="true" />
               </Button>
             </div>
@@ -690,7 +693,7 @@ export function ConversationView({
               type="text"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Add a caption (optional)…"
+              placeholder={t('inbox.addACaptionOptional') || 'Add a caption (optional)…'}
               disabled={uploading}
               className={cn(
                 'mb-3 w-full rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 text-[14px] text-[var(--ds-text)] outline-none transition-colors',
@@ -703,7 +706,7 @@ export function ConversationView({
 
             <div className="flex items-center justify-end gap-2">
               <Button variant="ghost" size="md" onClick={closePreview} disabled={uploading}>
-                Cancel
+                {t('inbox.cancel') || 'Cancel'}
               </Button>
               <Button size="md" onClick={() => void handleSendFile()} disabled={uploading || !connected}>
                 {uploading ? (
@@ -714,7 +717,7 @@ export function ConversationView({
                 ) : (
                   <>
                     <Send size={15} aria-hidden="true" />
-                    Send
+                    {t('inbox.send') || 'Send'}
                   </>
                 )}
               </Button>

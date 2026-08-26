@@ -22,6 +22,7 @@ import {
 } from './liveChatProtocol';
 import { mergeHistoryWithLive, parseHistoryMessage } from './liveChatHelpers';
 import { alertOperator, ensureNotificationPermission } from './notifications';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Resolution of a proactive connect-request, surfaced to the panel. */
 export interface ConnectResolution {
@@ -191,7 +192,7 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
       case 'queue_update': {
         const waiting = Array.isArray(msg.waiting) ? msg.waiting : [];
         if (waiting.length > prevQueueCountRef.current) {
-          alertOperator('New chat waiting', 'A visitor is waiting for a live agent.');
+          alertOperator(translateNow('inbox.newChatWaiting') || 'New chat waiting', translateNow('inbox.aVisitorIsWaitingFor') || 'A visitor is waiting for a live agent.');
         }
         prevQueueCountRef.current = waiting.length;
         setQueue(waiting);
@@ -238,11 +239,11 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
           setTypingBySession((prev) => (prev[sid] ? { ...prev, [sid]: false } : prev));
           const preview =
             msg.type === 'file'
-              ? msg.filename || 'Sent a file'
+              ? msg.filename || translateNow('inbox.sentAFile') || 'Sent a file'
               : typeof msg.content === 'string' && msg.content.trim()
                 ? msg.content.slice(0, 120)
-                : 'New message';
-          alertOperator('New message from a visitor', preview);
+                : translateNow('inbox.newMessage') || 'New message';
+          alertOperator(translateNow('inbox.newMessageFromAVisitor') || 'New message from a visitor', preview);
         }
         break;
       }
@@ -403,7 +404,7 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
       }
 
       case 'error': {
-        setLastError(msg.message || 'A live-chat error occurred.');
+        setLastError(msg.message || translateNow('inbox.aLiveChatErrorOccurred') || 'A live-chat error occurred.');
         break;
       }
 
@@ -521,7 +522,7 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
         terminalCloseRef.current = true;
         if (mountedRef.current) {
           setStatus('idle');
-          setLastError(event.reason || 'Live chat authentication failed.');
+          setLastError(event.reason || translateNow('inbox.liveChatAuthenticationFailed') || 'Live chat authentication failed.');
         }
         return;
       }

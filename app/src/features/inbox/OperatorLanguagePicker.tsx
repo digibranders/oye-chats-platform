@@ -3,6 +3,7 @@ import { Languages, Loader2 } from 'lucide-react';
 import { Select, type SelectOption } from '../../design-system';
 import { setMyLanguage } from '../../services/api';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Sets the operator's own live-chat working language.
@@ -37,6 +38,7 @@ export function OperatorLanguagePicker({
   onChange: (locale: string | null) => void;
   disabled?: boolean;
 }): ReactElement {
+  const { t } = useTranslation();
   const selectId = useId();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export function OperatorLanguagePicker({
       // option, so what the UI shows is what translation will actually key on.
       onChange(res?.preferred_locale ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save your language.');
+      setError(err instanceof Error ? err.message : t('inbox.couldNotSaveYourLanguage') || 'Could not save your language.');
     } finally {
       setSaving(false);
     }
@@ -82,7 +84,7 @@ export function OperatorLanguagePicker({
       <div className="flex items-center gap-2">
         <Languages size={14} className="text-[var(--ds-text-muted)]" aria-hidden="true" />
         <label htmlFor={selectId} className="sr-only">
-          Read live chat in
+          {t('inbox.readLiveChatIn') || 'Read live chat in'}
         </label>
         <div className="w-52">
           <Select
@@ -91,7 +93,7 @@ export function OperatorLanguagePicker({
             onChange={(next) => void handleChange(next)}
             options={options}
             disabled={disabled || saving}
-            aria-label="Read live chat in"
+            aria-label={t('inbox.readLiveChatIn') || 'Read live chat in'}
           />
         </div>
         {saving && <Loader2 size={13} className="animate-spin text-[var(--ds-text-muted)]" aria-hidden="true" />}
@@ -100,7 +102,7 @@ export function OperatorLanguagePicker({
         <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>
       ) : (
         <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          {value ? `Visitor messages are translated into ${labelFor(value)}.` : 'Messages show in their original language.'}
+          {value ? `Visitor messages are translated into ${labelFor(value)}.` : t('inbox.messagesShowInTheirOriginal') || 'Messages show in their original language.'}
         </p>
       )}
     </div>

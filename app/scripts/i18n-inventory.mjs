@@ -107,6 +107,9 @@ function walkFiles(dir, out = []) {
     } else if (/\.(tsx?|jsx?)$/.test(entry.name)) {
       if (/\.(test|spec)\.[tj]sx?$/.test(entry.name)) continue;
       if (/\.d\.ts$/.test(entry.name)) continue;
+      // The dictionaries ARE strings. Scanning them counts every translation
+      // as untranslated copy, which is both meaningless and self-inflating.
+      if (full.includes(`${path.sep}i18n${path.sep}locales${path.sep}`)) continue;
       out.push(full);
     }
   }
@@ -148,6 +151,22 @@ function isSentenceShaped(text) {
  * shortly before it, which is exactly what that idiom produces. Same technique
  * the widget's own guard uses.
  */
+/**
+ * Inline exemption: `// i18n-exempt: reason` on the line, or the line above.
+ *
+ * Some English legitimately lives in a pure module that must not resolve a
+ * locale itself -- presentation descriptors consumed by a component that
+ * localizes them at render. A central allowlist keyed on text would be both too
+ * broad (the same words elsewhere would be silently exempt) and too far from
+ * the code to stay true. The marker carries its reason at the call site and is
+ * greppable.
+ */
+function isExempt(sourceLines, lineIndex) {
+  const here = sourceLines[lineIndex] ?? '';
+  const above = sourceLines[lineIndex - 1] ?? '';
+  return /i18n-exempt:/.test(here) || /i18n-exempt:/.test(above);
+}
+
 const LOOKBEHIND = 220;
 function isLocalized(source, start) {
   const preceding = source.slice(Math.max(0, start - LOOKBEHIND), start);
@@ -166,6 +185,17 @@ function isLocalized(source, start) {
  * fallback, exactly as it does at a call site, so flagging it would report
  * finished work as outstanding.
  */
+/** Whether a node sits inside any function body (vs module top level). */
+function isInFunction(node, ts) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p) || ts.isArrowFunction(p) ||
+        ts.isMethodDeclaration(p) || ts.isConstructorDeclaration(p)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isKeyedConstant(node, ts, source) {
   for (let p = node.parent; p; p = p.parent) {
     if (ts.isObjectLiteralExpression(p)) {
@@ -179,6 +209,12 @@ function isKeyedConstant(node, ts, source) {
       // `{ id, label }` rows, and `Record<Id, { label }>` tables where the
       // object KEY is the id and there is no `id` property to match on.
       if (names.includes('label') && /\b(?:t|translateNow)\(\s*`/.test(source)) return true;
+      // `Record<Status, string>` tables have no `label` property at all -- the
+      // object KEY is the id and the value is the copy. A module-scope table
+      // cannot call t() in place, so the only correct pattern is a template key
+      // resolved at the render site, and a template t() in the file is the
+      // evidence that is what happens.
+      if (!isInFunction(node, ts) && /\b(?:t|translateNow)\(\s*`/.test(source)) return true;
       return false;
     }
     if (ts.isJsxElement(p) || ts.isFunctionDeclaration(p)) return false;
@@ -198,6 +234,22 @@ const ALLOWED_ENGLISH = new Map([
   ['Custom request', 'mailto subject line, read by an English-speaking support team'],
   ['OyeChats', 'brand name; never translated'],
   ['Wix', 'third-party product name; never translated'],
+  // Canned operator replies are SENT TO THE VISITOR. Translating them because
+  // the operator's console is in Hindi would put Hindi in front of an
+  // English-speaking visitor. The visitor's language is a property of their
+  // session, not of the operator's dashboard.
+  [
+    "Hi {name},\n\nThank you for reaching out! We've received your message and will follow up with you shortly.\n\nBest regards",
+    'operator reply body sent to the visitor; not dashboard chrome',
+  ],
+  [
+    "Hi {name},\n\nThank you for your message. We've sent the information you requested - please check your inbox.\n\nBest regards",
+    'operator reply body sent to the visitor; not dashboard chrome',
+  ],
+  [
+    'Hi {name},\n\nThank you for contacting us. Your request has been resolved. Please reach out again if you need anything else.\n\nBest regards',
+    'operator reply body sent to the visitor; not dashboard chrome',
+  ],
 ]);
 
 /** A single word that is still clearly UI copy (button labels etc.). */
@@ -273,8 +325,10 @@ function scanFile(file) {
           kind: 'jsx-text',
           text,
           attr: null,
+          inFunction: isInFunction(node, ts),
           localized:
             isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
+          inFunction: isInFunction(node, ts),
         });
       }
     }
@@ -299,6 +353,7 @@ function scanFile(file) {
             kind: 'attr',
             text: value,
             attr,
+            inFunction: isInFunction(node, ts),
             localized: isLocalized(source, node.getStart(sf)),
           });
         }
@@ -333,6 +388,7 @@ function scanFile(file) {
           inThrow,
           localized:
             isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
+          inFunction: isInFunction(node, ts),
         });
       }
     }
@@ -341,7 +397,9 @@ function scanFile(file) {
   };
   visit(sf);
 
+  const srcLines = source.split('\n');
   for (const h of hits) {
+    h.exempt = isExempt(srcLines, h.line - 1);
     h.class = classify({
       relPath,
       kind: h.kind,
@@ -391,6 +449,7 @@ const payload = {
     (h) =>
       (h.class === CLASSES.UI_TEXT || h.class === CLASSES.A11Y) &&
       !h.localized &&
+      !h.exempt &&
       !ALLOWED_ENGLISH.has(h.text.trim()),
   ).length,
   formatSites: allFormat.length,
@@ -405,6 +464,7 @@ if (wantJson) {
     (x) =>
       (x.class === CLASSES.UI_TEXT || x.class === CLASSES.A11Y) &&
       !x.localized &&
+      !x.exempt &&
       !ALLOWED_ENGLISH.has(x.text.trim()),
   )) {
     console.log(

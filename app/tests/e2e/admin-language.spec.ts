@@ -136,6 +136,20 @@ test.describe('Dashboard language selector', () => {
     expect(operatorLanguageWrites).toEqual([]);
   });
 
+  test('the inbox chrome follows the language too', async ({ page }) => {
+    await mockBackend(page);
+    await openAppearance(page);
+    await page.getByRole('radio', { name: 'हिन्दी' }).click();
+    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+
+    await page.goto('/inbox');
+
+    // PRESENT: the localized tab strip. ABSENT: the English it replaced.
+    await expect(page.getByRole('tab', { name: 'संदेश' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('tab', { name: 'Messages' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'Live chat' })).toHaveCount(0);
+  });
+
   test('stores the locale per device, not on the server', async ({ page }) => {
     await mockBackend(page);
     await openAppearance(page);

@@ -20,8 +20,18 @@ import {
   statusBadge,
   type OfflineStatus,
 } from './inboxHelpers';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Built-in reply templates (used when the workspace has no canned responses). */
+/**
+ * Canned operator replies. NOT localized by the dashboard language.
+ *
+ * `body` is sent TO THE VISITOR. Translating it because the operator's console
+ * is in Hindi would put Hindi in front of an English-speaking visitor, which is
+ * the opposite of what the multilingual feature does: the visitor's language is
+ * a property of their session, not of the operator's UI. `label` is chrome and
+ * is resolved at the render site.
+ */
 const DEFAULT_TEMPLATES: ReadonlyArray<{ label: string; body: string }> = [
   {
     label: 'Will follow up',
@@ -67,6 +77,7 @@ export function MessageDetail({
   savingStatus = false,
   deleting = false,
 }: MessageDetailProps): ReactElement {
+  const { t } = useTranslation();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const status = statusBadge(message.status);
@@ -75,7 +86,7 @@ export function MessageDetail({
     [message.message_body],
   );
 
-  const name = message.visitor_name?.trim() || 'Anonymous visitor';
+  const name = message.visitor_name?.trim() || t('inbox.anonymousVisitor') || 'Anonymous visitor';
   const email = message.visitor_email ?? null;
   const phone = message.visitor_phone ?? null;
   const canReply = Boolean(email);
@@ -106,14 +117,18 @@ export function MessageDetail({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="truncate text-[16px] font-semibold text-[var(--ds-text)]">{name}</h2>
-            <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-            <StatusBadge tone={sentiment.tone}>{sentiment.label}</StatusBadge>
+            <StatusBadge tone={status.tone}>
+              {t(`inbox.offlineStatus.${message.status}`) || status.label}
+            </StatusBadge>
+            <StatusBadge tone={sentiment.tone}>
+              {t(`inbox.sentiment.${detectSentiment(message.message_body)}`) || sentiment.label}
+            </StatusBadge>
           </div>
           <dl className="mt-2 flex flex-col gap-1 text-[13px] text-[var(--ds-text-muted)]">
             {email && (
               <div className="flex items-center gap-2">
                 <Mail size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                <dt className="sr-only">Email</dt>
+                <dt className="sr-only">{t('inbox.email') || 'Email'}</dt>
                 <dd>
                   <a
                     href={`mailto:${email}`}
@@ -127,14 +142,15 @@ export function MessageDetail({
             {phone && (
               <div className="flex items-center gap-2">
                 <Phone size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                <dt className="sr-only">Phone</dt>
+                <dt className="sr-only">{t('inbox.phone') || 'Phone'}</dt>
                 <dd>{phone}</dd>
               </div>
             )}
           </dl>
           {message.created_at && (
             <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-              Received {absoluteTime(message.created_at)}
+              {t('inbox.receivedAt', { time: absoluteTime(message.created_at) }) ||
+                `Received ${absoluteTime(message.created_at)}`}
               {message.bot_name ? ` · via ${message.bot_name}` : ''}
             </p>
           )}
@@ -145,7 +161,7 @@ export function MessageDetail({
       <div className="flex-1 overflow-y-auto p-5">
         <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
           <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--ds-text)]">
-            {message.message_body?.trim() || 'No message content.'}
+            {message.message_body?.trim() || t('inbox.noMessageContent') || 'No message content.'}
           </p>
         </div>
 
@@ -160,11 +176,11 @@ export function MessageDetail({
               aria-hidden="true"
               className="text-[var(--ds-text-subtle)]"
             />
-            {cannedResponses.length > 0 ? 'Reply with a quick response' : 'Reply by email'}
+            {cannedResponses.length > 0 ? t('inbox.replyWithAQuickResponse') || 'Reply with a quick response' : t('inbox.replyByEmail') || 'Reply by email'}
           </h3>
           {!canReply && (
             <p className="mt-1.5 text-[12px] text-[var(--ds-text-muted)]">
-              This visitor didn’t leave an email address, so there’s no way to reply directly.
+              {t('inbox.thisVisitorDidntLeaveAn') || 'This visitor didn’t leave an email address, so there’s no way to reply directly.'}
             </p>
           )}
           {canReply && (
@@ -172,7 +188,7 @@ export function MessageDetail({
               {templates.map((tpl) => {
                 const href = buildReplyHref(
                   email,
-                  'Re: your message',
+                  t('inbox.reYourMessage') || 'Re: your message',
                   applyTemplate(tpl.body, message.visitor_name),
                 );
                 // canReply guarantees an address, so href is always present here;
@@ -193,7 +209,9 @@ export function MessageDetail({
                       aria-hidden="true"
                       className="text-[var(--ds-text-subtle)]"
                     />
-                    {tpl.label}
+                    {cannedResponses.length > 0
+                      ? tpl.label
+                      : t(`inbox.template.${tpl.label}`) || tpl.label}
                   </a>
                 );
               })}
@@ -212,7 +230,7 @@ export function MessageDetail({
             disabled={savingStatus}
           >
             <Check size={15} aria-hidden="true" />
-            Mark as read
+            {t('inbox.markAsRead') || 'Mark as read'}
           </Button>
         )}
         {!isReplied && (
@@ -223,21 +241,21 @@ export function MessageDetail({
             disabled={savingStatus}
           >
             <CheckCheck size={15} aria-hidden="true" />
-            Mark as replied
+            {t('inbox.markAsReplied') || 'Mark as replied'}
           </Button>
         )}
 
         <div className="ml-auto flex items-center gap-2">
           {confirmingDelete ? (
             <>
-              <span className="text-[12px] text-[var(--ds-text-muted)]">Delete permanently?</span>
+              <span className="text-[12px] text-[var(--ds-text-muted)]">{t('inbox.deletePermanently') || 'Delete permanently?'}</span>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setConfirmingDelete(false)}
                 disabled={deleting}
               >
-                Cancel
+                {t('inbox.cancel') || 'Cancel'}
               </Button>
               <Button variant="danger" size="sm" onClick={onDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}
@@ -248,10 +266,10 @@ export function MessageDetail({
               variant="ghost"
               size="sm"
               onClick={() => setConfirmingDelete(true)}
-              aria-label="Delete message"
+              aria-label={t('inbox.deleteMessage') || 'Delete message'}
             >
               <Trash2 size={15} aria-hidden="true" />
-              Delete
+              {t('inbox.delete') || 'Delete'}
             </Button>
           )}
         </div>
