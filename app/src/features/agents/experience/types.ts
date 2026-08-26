@@ -23,9 +23,10 @@ export interface ExperienceDraft {
    * showing it as though someone uploaded it. */
   botLogoSource: string | null;
   /** `feature_flags.show_branding` - true shows the "Powered by OyeChats"
-   * footer. Only a workspace with the `branding_removable` plan feature can
-   * turn this off; the backend force-sets it back to `true` on save
-   * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
+   * footer. Only a workspace that has bought the branding-removal add-on (which
+   * grants `branding_removable`; no plan tier bundles it) can turn this off.
+   * The backend rejects the write with 403 `branding_addon_required` otherwise
+   * (see `bot_routes.py` `_bot_has_branding_addon`). */
   showBranding: boolean;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────

@@ -50,6 +50,7 @@ import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
+import { BrandingAddonCard } from './billing/BrandingAddonCard';
 import { CancelSubscriptionModal } from './billing/CancelSubscriptionModal';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingOverview } from './billing/BillingOverview';
@@ -583,6 +584,17 @@ export function BillingPage(): ReactElement {
                   onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
                 />
               )}
+
+              {/* Branding removal - a recurring add-on that rides on the
+                  subscription, exactly like an extra seat, so it is managed
+                  here rather than sold as a plan tier. Always rendered: an
+                  unpurchased add-on has to be discoverable, and the card
+                  explains the paid-plan requirement itself. */}
+              <BrandingAddonCard
+                botId={billingBotId}
+                hasPaidPlan={Boolean(plan?.isPaid)}
+                onSettled={handleSuccess}
+              />
 
               {/* Cancel - a live paid subscription that isn't already ending. A
                   quiet, understated row (not an alarming red card): cancellation

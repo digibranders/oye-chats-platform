@@ -1228,7 +1228,11 @@ class BillingFunnelEventBody(BaseModel):
     """Fire-and-forget drop-off signal from the app's Razorpay wrapper."""
 
     event: Literal["checkout_abandoned", "payment_failed"]
-    surface: Literal["plan", "topup", "seat", "resume"]
+    # One member per checkout surface. A new paid surface MUST be added here at
+    # the moment it ships, or its drop-offs are unreportable and the frontend's
+    # only options are to stay silent or to mislabel them as another surface,
+    # corrupting that surface's funnel.
+    surface: Literal["plan", "topup", "seat", "resume", "branding"]
     # Telemetry, not a dumping ground. ``SmallJsonObject`` bounds serialized
     # size, nesting depth and key count; the check below keeps this route's
     # own tighter 2 KB ceiling on top of it.
@@ -3035,6 +3039,152 @@ def change_seat_count(
             "extra_seat_price_cents": seat_price_cents,
             "currency": seat_currency,
         }
+
+
+# ── Branding-removal add-on ──
+
+
+class BrandingAddonRequest(BaseModel):
+    bot_id: RowId | None = None  # target a specific bot's subscription; None = account
+
+
+def _branding_addon_state(sub, *, checkout=None, message: str) -> dict:
+    """Uniform response body for every branding add-on route.
+
+    The frontend renders one card off this shape, so purchase, re-open and
+    cancel must all answer with the same keys, ``active`` being the entitlement
+    the UI unlocks on.
+    """
+    price_cents, currency = seat_price(
+        inr_cents=app_config.RAZORPAY_BRANDING_PLAN_PRICE_CENTS,
+        usd_cents=app_config.BRANDING_ADDON_PRICE_USD_CENTS,
+        currency=sub.plan.currency if sub.plan else "INR",
+    )
+    return {
+        "message": message,
+        "active": bool(sub.branding_addon_active),
+        "pending": bool(sub.branding_addon_pending),
+        "requires_authorization": checkout is not None,
+        "checkout": checkout,
+        "price_cents": price_cents,
+        "currency": currency,
+    }
+
+
+@router.post("/branding-addon", dependencies=[Depends(money_route_limit("branding_addon", "10/minute", "50/day"))])
+def purchase_branding_addon(
+    request: BrandingAddonRequest,
+    http_request: Request,
+    client: Client = Depends(get_current_client),
+    _verified: Client = Depends(require_verified_email),
+):
+    """Buy the branding-removal add-on for a subscription.
+
+    Branding removal is not bundled into any plan tier: it is sold only here,
+    on its own Razorpay mandate, for the same reason seats are (a Razorpay
+    ``quantity`` would multiply the whole plan amount). The entitlement is NOT
+    granted by this call. The mandate is minted in ``created`` state and
+    charges nothing until the customer authorizes the returned checkout, so
+    ``branding_addon_active`` is flipped by the ``activated`` webhook instead.
+    """
+    _require_precharge_gates(client, http_request)
+
+    with get_session() as session:
+        lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
+        if not sub:
+            raise HTTPException(status_code=404, detail="No active subscription found.")
+        if sub.plan is None:
+            raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
+        if (sub.plan.slug or "").lower() == "free":
+            # The add-on rides on a paid subscription. Selling it against Free
+            # would mint a mandate for an entitlement the resolver refuses to
+            # grant, so the customer would pay and see nothing change.
+            raise HTTPException(
+                status_code=400,
+                detail="The branding removal add-on requires a paid plan.",
+            )
+
+        if sub.branding_addon_active:
+            return _branding_addon_state(sub, message="The branding removal add-on is already active.")
+
+        try:
+            from app.services import razorpay_service
+
+            checkout = razorpay_service.purchase_branding_addon(session, sub)
+        except razorpay_service.IntlPaymentsDisabled:
+            # Policy refusal, not a gateway fault. Propagate so the app-level
+            # handler renders the 409 intl_usd_pending contact-sales contract.
+            raise
+        except razorpay_service.RazorpayBillingError as exc:
+            logger.exception("Branding add-on purchase failed for client %s: %s", client.id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Branding add-on purchase failed for client %s: %s", client.id, exc)
+            raise HTTPException(
+                status_code=502, detail="Could not start the branding add-on with the payment provider."
+            ) from exc
+
+        session.commit()
+        logger.info("Client %s branding add-on purchase pending authorization", client.id)
+        return _branding_addon_state(
+            sub,
+            checkout=checkout,
+            message="Authorize the add-on to remove OyeChats branding.",
+        )
+
+
+@router.delete("/branding-addon")
+def cancel_branding_addon(
+    request: BrandingAddonRequest,
+    client: Client = Depends(get_current_client),
+):
+    """Cancel the branding-removal add-on.
+
+    Cancels immediately rather than at cycle end, matching the seat add-on, so
+    the customer stops being billed the moment they ask. The badge reappears on
+    their widget within the entitlements cache TTL.
+
+    Not behind ``require_verified_email`` or the pre-charge gates: this call
+    only ever REMOVES a charge, and blocking it would trap a customer in a
+    subscription they are trying to leave.
+    """
+    with get_session() as session:
+        lock_client_for_billing(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
+        if not sub:
+            raise HTTPException(status_code=404, detail="No active subscription found.")
+        if not sub.branding_addon_subscription_id and not sub.branding_addon_active:
+            return _branding_addon_state(sub, message="The branding removal add-on is not active.")
+
+        try:
+            from app.services import razorpay_service
+
+            razorpay_service.cancel_branding_addon(session, sub)
+        except razorpay_service.RazorpayBillingError as exc:
+            logger.exception("Branding add-on cancel failed for client %s: %s", client.id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        session.commit()
+        _invalidate_branding_caches(session, client.id)
+        logger.info("Client %s cancelled the branding add-on", client.id)
+        return _branding_addon_state(sub, message="Branding removal cancelled. The badge will reappear shortly.")
+
+
+def _invalidate_branding_caches(session, client_id: int) -> None:
+    """Drop the entitlement caches a branding add-on change invalidates.
+
+    The widget reads the PER-BOT resolver, so dropping only the account slot
+    would leave the badge hidden for up to the 60s TTL after a cancel, i.e. a
+    paid feature still running after the customer stopped paying for it.
+    Best-effort: a cache miss only costs a query.
+    """
+    try:
+        plan_entitlements_service.invalidate(client_id)
+        for bot_id in session.execute(select(Bot.id).where(Bot.client_id == client_id)).scalars().all():
+            plan_entitlements_service.invalidate_bot(bot_id)
+    except Exception:
+        logger.debug("branding add-on cache invalidation failed for client=%s", client_id, exc_info=True)
 
 
 # ── Credits API (companion router) ──

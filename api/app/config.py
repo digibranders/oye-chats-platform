@@ -358,6 +358,29 @@ RAZORPAY_SEAT_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID_USD") o
 RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "44900"))
 EXTRA_SEAT_PRICE_USD_CENTS: int = int(os.getenv("EXTRA_SEAT_PRICE_USD_CENTS", "500"))
 
+# RAZORPAY_BRANDING_PLAN_ID / _USD. Razorpay Plan IDs for the branding-removal
+#   add-on, the standalone purchase that hides "Powered by OyeChats" from the
+#   widget. It is NOT bundled into any plan tier: every plan seeds
+#   ``features.branding_removable = false`` and the entitlement is granted only
+#   by an authorized add-on mandate (``Subscription.branding_addon_active``).
+#
+#   Billed on its own subscription for the same reason seats are: the main
+#   plan's amount must never move. Unlike seats there is no quantity, the
+#   add-on is a boolean, one mandate per subscription.
+#
+#   Same OPS INVARIANT as the seat plan: the Razorpay plan behind each id MUST
+#   charge exactly the matching price constant below. Razorpay plans are
+#   immutable, so the id and its price are repointed together. Env-driven with
+#   no baked-in default; empty/unset disables the add-on on that rail.
+RAZORPAY_BRANDING_PLAN_ID: str | None = os.getenv("RAZORPAY_BRANDING_PLAN_ID") or None
+RAZORPAY_BRANDING_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_BRANDING_PLAN_ID_USD") or None
+
+# Canonical branding add-on price, the single source of truth for what the
+# customer is charged and what every surface displays.
+#   INR: ₹499/month · International: $5/month
+RAZORPAY_BRANDING_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_BRANDING_PLAN_PRICE_CENTS", "49900"))
+BRANDING_ADDON_PRICE_USD_CENTS: int = int(os.getenv("BRANDING_ADDON_PRICE_USD_CENTS", "500"))
+
 # Default billing provider for all subscriptions and top-ups.
 BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
 

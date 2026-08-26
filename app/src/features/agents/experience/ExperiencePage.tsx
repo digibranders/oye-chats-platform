@@ -39,6 +39,23 @@ const SECTION_TABS: TabItem[] = [
   { key: 'servicesCopy', label: 'Services & copy' },
 ];
 
+/**
+ * `PATCH /bots/{id}` answers 403 `branding_addon_required` when a bot without
+ * the branding-removal add-on tries to hide or re-label the "Powered by
+ * OyeChats" badge. It is the one save failure on this page that has a specific
+ * cure, so it must not land in the generic error line.
+ */
+function isBrandingAddonRequired(err: unknown): boolean {
+  const detail =
+    (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
+      ?.detail ?? (err as { detail?: unknown })?.detail;
+  return (
+    detail !== null &&
+    typeof detail === 'object' &&
+    (detail as { error?: string }).error === 'branding_addon_required'
+  );
+}
+
 /** Narrows the Tabs' string key to a SectionKey without an unchecked assertion. */
 function isSectionKey(key: string): key is SectionKey {
   return SECTION_TABS.some((tab) => tab.key === key);
@@ -198,6 +215,20 @@ export function ExperiencePage(): ReactElement {
       if (identityChanged) void refresh();
     } catch (err) {
       if (botIdRef.current !== saveBotId) return;
+      if (isBrandingAddonRequired(err)) {
+        // Point at the cure, and put the branding toggle back where the server
+        // has it. Left switched off, every later save on this page would fail
+        // on the same field and block edits that have nothing to do with it.
+        setActiveSection('branding');
+        setDraft((prev) =>
+          prev && baseline ? { ...prev, showBranding: baseline.showBranding } : prev,
+        );
+        setSaveError(
+          translateNow('agents.brandingAddOnRequiredToSave') ||
+            'Hiding the “Powered by OyeChats” badge needs the branding removal add-on. Add it from the Remove branding card, then try again.',
+        );
+        return;
+      }
       setSaveError(err instanceof Error ? err.message : translateNow('agents.couldNotSavePleaseTry') || 'Could not save. Please try again.');
     } finally {
       if (botIdRef.current === saveBotId) setSaving(false);
@@ -264,6 +295,7 @@ export function ExperiencePage(): ReactElement {
                 <BrandingSection
                   draft={draft}
                   onChange={updateDraft}
+                  botId={botId}
                   swatches={swatches}
                   uploading={uploading}
                   uploadError={uploadError}

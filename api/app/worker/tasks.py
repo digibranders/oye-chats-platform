@@ -557,7 +557,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     from sqlalchemy import select
 
     from app.core.dates import add_months
-    from app.db.models import Invoice, Subscription
+    from app.db.models import Invoice, Subscription, plan_charge_only_clauses
     from app.db.session import get_session
     from app.services import credit_service
 
@@ -623,14 +623,14 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                                 Invoice.status == "paid",
                                 Invoice.paid_at.is_not(None),
                                 Invoice.paid_at >= sub.current_period_end - timedelta(days=2),
-                                # PLAN charges only. Seat add-on invoices stamp
-                                # the main sub's id but pay for seats, and a
-                                # withheld charge explicitly funded nothing. A
-                                # ₹449 seat debit must not evidence a full plan
-                                # renewal (same masking class as the F5 revoke
-                                # probe). is_distinct_from keeps legacy NULL-kind
-                                # rows counting as plan charges.
-                                Invoice.kind.is_distinct_from("seat"),
+                                # PLAN charges only. Add-on invoices (seats,
+                                # branding removal) stamp the main sub's id but
+                                # pay for the add-on, and a withheld charge
+                                # explicitly funded nothing. A ₹449 seat or
+                                # ₹499 branding debit must not evidence a full
+                                # plan renewal (same masking class as the F5
+                                # revoke probe).
+                                *plan_charge_only_clauses(),
                                 Invoice.kind.is_distinct_from("withheld_charge"),
                             )
                             .limit(1)
@@ -2591,15 +2591,17 @@ async def task_invoice_reconciliation_alert(ctx: dict) -> int:
 
 
 async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
-    """Daily cron: cancel operator-seat add-ons whose parent subscription is gone.
+    """Daily cron: cancel add-ons whose parent subscription is gone.
 
-    The seat add-on (P0-3) is a separate Razorpay subscription. The cancel,
+    Covers BOTH add-on kinds (operator seats and branding removal), despite the
+    task's seat-era name, which is kept because it is the registered cron
+    identity. Each add-on is a separate Razorpay subscription. The cancel,
     plan-cutover, and scheduled-downgrade paths all cancel it best-effort and
     only log on failure, and the cutover re-create is an external call a
-    rolled-back activation can strand. Any of which leaves an orphan billing
-    a churned/plan-changed customer ₹499/seat/month forever. This sweep
-    reconciles the gateway against local state, auto-cancels each orphan, and
-    surfaces the outcome loudly (error → Sentry). Returns the number cancelled.
+    rolled-back activation can strand. Any of which leaves an orphan billing a
+    churned or plan-changed customer every month forever. This sweep reconciles
+    the gateway against local state, auto-cancels each orphan, and surfaces the
+    outcome loudly (error → Sentry). Returns the number cancelled.
     """
     import asyncio
 
@@ -2612,15 +2614,16 @@ async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
 
     def _run() -> int:
         with get_session() as session:
-            result = seat_addon_reports.reconcile_orphaned_seat_addons(session)
+            result = seat_addon_reports.reconcile_orphaned_addons(session)
             session.commit()
         cancelled = result["cancelled"]
         failed = result["failed"]
         if cancelled or failed:
             logger.error(
-                "orphaned seat add-on reconciliation: cancelled=%s failed=%s",
+                "orphaned add-on reconciliation: cancelled=%s failed=%s by_addon=%s",
                 cancelled,
                 failed,
+                {name: {"cancelled": r["cancelled"], "failed": r["failed"]} for name, r in result["by_addon"].items()},
             )
         return len(cancelled)
 

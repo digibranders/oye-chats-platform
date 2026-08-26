@@ -75,7 +75,7 @@ const attributionStep = (botKey, mode, location, attribution) => {
  * script tag (see `withInlineAttribution`).
  */
 const INLINE_ATTRIBUTION_NOTE =
-    ' This block also includes a small visible "Powered by OyeChats" credit line - upgrade to a plan with white-label branding to remove it.';
+    ' This block also includes a small visible "Powered by OyeChats" credit line. Add the branding removal add-on to your plan to remove it.';
 
 /**
  * Folds the attribution anchor into an existing script-tag step's own code
@@ -325,7 +325,7 @@ const vue = {
         {
             title: 'For Nuxt 3: use useHead in app.vue',
             description: attribution
-                ? 'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file. useHead only manages <head> tags, so the attribution anchor cannot ride inside that call - it goes in the template block below instead, which Nuxt server-renders by default. This block also includes a small visible "Powered by OyeChats" credit line - upgrade to a plan with white-label branding to remove it.'
+                ? 'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file. useHead only manages <head> tags, so the attribution anchor cannot ride inside that call - it goes in the template block below instead, which Nuxt server-renders by default. This block also includes a small visible "Powered by OyeChats" credit line. Add the branding removal add-on to your plan to remove it.'
                 : 'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file.',
             code: attribution
                 ? `<script setup>

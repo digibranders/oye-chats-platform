@@ -415,7 +415,7 @@ export function getCurrentSubscription(botId?: number | null): Promise<Record<st
 export function getPaymentRecovery(botId?: number | null): Promise<Record<string, unknown>>;
 export function recordBillingEvent(
   event: 'checkout_abandoned' | 'payment_failed',
-  surface: 'plan' | 'topup' | 'seat' | 'resume',
+  surface: 'plan' | 'topup' | 'seat' | 'resume' | 'branding',
   meta?: Record<string, unknown> | null,
 ): Promise<unknown>;
 export function getSubscriptionPlans(): Promise<Array<Record<string, unknown>>>;
@@ -465,6 +465,15 @@ export function verifyRazorpaySubscription(payload: {
 }): Promise<Record<string, unknown>>;
 /** Add (delta > 0) or remove (delta < 0) operator seats; may return `{ requires_authorization, checkout }`. */
 export function changeOperatorSeats(delta: number, botId?: number | null): Promise<Record<string, unknown>>;
+/**
+ * Buy the branding-removal add-on → `{ message, active, pending,
+ * requires_authorization, checkout, price_cents, currency }`. The entitlement is
+ * granted by the activation webhook, never by this response, so `active` stays
+ * false until the mandate is authorized.
+ */
+export function purchaseBrandingAddon(botId?: number | null): Promise<Record<string, unknown>>;
+/** Cancel the branding-removal add-on → the same state shape as the purchase. */
+export function cancelBrandingAddon(botId?: number | null): Promise<Record<string, unknown>>;
 /** Standing referral attribution on the account: `{ attributed, code, discount_pct }`. */
 export function getReferralStatus(): Promise<{ attributed?: boolean; code?: string | null; discount_pct?: number } | null>;
 /** Apply/validate a referral code. Non-null `code` ⇒ accepted. */

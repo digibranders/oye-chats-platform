@@ -2891,6 +2891,45 @@ export const changeOperatorSeats = async (delta, botId = null) => {
     }
 };
 
+/**
+ * Buy the branding-removal add-on for a subscription.
+ *
+ * Branding removal is not bundled into any plan tier - it rides on its own
+ * Razorpay mandate, exactly like an extra operator seat. The entitlement is NOT
+ * granted by this call: the mandate is minted in `created` state and
+ * `branding_removable` only flips once the customer authorizes the returned
+ * `checkout` payload and the `activated` webhook lands. Callers must re-read
+ * entitlements rather than assume success.
+ *
+ * 400 when the subscription is on the Free plan.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const purchaseBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.post('/subscriptions/branding-addon', { bot_id: botId ?? null });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start the branding removal add-on');
+    }
+};
+
+/**
+ * Cancel the branding-removal add-on. Cancels immediately (not at cycle end),
+ * so billing stops the moment the customer asks; the badge reappears on their
+ * widget within the entitlements cache TTL.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const cancelBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.delete('/subscriptions/branding-addon', {
+            data: { bot_id: botId ?? null },
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to cancel the branding removal add-on');
+    }
+};
+
 
 
 // ─── Affiliate Program v1 ────────────────────────────────────────────────

@@ -78,8 +78,9 @@ async function loadPlanStepData(): Promise<PlanStepData> {
  *
  * Shows the full plan picker (cards + cycle toggle + compare grid) so the user
  * selects and pays for a plan BEFORE creating their first agent. This ensures
- * plan limits (credits, live chat, BANT, branding removal, operator seats) are
- * established before any agent config is built.
+ * plan limits (credits, live chat, BANT, operator seats) are established before
+ * any agent config is built. Branding removal is deliberately absent: it is a
+ * paid add-on bought from Billing on top of any paid plan, not a plan limit.
  *
  * Behaviour:
  * - Free plan clicked → advances immediately (account is already on Free by

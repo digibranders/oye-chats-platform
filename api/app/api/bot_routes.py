@@ -297,6 +297,66 @@ def _require_bot_management_access(auth: dict) -> None:
         raise HTTPException(status_code=403, detail="You do not have permission to manage bots.")
 
 
+# The badge's stock copy. A bot row that still holds these values has never
+# been customised, so a PATCH resending them is a no-op and must not trip the
+# add-on guard: the Experience page saves its whole draft, unchanged fields
+# included.
+DEFAULT_BRANDING_TEXT = "Powered by OyeChats"
+DEFAULT_BRANDING_URL = "https://www.oyechats.com"
+
+
+def _branding_fields_requiring_addon(bot: Bot, update_data: dict) -> list[str]:
+    """Which fields in this PATCH need the branding-removal add-on.
+
+    Three writes are gated, and only when they actually change something:
+
+    * ``feature_flags.show_branding`` set to False. Turning the badge back ON
+      is always allowed, including after the add-on lapses, so a customer is
+      never stuck holding a setting they can no longer switch off.
+    * ``branding_text`` / ``branding_url`` moved off the stock values. These
+      re-label and re-target the badge, which is the same paid capability
+      wearing a different hat.
+
+    Returns the offending field names (dotted for the nested flag) for the
+    error payload, or an empty list when the PATCH touches nothing gated.
+    """
+    offending: list[str] = []
+
+    flags = update_data.get("feature_flags")
+    if isinstance(flags, dict) and flags.get("show_branding") is False:
+        offending.append("feature_flags.show_branding")
+
+    for field, default in (
+        ("branding_text", DEFAULT_BRANDING_TEXT),
+        ("branding_url", DEFAULT_BRANDING_URL),
+    ):
+        if field not in update_data:
+            continue
+        incoming = update_data[field]
+        if incoming is None:
+            continue  # Clearing back to the default is a downgrade, always allowed.
+        if str(incoming) != str(getattr(bot, field, None) or default):
+            offending.append(field)
+
+    return offending
+
+
+def _bot_has_branding_addon(session, bot_id: int) -> bool:
+    """True iff the subscription funding this bot holds the branding add-on.
+
+    Denies on any resolver error, matching ``plan_entitlements_service``'s
+    deny-by-default policy: a transient failure must never let an unpaid write
+    through, and the customer can retry.
+    """
+    from app.services import plan_entitlements_service
+
+    try:
+        return plan_entitlements_service.get_bot_entitlements(bot_id, session).has_feature("branding_removable")
+    except Exception:
+        logger.warning("branding add-on check failed for bot=%s. Denying", bot_id, exc_info=True)
+        return False
+
+
 def _record_growth_event(session, bot_id: int, event_type: str) -> None:
     if event_type not in DEMO_EVENT_TYPES:
         raise ValueError(f"Unsupported growth event type: {event_type}")
@@ -958,17 +1018,18 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
             }
         )
     elif not _plan_branding_removable:
-        # Non-free plans that don't include branding removal (e.g. Starter)
-        # must also force show_branding=True. The admin UI locks the toggle
-        # for these plans but stored feature_flags may have show_branding=False
-        # left over from a previous paid tier. Enforce server-side so the
-        # widget always reflects the plan entitlement.
+        # No authorized branding add-on → force show_branding=True. Branding
+        # removal is sold only as a standalone add-on, so a stored
+        # show_branding=False is always stale here: left over from before the
+        # add-on model, or from a mandate that has since been cancelled.
+        # ``update_bot`` now rejects the write outright, but this stays as the
+        # boundary that governs what the widget actually renders.
         effective_feature_flags["show_branding"] = True
 
-    # Mirror the show_branding lock: a plan without branding removal must also
-    # not be able to re-label or re-target the badge by PATCHing the fields
-    # directly. The admin UI hides these inputs for such plans, but the API is
-    # the real boundary.
+    # Mirror the show_branding lock: a subscription without the branding add-on
+    # must also not be able to re-label or re-target the badge by PATCHing the
+    # fields directly. The admin UI hides these inputs without the add-on, but
+    # the API is the real boundary.
     effective_branding_text = bot.branding_text or "Powered by OyeChats"
     effective_branding_url = bot.branding_url or "https://www.oyechats.com"
     if not _plan_branding_removable:
@@ -2477,6 +2538,33 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                             ),
                         },
                     )
+
+            # Branding-removal add-on guard. Hiding or re-labelling the
+            # "Powered by OyeChats" badge is a paid add-on, not a plan
+            # inclusion. ``GET /settings/public`` already forces the badge back
+            # on for an unentitled bot, but accepting the write anyway left the
+            # row asserting something the customer had not bought, which every
+            # other reader of ``Bot`` (the dashboard, the bot list, the embed
+            # snippet) would surface as if it were true. Reject at the door
+            # instead, so the stored state and the entitlement agree.
+            _branding_writes = _branding_fields_requiring_addon(bot, update_data)
+            if _branding_writes and not _bot_has_branding_addon(session, bot.id):
+                logger.warning(
+                    "Bot %s branding write rejected, no branding add-on: %s",
+                    bot_id,
+                    _branding_writes,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "branding_addon_required",
+                        "message": (
+                            "Removing or customising the 'Powered by OyeChats' badge "
+                            "requires the branding removal add-on."
+                        ),
+                        "fields": _branding_writes,
+                    },
+                )
 
             # Sync logos
             if "bot_logo" in update_data:

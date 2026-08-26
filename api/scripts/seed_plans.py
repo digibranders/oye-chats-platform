@@ -186,7 +186,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,
@@ -231,7 +231,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,
@@ -282,7 +282,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,

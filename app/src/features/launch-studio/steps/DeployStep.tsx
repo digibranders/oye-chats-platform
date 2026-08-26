@@ -54,7 +54,9 @@ export function DeployStep(props: StepProps) {
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
 
-  // Plans entitled to remove branding get a snippet with no attribution anchor.
+  // A workspace that has bought the branding-removal add-on gets a snippet with
+  // no attribution anchor. The entitlement comes from the add-on, not from the
+  // plan tier: no tier bundles it, and it can be bought on top of any paid plan.
   // `loading` guards this the same way `WebsiteInstall` does: the entitlements
   // fallback defaults `branding_removable` to `false`, so a not-yet-resolved
   // fetch would otherwise compute `attribution = true` even for a workspace

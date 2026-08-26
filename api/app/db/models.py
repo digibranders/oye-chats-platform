@@ -1772,6 +1772,23 @@ class Subscription(Base):
     # from seat_addon_quantity (the AUTHORIZED/billed count).
     seat_addon_pending_quantity = Column(Integer, nullable=True)
 
+    # Razorpay id of the SEPARATE branding-removal add-on subscription. Same
+    # reason as seats for living on its own mandate: the main plan's amount
+    # must never move. Unlike seats there is no quantity, the add-on is a
+    # boolean, so one mandate per subscription.
+    branding_addon_subscription_id = Column(String, nullable=True)
+    # The AUTHORIZED entitlement. This column, and nothing else, is what
+    # ``plan_entitlements_service`` reads to grant ``branding_removable``. No
+    # plan tier grants it: branding removal is sold only as this add-on.
+    branding_addon_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Purchase DESIRED but awaiting mandate authorization, mirroring
+    # ``seat_addon_pending_quantity``. The add-on subscription is minted in
+    # Razorpay's ``created`` state and charges nothing until the customer
+    # authorizes it, so the entitlement must wait for the ``activated``
+    # webhook. Otherwise a customer who opens checkout and dismisses it hides
+    # the branding for free.
+    branding_addon_pending = Column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -2023,6 +2040,27 @@ def _reject_frozen_invoice_mutation(mapper, connection, target):  # noqa: ANN001
             f"Invoice {target.invoice_number} is finalized; refusing to mutate "
             f"frozen column(s): {', '.join(sorted(changed))}"
         )
+
+
+# ``Invoice.kind`` values that document ADD-ON revenue rather than a plan
+# charge. Add-on invoices stamp the MAIN subscription's id (they have no
+# subscription row of their own) but fund no credit grant, so any query asking
+# "was the plan actually paid for this period?" must exclude them. Missing one
+# lets a ₹499 add-on debit masquerade as a full plan renewal and mask an unpaid
+# plan charge, which is the leak the seat-only version of this filter was
+# written to close (F5).
+#
+# Every new add-on kind belongs in this tuple at the moment it is introduced.
+ADDON_INVOICE_KINDS: tuple[str, ...] = ("seat", "branding")
+
+
+def plan_charge_only_clauses() -> list:
+    """SQLAlchemy filter clauses restricting a query to PLAN charges.
+
+    ``is_distinct_from`` rather than ``!=`` so legacy rows with ``kind IS NULL``
+    still count as plan charges; a plain inequality drops NULLs too.
+    """
+    return [Invoice.kind.is_distinct_from(kind) for kind in ADDON_INVOICE_KINDS]
 
 
 class InvoiceCounter(Base):
@@ -2660,7 +2698,8 @@ class BillingFunnelEvent(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     # checkout_abandoned (customer closed the sheet) | payment_failed (gateway decline)
     event = Column(String(24), nullable=False)
-    # plan | topup | seat | resume, which purchase surface opened the sheet
+    # plan | topup | seat | resume | branding, which purchase surface opened
+    # the sheet. Validated by the route's Literal, not by a CHECK constraint.
     surface = Column(String(12), nullable=False)
     meta = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)

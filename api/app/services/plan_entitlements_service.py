@@ -831,6 +831,28 @@ def _compute(
         entitled_seats = max(included_seats, paid_seats)
         limits["operators"] = min(operator_ceiling, entitled_seats)
 
+    # ``branding_removable`` is an ADD-ON, never a plan inclusion. No tier
+    # grants it (every seeded plan carries ``false``, and migration
+    # j4e5f6a7b8c9 revoked the historical Standard/Professional/Enterprise
+    # grant), so the plan JSONB is overwritten unconditionally here rather
+    # than merged. A hand-edited plan row that sets the flag true must not be
+    # able to hand out a feature nobody paid the add-on price for.
+    #
+    # Two conditions, both required:
+    #   * an authorized add-on mandate (``branding_addon_active``, set only by
+    #     the add-on's ``activated`` webhook), and
+    #   * a paid plan. The add-on is sold on top of a paid subscription, so a
+    #     lapsed customer who fell back to Free loses it even if a stale
+    #     mandate flag survived the downgrade.
+    #
+    # ``getattr`` rather than attribute access: the flag is absent on the
+    # lightweight subscription stand-ins some call sites and tests synthesise,
+    # and the missing-attribute default must be the same as the missing-add-on
+    # one. Deny.
+    features["branding_removable"] = bool(
+        subscription is not None and getattr(subscription, "branding_addon_active", False) and plan.slug != "free"
+    )
+
     result = PlanEntitlements(
         client_id=client_id,
         plan_slug=plan.slug,
