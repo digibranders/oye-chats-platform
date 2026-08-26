@@ -906,9 +906,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const retryTimer = setTimeout(async () => {
             if (cancelled) return;
             try {
+                // Availability probe only. Pass the contact the visitor
+                // already submitted through the validated handoff form, and
+                // nothing else: ``requestHandoff`` captures a lead as a side
+                // effect, so anything half-typed handed to it here is a lead
+                // row the visitor never submitted. See the offline-form poll
+                // below, where the same fallback was writing rejected
+                // addresses.
                 const retry = await requestHandoff(sessionId, {
-                    name: liveChatState?.capturedName || offlineForm.name,
-                    email: liveChatState?.capturedEmail || offlineForm.email,
+                    name: liveChatState?.capturedName || '',
+                    email: liveChatState?.capturedEmail || '',
                 });
                 if (cancelled) return;
                 const retryAction = retry?.suggested_action;
@@ -941,9 +948,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             clearTimeout(retryTimer);
             clearTimeout(fallbackTimer);
         };
-        // sessionId / form fields are stable for the duration of this
-        // connecting window; we intentionally don't re-run the timer on
-        // every keystroke. eslint-disable to silence the exhaustive-deps warn.
+        // sessionId and the captured contact are stable for the duration of
+        // this connecting window, and the timer must not restart when they
+        // settle. eslint-disable to silence the exhaustive-deps warn.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatMode]);
 
@@ -1993,9 +2000,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         let cancelled = false;
         const poll = async () => {
             try {
+                // Availability probe only, so it carries ONLY contact the
+                // visitor has already submitted through a validated form.
+                //
+                // ``requestHandoff`` fires ``submitLeadCapture`` as a side
+                // effect whenever it is given a name or an email, and this
+                // runs every 15s while the visitor is still typing. Falling
+                // back to ``offlineForm`` therefore persisted an address the
+                // blur check may have just REJECTED, and let the visitor
+                // carry it into live chat by accepting the toast below. The
+                // offline form captures its own contact when it is
+                // submitted, which is the point the address has passed the
+                // gate.
                 const res = await requestHandoff(sessionId, {
-                    name: liveChatState?.capturedName || offlineForm.name,
-                    email: liveChatState?.capturedEmail || offlineForm.email,
+                    name: liveChatState?.capturedName || '',
+                    email: liveChatState?.capturedEmail || '',
                 });
                 if (cancelled) return;
                 const action = res?.suggested_action;
