@@ -2,6 +2,7 @@ import { useMemo, type ReactElement } from 'react';
 import { Activity } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type ActivityPoint } from '../../../types/domain';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * Formats a backend day string as a short "Mon 5" label; falls back to raw.
@@ -32,6 +33,7 @@ export interface ActivityTrendProps {
  * native tooltip. Renders an empty state when there's no traffic yet.
  */
 export function ActivityTrend({ points, className }: ActivityTrendProps): ReactElement {
+  const { t } = useTranslation();
   const { maxMessages, total } = useMemo(() => {
     let max = 0;
     let sum = 0;
@@ -48,7 +50,7 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
       <Card className={cn('p-6', className)}>
         <EmptyState
           icon={Activity}
-          title="No activity yet"
+          title={t('agents.noActivityYet') || 'No activity yet'}
           description="Once visitors start chatting with your AI, daily message volume will appear here."
         />
       </Card>
@@ -87,11 +89,11 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
             native bar tooltips carry, surfaced to keyboard and screen-reader
             users who can't hover. */}
         <table className="sr-only">
-          <caption>Daily message volume</caption>
+          <caption>{t('agents.dailyMessageVolume') || 'Daily message volume'}</caption>
           <thead>
             <tr>
-              <th scope="col">Day</th>
-              <th scope="col">Messages</th>
+              <th scope="col">{t('agents.day') || 'Day'}</th>
+              <th scope="col">{t('agents.messages') || 'Messages'}</th>
             </tr>
           </thead>
           <tbody>

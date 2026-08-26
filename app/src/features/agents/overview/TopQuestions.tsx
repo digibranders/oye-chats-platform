@@ -2,6 +2,7 @@ import { type ReactElement } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type TopQuestion } from '../../../types/domain';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface TopQuestionsProps {
   readonly questions: readonly TopQuestion[];
@@ -14,12 +15,13 @@ export interface TopQuestionsProps {
  * my AI for?" at a glance. Shows an empty state before any traffic.
  */
 export function TopQuestions({ questions, className }: TopQuestionsProps): ReactElement {
+  const { t } = useTranslation();
   if (questions.length === 0) {
     return (
       <Card className={cn('p-6', className)}>
         <EmptyState
           icon={MessageSquare}
-          title="No questions yet"
+          title={t('agents.noQuestionsYet') || 'No questions yet'}
           description="The questions visitors ask your AI most often will show up here."
         />
       </Card>

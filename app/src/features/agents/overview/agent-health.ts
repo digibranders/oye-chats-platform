@@ -1,4 +1,5 @@
 import { type Bot } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Overall health of an agent, worst-first:
@@ -69,7 +70,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
       status: 'pending',
       detail: trained
         ? `Trained on ${formatPassages(chunks)} - learning more right now.`
-        : 'Learning from your website right now.',
+        : translateNow('agents.learningFromYourWebsiteRight') || 'Learning from your website right now.',
     };
   }
 
@@ -90,7 +91,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
       id: 'knowledge',
       label: 'Knowledge',
       status: 'fail',
-      detail: 'The last training run failed. Try training again.',
+      detail: translateNow('agents.theLastTrainingRunFailed') || 'The last training run failed. Try training again.',
     };
   }
 
@@ -98,7 +99,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
     id: 'knowledge',
     label: 'Knowledge',
     status: 'fail',
-    detail: 'Nothing learned yet - add a website or documents.',
+    detail: translateNow('agents.nothingLearnedYetAddA') || 'Nothing learned yet - add a website or documents.',
   };
 }
 
@@ -112,17 +113,17 @@ function deploymentCheck(agent: Bot): HealthCheck {
   if (isDeployed(agent)) {
     return {
       id: 'deployment',
-      label: 'Live on your site',
+      label: translateNow('agents.liveOnYourSite') || 'Live on your site',
       status: 'pass',
-      detail: 'The chat widget is installed and answering visitors.',
+      detail: translateNow('agents.theChatWidgetIsInstalled') || 'The chat widget is installed and answering visitors.',
     };
   }
 
   return {
     id: 'deployment',
-    label: 'Live on your site',
+    label: translateNow('agents.liveOnYourSite') || 'Live on your site',
     status: 'warn',
-    detail: 'Not installed yet - add the widget to start conversations.',
+    detail: translateNow('agents.notInstalledYetAddThe') || 'Not installed yet - add the widget to start conversations.',
   };
 }
 
@@ -139,10 +140,10 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
   if (knowledge.status === 'fail' && agent.last_crawl_status === 'failed') {
     return {
       level: 'critical',
-      title: 'Training needs attention',
-      description: 'Your AI’s last training run failed, so its answers may be out of date.',
+      title: translateNow('agents.trainingNeedsAttention') || 'Training needs attention',
+      description: translateNow('agents.yourAisLastTrainingRun') || 'Your AI’s last training run failed, so its answers may be out of date.',
       checks,
-      nextStep: { label: 'Retry training', to: 'knowledge' },
+      nextStep: { label: translateNow('agents.retryTraining') || 'Retry training', to: 'knowledge' },
     };
   }
 
@@ -150,10 +151,10 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
   if (knowledge.status === 'pending') {
     return {
       level: 'training',
-      title: 'Your AI is learning',
-      description: 'Training is in progress. This usually takes a few minutes.',
+      title: translateNow('agents.yourAiIsLearning') || 'Your AI is learning',
+      description: translateNow('agents.trainingIsInProgressThis') || 'Training is in progress. This usually takes a few minutes.',
       checks,
-      nextStep: { label: 'View progress', to: 'knowledge' },
+      nextStep: { label: translateNow('agents.viewProgress') || 'View progress', to: 'knowledge' },
     };
   }
 
@@ -161,10 +162,10 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
   if (!isTrained(agent)) {
     return {
       level: 'setup',
-      title: 'Your AI needs knowledge',
-      description: 'Teach your AI about your business so it can answer visitor questions.',
+      title: translateNow('agents.yourAiNeedsKnowledge') || 'Your AI needs knowledge',
+      description: translateNow('agents.teachYourAiAboutYour') || 'Teach your AI about your business so it can answer visitor questions.',
       checks,
-      nextStep: { label: 'Add knowledge', to: 'knowledge' },
+      nextStep: { label: translateNow('agents.addKnowledge') || 'Add knowledge', to: 'knowledge' },
     };
   }
 
@@ -172,18 +173,18 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
   if (!isDeployed(agent)) {
     return {
       level: 'attention',
-      title: 'Ready to go live',
-      description: 'Your AI is trained and answering well - add it to your website to meet visitors.',
+      title: translateNow('agents.readyToGoLive') || 'Ready to go live',
+      description: translateNow('agents.yourAiIsTrainedAnd') || 'Your AI is trained and answering well - add it to your website to meet visitors.',
       checks,
-      nextStep: { label: 'Install widget', to: 'channels' },
+      nextStep: { label: translateNow('agents.installWidget') || 'Install widget', to: 'channels' },
     };
   }
 
   // Trained and live.
   return {
     level: 'healthy',
-    title: 'Your AI is healthy',
-    description: 'It’s trained, live on your website, and answering visitors.',
+    title: translateNow('agents.yourAiIsHealthy') || 'Your AI is healthy',
+    description: translateNow('agents.itsTrainedLiveOnYour') || 'It’s trained, live on your website, and answering visitors.',
     checks,
     nextStep: null,
   };

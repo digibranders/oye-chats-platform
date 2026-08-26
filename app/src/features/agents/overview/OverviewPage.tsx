@@ -24,6 +24,8 @@ import { useOverviewData, type AgentStats } from './overview-data';
 import { HealthHero } from './HealthHero';
 import { AgentSnapshotCards } from './AgentSnapshotCards';
 import { TopQuestions } from './TopQuestions';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { formatNumber } from '../../../i18n/formatters';
 
 interface MetricDef {
   readonly key: keyof AgentStats;
@@ -35,42 +37,53 @@ interface MetricDef {
 /**
  * The four headline Mission Control metrics.
  * Replaces total messages with resolution rate and average rating for honest quality read.
+ *
+ * A module constant, so the labels here are the English fallback; `MetricGrid`
+ * resolves each one from its key. `format` runs per render, so it can localize
+ * its numbers directly.
  */
 const METRICS: readonly MetricDef[] = [
   {
     key: 'activeUsers',
     label: 'Active visitors',
     icon: Users,
-    format: (s) => s.activeUsers.toLocaleString(),
+    format: (s) => formatNumber(s.activeUsers),
   },
   {
     key: 'totalConversations',
     label: 'Conversations',
     icon: MessagesSquare,
-    format: (s) => s.totalConversations.toLocaleString(),
+    format: (s) => formatNumber(s.totalConversations),
   },
   {
     key: 'resolutionRate',
     label: 'Resolution rate',
     icon: CheckCircle2,
-    format: (s) => (s.resolutionRate === null || s.resolutionRate === undefined ? '-' : `${s.resolutionRate}%`),
+    format: (s) =>
+      s.resolutionRate === null || s.resolutionRate === undefined
+        ? '-'
+        : `${formatNumber(s.resolutionRate)}%`,
   },
   {
     key: 'averageRating',
     label: 'Average rating',
     icon: Star,
-    format: (s) => (s.averageRating === null || s.averageRating === undefined ? '-' : `${s.averageRating} / 5`),
+    format: (s) =>
+      s.averageRating === null || s.averageRating === undefined
+        ? '-'
+        : `${formatNumber(s.averageRating)} / 5`,
   },
 ];
 
 /** Four-up grid of headline metrics. */
 function MetricGrid({ stats }: { readonly stats: AgentStats }): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {METRICS.map((metric) => (
         <MetricCard
           key={metric.key}
-          label={metric.label}
+          label={t(`agents.metric.${metric.key}`) || metric.label}
           icon={metric.icon}
           value={metric.format(stats)}
         />
@@ -101,16 +114,17 @@ function MetricsError({
   readonly message: string;
   readonly onRetry: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <Card className="p-6">
       <EmptyState
         icon={AlertCircle}
-        title="Couldn’t load your metrics"
+        title={t('agents.couldntLoadYourMetrics') || 'Couldn’t load your metrics'}
         description={message}
         action={
           <Button variant="outline" size="sm" onClick={onRetry}>
             <RefreshCw size={15} aria-hidden="true" />
-            Try again
+            {t('agents.tryAgain') || 'Try again'}
           </Button>
         }
       />
@@ -120,11 +134,12 @@ function MetricsError({
 
 /** Neutral placeholder for a section whose data failed to load. */
 function SectionUnavailable(): ReactElement {
+  const { t } = useTranslation();
   return (
     <Card className="p-6">
       <EmptyState
         icon={AlertCircle}
-        title="Couldn’t load this section"
+        title={t('agents.couldntLoadThisSection') || 'Couldn’t load this section'}
         description="Refresh to try loading this data again."
       />
     </Card>
@@ -135,6 +150,7 @@ function SectionUnavailable(): ReactElement {
  * OverviewContent - Mission Control layout for an agent.
  */
 function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
+  const { t } = useTranslation();
   const health = deriveAgentHealth(agent);
   const { status, isRefetching, stats, activity, questions, details, error, refetch } =
     useOverviewData(agent.id);
@@ -157,7 +173,7 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
 
   return (
     <PageContainer
-      title="Overview"
+      title={t('agents.overview') || 'Overview'}
       description="Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance."
       actions={
         <Button variant="outline" size="sm" onClick={refreshAll} disabled={isBusy}>
@@ -166,7 +182,7 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
             aria-hidden="true"
             className={isBusy ? 'animate-spin' : undefined}
           />
-          Refresh
+          {t('agents.refresh') || 'Refresh'}
         </Button>
       }
     >
@@ -190,7 +206,11 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
 
       <section className="space-y-4" aria-labelledby="overview-questions-heading">
         <SectionHeader
-          title={<span id="overview-questions-heading">Top questions</span>}
+          title={
+            <span id="overview-questions-heading">
+              {t('agents.topQuestions') || 'Top questions'}
+            </span>
+          }
           description="What visitors ask your AI most."
         />
         {isInitialLoading ? (
@@ -211,8 +231,9 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
 
 /** Skeleton shown while the agent itself is resolving from context. */
 function OverviewSkeleton(): ReactElement {
+  const { t } = useTranslation();
   return (
-    <PageContainer title="Overview">
+    <PageContainer title={t('agents.overview') || 'Overview'}>
       <Card className="p-6">
         <div className="flex gap-5">
           <Skeleton className="h-14 w-14 rounded-2xl" />
@@ -234,6 +255,7 @@ function OverviewSkeleton(): ReactElement {
 }
 
 export function OverviewPage(): ReactElement {
+  const { t } = useTranslation();
   const { agent, loading, error } = useAgent();
 
   if (agent) {
@@ -245,15 +267,15 @@ export function OverviewPage(): ReactElement {
   }
 
   return (
-    <PageContainer title="Overview">
+    <PageContainer title={t('agents.overview') || 'Overview'}>
       <Card className="p-6">
         <EmptyState
           icon={AlertCircle}
-          title={error ? 'We couldn’t load this chatbot' : 'Chatbot not found'}
+          title={error ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             error
-              ? 'Something went wrong loading this chatbot. Please refresh the page.'
-              : 'This chatbot doesn’t exist or you don’t have access to it.'
+              ? t('agents.somethingWentWrongLoadingThis') || 'Something went wrong loading this chatbot. Please refresh the page.'
+              : t('agents.thisChatbotDoesntExistOr') || 'This chatbot doesn’t exist or you don’t have access to it.'
           }
         />
       </Card>

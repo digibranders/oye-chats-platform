@@ -9,7 +9,8 @@ import tseslint from 'typescript-eslint'
 //   • New `.ts/.tsx`     - typescript-eslint recommended + react-hooks, with
 //     react-refresh scoped to `.tsx` component files only.
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // dist-e2e is the hermetic bundle the Playwright suite builds for itself.
+  { ignores: ['dist', 'dist-e2e'] },
 
   // ── Legacy JavaScript / JSX ──────────────────────────────────────────────
   {
