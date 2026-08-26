@@ -65,6 +65,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount
+from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
     Bot,
     Client,
@@ -77,6 +78,7 @@ from app.db.models import (
     plan_charge_only_clauses,
 )
 from app.services import credit_service, email_service, invoice_service
+from app.services.seller_profile_service import charge_tax_rate_bps
 
 if TYPE_CHECKING:
     import razorpay
@@ -377,7 +379,16 @@ def create_topup_order(
     # rounds (Wave 4b), so the CHARGE must round identically or a "1599.99"
     # pack would match a 1600 request and then debit ₹1599.
     amount_inr = int(round(float(amount_inr_major)))
-    amount_paise = amount_inr * 100
+    # Pack prices are BASE prices, like every other price we publish, so the
+    # order must collect base + GST. Classified off the buyer's own country
+    # (this rail bills INR even to an international buyer, so the currency
+    # cannot stand in for the supply kind the way it can for plans).
+    base_paise = amount_inr * 100
+    amount_paise = gross_charge_minor(
+        base_paise,
+        rate_bps=charge_tax_rate_bps(session),
+        kind=supply_kind(None, None, getattr(client, "billing_country", None)),
+    )
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
         amount_paise = 100
@@ -389,7 +400,16 @@ def create_topup_order(
         "purpose": "topup",
         "client_id": str(client.id),
         "credits": str(credits),
+        # BASE rupees, exclusive of GST. This is the pack price we advertise and
+        # the taxable value the invoice carves back out; it is NOT what the
+        # customer is debited.
         "amount_inr": str(amount_inr),
+        # What Razorpay will actually capture, base + GST. Stamped rather than
+        # recomputed at capture time: the GST rate can move between order
+        # creation and capture, and the reconciliation below has to compare
+        # against the amount THIS order was created for, not the amount today's
+        # rate would produce.
+        "charge_paise": str(amount_paise),
         "bonus_pct": str(bonus_pct),
     }
     # The modal advertises USD prices to non-INR buyers while Razorpay charges
@@ -940,7 +960,19 @@ def resolve_discounted_plan(
     # CURRENT base plan produces. Otherwise the base price changed since we
     # cached and the row points at a Razorpay plan billing the old amount, so we
     # must create a fresh discounted plan and refresh the row (audit F34).
-    if cached is not None and cached.amount_paise == discounted_paise:
+    # Published prices are BASE prices, so the mandate must collect base + GST.
+    # Domestic (INR) rail only: the USD rail is an export and carries no Indian
+    # GST. See ``gross_charge_minor``.
+    charge_paise = gross_charge_minor(
+        discounted_paise,
+        rate_bps=charge_tax_rate_bps(session),
+        kind="export" if currency == "USD" else "intra",
+    )
+
+    # The cache is keyed on the CHARGED amount, not the base. A GST rate change
+    # moves the charge without moving the base, and comparing the base would
+    # keep handing out a plan minted at the old rate.
+    if cached is not None and cached.amount_paise == charge_paise:
         return cached.razorpay_plan_id
 
     period = "yearly" if billing_cycle == "annual" else "monthly"
@@ -953,7 +985,7 @@ def resolve_discounted_plan(
                 "interval": 1,
                 "item": {
                     "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
-                    "amount": discounted_paise,
+                    "amount": charge_paise,
                     "currency": currency,
                 },
                 "notes": {
@@ -981,7 +1013,7 @@ def resolve_discounted_plan(
         # Refresh the stale row in place, the UNIQUE (base_plan_id, cycle, bps,
         # currency) constraint means we can't insert a second row for the same key.
         cached.razorpay_plan_id = plan["id"]
-        cached.amount_paise = discounted_paise
+        cached.amount_paise = charge_paise
     else:
         session.add(
             DiscountedPlanCache(
@@ -990,15 +1022,28 @@ def resolve_discounted_plan(
                 discount_bps=discount_bps,
                 currency=currency,
                 razorpay_plan_id=plan["id"],
-                amount_paise=discounted_paise,
+                amount_paise=charge_paise,
             )
         )
     session.flush()
     return plan["id"]
 
 
-def create_plan_for_price(*, name: str, amount_paise: int, period: str, currency: str = "INR") -> str:
-    """Mint a fresh immutable Razorpay plan at ``amount_paise`` and return its id.
+def create_plan_for_price(
+    *, name: str, amount_paise: int, period: str, currency: str = "INR", rate_bps: int | None = None
+) -> str:
+    """Mint a fresh immutable Razorpay plan for a BASE price and return its id.
+
+    ``amount_paise`` is the base, exclusive of GST, exactly as it is stored on
+    the ``Plan`` row. The uplift to what Razorpay actually debits happens HERE,
+    not at the call site, because a mint that forgets it silently reverts that
+    tier to absorbing the tax and nothing downstream notices. The one caller
+    that did compute its own amount (the super-admin price edit) shipped
+    exactly that bug.
+
+    Domestic (INR) is uplifted; USD is an export and is minted at the base. Pass
+    ``rate_bps`` to avoid a second seller-profile read when the caller already
+    has one; omitted, it is looked up.
 
     Used when a super-admin edits a plan's price (finding B): Razorpay plans are
     immutable, so a new price needs a new plan. ``period`` is Razorpay's cadence
@@ -1008,13 +1053,21 @@ def create_plan_for_price(*, name: str, amount_paise: int, period: str, currency
         raise ValueError(f"amount_paise must be positive, got {amount_paise}")
     if period not in ("monthly", "yearly"):
         raise ValueError(f"period must be 'monthly' or 'yearly', got {period!r}")
+    if rate_bps is None:
+        from app.db.session import get_session
+
+        with get_session() as _s:
+            rate_bps = charge_tax_rate_bps(_s)
+    charge_paise = gross_charge_minor(
+        int(amount_paise), rate_bps=rate_bps, kind="export" if currency == "USD" else "intra"
+    )
     rzp = _get_razorpay()
     try:
         plan = rzp.plan.create(
             data={
                 "period": period,
                 "interval": 1,
-                "item": {"name": name[:255], "amount": int(amount_paise), "currency": currency},
+                "item": {"name": name[:255], "amount": charge_paise, "currency": currency},
             }
         )
     except Exception as exc:
@@ -1086,11 +1139,48 @@ def create_seat_addon_subscription(
         extra_seats,
     )
 
-    return _seat_checkout_payload(subscription["id"], client, extra_seats, short_url=subscription.get("short_url"))
+    return _seat_checkout_payload(
+        subscription["id"],
+        client,
+        extra_seats,
+        rate_bps=charge_tax_rate_bps(session),
+        short_url=subscription.get("short_url"),
+    )
+
+
+def charged_price_display(client: Client, base_minor: int, rate_bps: int, *, currency: str | None = None) -> str:
+    """How to quote a price on any surface that names what the customer pays.
+
+    Used by the add-on checkout sheets (one click from the Razorpay modal) and
+    by the dunning and pre-charge emails (which name an amount the customer will
+    compare against their bank statement). Prices are published exclusive of
+    GST, so quoting the base on any of those understates the charge by the tax:
+    the sheets disagreed with the amount Razorpay was about to show, and the
+    emails disagreed with the debit that had just failed.
+
+    Leads with the gross and names the split, so the figure is both correct and
+    reconcilable against the invoice. Exports carry no Indian GST, so they get
+    the bare price with no parenthetical.
+
+    ``currency`` overrides only the SYMBOL, never the tax treatment, and exists
+    because the two email call sites read the plan's INR columns for every
+    customer regardless of rail. Deriving the symbol from the buyer's country
+    there rendered a rupee amount as ``$1,799`` for a foreign customer: the
+    right number wearing the wrong currency, in the one email that must not look
+    like a phishing attempt. The supply kind still follows the country, so an
+    export is not taxed just because it is being quoted in rupees.
+    """
+    rail_currency = charge_currency(getattr(client, "billing_country", None))
+    kind: SupplyKind = "export" if rail_currency == "USD" else "intra"
+    currency = currency or rail_currency
+    gross_minor = gross_charge_minor(base_minor, rate_bps=rate_bps, kind=kind)
+    if gross_minor == base_minor:
+        return format_amount(base_minor, currency)
+    return f"{format_amount(gross_minor, currency)} ({format_amount(base_minor, currency)} + GST)"
 
 
 def _seat_checkout_payload(
-    subscription_id: str, client: Client, extra_seats: int, *, short_url: str | None = None
+    subscription_id: str, client: Client, extra_seats: int, *, rate_bps: int, short_url: str | None = None
 ) -> dict[str, Any]:
     """Checkout payload for a seat add-on subscription. Reused when re-opening an
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
@@ -1099,10 +1189,11 @@ def _seat_checkout_payload(
     path can email the customer a re-authorization link.
 
     The quoted per-seat price follows the client's rail, so the description can
-    never advertise rupees against a dollar charge."""
+    never advertise rupees against a dollar charge, and carries GST so it can
+    never advertise less than the mandate debits."""
     currency = charge_currency(getattr(client, "billing_country", None))
     seat_minor = EXTRA_SEAT_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_SEAT_PLAN_PRICE_CENTS
-    seat_display = format_amount(seat_minor, currency)
+    seat_display = charged_price_display(client, seat_minor, rate_bps)
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
@@ -1199,7 +1290,12 @@ def edit_seat_addon_quantity(
                 raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
         sub.seat_addon_pending_quantity = extra_seats
         session.flush()
-        return _seat_checkout_payload(sub.seat_addon_subscription_id, sub.client, extra_seats)
+        return _seat_checkout_payload(
+            sub.seat_addon_subscription_id,
+            sub.client,
+            extra_seats,
+            rate_bps=charge_tax_rate_bps(session),
+        )
 
     # Existing, already-authorized add-on → the mandate can be charged now, so
     # apply the new quantity immediately.
@@ -1321,25 +1417,34 @@ def create_branding_addon_subscription(session: Session, client: Client) -> dict
         raise RazorpayBillingError("Could not create the branding add-on subscription. Please try again.") from exc
 
     logger.info("Created Razorpay branding add-on subscription %s for client %s", subscription["id"], client.id)
-    return _branding_checkout_payload(subscription["id"], client, short_url=subscription.get("short_url"))
+    return _branding_checkout_payload(
+        subscription["id"],
+        client,
+        rate_bps=charge_tax_rate_bps(session),
+        short_url=subscription.get("short_url"),
+    )
 
 
-def _branding_checkout_payload(subscription_id: str, client: Client, *, short_url: str | None = None) -> dict[str, Any]:
+def _branding_checkout_payload(
+    subscription_id: str, client: Client, *, rate_bps: int, short_url: str | None = None
+) -> dict[str, Any]:
     """Checkout payload for the branding add-on, reused when re-opening an
     unauthorized pending purchase so rebuilding it needs no Razorpay round-trip.
 
     The quoted price follows the client's rail, so the description can never
-    advertise rupees against a dollar charge.
+    advertise rupees against a dollar charge, and carries GST so it can never
+    advertise less than the mandate debits.
     """
     currency = charge_currency(getattr(client, "billing_country", None))
     price_minor = BRANDING_ADDON_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_BRANDING_PLAN_PRICE_CENTS
+    price_display = charged_price_display(client, price_minor, rate_bps)
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats branding removal",
-        "description": f"Remove OyeChats branding - {format_amount(price_minor, currency)}/month",
+        "description": f"Remove OyeChats branding - {price_display}/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",
@@ -1371,7 +1476,11 @@ def purchase_branding_addon(session: Session, sub: Subscription) -> dict[str, An
     # the first sheet accumulates orphaned mandates that the reconciliation
     # sweep then has to cancel.
     if sub.branding_addon_subscription_id:
-        return _branding_checkout_payload(sub.branding_addon_subscription_id, sub.client)
+        return _branding_checkout_payload(
+            sub.branding_addon_subscription_id,
+            sub.client,
+            rate_bps=charge_tax_rate_bps(session),
+        )
 
     addon = create_branding_addon_subscription(session, sub.client)
     sub.branding_addon_subscription_id = addon["subscription_id"]
@@ -4383,14 +4492,30 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     # didn't pay for. ``CHECKOUT_TEST_CLIENT_IDS`` orders are deliberately
     # charged ₹1 (100 paise) while their notes carry the real pack price, so we
     # exempt exactly that documented override and nothing else.
+    #
+    # Prices are published exclusive of GST, so the captured amount is base +
+    # tax while ``amount_inr`` is the base. Compare against ``charge_paise``,
+    # the amount the order was actually created for. Falling back to
+    # ``amount_inr × 100`` would reject every domestic top-up: the customer is
+    # debited and the credits are never granted.
+    notes_charge_paise = notes.get("charge_paise")
     notes_amount_inr = notes.get("amount_inr")
-    if notes_amount_inr is not None:
+    expected_paise: int | None = None
+    if notes_charge_paise is not None:
+        expected_paise = int(notes_charge_paise)
+    elif notes_amount_inr is not None:
+        # Legacy order created before the exclusive-pricing switch stamped
+        # ``charge_paise``. Those were charged the base, so the base is the
+        # right expectation for them and only for them.
         expected_paise = int(notes_amount_inr) * 100
+
+    if expected_paise is not None:
         is_test_override = client_id in CHECKOUT_TEST_CLIENT_IDS and amount_paise == 100
         if not is_test_override and amount_paise != expected_paise:
             raise RazorpayBillingError(
                 f"Top-up amount mismatch for client {client_id}: captured {amount_paise} paise "
-                f"but order notes declare ₹{notes_amount_inr} ({expected_paise} paise); "
+                f"but order notes declare {expected_paise} paise "
+                f"(base {'₹' + str(notes_amount_inr) if notes_amount_inr is not None else 'unstated'}); "
                 f"refusing to grant {credits} credits (payment {rzp_payment_id})"
             )
 

@@ -332,11 +332,14 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 #   in production, so a plan id is never hardcoded in the repo. Empty/unset means
 #   the seat add-on is disabled until configured.
 #
-#   OPS INVARIANT: the Razorpay plan behind this id MUST charge exactly
-#   ``RAZORPAY_SEAT_PLAN_PRICE_CENTS`` (below). To change the seat price, mint a
-#   NEW Razorpay seat plan at the new amount and repoint BOTH this id and the
-#   price env together. Razorpay plans are immutable, so the price and the id
-#   always move as a pair.
+#   OPS INVARIANT: ``RAZORPAY_SEAT_PLAN_PRICE_CENTS`` (below) is the BASE price,
+#   exclusive of GST, and is what every surface displays. The Razorpay plan
+#   behind this id must therefore charge base + GST, i.e.
+#   ``tax.gross_charge_minor(RAZORPAY_SEAT_PLAN_PRICE_CENTS, rate_bps, "intra")``.
+#   The USD id below is an export and is minted at the base with no uplift.
+#   To change the seat price, or the GST rate, mint a NEW Razorpay seat plan at
+#   the new charge and repoint BOTH this id and the price env together.
+#   Razorpay plans are immutable, so the price and the id always move as a pair.
 RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 
 # RAZORPAY_SEAT_PLAN_ID_USD, the same add-on for the USD (international) rail.
@@ -368,10 +371,11 @@ EXTRA_SEAT_PRICE_USD_CENTS: int = int(os.getenv("EXTRA_SEAT_PRICE_USD_CENTS", "5
 #   plan's amount must never move. Unlike seats there is no quantity, the
 #   add-on is a boolean, one mandate per subscription.
 #
-#   Same OPS INVARIANT as the seat plan: the Razorpay plan behind each id MUST
-#   charge exactly the matching price constant below. Razorpay plans are
-#   immutable, so the id and its price are repointed together. Env-driven with
-#   no baked-in default; empty/unset disables the add-on on that rail.
+#   Same OPS INVARIANT as the seat plan: the price constants below are BASE
+#   prices, exclusive of GST, so the INR plan must be minted at base + GST and
+#   the USD plan (an export) at the base. Razorpay plans are immutable, so the
+#   id and its price are repointed together. Env-driven with no baked-in
+#   default; empty/unset disables the add-on on that rail.
 RAZORPAY_BRANDING_PLAN_ID: str | None = os.getenv("RAZORPAY_BRANDING_PLAN_ID") or None
 RAZORPAY_BRANDING_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_BRANDING_PLAN_ID_USD") or None
 
@@ -380,6 +384,20 @@ RAZORPAY_BRANDING_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_BRANDING_PLAN_ID
 #   INR: ₹499/month · International: $5/month
 RAZORPAY_BRANDING_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_BRANDING_PLAN_PRICE_CENTS", "49900"))
 BRANDING_ADDON_PRICE_USD_CENTS: int = int(os.getenv("BRANDING_ADDON_PRICE_USD_CENTS", "500"))
+
+# WHY every domestic Razorpay plan is minted at base + GST rather than at the
+# base with the tax delegated to the gateway:
+#
+# Razorpay Subscriptions debit ``plan.item.amount`` and nothing else. The plan
+# item DOES accept and store ``tax_inclusive`` and ``tax_rate``, which reads
+# like a tax layer, but they are metadata: two subscriptions on identical ₹1,199
+# bases, one with ``tax_rate: 1800`` and one without, quote the customer the
+# same ₹1,199 on the hosted checkout. Measured in test mode on 2026-08-26 by
+# ``scripts/razorpay_tax_probe.py``; re-run it before believing otherwise.
+#
+# The consequence to keep in mind: the GST rate is welded to the mandate. A rate
+# change means re-minting every plan and re-authorising every customer, so
+# ``tax_rate_bps`` on the seller profile is no longer a free super-admin toggle.
 
 # Default billing provider for all subscriptions and top-ups.
 BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()

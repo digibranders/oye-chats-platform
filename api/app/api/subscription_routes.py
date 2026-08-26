@@ -32,6 +32,7 @@ from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import annual_saving_percent, format_amount, resolve_billing_context, seat_price
 from app.core.rate_limit import money_route_limit
+from app.core.tax import gross_charge_minor
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -53,6 +54,7 @@ from app.services.plan_service import (
     has_used_trial,
     lock_client_for_billing,
 )
+from app.services.seller_profile_service import charge_tax_rate_bps
 
 logger = logging.getLogger(__name__)
 
@@ -1303,6 +1305,35 @@ def _amount_for_cycle(plan, billing_cycle: str) -> int:
     return int(plan.monthly_price_cents or 0)
 
 
+def _tax_block(amount_minor: int, *, currency: str, is_domestic: bool, rate_bps: int) -> dict:
+    """The tax half of a checkout quote, for one base amount.
+
+    Published prices are BASE prices, so ``amount_minor`` alone is not what the
+    mandate debits on the domestic rail. Every quote therefore has to carry
+    three numbers, not one: the taxable base, the tax, and the gross the
+    customer is actually charged. Returning only the base is what made this
+    endpoint's own "single source of truth for what the checkout button will
+    charge" docstring false by 18%.
+
+    Exports carry no Indian GST, so the gross equals the base and the tax is
+    zero. Same for a zero-price (free) plan, where there is nothing to tax.
+
+    Built once and spread into all five return shapes rather than written out
+    per branch, so a future branch cannot ship a quote with the tax missing.
+    """
+    gross_minor = gross_charge_minor(
+        max(int(amount_minor), 0),
+        rate_bps=rate_bps,
+        kind="intra" if is_domestic else "export",
+    )
+    return {
+        "tax_minor": gross_minor - int(amount_minor),
+        "tax_rate_bps": rate_bps if is_domestic else 0,
+        "gross_minor": gross_minor,
+        "gross_display": format_amount(gross_minor, currency),
+    }
+
+
 @router.get("/checkout/quote")
 def checkout_quote(
     request: Request,
@@ -1322,14 +1353,23 @@ def checkout_quote(
     ``{
         "country": "IN" | "US" | null,
         "currency": "INR" | "USD",
-        "amount_minor": 149900,
+        "amount_minor": 149900,                # BASE, exclusive of GST
         "amount_display": "₹1,499",
+        "tax_minor": 26982,                    # 0 on the USD rail (export)
+        "tax_rate_bps": 1800,                  # 0 on the USD rail
+        "gross_minor": 176882,                 # what the mandate ACTUALLY debits
+        "gross_display": "₹1,768.82",
         "billing_cycle": "monthly",
         "provider": "razorpay",
         "methods": ["card", "upi"],
         "checkout_supported": true,            # false → render Contact Sales
         "contact_sales": null | "developer@oyechats.com",
     }``
+
+    ``amount_minor`` is the advertised base and ``gross_minor`` is the charge.
+    A UI that shows a customer one number before the Razorpay sheet opens
+    should show ``gross_display``; anything quoting ``amount_display`` as the
+    amount payable is understating it by the tax.
 
     A ``checkout_supported: false`` response carries ``contact_sales`` so
     the UI can surface a CTA instead of an empty button.
@@ -1373,6 +1413,12 @@ def checkout_quote(
             usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
+        tax = _tax_block(
+            amount_minor,
+            currency=currency,
+            is_domestic=is_domestic,
+            rate_bps=charge_tax_rate_bps(session),
+        )
 
         # Free plan (any zero-price plan): render a quote but mark checkout as
         # unsupported.
@@ -1382,6 +1428,7 @@ def checkout_quote(
                 "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
+                **tax,
                 "billing_cycle": billing_cycle,
                 "provider": None,
                 "methods": [],
@@ -1409,6 +1456,7 @@ def checkout_quote(
                 "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
+                **tax,
                 "billing_cycle": billing_cycle,
                 "provider": "razorpay",
                 # Cards only. UPI is a domestic rail and cannot settle a USD charge.
@@ -1427,6 +1475,7 @@ def checkout_quote(
                 "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
+                **tax,
                 "billing_cycle": billing_cycle,
                 "provider": None,
                 "methods": [],
@@ -1454,6 +1503,7 @@ def checkout_quote(
                 "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
+                **tax,
                 "billing_cycle": billing_cycle,
                 "provider": None,
                 "methods": [],
@@ -1468,6 +1518,7 @@ def checkout_quote(
             "currency": currency,
             "amount_minor": amount_minor,
             "amount_display": amount_display,
+            **tax,
             "billing_cycle": billing_cycle,
             "provider": "razorpay",
             "methods": list(_RAZORPAY_METHODS_INR),
@@ -1496,18 +1547,28 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     rzp = _get_razorpay()
     out = []
     with get_session() as session:
+        rate_bps = charge_tax_rate_bps(session)
         for plan in get_active_plans(session):
             row = {"plan_id": plan.id, "slug": plan.slug}
             # Both rails (P1-2/F2): USD drift is just as displayed-vs-charged
             # as INR drift, and was previously invisible to this diagnostic.
-            for cycle, local_minor, rzp_id in (
-                ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly),
-                ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual),
-                ("monthly_usd", plan.monthly_price_usd_cents, plan.razorpay_plan_id_monthly_usd),
-                ("annual_usd", plan.annual_price_usd_cents, plan.razorpay_plan_id_annual_usd),
+            for cycle, local_minor, rzp_id, is_export in (
+                ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly, False),
+                ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual, False),
+                ("monthly_usd", plan.monthly_price_usd_cents, plan.razorpay_plan_id_monthly_usd, True),
+                ("annual_usd", plan.annual_price_usd_cents, plan.razorpay_plan_id_annual_usd, True),
             ):
+                # Prices are published EXCLUSIVE of GST, so the live Razorpay
+                # plan must be minted at base + tax on the domestic rail. The
+                # comparison is against that expected charge, not against the
+                # base: checking the base here would report every correctly
+                # minted INR plan as drifted, and pass a plan still billing the
+                # old GST-inclusive amount.
+                base = int(local_minor or 0)
+                expected = gross_charge_minor(base, rate_bps=rate_bps, kind="export" if is_export else "intra")
                 entry = {
-                    "local_minor": int(local_minor or 0),
+                    "local_minor": base,
+                    "expected_charge_minor": expected,
                     "razorpay_minor": None,
                     "in_sync": None,
                     "error": None,
@@ -1516,12 +1577,12 @@ def plan_price_check(client: Client = Depends(get_current_client)):
                     try:
                         item = (rzp.plan.fetch(rzp_id) or {}).get("item", {})
                         entry["razorpay_minor"] = int(item.get("amount") or 0)
-                        entry["in_sync"] = entry["razorpay_minor"] == entry["local_minor"]
+                        entry["in_sync"] = entry["razorpay_minor"] == expected
                     except Exception as exc:  # diagnostic must not 500
                         entry["error"] = str(exc)
                 row[cycle] = entry
             out.append(row)
-    return {"plans": out}
+    return {"plans": out, "tax_rate_bps": rate_bps}
 
 
 def _geo_mismatch_detail(confirmed_country: str, detected_country: str | None) -> str | None:

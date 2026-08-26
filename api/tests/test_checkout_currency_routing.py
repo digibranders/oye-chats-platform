@@ -378,3 +378,109 @@ def test_domestic_quote_is_cycle_specific_about_the_missing_plan_id(db, monkeypa
     assert body["checkout_supported"] is True
     assert body["provider"] == "razorpay"
     assert body["methods"] == ["card", "upi"]
+
+
+# ── Quote tax disclosure (GST-exclusive pricing) ────────────────────────────
+#
+# ``amount_minor`` is the advertised BASE. On the domestic rail the mandate
+# debits base + GST, so a quote that carries only the base understates what the
+# customer is about to be charged by the whole tax. These pin the three extra
+# numbers every branch of the quote must carry.
+
+
+def test_domestic_quote_carries_the_gross_it_will_actually_debit(db, monkeypatch):
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-tax-in@e.com")
+    plan = _make_plan(db, slug="starter-tax-in", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    # A GST rate only applies once the seller is REGISTERED: ``charge_tax_rate_bps``
+    # returns 0 without a GSTIN, and this test database has no seller profile.
+    # Pin the live 18% so this asserts the uplift rather than a no-op.
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "charge_tax_rate_bps", return_value=1800),
+    ):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["amount_minor"] == 179900  # base, unchanged
+    assert body["tax_minor"] == 32382  # 18% of the base
+    assert body["tax_rate_bps"] == 1800
+    assert body["gross_minor"] == 212282  # what Razorpay debits
+    assert body["gross_display"] == "₹2,122.82"
+    # The invariant a reader of this payload relies on.
+    assert body["amount_minor"] + body["tax_minor"] == body["gross_minor"]
+
+
+def test_export_quote_adds_no_indian_gst(db, monkeypatch):
+    """A USD buyer is an export. Quoting them GST would simply be wrong."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-tax-us@e.com")
+    plan = _make_plan(db, slug="starter-tax-us", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "USD"
+    assert body["tax_minor"] == 0
+    assert body["tax_rate_bps"] == 0
+    assert body["gross_minor"] == body["amount_minor"]
+
+
+def test_free_plan_quote_still_carries_the_tax_fields(db, monkeypatch):
+    """Every branch answers the same shape, including the ones that sell nothing.
+
+    A UI reading ``gross_minor`` must not have to special-case a branch that
+    omits it.
+    """
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-tax-free@e.com")
+    plan = _make_plan(db, slug="free-tax", monthly_price_cents=0)
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["checkout_supported"] is False
+    assert body["reason"] == "free_plan"
+    assert body["tax_minor"] == 0
+    assert body["gross_minor"] == 0
+
+
+def test_contact_sales_quote_still_carries_the_tax_fields(db, monkeypatch):
+    """The unwired-INR-plan branch answers the same shape too."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-tax-cs@e.com")
+    plan = _make_plan(db, slug="cs-tax", monthly_price_cents=179900)
+    plan.razorpay_plan_id_monthly = None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "charge_tax_rate_bps", return_value=1800),
+    ):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["reason"] == "inr_plan_unconfigured"
+    assert body["gross_minor"] == 212282

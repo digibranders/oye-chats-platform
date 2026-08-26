@@ -156,3 +156,33 @@ def compute_tax(
         rate_bps=rate_bps,
         zero_rated_export=False,
     )
+
+
+def gross_charge_minor(base_minor: int, *, rate_bps: int, kind: SupplyKind) -> int:
+    """The amount to actually DEBIT for an advertised base price.
+
+    Every price OyeChats publishes is a base price, exclusive of GST, so the
+    gateway must be told to collect base + tax. This is the single place that
+    uplift is computed; a second implementation is a second rounding rule, and
+    two rounding rules on money eventually disagree by a paisa on somebody's
+    invoice.
+
+    Domestic supplies are uplifted by the full rate. Exports are NOT: billing
+    Indian GST to a foreign customer is not a thing, and the Terms already put
+    any local tax in the buyer's own jurisdiction on the buyer. Whether an
+    export carries IGST that OyeChats absorbs (no LUT filed, Rule 96A) is a
+    remittance question, not a "what do we charge" one, so it deliberately does
+    not move the price.
+
+    The result round-trips exactly: carving tax back out of it with
+    ``compute_tax(gross, rate, inclusive=True)`` returns ``base_minor`` and the
+    tax that was added. That property is what lets invoicing stay untouched by
+    the switch to exclusive pricing. The invoice still carves out of what was
+    charged, and the carve-out now yields the advertised base by construction.
+    Pinned for every live price by ``test_gross_charge_round_trip``.
+    """
+    if base_minor < 0:
+        raise ValueError("base_minor must be non-negative")
+    if kind == "export":
+        return base_minor
+    return compute_tax(base_minor, rate_bps, inclusive=False, kind=kind).total_minor
