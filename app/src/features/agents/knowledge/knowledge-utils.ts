@@ -33,6 +33,33 @@ export function crawlFinishedLabel(pages: number): string {
     `Finished - your AI learned ${label}.`;
 }
 
+/** "1 document" / "3 documents", same plural rule as pageCountLabel. */
+export function documentCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.documentOne' : 'agents.documentMany', { count }) ||
+    `${count} document${n === 1 ? '' : 's'}`
+  );
+}
+
+/** "1 file" / "12 files", same plural rule as pageCountLabel. */
+export function fileCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.fileOne' : 'agents.fileMany', { count }) ||
+    `${count} file${n === 1 ? '' : 's'}`
+  );
+}
+
+/** "1 word" / "1,204 words", same plural rule as pageCountLabel. */
+export function wordCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.wordOne' : 'agents.wordMany', { count }) ||
+    `${count} word${n === 1 ? '' : 's'}`
+  );
+}
+
 /** "1 credit" / "250 credits", same plural rule as pageCountLabel. */
 export function creditCountLabel(total: number): string {
   const count = formatNumber(total);

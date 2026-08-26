@@ -467,7 +467,7 @@ export function KnowledgePage(): ReactElement {
           confirmingDelete === row.name ? (
             <div
               role="group"
-              aria-label={`Confirm removing ${row.name}`}
+              aria-label={translateNow('agents.confirmRemoving', { name: row.name }) || `Confirm removing ${row.name}`}
               className="flex items-center justify-end gap-2"
             >
               <Button
@@ -558,7 +558,7 @@ export function KnowledgePage(): ReactElement {
         <EmptyState
           icon={BookOpen}
           title={t('agents.chatbotNotFound') || 'Chatbot not found'}
-          description="We couldn't find this chatbot. Pick a chatbot from the list and try again."
+          description={t('agents.weCouldntFindThisChatbot') || 'We couldn\'t find this chatbot. Pick a chatbot from the list and try again.'}
         />
       ) : (
         <div className="space-y-6">
@@ -578,9 +578,8 @@ export function KnowledgePage(): ReactElement {
                   {t('agents.yourKnowledgeIsPausedOn') || 'Your knowledge is paused on Free'}
                 </p>
                 <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-                  Your assistant kept its data but stopped answering from it when your plan moved to
-                  Free. Re-crawl your website or upload documents below to reactivate it on Free.
-                  Upgrade to restore all of your previous knowledge instantly.
+                  {t('agents.knowledgePausedExplanation') ||
+                    'Your assistant kept its data but stopped answering from it when your plan moved to Free. Re-crawl your website or upload documents below to reactivate it on Free. Upgrade to restore all of your previous knowledge instantly.'}
                 </p>
               </div>
             </div>
@@ -591,7 +590,7 @@ export function KnowledgePage(): ReactElement {
               title={
                 <span id="knowledge-quotas-heading">{t('agents.planLimits') || 'Plan limits'}</span>
               }
-              description="How much of your plan's knowledge capacity is in use."
+              description={t('agents.howMuchOfYourPlans') || 'How much of your plan\'s knowledge capacity is in use.'}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
@@ -623,20 +622,20 @@ export function KnowledgePage(): ReactElement {
               title={
                 <span id="knowledge-sources-heading">{t('agents.sources') || 'Sources'}</span>
               }
-              description="Websites and documents your AI has learned from."
+              description={t('agents.websitesAndDocumentsYourAi') || 'Websites and documents your AI has learned from.'}
             />
             {stats.total === 0 ? (
               <EmptyState
                 icon={BookOpen}
                 title={t('agents.yourAiHasntLearnedAnything') || 'Your AI hasn\'t learned anything yet'}
-                description="Add your first website or document below. As soon as it's processed, your AI can answer questions about it."
+                description={t('agents.addYourFirstWebsiteOr') || 'Add your first website or document below. As soon as it\'s processed, your AI can answer questions about it.'}
               />
             ) : (
               <DataTable
                 columns={columns}
                 rows={sources ?? []}
                 rowKey={(row) => row.name}
-                caption="Your AI's knowledge sources"
+                caption={t('agents.yourAisKnowledgeSources') || 'Your AI\'s knowledge sources'}
               />
             )}
           </section>

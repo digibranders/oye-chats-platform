@@ -12,6 +12,7 @@ import { Button, Card, IconTile, Skeleton, cn } from '../../../design-system';
 import { fetchRecrawlStatus, setAutoRecrawl, type RecrawlStatus } from './recrawl-api';
 import { useTranslation } from '../../../i18n/useTranslation';
 import { t as translateNow } from '../../../i18n/i18n';
+import { formatNumber } from '../../../i18n/formatters';
 
 export interface AutoRecrawlCardProps {
   /** The agent whose weekly auto-recrawl is configured. */
@@ -140,7 +141,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
           <div className="flex items-start gap-3">
             <IconTile icon={RefreshCw} tone="accent" size="md" />
             <div>
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Auto-retrain</h3>
+              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">{t('agents.autoRetrain') || 'Auto-retrain'}</h3>
               <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
                 {t('agents.weeklyRefreshHint') ||
                   'Refresh every trained website once a week. We only re-learn pages whose content actually changed.'}
@@ -171,7 +172,12 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
           <StatusTile
             icon={<CalendarClock size={14} aria-hidden="true" />}
             label={t('agents.cadence') || 'Cadence'}
-            value={toggleOn ? `Every ${data.cadenceDays} days` : 'Off'}
+            value={
+              toggleOn
+                ? translateNow('agents.everyNDays', { count: formatNumber(data.cadenceDays) }) ||
+                  `Every ${formatNumber(data.cadenceDays)} days`
+                : translateNow('agents.off') || 'Off'
+            }
           />
           <StatusTile
             icon={<Clock size={14} aria-hidden="true" />}
@@ -202,8 +208,8 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             <div className="text-[13px] text-[var(--ds-text)]">
               <p className="font-medium">{t('agents.turnOffAutoRetrain') || 'Turn off auto-retrain?'}</p>
               <p className="mt-0.5 text-[var(--ds-text-muted)]">
-                Your chatbot stops refreshing crawled pages automatically. Turning it back on later
-                starts a fresh 7-day countdown.
+                {t('agents.turnOffAutoRetrainConsequence') ||
+                  'Your chatbot stops refreshing crawled pages automatically. Turning it back on later starts a fresh 7-day countdown.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -253,15 +259,15 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
                     {entry.ranAt ? formatDate(entry.ranAt) : '-'}
                   </span>
                   <span>
-                    <span className="text-[var(--ds-text-subtle)]">unchanged</span>{' '}
+                    <span className="text-[var(--ds-text-subtle)]">{t('agents.unchanged') || 'unchanged'}</span>{' '}
                     <span className="font-medium text-[var(--ds-text)]">{entry.unchanged}</span>
                   </span>
                   <span>
-                    <span className="text-[var(--ds-text-subtle)]">updated</span>{' '}
+                    <span className="text-[var(--ds-text-subtle)]">{t('agents.updated') || 'updated'}</span>{' '}
                     <span className="font-medium text-[var(--ds-accent)]">{entry.changed}</span>
                   </span>
                   <span>
-                    <span className="text-[var(--ds-text-subtle)]">failed</span>{' '}
+                    <span className="text-[var(--ds-text-subtle)]">{t('agents.failed') || 'failed'}</span>{' '}
                     <span
                       className={cn(
                         'font-medium',

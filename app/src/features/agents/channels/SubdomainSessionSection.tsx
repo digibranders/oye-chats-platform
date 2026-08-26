@@ -99,8 +99,12 @@ export function SubdomainSessionSection({
       return {
         tone: 'success' as const,
         icon: ShieldCheck,
-        title: `Scoped to *.${normalizedDomain}`,
-        body: `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
+        title:
+          translateNow('agents.scopedTo', { domain: normalizedDomain }) ||
+          `Scoped to *.${normalizedDomain}`,
+        body:
+          translateNow('agents.scopedToBody', { domain: normalizedDomain }) ||
+          `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
       };
     }
     return {
@@ -108,7 +112,8 @@ export function SubdomainSessionSection({
       icon: ShieldCheck,
       title: translateNow('agents.onAutomatically') || 'On automatically',
       body: websiteDomain
-        ? `Conversations follow visitors across all your subdomains. We detect ${websiteDomain} automatically, so there is nothing to set up.`
+        ? translateNow('agents.autoDetectedDomainBody', { domain: websiteDomain }) ||
+          `Conversations follow visitors across all your subdomains. We detect ${websiteDomain} automatically, so there is nothing to set up.`
         : translateNow('agents.conversationsFollowVisitorsAcrossAll') || 'Conversations follow visitors across all your subdomains automatically. There is nothing to set up.',
     };
   }, [hasOverride, normalizedDomain, websiteDomain]);
@@ -267,7 +272,7 @@ export function SubdomainSessionSection({
               ),
               example: (
                 <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
-                  academy.{normalizedDomain || websiteDomain || 'example.com'}
+                  {`academy.${normalizedDomain || websiteDomain || 'example.com'}`}
                 </code>
               ),
             }}

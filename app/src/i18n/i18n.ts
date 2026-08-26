@@ -202,16 +202,6 @@ function resolveKey(dict: Dictionary, keyPath: string): string | null {
 const PLACEHOLDER = /\{(\w+)\}/g;
 
 /**
- * Translate a dotted key, with `{name}` interpolation.
- *
- * Returns **null** on a miss, never the key path. That is what makes the
- * `t('a.b') || 'English'` idiom work: a missing key falls through to the
- * caller's inline English. Returning the key instead would put raw strings
- * like "nav.home" in front of users AND make every `|| 'English'` in the
- * codebase unreachable dead code. The widget shipped the key-returning
- * variant first and had exactly that bug.
- */
-/**
  * The dictionary entry for `key`, placeholders left intact, or null on a miss.
  *
  * `t()` is the right call for everything that renders as a plain string. This
@@ -226,25 +216,35 @@ export function template(key: string): string | null {
   return dict ? resolveKey(dict, key) : null;
 }
 
+/**
+ * Translate a dotted key, with `{name}` interpolation.
+ *
+ * Returns **null** on a miss, never the key path. That is what makes the
+ * `t('a.b') || 'English'` idiom work: a missing key falls through to the
+ * caller's inline English. Returning the key instead would put raw strings
+ * like "nav.home" in front of users AND make every `|| 'English'` in the
+ * codebase unreachable dead code. The widget shipped the key-returning
+ * variant first and had exactly that bug.
+ */
 export function t(key: string, params?: Record<string, unknown>): string | null {
   if (!key || typeof key !== 'string') return null;
 
   const dict = dictionaryFor(currentLocale);
-  const template = dict ? resolveKey(dict, key) : null;
-  if (template === null) return null;
+  const raw = dict ? resolveKey(dict, key) : null;
+  if (raw === null) return null;
 
   if (!params) {
     // An un-parameterised call against a parameterised string would render
     // "{count}" to the user. Surface it in development instead of shipping it.
-    if (import.meta.env?.DEV && PLACEHOLDER.test(template)) {
+    if (import.meta.env?.DEV && PLACEHOLDER.test(raw)) {
       PLACEHOLDER.lastIndex = 0;
       console.warn(`[OyeChats] i18n: "${key}" expects parameters but received none`);
     }
     PLACEHOLDER.lastIndex = 0;
-    return template;
+    return raw;
   }
 
-  return template.replace(PLACEHOLDER, (match, name: string) => {
+  return raw.replace(PLACEHOLDER, (match, name: string) => {
     if (!(name in params)) {
       // Never silently swallow: an unresolved placeholder is a dictionary bug,
       // and the parity guard exists to catch it before it ships.

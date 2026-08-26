@@ -5,6 +5,7 @@ import { Card, EmptyState, SectionHeader, Skeleton } from '../../../design-syste
 import { CHART } from './chartTheme';
 import { type RatingStar, type RatingsSummary, type ResolutionSummary } from './analytics.types';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { formatNumber } from '../../../i18n/formatters';
 
 interface SatisfactionBreakdownProps {
   ratings: RatingsSummary;
@@ -36,7 +37,7 @@ export function SatisfactionBreakdown({
       <Card className="p-5">
         <SectionHeader
           title={t('agents.ratingDistribution') || 'Rating distribution'}
-          description="How visitors rated their chats."
+          description={t('agents.howVisitorsRatedTheirChats') || 'How visitors rated their chats.'}
           actions={
             !loading && ratings.avg !== null ? (
               <span className="flex items-baseline gap-1">
@@ -59,7 +60,7 @@ export function SatisfactionBreakdown({
             <EmptyState
               icon={Star}
               title={t('agents.noRatingsYet') || 'No ratings yet'}
-              description="Ratings appear once visitors leave feedback at the end of a chat."
+              description={t('agents.ratingsAppearOnceVisitorsLeave') || 'Ratings appear once visitors leave feedback at the end of a chat.'}
             />
           ) : (
             <ul className="space-y-2.5">
@@ -94,7 +95,8 @@ export function SatisfactionBreakdown({
                 );
               })}
               <li className="border-t border-[var(--ds-border)] pt-2.5 text-[12px] text-[var(--ds-text-subtle)]">
-                {ratings.total.toLocaleString()} rating{ratings.total === 1 ? '' : 's'} total
+                {t('agents.ratingsTotal', { count: formatNumber(ratings.total) }) ||
+                  `${formatNumber(ratings.total)} ratings total`}
               </li>
             </ul>
           )}
@@ -104,7 +106,7 @@ export function SatisfactionBreakdown({
       <Card className="p-5">
         <SectionHeader
           title={t('agents.resolutionRate') || 'Resolution rate'}
-          description="Were visitor issues resolved?"
+          description={t('agents.wereVisitorIssuesResolved') || 'Were visitor issues resolved?'}
           actions={
             !loading && resolution.rate !== null ? (
               <span className="text-xl font-bold tabular-nums text-[var(--ds-text)]">
@@ -120,7 +122,7 @@ export function SatisfactionBreakdown({
             <EmptyState
               icon={CheckCircle2}
               title={t('agents.noResolutionDataYet') || 'No resolution data yet'}
-              description="This fills in when visitors confirm whether their question was answered."
+              description={t('agents.thisFillsInWhenVisitors') || 'This fills in when visitors confirm whether their question was answered.'}
             />
           ) : (
             <div className="flex flex-col items-center gap-4">

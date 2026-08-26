@@ -96,7 +96,7 @@ export function ChannelsPage(): ReactElement {
         <EmptyState
           icon={PlugZap}
           title={t('agents.noChatbotSelected') || 'No chatbot selected'}
-          description="Open a chatbot to see where it's connected."
+          description={t('agents.openAChatbotToSee') || 'Open a chatbot to see where it\'s connected.'}
         />
       );
     }
@@ -130,7 +130,7 @@ export function ChannelsPage(): ReactElement {
             tone="warning"
             icon={PlugZap}
             title={t('agents.yourChatbotIsntLiveYet') || 'Your chatbot isn’t live yet'}
-            body="Add the snippet below to your website so visitors can start chatting. It takes about a minute."
+            body={t('agents.addTheSnippetBelowTo') || 'Add the snippet below to your website so visitors can start chatting. It takes about a minute.'}
           />
         )}
 
@@ -138,7 +138,7 @@ export function ChannelsPage(): ReactElement {
         <section aria-label={t('agents.liveChannels') || 'Live channels'} className="space-y-4">
           <SectionHeader
             title={t('agents.liveChannels') || 'Live channels'}
-            description="Places your chatbot can answer people today."
+            description={t('agents.placesYourChatbotCanAnswer') || 'Places your chatbot can answer people today.'}
           />
 
           {/* Website - the primary channel, with the full install flow */}
@@ -149,7 +149,7 @@ export function ChannelsPage(): ReactElement {
             description={
               installed
                 ? website
-                  ? `Embedded on ${website}.`
+                  ? t('agents.embeddedOn', { site: website }) || `Embedded on ${website}.`
                   : t('agents.widgetInstalledOnSite') || 'The chat widget is installed on your site.'
                 : t('agents.embedTheChatWidgetTo') || 'Embed the chat widget to go live on your site.'
             }

@@ -102,7 +102,7 @@ export function KnowledgeGapsPanel({
         title={
           <span id="knowledge-gaps-heading">{t('agents.knowledgeGaps') || 'Knowledge gaps'}</span>
         }
-        description="Questions visitors asked that your AI couldn't answer. Add a matching website or document below to close them."
+        description={t('agents.questionsVisitorsAskedThatYour') || 'Questions visitors asked that your AI couldn\'t answer. Add a matching website or document below to close them.'}
       />
       {error !== null ? (
         <div
@@ -117,14 +117,14 @@ export function KnowledgeGapsPanel({
         <EmptyState
           icon={CheckCircle2}
           title={t('agents.noGapsRecordedYet') || 'No gaps recorded yet'}
-          description="Questions your AI can't answer from its knowledge will show up here as visitors ask them - so you always know what to add next."
+          description={t('agents.questionsYourAiCantAnswer') || 'Questions your AI can\'t answer from its knowledge will show up here as visitors ask them - so you always know what to add next.'}
         />
       ) : (
         <DataTable
           columns={columns}
           rows={gaps}
           rowKey={(row) => row.question}
-          caption="Questions your AI couldn't answer from its knowledge"
+          caption={t('agents.questionsYourAiCouldntAnswer') || 'Questions your AI couldn\'t answer from its knowledge'}
         />
       )}
     </section>

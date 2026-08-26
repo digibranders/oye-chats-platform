@@ -3,6 +3,7 @@ import { Activity } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type ActivityPoint } from '../../../types/domain';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { formatNumber } from '../../../i18n/formatters';
 
 /**
  * Formats a backend day string as a short "Mon 5" label; falls back to raw.
@@ -51,18 +52,27 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
         <EmptyState
           icon={Activity}
           title={t('agents.noActivityYet') || 'No activity yet'}
-          description="Once visitors start chatting with your AI, daily message volume will appear here."
+          description={t('agents.onceVisitorsStartChattingWith') || 'Once visitors start chatting with your AI, daily message volume will appear here.'}
         />
       </Card>
     );
   }
 
+  const messageLabel =
+    t(total === 1 ? 'agents.messageOne' : 'agents.messageMany', { count: formatNumber(total) }) ||
+    `${formatNumber(total)} message${total === 1 ? '' : 's'}`;
+  const dayLabel =
+    t(points.length === 1 ? 'agents.dayOne' : 'agents.dayMany', {
+      count: formatNumber(points.length),
+    }) || `${formatNumber(points.length)} day${points.length === 1 ? '' : 's'}`;
+
   return (
     <Card className={cn('p-6', className)}>
       <figure
-        aria-label={`Message activity: ${total.toLocaleString()} ${
-          total === 1 ? 'message' : 'messages'
-        } over the last ${points.length} ${points.length === 1 ? 'day' : 'days'}.`}
+        aria-label={
+          t('agents.activityChartSummary', { messages: messageLabel, days: dayLabel }) ||
+          `Message activity: ${messageLabel} over the last ${dayLabel}.`
+        }
       >
         <div className="flex h-40 items-end gap-1.5" role="presentation">
           {points.map((point) => {

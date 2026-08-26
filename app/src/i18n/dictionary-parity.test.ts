@@ -64,6 +64,18 @@ describe('dictionary parity', () => {
     expect(offenders).toEqual([]);
   });
 
+  // A value with no Devanagari at all is almost always an untranslated
+  // placeholder that slipped through - `inbox.greeting` shipped as the literal
+  // English word "greeting". Product names, plan tiers and code samples are
+  // legitimately Latin, so only values with LETTERS and no Devanagari and no
+  // uppercase (a proper noun) are flagged.
+  it('hi has no value left in lowercase Latin prose', () => {
+    const offenders = Object.entries(flatHi)
+      .filter(([, v]) => /[a-z]{3}/.test(v) && !/[\u0900-\u097F]/.test(v) && !/[A-Z0-9@.:/{]/.test(v))
+      .map(([k, v]) => `${k}: ${v}`);
+    expect(offenders).toEqual([]);
+  });
+
   it.each(DICTIONARIES)('%s has no keys missing against English', (_name, dict) => {
     const missing = Object.keys(flatEn).filter((k) => !(k in dict));
     expect(missing).toEqual([]);

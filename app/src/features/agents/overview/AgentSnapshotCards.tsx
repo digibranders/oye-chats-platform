@@ -31,6 +31,7 @@ export function AgentSnapshotCards({
   const { t } = useTranslation();
   const chunkCount = agent.indexed_chunk_count ?? 0;
   const isInstalled = Boolean(agent.widget_installed_at);
+  const siteHost = (agent.website ?? '').replace(/^https?:\/\//, '');
   const crawlStatus = agent.last_crawl_status;
 
   let knowledgeStatusText = t('agents.notTrained') || 'Not trained';
@@ -66,7 +67,7 @@ export function AgentSnapshotCards({
                   {t('agents.knowledgeBase') || 'Knowledge base'}
                 </span>
               }
-              description="Trained sources and passages."
+              description={t('agents.trainedSourcesAndPassages') || 'Trained sources and passages.'}
             />
             <StatusBadge tone={knowledgeTone} dot>
               {knowledgeStatusText}
@@ -107,7 +108,7 @@ export function AgentSnapshotCards({
                   {t('agents.deploymentChannels') || 'Deployment channels'}
                 </span>
               }
-              description="Active channels and website widget."
+              description={t('agents.activeChannelsAndWebsiteWidget') || 'Active channels and website widget.'}
             />
             <StatusBadge tone={isInstalled ? 'success' : 'neutral'} dot>
               {isInstalled ? 'Live' : t('agents.notInstalled') || 'Not installed'}
@@ -119,7 +120,7 @@ export function AgentSnapshotCards({
             <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
               {isInstalled
                 ? agent.website
-                  ? `Active on ${agent.website.replace(/^https?:\/\//, '')}`
+                  ? t('agents.activeOn', { site: siteHost }) || `Active on ${siteHost}`
                   : t('agents.installedAndAnsweringLiveVisitors') || 'Installed and answering live visitors.'
                 : t('agents.embedCodeReadyToCopy') || 'Embed code ready to copy into your site.'}
             </p>
@@ -147,7 +148,7 @@ export function AgentSnapshotCards({
                 {t('agents.aiPersonalityExperience') || 'AI personality & experience'}
               </span>
             }
-            description="Brand tone, styling, and behavior."
+            description={t('agents.brandToneStylingAndBehavior') || 'Brand tone, styling, and behavior.'}
           />
 
           <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
@@ -181,10 +182,10 @@ export function AgentSnapshotCards({
             title={
               <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]">
                 <TrendingUp size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
-                7-day performance
+                {t('agents.7DayPerformance') || '7-day performance'}
               </span>
             }
-            description="Resolution rate and satisfaction ratings."
+            description={t('agents.resolutionRateAndSatisfactionRatings') || 'Resolution rate and satisfaction ratings.'}
           />
 
           <div className="grid grid-cols-2 gap-3">

@@ -30,6 +30,8 @@ type SectionKey = 'branding' | 'messages' | 'personality' | 'language' | 'liveCh
 
 // Built at import, before a locale exists. The labels here are the fallback;
 // the render site resolves each from its key.
+// @i18n-exempt: resolved in `sectionTabs` below from the tab key
+// (`agents.tab.<key>`); the labels here are that lookup's English fallback.
 const SECTION_TABS: TabItem[] = [
   { key: 'branding', label: 'Branding' },
   { key: 'messages', label: 'Messages' },
@@ -283,7 +285,7 @@ export function ExperiencePage(): ReactElement {
               onChange={(key) => {
                 if (isSectionKey(key)) setActiveSection(key);
               }}
-              ariaLabel="Experience sections"
+              ariaLabel={t('agents.experienceSections') || 'Experience sections'}
             />
 
             <div

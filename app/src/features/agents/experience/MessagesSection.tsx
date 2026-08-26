@@ -89,11 +89,11 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
       <section className="space-y-5">
         <SectionHeader
           title={t('agents.widgetIdentity') || 'Widget identity'}
-          description="The name shown in the widget header and the tooltip beside the launcher button."
+          description={t('agents.theNameShownInThe') || 'The name shown in the widget header and the tooltip beside the launcher button.'}
         />
         <Field
           label={t('agents.displayName') || 'Display name'}
-          hint="Shown in the widget header - also your chatbot's name across the dashboard."
+          hint={t('agents.shownInTheWidgetHeader') || 'Shown in the widget header - also your chatbot\'s name across the dashboard.'}
           value={draft.displayName}
           maxLength={FIELD_LIMITS.displayName}
           placeholder={t('agents.eGAcmeAssistant') || 'e.g. Acme Assistant'}
@@ -101,10 +101,10 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
         />
         <Field
           label={t('agents.launcherText') || 'Launcher text'}
-          hint="The tooltip shown next to the launcher button before the chat opens."
+          hint={t('agents.theTooltipShownNextTo') || 'The tooltip shown next to the launcher button before the chat opens.'}
           value={draft.launcherName}
           maxLength={FIELD_LIMITS.launcherName}
-          // i18n-exempt: the WIDGET's default, shown so the operator knows what
+          // @i18n-exempt: the WIDGET's default, shown so the operator knows what
           // their visitors get if this is left blank. Translating it would promise
           // one sentence and render another.
           placeholder="Have Questions?"
@@ -115,21 +115,21 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
       <section className="space-y-5 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title={t('agents.welcomeScreen') || 'Welcome screen'}
-          description="The greeting visitors see the moment the chat opens."
+          description={t('agents.theGreetingVisitorsSeeThe') || 'The greeting visitors see the moment the chat opens.'}
         />
         <Field
           label={t('agents.greeting') || 'Greeting'}
-          hint="The headline that welcomes visitors."
+          hint={t('agents.theHeadlineThatWelcomesVisitors') || 'The headline that welcomes visitors.'}
           value={draft.welcomeGreeting}
-          // i18n-exempt: the widget's own default. See launcher text above.
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Hi there, how can I help you today?"
           onChange={(v) => onChange({ welcomeGreeting: v })}
         />
         <Field
           label={t('agents.subtitle') || 'Subtitle'}
-          hint="A short line of context under the greeting."
+          hint={t('agents.aShortLineOfContext') || 'A short line of context under the greeting.'}
           value={draft.welcomeSubtitle}
-          // i18n-exempt: the widget's own default. See launcher text above.
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Ask me anything - I answer from your knowledge base."
           onChange={(v) => onChange({ welcomeSubtitle: v })}
         />
@@ -138,7 +138,7 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title={t('agents.quickActions') || 'Quick actions'}
-          description="Tappable prompts that give visitors a head start. Leave empty to hide them."
+          description={t('agents.tappablePromptsThatGiveVisitors') || 'Tappable prompts that give visitors a head start. Leave empty to hide them.'}
           actions={
             <div
               role="group"
@@ -183,14 +183,17 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
               <div key={index} className="flex items-center gap-2">
                 <Input
                   value={action}
-                  aria-label={`Quick action ${index + 1}`}
-                  placeholder={`Quick action ${index + 1}`}
+                  aria-label={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
+                  placeholder={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
                   onChange={(e) => setAction(index, e.target.value)}
                 />
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Remove quick action ${index + 1}`}
+                  aria-label={
+                    t('agents.removeQuickActionLabel', { n: index + 1 }) ||
+                    `Remove quick action ${index + 1}`
+                  }
                   onClick={() => removeAction(index)}
                   className="shrink-0 hover:text-[var(--ds-danger)]"
                 >
@@ -208,12 +211,12 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
       </section>
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader title={t('agents.chatInput') || 'Chat input'} description="The placeholder shown in the message box." />
+        <SectionHeader title={t('agents.chatInput') || 'Chat input'} description={t('agents.thePlaceholderShownInThe') || 'The placeholder shown in the message box.'} />
         <Field
           label={t('agents.inputPlaceholder') || 'Input placeholder'}
-          hint="Hint text inside the message field."
+          hint={t('agents.hintTextInsideTheMessage') || 'Hint text inside the message field.'}
           value={draft.inputPlaceholder}
-          // i18n-exempt: the widget's own default. See launcher text above.
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Write a message…"
           onChange={(v) => onChange({ inputPlaceholder: v })}
         />

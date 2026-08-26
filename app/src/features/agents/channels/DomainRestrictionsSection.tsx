@@ -17,6 +17,7 @@ import { Button, cn } from '../../../design-system';
 import { InsightCard } from '../../../design-system/components/InsightCard';
 import { getBot, updateBot } from '../../../services/api';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { formatNumber } from '../../../i18n/formatters';
 import { t as translateNow } from '../../../i18n/i18n';
 import { Trans } from '../../../i18n/Trans';
 
@@ -102,7 +103,11 @@ export function DomainRestrictionsSection({
     return {
       tone: 'success' as const,
       icon: ShieldCheck,
-      title: `Widget locked to ${domains.length} domain${domains.length === 1 ? '' : 's'}`,
+      title:
+        translateNow(
+          domains.length === 1 ? 'agents.lockedToDomainOne' : 'agents.lockedToDomainMany',
+          { count: formatNumber(domains.length) },
+        ) || `Widget locked to ${formatNumber(domains.length)} domain${domains.length === 1 ? '' : 's'}`,
       body: translateNow('agents.requestsFromAnyOtherSite') || 'Requests from any other site are rejected.',
     };
   }, [enabled, domains]);
@@ -130,7 +135,10 @@ export function DomainRestrictionsSection({
       return false;
     }
     if (domains.length >= MAX_DOMAINS) {
-      setDraftError(`Maximum ${MAX_DOMAINS} domains`);
+      setDraftError(
+        translateNow('agents.maximumDomains', { count: formatNumber(MAX_DOMAINS) }) ||
+          `Maximum ${formatNumber(MAX_DOMAINS)} domains`,
+      );
       return false;
     }
     setDomains((prev) => [...prev, normalized]);
@@ -244,6 +252,8 @@ export function DomainRestrictionsSection({
                 *.
               </code>
             ),
+            // @i18n-exempt: a wildcard-domain SAMPLE inside a <code> tag, not
+            // copy. The syntax is identical in every language.
             example: <code className="font-mono text-[11px]">*.acme.com</code>,
           }}
         />

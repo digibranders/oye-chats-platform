@@ -42,7 +42,7 @@ const CUSTOM_PRESET = 'custom';
 /**
  * A neutral question used to stream a representative sample reply.
  *
- * i18n-exempt: this is SENT to the model, not rendered as chrome. The preview
+ * @i18n-exempt: this is SENT to the model, not rendered as chrome. The preview
  * exists to show what the tone settings do; asking in the dashboard's language
  * would change the answer's language too and confound the thing being previewed.
  */
@@ -234,11 +234,11 @@ export function PersonalitySection({
       <section className="space-y-4">
         <SectionHeader
           title={t('agents.systemPrompt') || 'System prompt'}
-          description="Custom instructions that steer every reply. Leave blank to use the platform default."
+          description={t('agents.customInstructionsThatSteerEvery') || 'Custom instructions that steer every reply. Leave blank to use the platform default.'}
         />
         <TextAreaField
           label={t('agents.customInstructions') || 'Custom instructions'}
-          hint="Layered on top of your knowledge base to guide the chatbot's behaviour."
+          hint={t('agents.layeredOnTopOfYour') || 'Layered on top of your knowledge base to guide the chatbot\'s behaviour.'}
           value={draft.systemPrompt}
           maxLength={FIELD_LIMITS.systemPrompt}
           rows={6}
@@ -250,7 +250,7 @@ export function PersonalitySection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title={t('agents.brandVoice') || 'Brand voice'}
-          description="Describe the tone your chatbot should match. Visitors feel this in every message."
+          description={t('agents.describeTheToneYourChatbot') || 'Describe the tone your chatbot should match. Visitors feel this in every message.'}
           actions={
             <Button
               variant="outline"
@@ -308,7 +308,7 @@ export function PersonalitySection({
 
         <TextAreaField
           label={t('agents.voiceTone') || 'Voice & tone'}
-          hint="e.g. Warm and approachable, with a touch of humour. Avoid jargon."
+          hint={t('agents.eGWarmAndApproachable') || 'e.g. Warm and approachable, with a touch of humour. Avoid jargon.'}
           value={draft.brandTone}
           maxLength={FIELD_LIMITS.brandTone}
           rows={3}
@@ -365,7 +365,7 @@ export function PersonalitySection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title={t('agents.companyDetails') || 'Company details'}
-          description="Context the chatbot uses to describe your business accurately."
+          description={t('agents.contextTheChatbotUsesTo') || 'Context the chatbot uses to describe your business accurately.'}
         />
         <div className="space-y-1.5">
           <label htmlFor={companyId} className="block text-[13px] font-medium text-[var(--ds-text)]">
@@ -385,7 +385,7 @@ export function PersonalitySection({
         </div>
         <TextAreaField
           label={t('agents.companyDescription') || 'Company description'}
-          hint="A short summary of what your company does."
+          hint={t('agents.aShortSummaryOfWhat') || 'A short summary of what your company does.'}
           value={draft.companyDescription}
           maxLength={FIELD_LIMITS.companyDescription}
           rows={4}

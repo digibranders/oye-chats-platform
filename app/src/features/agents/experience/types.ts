@@ -74,7 +74,7 @@ export const FIELD_LIMITS = {
   companyDescription: 1000,
 } as const;
 
-// i18n-exempt: widget copy, not dashboard chrome. These are the initial values
+// @i18n-exempt: widget copy, not dashboard chrome. These are the initial values
 // SAVED into the customer's bot config and rendered to their visitors, so the
 // dashboard's own language must never reach them - a Hindi-speaking operator
 // creating an agent would otherwise ship a Hindi launcher to an English site.

@@ -42,7 +42,7 @@ export function SaveFooter({
           <span className="text-[var(--ds-text-muted)]">{t('agents.saving') || 'Saving…'}</span>
         ) : status.saved && !dirty ? (
           <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
-            <Check size={13} aria-hidden="true" /> Saved
+            <Check size={13} aria-hidden="true" /> {t('agents.saved') || 'Saved'}
           </span>
         ) : dirty ? (
           <span className="text-[var(--ds-text-muted)]">{t('agents.unsavedChanges') || 'Unsaved changes'}</span>

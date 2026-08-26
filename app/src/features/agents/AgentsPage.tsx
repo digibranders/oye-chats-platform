@@ -136,7 +136,7 @@ export function AgentsPage(): ReactElement {
   return (
     <PageContainer
       title={t('agents.yourChatbots') || 'Your chatbots'}
-      description="Select a chatbot to view its health, knowledge and settings."
+      description={t('agents.selectAChatbotToView') || 'Select a chatbot to view its health, knowledge and settings.'}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           {/* Launch Studio saves progress but had no door back in once the user
@@ -183,7 +183,7 @@ export function AgentsPage(): ReactElement {
         <EmptyState
           icon={BotIcon}
           title={t('agents.createYourFirstAiChatbot') || 'Create your first AI chatbot'}
-          description="An AI chatbot answers your visitors from your own content. Name one to get started - training and customization come next."
+          description={t('agents.anAiChatbotAnswersYour') || 'An AI chatbot answers your visitors from your own content. Name one to get started - training and customization come next.'}
           action={
             <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />

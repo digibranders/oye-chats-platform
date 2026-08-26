@@ -59,7 +59,7 @@ export function BrandingSection({
       <section className="space-y-5">
         <SectionHeader
           title={t('agents.colours') || 'Colours'}
-          description="Match the widget to your brand. These drive the launcher, avatar and message bubbles."
+          description={t('agents.matchTheWidgetToYour') || 'Match the widget to your brand. These drive the launcher, avatar and message bubbles.'}
         />
         <div className="grid gap-6 sm:grid-cols-2">
           <ColorField
@@ -80,7 +80,7 @@ export function BrandingSection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title={t('agents.avatar') || 'Avatar'}
-          description="The face of your chatbot - a photo, a glowing orb, or a friendly mascot."
+          description={t('agents.theFaceOfYourChatbot') || 'The face of your chatbot - a photo, a glowing orb, or a friendly mascot.'}
         />
         <AvatarPicker
           avatarType={draft.avatarType}

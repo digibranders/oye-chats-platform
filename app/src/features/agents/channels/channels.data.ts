@@ -24,7 +24,7 @@ export interface ComingSoonChannel {
  * declarative list - add a channel here when it ships and promote it to a live
  * `<ChannelCard>` in `ChannelsPage`.
  */
-// i18n-exempt: this table is built at import, before a locale exists, and it
+// @i18n-exempt: this table is built at import, before a locale exists, and it
 // holds no `t()` of its own by design - the resolution happens where it is
 // RENDERED, in `features/workspace/IntegrationsPage`, keyed on the channel id
 // (`agents.channel.${id}`). The English here is that lookup's fallback. The

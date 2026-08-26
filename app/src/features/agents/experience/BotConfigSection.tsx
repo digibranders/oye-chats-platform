@@ -330,12 +330,12 @@ function LiveChatCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.liveChat') || 'Live chat'}
-        description="Let visitors ask for a human, and control the wait-time copy and queue behaviour."
+        description={t('agents.letVisitorsAskForA') || 'Let visitors ask for a human, and control the wait-time copy and queue behaviour.'}
       />
       <Card>
         <ToggleRow
           title={t('agents.enableLiveChat') || 'Enable live chat'}
-          description='Shows a "Talk to a human" option in the widget during a chat.'
+          description={t('agents.showsATalkToA') || 'Shows a "Talk to a human" option in the widget during a chat.'}
           checked={value.enabled}
           onChange={(enabled) => onChange((prev) => ({ ...prev, enabled }))}
         />
@@ -346,7 +346,7 @@ function LiveChatCard({
 
             <TextField
               label={t('agents.waitingMessage') || 'Waiting message'}
-              hint="Shown while the visitor waits for an operator to accept."
+              hint={t('agents.shownWhileTheVisitorWaits') || 'Shown while the visitor waits for an operator to accept.'}
               value={value.waitingMessage}
               placeholder={LIVE_CHAT_PLACEHOLDERS.waitingMessage}
               maxLength={200}
@@ -355,7 +355,7 @@ function LiveChatCard({
 
             <TextField
               label={t('agents.noOperatorsHandoffMessage') || 'No-operators handoff message'}
-              hint="The live-chat handoff reply shown when a visitor asks for a human but live chat is off or every operator is offline. Different from the widget's general “Offline banner” (under Services & copy)."
+              hint={t('agents.theLiveChatHandoffReply') || 'The live-chat handoff reply shown when a visitor asks for a human but live chat is off or every operator is offline. Different from the widget\'s general “Offline banner” (under Services & copy).'}
               value={value.offlineMessage}
               placeholder={LIVE_CHAT_PLACEHOLDERS.offlineMessage}
               maxLength={200}
@@ -403,7 +403,7 @@ function LiveChatCard({
                     aria-hidden="true"
                     className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] font-medium text-[var(--ds-text-subtle)]"
                   >
-                    sec
+                    {t('agents.sec') || 'sec'}
                   </span>
                 </div>
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
@@ -478,12 +478,12 @@ function LeadFormCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.preChatLeadForm') || 'Pre-chat lead form'}
-        description="Ask new visitors for their details before the conversation starts."
+        description={t('agents.askNewVisitorsForTheir') || 'Ask new visitors for their details before the conversation starts.'}
       />
       <Card>
         <ToggleRow
           title={t('agents.enableLeadForm') || 'Enable lead form'}
-          description="New visitors fill out a short form before chatting."
+          description={t('agents.newVisitorsFillOutA') || 'New visitors fill out a short form before chatting.'}
           checked={value}
           onChange={onToggle}
         />
@@ -563,7 +563,7 @@ function ServicesCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.services') || 'Services'}
-        description="Scope what the bot may answer about. Add a page link and it shows an ↗ next to the service when mentioned."
+        description={t('agents.scopeWhatTheBotMay') || 'Scope what the bot may answer about. Add a page link and it shows an ↗ next to the service when mentioned.'}
       />
       <Card>
         {services.length === 0 ? (
@@ -581,15 +581,18 @@ function ServicesCard({
               >
                 <Input
                   value={service.name}
-                  aria-label={`Service ${index + 1} name`}
-                  placeholder={`Service ${index + 1} name (e.g. SEO Audit)`}
+                  aria-label={t('agents.serviceNameLabel', { n: index + 1 }) || `Service ${index + 1} name`}
+                  placeholder={
+                    t('agents.serviceNamePlaceholder', { n: index + 1 }) ||
+                    `Service ${index + 1} name (e.g. SEO Audit)`
+                  }
                   onChange={(e) => updateAt(index, { name: e.target.value })}
                   className="flex-1 bg-[var(--ds-bg-surface)]"
                 />
                 <Input
                   type="url"
                   value={service.url}
-                  aria-label={`Service ${index + 1} link`}
+                  aria-label={t('agents.serviceLinkLabel', { n: index + 1 }) || `Service ${index + 1} link`}
                   placeholder={t('agents.httpsExampleComServicesSeo') || 'https://example.com/services/seo (optional)'}
                   onChange={(e) => updateAt(index, { url: e.target.value })}
                   className="flex-1 bg-[var(--ds-bg-surface)]"
@@ -597,7 +600,7 @@ function ServicesCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Remove service ${index + 1}`}
+                  aria-label={t('agents.removeServiceLabel', { n: index + 1 }) || `Remove service ${index + 1}`}
                   onClick={() => removeAt(index)}
                   className="shrink-0 hover:text-[var(--ds-danger)]"
                 >
@@ -655,7 +658,7 @@ function SmartLinksCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.smartLinks') || 'Smart links'}
-        description="Map a keyword to a page. When the bot's answer mentions it, the word becomes a link to that page. Separate from Services - this never limits what the bot can answer."
+        description={t('agents.mapAKeywordToA') || 'Map a keyword to a page. When the bot\'s answer mentions it, the word becomes a link to that page. Separate from Services - this never limits what the bot can answer.'}
       />
       <Card>
         {links.length === 0 ? (
@@ -676,7 +679,7 @@ function SmartLinksCard({
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       value={link.keyword}
-                      aria-label={`Smart link ${index + 1} keyword`}
+                      aria-label={t('agents.smartLinkKeywordLabel', { n: index + 1 }) || `Smart link ${index + 1} keyword`}
                       placeholder={t('agents.keywordEGPricing') || 'Keyword (e.g. pricing)'}
                       maxLength={80}
                       onChange={(e) => updateAt(index, { keyword: e.target.value })}
@@ -685,7 +688,7 @@ function SmartLinksCard({
                     <Input
                       type="url"
                       value={link.url}
-                      aria-label={`Smart link ${index + 1} URL`}
+                      aria-label={t('agents.smartLinkUrlLabel', { n: index + 1 }) || `Smart link ${index + 1} URL`}
                       placeholder={t('agents.httpsExampleComPricing') || 'https://example.com/pricing'}
                       aria-invalid={urlInvalid || undefined}
                       onChange={(e) => updateAt(index, { url: e.target.value })}
@@ -694,7 +697,7 @@ function SmartLinksCard({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Remove smart link ${index + 1}`}
+                      aria-label={t('agents.removeSmartLinkLabel', { n: index + 1 }) || `Remove smart link ${index + 1}`}
                       onClick={() => removeAt(index)}
                       className="shrink-0 hover:text-[var(--ds-danger)]"
                     >
@@ -721,8 +724,8 @@ function SmartLinksCard({
         </div>
 
         <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          The bot links a keyword only where it fits the sentence, at most once per reply. Every row needs a
-          keyword and an http(s) link; blank or invalid rows are dropped when you save.
+          {t('agents.smartLinkRules') ||
+            'The bot links a keyword only where it fits the sentence, at most once per reply. Every row needs a keyword and an http(s) link; blank or invalid rows are dropped when you save.'}
         </p>
 
         <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveSmartLinks') || 'Save smart links'} />
@@ -758,7 +761,7 @@ function WidgetCopyCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.moreWidgetCopy') || 'More widget copy'}
-        description="The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts."
+        description={t('agents.theRemainingVisitorFacingStrings') || 'The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts.'}
       />
       <CustomCopyNotice multilingual={multilingual} />
       {!liveChatUnlocked && (
@@ -784,7 +787,7 @@ function WidgetCopyCard({
       <Card>
         <TextField
           label={t('agents.liveChatButtonLabel') || 'Live-chat button label'}
-          hint="Label for the button that starts a live chat."
+          hint={t('agents.labelForTheButtonThat2') || 'Label for the button that starts a live chat.'}
           value={value.liveChatLabel}
           placeholder={COPY_PLACEHOLDERS.liveChatLabel}
           maxLength={40}
@@ -793,7 +796,7 @@ function WidgetCopyCard({
         />
         <TextField
           label={t('agents.greetingBubbleMessage') || 'Greeting bubble message'}
-          hint="The teaser bubble that pops up next to the launcher after a short delay."
+          hint={t('agents.theTeaserBubbleThatPops') || 'The teaser bubble that pops up next to the launcher after a short delay.'}
           value={value.greetingMessage}
           placeholder={COPY_PLACEHOLDERS.greetingMessage}
           maxLength={160}
@@ -826,7 +829,7 @@ function WidgetCopyCard({
         </div>
         <TextField
           label={t('agents.ratingPrompt') || 'Rating prompt'}
-          hint="Prompt shown in the post-chat rating card."
+          hint={t('agents.promptShownInThePost') || 'Prompt shown in the post-chat rating card.'}
           value={value.ratingPrompt}
           placeholder={COPY_PLACEHOLDERS.ratingPrompt}
           maxLength={120}
@@ -835,7 +838,7 @@ function WidgetCopyCard({
         />
         <TextField
           label={t('agents.endChatButtonLabel') || 'End-chat button label'}
-          hint="Label for the button that ends a live chat and returns to the AI."
+          hint={t('agents.labelForTheButtonThat') || 'Label for the button that ends a live chat and returns to the AI.'}
           value={value.endChatLabel}
           placeholder={COPY_PLACEHOLDERS.endChatLabel}
           maxLength={40}

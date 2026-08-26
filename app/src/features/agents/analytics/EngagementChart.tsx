@@ -13,6 +13,7 @@ import { Card, SectionHeader, Skeleton, cn } from '../../../design-system';
 import { type EngagementPoint } from './analytics.types';
 import { CHART, ChartTooltip } from './chartTheme';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { formatNumber } from '../../../i18n/formatters';
 import { t as translateNow } from '../../../i18n/i18n';
 
 type Range = '7d' | '30d' | '90d' | 'all';
@@ -62,7 +63,10 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
       (best, point) => (best === null || point.messages > best.messages ? point : best),
       null,
     );
-    const base = `Daily message volume over ${rangeLabel}: ${total.toLocaleString()} messages total`;
+    const totalLabel = formatNumber(total);
+    const base =
+      translateNow('agents.chartVolumeSummary', { range: rangeLabel, total: totalLabel }) ||
+      `Daily message volume over ${rangeLabel}: ${totalLabel} messages total`;
     return peak && peak.messages > 0
       ? `${base}, peaking at ${peak.messages.toLocaleString()} on ${peak.label}.`
       : `${base}.`;
@@ -72,7 +76,7 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
     <Card className="p-5">
       <SectionHeader
         title={t('agents.messageVolume') || 'Message volume'}
-        description="How many messages your AI handled each day."
+        description={t('agents.howManyMessagesYourAi') || 'How many messages your AI handled each day.'}
         actions={
           <div
             role="group"

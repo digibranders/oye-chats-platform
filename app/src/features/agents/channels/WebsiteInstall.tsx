@@ -221,7 +221,8 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
                   : promptCopied
                     ? t('agents.installPromptCopied') || 'Install prompt copied'
                     : platform
-                      ? `Copy the ${platform.name} install prompt for a coding agent`
+                      ? t('agents.copyPlatformPrompt', { platform: platform.name }) ||
+                        `Copy the ${platform.name} install prompt for a coding agent`
                       : t('agents.copyTheInstallPromptFor') || 'Copy the install prompt for a coding agent'
               }
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[var(--ds-bg-surface)]"

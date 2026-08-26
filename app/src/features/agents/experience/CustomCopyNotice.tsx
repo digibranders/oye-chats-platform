@@ -31,8 +31,8 @@ export function CustomCopyNotice({ multilingual }: { multilingual: boolean }): R
         <span className="font-medium text-[var(--ds-text)]">
           {t('agents.customTextIsShownUnchanged') || 'Custom text is shown unchanged in all languages.'}
         </span>{' '}
-        Anything you write here replaces the built-in wording, which your chatbot would otherwise
-        translate for each visitor. Leave a field empty to keep the translated default.
+        {t('agents.customCopyExplanation') ||
+          'Anything you write here replaces the built-in wording, which your chatbot would otherwise translate for each visitor. Leave a field empty to keep the translated default.'}
       </p>
     </div>
   );

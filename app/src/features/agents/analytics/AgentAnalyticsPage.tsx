@@ -199,7 +199,7 @@ export function AgentAnalyticsPage(): ReactElement {
   // Agent list still resolving - hold the layout with skeletons.
   if (agentLoading && !agent) {
     return (
-      <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
+      <PageContainer title={t('agents.analytics') || 'Analytics'} description={t('agents.howYourAiIsPerforming') || 'How your AI is performing.'}>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
@@ -231,7 +231,7 @@ export function AgentAnalyticsPage(): ReactElement {
 
   if (error) {
     return (
-      <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
+      <PageContainer title={t('agents.analytics') || 'Analytics'} description={t('agents.howYourAiIsPerforming') || 'How your AI is performing.'}>
         <EmptyState
           icon={AlertTriangle}
           title={t('agents.couldntLoadAnalytics') || 'Couldn’t load analytics'}
@@ -265,7 +265,7 @@ export function AgentAnalyticsPage(): ReactElement {
     : 0;
 
   return (
-    <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
+    <PageContainer title={t('agents.analytics') || 'Analytics'} description={t('agents.howYourAiIsPerforming') || 'How your AI is performing.'}>
       {/* KPI row - the four numbers that summarise agent health. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard
@@ -312,7 +312,7 @@ export function AgentAnalyticsPage(): ReactElement {
             }
             setPanel(key);
           }}
-          ariaLabel="Analytics sections"
+          ariaLabel={t('agents.analyticsSections') || 'Analytics sections'}
         />
         <div
           id={`tabpanel-${panel}`}

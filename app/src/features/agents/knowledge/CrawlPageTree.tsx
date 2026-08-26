@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { cn, Modal } from '../../../design-system';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
+import { formatNumber } from '../../../i18n/formatters';
 
 /**
  * A node in the discovered-page route tree. A node can be a folder (has
@@ -417,9 +419,18 @@ export function CrawlPageTree({
             {allSelected ? t('agents.clearAll') || 'Clear all' : t('agents.selectAll') || 'Select all'}
           </button>
           <span className="text-[12px] text-[var(--ds-text-muted)]">
-            <span className="font-semibold tabular-nums text-[var(--ds-text)]">{selectedCount}</span>
-            {' of '}
-            <span className="tabular-nums">{allUrls.length}</span> selected
+            <Trans
+              k="agents.selectedOfTotal"
+              fallback="{selected} of {total} selected"
+              values={{
+                selected: (
+                  <span className="font-semibold tabular-nums text-[var(--ds-text)]">
+                    {formatNumber(selectedCount)}
+                  </span>
+                ),
+                total: <span className="tabular-nums">{formatNumber(allUrls.length)}</span>,
+              }}
+            />
           </span>
         </div>
         <div className="flex items-center gap-1 text-[12px]">
@@ -480,7 +491,7 @@ export function CrawlPageTree({
         open={maximized}
         onClose={() => setMaximized(false)}
         title={t('agents.discoveredPages') || 'Discovered pages'}
-        description="Pick the pages to add to your knowledge base."
+        description={t('agents.pickThePagesToAdd') || 'Pick the pages to add to your knowledge base.'}
         size="xl"
       >
         {renderTree('max-h-[65vh]', false)}

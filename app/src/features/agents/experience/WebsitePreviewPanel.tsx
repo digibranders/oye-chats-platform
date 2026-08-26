@@ -98,7 +98,7 @@ export function WebsitePreviewPanel({
       open={open}
       onClose={onClose}
       title={t('agents.previewOnMyWebsite') || 'Preview on my website'}
-      description="See the widget on your own site. It shows your saved settings - save first, then reload."
+      description={t('agents.seeTheWidgetOnYour') || 'See the widget on your own site. It shows your saved settings - save first, then reload.'}
       size="lg"
     >
       <div className="space-y-3">

@@ -39,11 +39,15 @@ import {
   isUrlSource,
   crawlFinishedLabel,
   creditCountLabel,
+  documentCountLabel,
+  fileCountLabel,
   normalizeUrl,
   pageCountLabel,
+  wordCountLabel,
 } from './knowledge-utils';
 import { CrawlPageTree, canonicalCrawlUrls } from './CrawlPageTree';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 import { Trans } from '../../../i18n/Trans';
 import { formatNumber } from '../../../i18n/formatters';
 
@@ -165,6 +169,7 @@ export function AddKnowledgePanel({
   // ── Upload sub-flow ───────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const formats = SUPPORTED_EXTENSIONS.join(', ').toUpperCase();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadNote, setUploadNote] = useState<string | null>(null);
@@ -364,9 +369,19 @@ export function AddKnowledgePanel({
         | undefined;
       const chargedRaw = result?.credits_charged;
       const charged = typeof chargedRaw === 'number' ? chargedRaw : 0;
-      const chargedText = charged > 0 ? ` (${charged} credits used)` : '';
+      const chargedText =
+        charged > 0
+          ? ` ${
+              translateNow('agents.creditsUsedSuffix', { credits: creditCountLabel(charged) }) ||
+              `(${creditCountLabel(charged)} used)`
+            }`
+          : '';
+      const docs = documentCountLabel(files.length);
       setUploadNote(
-        `Added ${files.length} document${files.length === 1 ? '' : 's'}. Your AI is learning from it now.${chargedText}`,
+        `${
+          translateNow('agents.addedDocuments', { documents: docs }) ||
+          `Added ${docs}. Your AI is learning from it now.`
+        }${chargedText}`,
       );
       await onChanged();
     } catch (err) {
@@ -396,8 +411,8 @@ export function AddKnowledgePanel({
           {isEmpty ? t('agents.teachYourAi') || 'Teach your AI' : t('agents.addMoreKnowledge') || 'Add more knowledge'}
         </h2>
         <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-          Crawl a website or upload documents. Everything you add becomes something your AI can
-          answer from.
+          {t('agents.addKnowledgeIntro') ||
+            'Crawl a website or upload documents. Everything you add becomes something your AI can answer from.'}
         </p>
 
         {/* Source-type switch */}
@@ -440,7 +455,7 @@ export function AddKnowledgePanel({
             <LockedAddCard
               icon={Globe}
               title={t('agents.pageLimitReached') || 'Page limit reached'}
-              description="You've used all the website pages included on your plan. Upgrade to train more pages."
+              description={t('agents.youveUsedAllTheWebsite') || 'You\'ve used all the website pages included on your plan. Upgrade to train more pages.'}
               onUpgrade={() =>
                 openUpgradeModal({
                   title: t('agents.pageLimitReached') || 'Page limit reached',
@@ -484,7 +499,7 @@ export function AddKnowledgePanel({
               {alreadyAddedHost && (
                 <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
                   <span className="font-medium text-[var(--ds-text-muted)]">{alreadyAddedHost}</span>{' '}
-                  is already in your knowledge base. Crawling again refreshes its pages.
+                  {t('agents.isAlreadyInYourKnowledge') || 'is already in your knowledge base. Crawling again refreshes its pages.'}
                 </p>
               )}
             </div>
@@ -631,8 +646,8 @@ export function AddKnowledgePanel({
                     <div className="text-[13px] text-[var(--ds-text)]">
                       <p className="font-medium">{t('agents.stopTrainingConfirm') || 'Stop training?'}</p>
                       <p className="mt-0.5 text-[var(--ds-text-muted)]">
-                        Pages already discovered are discarded, and you won&apos;t be charged for a
-                        training run that didn&apos;t finish.
+                        {t('agents.stopTrainingConsequence') ||
+                          'Pages already discovered are discarded, and you won’t be charged for a training run that didn’t finish.'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -706,7 +721,8 @@ export function AddKnowledgePanel({
                     <>
                       <Globe size={16} />{' '}
                       {hasPageList
-                        ? `Train on ${selectedCount} page${selectedCount === 1 ? '' : 's'}`
+                        ? t('agents.trainOnPages', { pages: pageCountLabel(selectedCount) }) ||
+                        `Train on ${pageCountLabel(selectedCount)}`
                         : t('agents.addThisWebsite') || 'Add this website'}
                     </>
                   )}
@@ -734,7 +750,7 @@ export function AddKnowledgePanel({
           <LockedAddCard
             icon={FileText}
             title={t('agents.documentLimitReached') || 'Document limit reached'}
-            description="You've used all the documents included on your plan. Upgrade to add more."
+            description={t('agents.youveUsedAllTheDocuments') || 'You\'ve used all the documents included on your plan. Upgrade to add more.'}
             onUpgrade={() =>
               openUpgradeModal({
                 title: t('agents.documentLimitReached') || 'Document limit reached',
@@ -770,7 +786,8 @@ export function AddKnowledgePanel({
                 {t('agents.dragAndDropDocumentsHere') || 'Drag and drop documents here'}
               </p>
               <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">
-                {SUPPORTED_EXTENSIONS.join(', ').toUpperCase()} · up to 10 MB each
+                {t('agents.uploadFormatsHint', { formats }) ||
+                  `${formats} · up to 10 MB each`}
               </p>
               <input
                 ref={fileInputRef}
@@ -892,18 +909,22 @@ function CrawlProgress({
         {t('agents.readingYourSite') || 'Reading your site'}
         {total ? (
           <span className="ml-auto tabular-nums text-[var(--ds-text-muted)]">
-            {done} of {total} pages
+            {t('agents.crawlProgressCount', {
+              done: formatNumber(done),
+              total: formatNumber(total),
+            }) || `${formatNumber(done)} of ${formatNumber(total)} pages`}
           </span>
         ) : done > 0 ? (
           <span className="ml-auto tabular-nums text-[var(--ds-text-muted)]">
-            {done} page{done === 1 ? '' : 's'}
+            {pageCountLabel(done)}
           </span>
         ) : null}
       </div>
       <Progress value={percent} label={t('agents.trainingProgress') || 'Training progress'} />
       {pages.length > 0 && (
         <p className="mt-3 truncate text-[12px] text-[var(--ds-text-subtle)]">
-          Latest: {pages[pages.length - 1]}
+          {t('agents.latestPage', { page: pages[pages.length - 1] }) ||
+            `Latest: ${pages[pages.length - 1]}`}
         </p>
       )}
     </div>
@@ -961,7 +982,7 @@ function UploadCostPanel({
           {t('agents.reviewBeforeUpload') || 'Review before upload'}
         </p>
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {preview.per_file.length} file{preview.per_file.length === 1 ? '' : 's'}
+          {fileCountLabel(preview.per_file.length)}
         </p>
       </div>
 
@@ -976,7 +997,7 @@ function UploadCostPanel({
                   <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">{reason}</p>
                 ) : (
                   <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
-                    {f.words.toLocaleString()} word{f.words === 1 ? '' : 's'}
+                    {wordCountLabel(f.words)}
                   </p>
                 )}
               </div>
@@ -1004,11 +1025,12 @@ function UploadCostPanel({
         <div>
           <p className="text-[13px] font-semibold text-[var(--ds-text)]">{t('agents.total') || 'Total'}</p>
           <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
-            Balance: {preview.current_balance.toLocaleString()} credits
+            {t('agents.balanceCredits', { credits: creditCountLabel(preview.current_balance) }) ||
+              `Balance: ${creditCountLabel(preview.current_balance)}`}
           </p>
         </div>
         <p className="text-[16px] font-semibold tabular-nums text-[var(--ds-text)]">
-          {preview.total_credits.toLocaleString()} credits
+          {creditCountLabel(preview.total_credits)}
         </p>
       </div>
 
@@ -1037,7 +1059,10 @@ function UploadCostPanel({
             t('agents.nothingToUpload') || 'Nothing to upload'
           ) : (
             <>
-              <Upload size={15} /> Upload for {preview.total_credits.toLocaleString()} credits
+              <Upload size={15} />{' '}
+              {t('agents.uploadForCredits', {
+                credits: creditCountLabel(preview.total_credits),
+              }) || `Upload for ${creditCountLabel(preview.total_credits)}`}
             </>
           )}
         </Button>

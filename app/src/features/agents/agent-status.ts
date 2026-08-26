@@ -26,6 +26,9 @@ export interface AgentStatusInfo {
 // The label does vary, and this table is built at import - before any locale
 // exists - so the English is the fallback and `getAgentStatus` resolves the
 // real one per call, at render time.
+// @i18n-exempt: resolved at the render site. `getAgentStatus` below looks up
+// `agents.status.<health>` per call, so these labels are that lookup's English
+// fallback and never freeze a language. Tone is design, not copy.
 const STATUS_BY_HEALTH: Record<AgentHealth, AgentCardStatus> = {
   live: { label: 'Live', tone: 'success' },
   ready: { label: 'Ready to deploy', tone: 'info' },

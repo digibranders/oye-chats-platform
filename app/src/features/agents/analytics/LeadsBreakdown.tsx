@@ -60,7 +60,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
     <Card className="p-5">
       <SectionHeader
         title={t('agents.leadFunnel') || 'Lead funnel'}
-        description="How conversations turn into qualified leads."
+        description={t('agents.howConversationsTurnIntoQualified') || 'How conversations turn into qualified leads.'}
       />
 
       <div className="mt-5">
@@ -74,7 +74,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
           <EmptyState
             icon={Users}
             title={t('agents.noLeadsCapturedYet') || 'No leads captured yet'}
-            description="When visitors share their details or show buying intent, they'll appear here as leads."
+            description={t('agents.whenVisitorsShareTheirDetails') || 'When visitors share their details or show buying intent, they\'ll appear here as leads.'}
           />
         ) : (
           <ol className="space-y-4">

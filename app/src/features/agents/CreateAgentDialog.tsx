@@ -188,6 +188,8 @@ export function CreateAgentDialog({
   if (!open) return null;
 
   const trimmedName = name.trim();
+
+  const planForName = trimmedName || t('agents.yourChatbotLower') || 'your chatbot';
   const canSubmitName = trimmedName.length > 0 && !submitting;
   const selectedPlan = plans.find((p) => p.slug === selectedSlug) ?? null;
   // Non-null exactly when the workspace is already at its plan's agent quota,
@@ -341,7 +343,7 @@ export function CreateAgentDialog({
             </span>
             <div className="min-w-0">
               <h2 id={titleId} className="text-base font-semibold text-[var(--ds-text)]">
-                {step === 'name' ? t('agents.createANewChatbot') || 'Create a new chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
+                {step === 'name' ? t('agents.createANewChatbot') || 'Create a new chatbot' : (t('agents.choosePlanFor', { name: planForName }) || `Choose a plan for ${planForName}`)}
               </h2>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
                 {step === 'plan'
@@ -407,7 +409,9 @@ export function CreateAgentDialog({
                   htmlFor="create-agent-website"
                   className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
                 >
-                  {t('agents.website') || 'Website'} <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
+                  {t('agents.website') || 'Website'} <span className="font-normal text-[var(--ds-text-subtle)]">
+                    {t('agents.optionalSuffix') || '(optional)'}
+                  </span>
                 </label>
                 <Input
                   id="create-agent-website"

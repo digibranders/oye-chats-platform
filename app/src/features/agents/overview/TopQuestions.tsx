@@ -22,7 +22,7 @@ export function TopQuestions({ questions, className }: TopQuestionsProps): React
         <EmptyState
           icon={MessageSquare}
           title={t('agents.noQuestionsYet') || 'No questions yet'}
-          description="The questions visitors ask your AI most often will show up here."
+          description={t('agents.theQuestionsVisitorsAskYour') || 'The questions visitors ask your AI most often will show up here.'}
         />
       </Card>
     );

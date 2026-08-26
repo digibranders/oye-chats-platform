@@ -22,7 +22,7 @@ export function TopQuestions({ questions, loading }: TopQuestionsProps): ReactEl
     <Card className="p-5">
       <SectionHeader
         title={t('agents.topQuestions') || 'Top questions'}
-        description="What visitors ask your AI most often."
+        description={t('agents.whatVisitorsAskYourAi') || 'What visitors ask your AI most often.'}
       />
 
       <div className="mt-5">
@@ -38,7 +38,7 @@ export function TopQuestions({ questions, loading }: TopQuestionsProps): ReactEl
           <EmptyState
             icon={MessagesSquare}
             title={t('agents.noRecurringQuestionsYet') || 'No recurring questions yet'}
-            description="Once visitors start chatting, the questions they ask most will appear here."
+            description={t('agents.onceVisitorsStartChattingThe') || 'Once visitors start chatting, the questions they ask most will appear here.'}
           />
         ) : (
           <ol className="space-y-1">

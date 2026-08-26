@@ -1,5 +1,6 @@
 import { type Bot } from '../../../types/domain';
 import { t as translateNow } from '../../../i18n/i18n';
+import { formatNumber } from '../../../i18n/formatters';
 
 /**
  * Overall health of an agent, worst-first:
@@ -69,7 +70,8 @@ function knowledgeCheck(agent: Bot): HealthCheck {
       label: 'Knowledge',
       status: 'pending',
       detail: trained
-        ? `Trained on ${formatPassages(chunks)} - learning more right now.`
+        ? translateNow('agents.trainedOnLearning', { passages: formatPassages(chunks) }) ||
+          `Trained on ${formatPassages(chunks)} - learning more right now.`
         : translateNow('agents.learningFromYourWebsiteRight') || 'Learning from your website right now.',
     };
   }
@@ -81,8 +83,10 @@ function knowledgeCheck(agent: Bot): HealthCheck {
       status: agent.last_crawl_status === 'failed' ? 'warn' : 'pass',
       detail:
         agent.last_crawl_status === 'failed'
-          ? `Trained on ${formatPassages(chunks)}, but the last training run failed.`
-          : `Trained on ${formatPassages(chunks)}.`,
+          ? translateNow('agents.trainedOnButFailed', { passages: formatPassages(chunks) }) ||
+            `Trained on ${formatPassages(chunks)}, but the last training run failed.`
+          : translateNow('agents.trainedOn', { passages: formatPassages(chunks) }) ||
+            `Trained on ${formatPassages(chunks)}.`,
     };
   }
 
@@ -105,7 +109,11 @@ function knowledgeCheck(agent: Bot): HealthCheck {
 
 /** "1 passage" / "1,204 passages" - shared so every knowledge string agrees. */
 function formatPassages(chunks: number): string {
-  return `${chunks.toLocaleString()} ${chunks === 1 ? 'passage' : 'passages'}`;
+  const count = formatNumber(chunks);
+  return (
+    translateNow(chunks === 1 ? 'agents.passageOne' : 'agents.passageMany', { count }) ||
+    `${count} passage${chunks === 1 ? '' : 's'}`
+  );
 }
 
 /** Builds the Deployment check row from the widget-install signal. */

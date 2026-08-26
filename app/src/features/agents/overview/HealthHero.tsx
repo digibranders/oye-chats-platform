@@ -23,6 +23,8 @@ import { useTranslation } from '../../../i18n/useTranslation';
 // exists, so the English label here is the fallback and the render site below
 // resolves the real one from the level key.
 /** Visual treatment per overall health level. */
+// @i18n-exempt: resolved at the render site from the level key
+// (`agents.health.level.<level>`); the English here is that lookup's fallback.
 const LEVEL_STYLE: Record<
   HealthLevel,
   { icon: LucideIcon; tone: IconTileTone; spin?: boolean; badge: StatusBadgeProps['tone']; badgeLabel: string }
@@ -37,6 +39,8 @@ const LEVEL_STYLE: Record<
 // Same as LEVEL_STYLE: the icon and tone are design, the label is copy, and
 // the label is resolved where it is rendered.
 /** Per-check marker treatment. */
+// @i18n-exempt: resolved at the render site from the check status
+// (`agents.health.check.<status>`); the English here is that lookup's fallback.
 const CHECK_STYLE: Record<
   CheckStatus,
   { icon: LucideIcon; tone: IconTileTone; spin?: boolean; srLabel: string }

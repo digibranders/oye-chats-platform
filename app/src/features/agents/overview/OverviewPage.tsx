@@ -42,6 +42,8 @@ interface MetricDef {
  * resolves each one from its key. `format` runs per render, so it can localize
  * its numbers directly.
  */
+// @i18n-exempt: resolved at the render site by `MetricGrid`, which looks up
+// `agents.metric.<key>`; the labels here are that lookup's English fallback.
 const METRICS: readonly MetricDef[] = [
   {
     key: 'activeUsers',
@@ -140,7 +142,7 @@ function SectionUnavailable(): ReactElement {
       <EmptyState
         icon={AlertCircle}
         title={t('agents.couldntLoadThisSection') || 'Couldn’t load this section'}
-        description="Refresh to try loading this data again."
+        description={t('agents.refreshToTryLoadingThis') || 'Refresh to try loading this data again.'}
       />
     </Card>
   );
@@ -174,7 +176,7 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   return (
     <PageContainer
       title={t('agents.overview') || 'Overview'}
-      description="Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance."
+      description={t('agents.missionControlDashboardForYour') || 'Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance.'}
       actions={
         <Button variant="outline" size="sm" onClick={refreshAll} disabled={isBusy}>
           <RefreshCw
@@ -211,7 +213,7 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
               {t('agents.topQuestions') || 'Top questions'}
             </span>
           }
-          description="What visitors ask your AI most."
+          description={t('agents.whatVisitorsAskYourAi2') || 'What visitors ask your AI most.'}
         />
         {isInitialLoading ? (
           <Card className="space-y-4 p-6">

@@ -13,7 +13,7 @@ import type { RecrawlDiff } from './recrawl-api';
 import { useTranslation } from '../../../i18n/useTranslation';
 import { t as translateNow } from '../../../i18n/i18n';
 import { Trans } from '../../../i18n/Trans';
-import { creditCountLabel, showingFirstLabel } from './knowledge-utils';
+import { creditCountLabel, pageCountLabel, showingFirstLabel } from './knowledge-utils';
 
 export interface RecrawlDiffModalProps {
   open: boolean;
@@ -266,12 +266,22 @@ export function RecrawlDiffModal({
                   />
                 </p>
                 <p className="mt-1 tabular-nums">
-                  {diff.costPerPage.toLocaleString()} credit{diff.costPerPage === 1 ? '' : 's'} per page ×{' '}
-                  {crawlSetSize.toLocaleString()} page{crawlSetSize === 1 ? '' : 's'} - you have{' '}
-                  <span className="font-semibold text-[var(--ds-text)]">
-                    {diff.balance.toLocaleString()}
-                  </span>{' '}
-                  credit{diff.balance === 1 ? '' : 's'} available.
+                  {/* One key. This had three English plurals written inline and
+                      its clause order in the markup, directly below the Trans
+                      that exists because that does not survive translation. */}
+                  <Trans
+                    k="agents.recrawlCostBreakdown"
+                    fallback="{cost} per page × {pages} - you have {balance} available."
+                    values={{
+                      cost: creditCountLabel(diff.costPerPage),
+                      pages: pageCountLabel(crawlSetSize),
+                      balance: (
+                        <span className="font-semibold text-[var(--ds-text)]">
+                          {creditCountLabel(diff.balance)}
+                        </span>
+                      ),
+                    }}
+                  />
                 </p>
                 {fullBlocked && (
                   <p className="mt-1.5 text-[12px]">

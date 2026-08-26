@@ -8,7 +8,7 @@
  * `platformIntegrations`, so the prompt can never drift from what the UI shows),
  * how to verify against the API, and the failure modes we already know about.
  *
- * i18n-exempt-file: this is not dashboard chrome. It is a briefing
+ * @i18n-exempt-file: this is not dashboard chrome. It is a briefing
  * PASTED INTO the user's own coding agent, carrying markdown, code fences, HTML
  * snippets and API instructions. Translating it would degrade the instructions
  * the agent acts on, and it embeds `platformIntegrations` steps verbatim, which

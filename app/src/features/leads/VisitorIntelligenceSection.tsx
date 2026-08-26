@@ -114,7 +114,7 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
               <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
             )}
             <span className="mt-1 block text-[11px] text-[var(--ds-text-subtle)]">
-              {t('leads.derivedFromVisitorNetwork') || 'Derived from the visitor’s network — not a confirmed employer.'}
+              {t('leads.derivedFromVisitorNetwork') || 'Derived from the visitor’s network, not a confirmed employer.'}
             </span>
           </span>
         </div>

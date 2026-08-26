@@ -98,6 +98,11 @@ const { hits } = JSON.parse(raw);
 const todo = hits.filter(
   (h) =>
     !h.localized &&
+    // Exemptions are decisions with a reason recorded at the site; the codemod
+    // must honour them or it silently translates the strings someone
+    // deliberately kept English. It had already rewritten five sentences of the
+    // install briefing that carries an @i18n-exempt-file: header.
+    !h.exempt &&
     (h.class === 'localizable UI text' || h.class === 'accessibility text') &&
     // Module-scope literals are evaluated once at import, before any locale
     // exists. Wrapping one in t() either fails to compile (no `t` in scope) or,

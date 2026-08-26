@@ -193,7 +193,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Actions for ${bot.name}`}
+        aria-label={t('agents.actionsFor', { name: bot.name }) || `Actions for ${bot.name}`}
         onClick={() => (open ? closeMenu() : setOpen(true))}
         onKeyDown={(event) => {
           if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -214,7 +214,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
       {open && (
         <div
           role="menu"
-          aria-label={`Actions for ${bot.name}`}
+          aria-label={t('agents.actionsFor', { name: bot.name }) || `Actions for ${bot.name}`}
           onKeyDown={handleMenuKeyDown}
           className="absolute right-0 top-full z-20 mt-1.5 w-56 overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] py-1.5 shadow-[var(--ds-shadow-lg)]"
         >

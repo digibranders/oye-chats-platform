@@ -81,6 +81,9 @@ export function LanguageCard({
     () => value.supportedLocales.filter((locale) => !uiTranslatedFor(locale)),
     [value.supportedLocales, uiTranslatedFor],
   );
+  const untranslatedNames = untranslated
+    .map((locale) => localeNameFor(locale) ?? locale)
+    .join(', ');
 
   const defaultOptions = useMemo(
     () =>
@@ -124,12 +127,12 @@ export function LanguageCard({
     <section className="space-y-5">
       <SectionHeader
         title={t('agents.language') || 'Language'}
-        description="Choose the languages your chatbot speaks to visitors, and how it picks one."
+        description={t('agents.chooseTheLanguagesYourChatbot') || 'Choose the languages your chatbot speaks to visitors, and how it picks one.'}
       />
       <Card>
         <ToggleRow
           title={t('agents.multilingual') || 'Multilingual'}
-          description="Let visitors chat in their own language."
+          description={t('agents.letVisitorsChatInTheir') || 'Let visitors chat in their own language.'}
           checked={value.enabled}
           onChange={setEnabled}
         />
@@ -154,7 +157,7 @@ export function LanguageCard({
                   )}
                   {localeNameFor(locale) ?? locale}
                   {locale === value.defaultLocale && (
-                    <span className="text-[11px] text-[var(--ds-text-subtle)]">default</span>
+                    <span className="text-[11px] text-[var(--ds-text-subtle)]">{t('agents.default') || 'default'}</span>
                   )}
                   <button
                     type="button"
@@ -209,14 +212,24 @@ export function LanguageCard({
                 <div className="space-y-1 text-[12px] text-[var(--ds-text-muted)]">
                   <p className="font-medium text-[var(--ds-text)]">
                     {untranslated.length === 1
-                      ? `The widget is not translated into ${localeNameFor(untranslated[0]) ?? untranslated[0]}.`
+                      ? t('agents.widgetNotTranslatedInto', {
+                          language: localeNameFor(untranslated[0]) ?? untranslated[0],
+                        }) ||
+                        `The widget is not translated into ${localeNameFor(untranslated[0]) ?? untranslated[0]}.`
                       : t('agents.theWidgetIsNotTranslated') || 'The widget is not translated into some of these languages.'}
                   </p>
                   <p>
-                    Your chatbot answers in{' '}
-                    {untranslated.map((locale) => localeNameFor(locale) ?? locale).join(', ')}, but
-                    its buttons and forms stay in English. Remove{' '}
-                    {untranslated.length === 1 ? 'it' : 'them'} unless you want that.
+                    {/* One key. Split around the language list and the it/them
+                        pronoun, this only ever read as English. */}
+                    {t(
+                      untranslated.length === 1
+                        ? 'agents.untranslatedWidgetNoteOne'
+                        : 'agents.untranslatedWidgetNoteMany',
+                      { languages: untranslatedNames },
+                    ) ||
+                      `Your chatbot answers in ${untranslatedNames}, but its buttons and forms stay in English. Remove ${
+                        untranslated.length === 1 ? 'it' : 'them'
+                      } unless you want that.`}
                   </p>
                 </div>
               </div>
@@ -236,14 +249,14 @@ export function LanguageCard({
               aria-label={t('agents.defaultLanguage') || 'Default language'}
             />
             <p className="text-[11px] text-[var(--ds-text-subtle)]">
-              Used when a visitor’s language can’t be determined. Only supported languages can be
-              the default.
+              {t('agents.defaultLanguageHint') ||
+                'Used when a visitor’s language can’t be determined. Only supported languages can be the default.'}
             </p>
           </div>
 
           <ToggleRow
             title={t('agents.detectTheVisitorsLanguageAutomatically') || 'Detect the visitor’s language automatically'}
-            description="Uses the visitor’s browser, your page, and their first message."
+            description={t('agents.usesTheVisitorsBrowserYour') || 'Uses the visitor’s browser, your page, and their first message.'}
             checked={value.autoDetect}
             onChange={(autoDetect) => onChange((prev) => ({ ...prev, autoDetect }))}
             disabled={off}
@@ -251,7 +264,7 @@ export function LanguageCard({
 
           <ToggleRow
             title={t('agents.letVisitorsSwitchLanguageIn') || 'Let visitors switch language in the widget'}
-            description="Shows a language selector visitors can change at any time."
+            description={t('agents.showsALanguageSelectorVisitors') || 'Shows a language selector visitors can change at any time.'}
             checked={value.allowVisitorSwitch}
             onChange={(allowVisitorSwitch) => onChange((prev) => ({ ...prev, allowVisitorSwitch }))}
             disabled={off || singleLocale}
@@ -267,7 +280,7 @@ export function LanguageCard({
 
           <ToggleRow
             title={t('agents.translateLiveChatForOperators') || 'Translate live chat for operators'}
-            description="Visitor messages are shown to your team in their own working language, and replies are translated back."
+            description={t('agents.visitorMessagesAreShownTo') || 'Visitor messages are shown to your team in their own working language, and replies are translated back.'}
             checked={value.operatorTranslation}
             onChange={(operatorTranslation) => onChange((prev) => ({ ...prev, operatorTranslation }))}
             disabled={off}
