@@ -150,7 +150,12 @@ function isSentenceShaped(text) {
   const t = decodeForShape(text).trim();
   if (t.length < 3) return false;
   if (!/[A-Za-z]{2,}(\s| )+[A-Za-z]/.test(t)) return false;
-  if (!/^[A-Z‘“"'(]/.test(t) && !/^[A-Z]/.test(t)) return false;
+  // Leading punctuation is stripped before the "starts like prose" test. A
+  // template literal's first span often opens with a separator - the Home
+  // header reads `${date} · Here's how your workspace is doing today.` - and
+  // testing the raw first character rejected the whole sentence.
+  const lead = t.replace(/^[^A-Za-z]+/, '');
+  if (!/^[A-Z]/.test(lead)) return false;
   // Tailwind-ish class soup and other machine tokens.
   if (/^[a-z-]+(\s+[a-z0-9:[\]/.#()-]+)+$/.test(t)) return false;
   if (/\b(flex|grid|rounded|border|text-|bg-|px-|py-|w-\d|h-\d)\b/.test(t)) return false;
@@ -287,6 +292,61 @@ function hasRealLocaleArg(node, ts) {
 }
 
 /**
+ * A literal that is COMPARED against, not rendered.
+ *
+ * `event.key === 'Escape'`, `status === 'Live'`, `case 'Free':` - these are API
+ * values and enum members. They look exactly like single-word labels, and
+ * translating one would not merely read oddly: it would break the keyboard
+ * handling or the branch that depends on it.
+ */
+function isComparisonOperand(node, ts) {
+  const parent = node.parent;
+  if (!parent) return false;
+  // `Button.displayName = 'Button'` is React devtools metadata, never rendered.
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    /\.displayName$/.test(parent.left.getText())
+  ) {
+    return true;
+  }
+  if (ts.isCaseClause(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    const op = parent.operatorToken.kind;
+    return (
+      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken
+    );
+  }
+  // `['Escape', 'Tab'].includes(key)` and `key in { ... }`
+  if (ts.isArrayLiteralExpression(parent) && parent.parent) {
+    const gp = parent.parent;
+    if (ts.isPropertyAccessExpression(gp) && /^(includes|indexOf|some|has)$/.test(gp.name.getText())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Prose inside a template literal.
+ *
+ * Unlike a plain string, a template's literal spans usually begin MID-sentence
+ * - `${count} chatbots are ready to go live` leaves the scanner " chatbots are
+ * ready to go live", with no capital anywhere. Requiring one silently dropped
+ * every interpolated sentence that did not happen to start with a word.
+ */
+function isTemplateProse(text) {
+  const t = decodeForShape(text).trim();
+  if (t.length < 3) return false;
+  if (!/[A-Za-z]{2,}(\s|\u00a0)+[A-Za-z]/.test(t)) return false;
+  if (isClassSoup(t)) return false;
+  return true;
+}
+
+/**
  * Whether an ATTRIBUTE value is already served through `t()`.
  *
  * `attr={t('k') || 'English'}` is the idiom; `attr="English"` is not. This is
@@ -312,10 +372,29 @@ function isRenderedText(text) {
   if (!/[A-Za-z]/.test(t)) return false;
   // A lone letter, or an ASCII-art separator.
   if (t.replace(/[^A-Za-z]/g, '').length < 2) return false;
-  // Tailwind-ish class soup that ended up in a text position.
-  if (/^[a-z-]+(\s+[a-z0-9:[\]/.#()-]+)+$/.test(t)) return false;
-  if (/\b(flex|grid|rounded|border|text-|bg-|px-|py-|w-\d|h-\d)\b/.test(t)) return false;
+  if (isClassSoup(t)) return false;
   return true;
+}
+
+/**
+ * Tailwind-ish class soup that ended up in a text position.
+ *
+ * The old test was `^[a-z-]+(\s+[a-z0-9:...]+)+$`, which matches ANY all-
+ * lowercase multi-word phrase - so ordinary prose like "know your business"
+ * and "in minutes" was discarded as CSS and never counted. A class list is
+ * recognisable by its PUNCTUATION (hyphens, colons, slashes, brackets) or by
+ * a known utility prefix, not by being lowercase.
+ */
+function isClassSoup(t) {
+  if (/\b(flex|grid|rounded|border|text-|bg-|px-|py-|w-\d|h-\d|gap-|mt-|mb-|ml-|mr-)\b/.test(t)) {
+    return true;
+  }
+  const tokens = t.split(/\s+/);
+  if (tokens.length < 2) return false;
+  const cssish = tokens.filter((tok) => /[-:/[\]().#]/.test(tok)).length;
+  // Most tokens carrying CSS punctuation means it is a class list, not a
+  // sentence. Real prose rarely hyphenates the majority of its words.
+  return cssish / tokens.length > 0.6;
 }
 
 /**
@@ -537,7 +616,11 @@ function classify({ relPath, kind, text, ctx }) {
     if (ctx.inConsole || ctx.inThrow) return CLASSES.INTERNAL;
     if (ctx.inImport) return CLASSES.CODE;
     if (ctx.isPropertyKey) return CLASSES.CODE;
-    if (isSentenceShaped(text)) return CLASSES.UI_TEXT;
+    // A single-word label is copy too. Collecting it and then classifying it
+    // as "uncertain" meant it was gathered and silently dropped from the count:
+    // `{ label: 'Conversations' }` on the Home agent card sat in English on an
+    // otherwise Hindi screen while the guard reported that surface at 0.
+    if (isSentenceShaped(text) || isSingleWordLabel(text)) return CLASSES.UI_TEXT;
     return CLASSES.UNCERTAIN;
   }
   return CLASSES.UNCERTAIN;
@@ -653,7 +736,7 @@ function scanFile(file) {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      if (isSentenceShaped(joined) || isSingleWordLabel(joined)) {
+      if (isTemplateProse(joined)) {
         hits.push({
           node,
           file: relPath,
@@ -689,7 +772,13 @@ function scanFile(file) {
         if (ts.isThrowStatement(p)) { inThrow = true; break; }
         if (ts.isJsxElement(p) || ts.isJsxSelfClosingElement(p)) break;
       }
-      if (!inImport && !isJsxAttrValue && !isPropertyKey && (isSentenceShaped(node.text))) {
+      if (
+        !inImport &&
+        !isJsxAttrValue &&
+        !isPropertyKey &&
+        !isComparisonOperand(node, ts) &&
+        (isSentenceShaped(node.text) || isSingleWordLabel(node.text))
+      ) {
         hits.push({
           node,
           file: relPath,

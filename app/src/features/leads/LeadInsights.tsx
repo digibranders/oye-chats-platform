@@ -304,7 +304,7 @@ function JourneyList({
                   <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
                   {row.isLast ? (
                     <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
-                      opened chat here
+                      {translateNow('leads.openedChatHere') || 'opened chat here'}
                     </span>
                   ) : row.durationLabel ? (
                     <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">

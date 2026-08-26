@@ -69,7 +69,7 @@ export function TopQuestions({ questions, loading }: TopQuestionsProps): ReactEl
                   </div>
                   <span className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
                     {formatNumber(item.count)}
-                    <span className="sr-only"> times asked</span>
+                    <span className="sr-only"> {t('agents.timesAskedSuffix') || 'times asked'}</span>
                   </span>
                 </li>
               );

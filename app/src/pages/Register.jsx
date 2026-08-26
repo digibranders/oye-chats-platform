@@ -9,6 +9,8 @@ import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import Select from '../components/ui/Select';
+import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 // Billing-country choices for the custom Select - the plain ISO country list.
 // The field auto-detects the visitor's country on load (see the effect below)
@@ -16,14 +18,18 @@ import Select from '../components/ui/Select';
 // load (COUNTRY_OPTIONS is static).
 const BILLING_COUNTRY_OPTIONS = COUNTRY_OPTIONS;
 
+// @i18n-exempt: built at import, before a locale exists. Each entry is resolved
+// at the render site from its `id` (`auth.feature.<id>.title` / `.desc`); the
+// English here is that lookup's fallback.
 const features = [
-  { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
-  { icon: Zap, title: 'One-Line Embed', desc: 'Add to any website instantly' },
-  { icon: BarChart3, title: 'Live Analytics', desc: 'Real-time insights & metrics' },
-  { icon: Shield, title: 'Enterprise Ready', desc: 'Encrypted & secure by design' },
+  { id: 'knowledge', icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
+  { id: 'embed', icon: Zap, title: 'One-Line Embed', desc: 'Add to any website instantly' },
+  { id: 'analytics', icon: BarChart3, title: 'Live Analytics', desc: 'Real-time insights & metrics' },
+  { id: 'security', icon: Shield, title: 'Enterprise Ready', desc: 'Encrypted & secure by design' },
 ];
 
 export default function Register() {
+  const { t } = useTranslation();
   const [initialSearchParams] = useSearchParams();
   // Pre-fill from URL - the invite airlock routes new invitees here as
   // ``/register?next=/invite/<token>&email=<invite_email>``. We pre-fill
@@ -105,19 +111,19 @@ export default function Register() {
     setError('');
 
     if (!name.trim() || !email.trim() || !password || !confirmPassword) {
-      setError('Please fill in all required fields.');
+      setError(t('auth.pleaseFillInAllRequired') || 'Please fill in all required fields.');
       return;
     }
     if (name.trim().length < 2) {
-      setError('Name must be at least 2 characters.');
+      setError(t('auth.nameMustBeAtLeast') || 'Name must be at least 2 characters.');
       return;
     }
     if (!hasMinLength || !hasLetter || !hasNumber) {
-      setError('Password does not meet the requirements below.');
+      setError(t('auth.passwordDoesNotMeetThe') || 'Password does not meet the requirements below.');
       return;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError(t('auth.passwordsDoNotMatch') || 'Passwords do not match.');
       return;
     }
 
@@ -193,7 +199,7 @@ export default function Register() {
         navigate(`/login?${params.toString()}`, { replace: true });
         return;
       }
-      setError(msg || 'Registration failed. Please try again.');
+      setError(msg || t('auth.registrationFailedPleaseTryAgain') || 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -246,7 +252,7 @@ export default function Register() {
           {/* White wordmark for the dark branding panel. */}
           <img
             src="/new_white.png"
-            alt="OyeChats"
+            alt={t('auth.oyechats') || 'OyeChats'}
             className="h-9 w-auto object-contain"
           />
         </motion.div>
@@ -258,11 +264,20 @@ export default function Register() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-4xl xl:text-5xl font-bold text-white leading-[1.15] mb-4"
           >
-            Start building
-            <br />
-            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
-              in minutes
-            </span>
+            <Trans
+              k="auth.registerHeadline"
+              fallback="Start building {highlight}"
+              values={{
+                highlight: (
+                  <>
+                    <br />
+                    <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
+                      {t('auth.registerHeadlineHighlight') || 'in minutes'}
+                    </span>
+                  </>
+                ),
+              }}
+            />
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -270,7 +285,7 @@ export default function Register() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-white/45 text-lg mb-10 max-w-md leading-relaxed"
           >
-            Create your free account and deploy your first AI chatbot today. No credit card required.
+            {t('auth.createYourFreeAccountAnd') || 'Create your free account and deploy your first AI chatbot today. No credit card required.'}
           </motion.p>
 
           <div className="grid grid-cols-2 gap-3">
@@ -286,8 +301,12 @@ export default function Register() {
                   <f.icon size={15} className="text-white" />
                 </div>
                 <div>
-                  <p className="text-[13px] font-semibold text-white">{f.title}</p>
-                  <p className="text-[11px] text-white/60 mt-0.5">{f.desc}</p>
+                  <p className="text-[13px] font-semibold text-white">
+                    {t(`auth.feature.${f.id}.title`) || f.title}
+                  </p>
+                  <p className="text-[11px] text-white/60 mt-0.5">
+                    {t(`auth.feature.${f.id}.desc`) || f.desc}
+                  </p>
                 </div>
               </motion.div>
             ))}
@@ -301,9 +320,9 @@ export default function Register() {
           className="relative z-10 flex items-center gap-8"
         >
           {[
-            { val: 'Free', label: 'To get started' },
-            { val: '< 5min', label: 'Setup time' },
-            { val: '24/7', label: 'AI support' },
+            { val: t('auth.statFree') || 'Free', label: t('auth.toGetStarted') || 'To get started' },
+            { val: '< 5min', label: t('auth.setupTime') || 'Setup time' },
+            { val: '24/7', label: t('auth.aiSupport') || 'AI support' },
           ].map((s) => (
             <div key={s.label}>
               <p className="text-xl font-bold text-white">{s.val}</p>
@@ -317,7 +336,7 @@ export default function Register() {
       <div className="flex-1 flex flex-col p-6 sm:p-10 bg-surface-50 overflow-y-auto">
         {/* Mobile logo pinned to the top-left; the form stays vertically centered below. */}
         <div className="flex shrink-0 items-center justify-start pt-2 pb-6 lg:hidden">
-          <img src="/new_dark.png" alt="OyeChats" className="h-8 w-auto object-contain" />
+          <img src="/new_dark.png" alt={t('auth.oyechats') || 'OyeChats'} className="h-8 w-auto object-contain" />
         </div>
 
         <motion.div
@@ -327,8 +346,8 @@ export default function Register() {
           className="w-full max-w-[400px] m-auto"
         >
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-surface-900 tracking-tight">Get started free</h1>
-            <p className="text-surface-500 mt-2 text-sm">Create your OyeChats account</p>
+            <h1 className="text-2xl font-bold text-surface-900 tracking-tight">{t('auth.getStartedFree') || 'Get started free'}</h1>
+            <p className="text-surface-500 mt-2 text-sm">{t('auth.createYourOyechatsAccount') || 'Create your OyeChats account'}</p>
           </div>
 
           {error && (
@@ -348,7 +367,7 @@ export default function Register() {
               Google OAuth is not configured. */}
           <div className="mb-3">
             <GoogleAuthButton
-              label="Sign up with Google"
+              label={t('auth.signUpWithGoogle') || 'Sign up with Google'}
               mode="register"
               promoCode={promoCode}
               // Same precedence as Login.jsx: honor an explicit ``next``
@@ -365,24 +384,35 @@ export default function Register() {
               consenting action; this notice sits under the primary CTA so it's
               always visible regardless of whether the email form is expanded. */}
           <p className="mb-4 text-xs leading-relaxed text-surface-500">
-            By signing up, you agree to our{' '}
-            <a
-              href="https://www.oyechats.com/legal/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-600 hover:text-primary-700 font-medium"
-            >
-              Terms
-            </a>{' '}
-            and{' '}
-            <a
-              href="https://www.oyechats.com/legal/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-600 hover:text-primary-700 font-medium"
-            >
-              Privacy Policy
-            </a>.
+            {/* One key. Split into "agree to our" + link + "and" + link, the
+                clause order is English word order and no dictionary can move
+                the links within it. */}
+            <Trans
+              k="auth.signupConsent"
+              fallback="By signing up, you agree to our {terms} and {privacy}."
+              values={{
+                terms: (
+                  <a
+                    href="https://www.oyechats.com/legal/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-600 hover:text-primary-700 font-medium"
+                  >
+                    {t('auth.terms') || 'Terms'}
+                  </a>
+                ),
+                privacy: (
+                  <a
+                    href="https://www.oyechats.com/legal/privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-600 hover:text-primary-700 font-medium"
+                  >
+                    {t('auth.privacyPolicy') || 'Privacy Policy'}
+                  </a>
+                ),
+              }}
+            />
           </p>
 
           {/* Secondary email/password path, disclosed on demand. All fields
@@ -392,7 +422,7 @@ export default function Register() {
             <>
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex-1 h-px bg-surface-200" />
-                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <span className="text-xs text-surface-400 uppercase tracking-wider">{t('auth.or') || 'or'}</span>
                 <div className="flex-1 h-px bg-surface-200" />
               </div>
               <button
@@ -406,28 +436,30 @@ export default function Register() {
                 tabIndex={0}
               >
                 <Mail size={16} className="text-surface-400" />
-                Continue with email
+                {t('auth.continueWithEmail') || 'Continue with email'}
               </button>
             </>
           ) : (
             <>
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex-1 h-px bg-surface-200" />
-                <span className="text-xs text-surface-400 uppercase tracking-wider">or sign up with email</span>
+                <span className="text-xs text-surface-400 uppercase tracking-wider">
+                  {t('auth.orSignUpWithEmail') || 'or sign up with email'}
+                </span>
                 <div className="flex-1 h-px bg-surface-200" />
               </div>
 
               <form onSubmit={handleRegister} className="space-y-3.5">
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Full name</label>
+              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">{t('auth.fullName') || 'Full name'}</label>
               <div className="relative group">
                 <User size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="John Doe" autoComplete="name" tabIndex={1} />
+                <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder={t('auth.johnDoe') || 'John Doe'} autoComplete="name" tabIndex={1} />
               </div>
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Email address</label>
+              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">{t('auth.emailAddress') || 'Email address'}</label>
               <div className="relative group">
                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
                 <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="you@company.com" autoComplete="email" tabIndex={2} />
@@ -437,16 +469,16 @@ export default function Register() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                  Company <span className="text-surface-400 font-normal text-[11px]">(optional)</span>
+                  {t('auth.company') || 'Company'} <span className="text-surface-400 font-normal text-[11px]">{t('auth.optional') || '(optional)'}</span>
                 </label>
                 <div className="relative group">
                   <Building2 size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                  <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className={inputCls} placeholder="Acme Inc." autoComplete="organization" tabIndex={3} />
+                  <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className={inputCls} placeholder={t('auth.acmeInc') || 'Acme Inc.'} autoComplete="organization" tabIndex={3} />
                 </div>
               </div>
               <div>
                 <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                  Website <span className="text-surface-400 font-normal text-[11px]">(optional)</span>
+                  {t('auth.website') || 'Website'} <span className="text-surface-400 font-normal text-[11px]">{t('auth.optional') || '(optional)'}</span>
                 </label>
                 <div className="relative group">
                   <Globe size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -473,7 +505,7 @@ export default function Register() {
 
             <div>
               <label htmlFor="billingCountry" className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                Billing country <span className="text-surface-400 font-normal text-[11px]">(sets your currency)</span>
+                {t('auth.billingCountry') || 'Billing country'} <span className="text-surface-400 font-normal text-[11px]">{t('auth.setsYourCurrency') || '(sets your currency)'}</span>
               </label>
               <div className="relative group">
                 <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 z-10 pointer-events-none text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -482,28 +514,28 @@ export default function Register() {
                   value={billingCountry}
                   onChange={setBillingCountry}
                   options={BILLING_COUNTRY_OPTIONS}
-                  placeholder="Select your country"
+                  placeholder={t('auth.selectYourCountry') || 'Select your country'}
                   searchable
                   light
                   className="pl-10 pr-4 py-2.5 rounded-xl"
                 />
               </div>
-              <p className="mt-1 text-[11px] text-surface-400">India is billed in ₹ INR; other countries in $ USD.</p>
+              <p className="mt-1 text-[11px] text-surface-400">{t('auth.indiaIsBilledInInr') || 'India is billed in ₹ INR; other countries in $ USD.'}</p>
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Password</label>
+              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">{t('auth.password') || 'Password'}</label>
               <div className="relative group">
                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
                 <input
                   type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
                   className={cn(inputCls, 'pr-11')}
-                  placeholder="Create a strong password" autoComplete="new-password" tabIndex={6}
+                  placeholder={t('auth.createAStrongPassword') || 'Create a strong password'} autoComplete="new-password" tabIndex={6}
                 />
                 <button
                   type="button" onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 transition-colors"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('auth.hidePassword') || 'Hide password' : t('auth.showPassword') || 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -518,8 +550,8 @@ export default function Register() {
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
                     {[
                       { met: hasMinLength, label: '8+ characters' },
-                      { met: hasLetter, label: 'Has letter' },
-                      { met: hasNumber, label: 'Has number' },
+                      { met: hasLetter, label: t('auth.hasLetter') || 'Has letter' },
+                      { met: hasNumber, label: t('auth.hasNumber') || 'Has number' },
                     ].map((check) => (
                       <div key={check.label} className={cn('flex items-center gap-1.5 text-xs transition-colors', check.met ? 'text-emerald-600' : 'text-surface-400')}>
                         <CheckCircle2 size={12} className={check.met ? 'text-emerald-600' : 'text-surface-300'} />
@@ -532,7 +564,7 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Confirm password</label>
+              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">{t('auth.confirmPassword') || 'Confirm password'}</label>
               <div className="relative group">
                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
                 <input
@@ -547,11 +579,11 @@ export default function Register() {
                         : 'border-rose-400 focus:border-rose-500'
                       : 'border-surface-200 focus:border-[var(--focus)]'
                   )}
-                  placeholder="Re-enter your password" autoComplete="new-password" tabIndex={7}
+                  placeholder={t('auth.reEnterYourPassword') || 'Re-enter your password'} autoComplete="new-password" tabIndex={7}
                 />
               </div>
               {confirmPassword && !passwordsMatch && (
-                <p className="text-xs text-rose-600 mt-1">Passwords do not match</p>
+                <p className="text-xs text-rose-600 mt-1">{t('auth.passwordsDoNotMatch') || 'Passwords do not match.'}</p>
               )}
             </div>
 
@@ -565,17 +597,24 @@ export default function Register() {
               )}
               tabIndex={9}
             >
-              {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
+              {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>{t('auth.createAccount') || 'Create account'} <ArrowRight size={15} /></>}
             </button>
               </form>
             </>
           )}
 
           <p className="text-center text-sm text-surface-500 mt-6">
-            Already have an account?{' '}
-            <Link to="/login" tabIndex={10} className="font-semibold text-primary-600 hover:text-primary-700 transition-colors">
-              Sign in
-            </Link>
+            <Trans
+              k="auth.haveAccountPrompt"
+              fallback="Already have an account? {link}"
+              values={{
+                link: (
+                  <Link to="/login" tabIndex={10} className="font-semibold text-primary-600 hover:text-primary-700 transition-colors">
+                    {t('auth.signIn') || 'Sign in'}
+                  </Link>
+                ),
+              }}
+            />
           </p>
         </motion.div>
       </div>

@@ -503,7 +503,9 @@ export function CreateAgentDialog({
                               {plan.name}
                             </span>
                             <span className="block text-[12px] text-[var(--ds-text-subtle)]">
-                              {formatCredits(plan.creditsPerMonth)} credits / month
+                              {t('agents.creditsPerMonth', {
+                                credits: formatCredits(plan.creditsPerMonth),
+                              }) || `${formatCredits(plan.creditsPerMonth)} credits / month`}
                             </span>
                           </span>
                           <span className="flex shrink-0 items-center gap-2">

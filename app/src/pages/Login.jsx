@@ -7,15 +7,21 @@ import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, getAuthItem } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
+import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
+// @i18n-exempt: built at import, before a locale exists. Each entry is resolved
+// at the render site from its `id` (`auth.feature.<id>.title` / `.desc`); the
+// English here is that lookup's fallback.
 const features = [
-  { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
-  { icon: Zap, title: 'One-Line Embed', desc: 'Add to any website instantly' },
-  { icon: BarChart3, title: 'Live Analytics', desc: 'Real-time insights & metrics' },
-  { icon: Shield, title: 'Enterprise Ready', desc: 'Encrypted & secure by design' },
+  { id: 'knowledge', icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
+  { id: 'embed', icon: Zap, title: 'One-Line Embed', desc: 'Add to any website instantly' },
+  { id: 'analytics', icon: BarChart3, title: 'Live Analytics', desc: 'Real-time insights & metrics' },
+  { id: 'security', icon: Shield, title: 'Enterprise Ready', desc: 'Encrypted & secure by design' },
 ];
 
 export default function Login() {
+  const { t } = useTranslation();
   // Read the initial email from the URL up front so ``useState``'s lazy
   // initializer captures it before the first render - the invite airlock
   // routes here as ``/login?next=/invite/<token>&email=<invited_email>``
@@ -58,7 +64,7 @@ export default function Login() {
     setError('');
 
     if (!email || !password) {
-      setError('Please enter both email and password.');
+      setError(t('auth.pleaseEnterBothEmailAnd') || 'Please enter both email and password.');
       return;
     }
 
@@ -147,7 +153,7 @@ export default function Login() {
         }
       }
     } catch (err) {
-      setError(err.message || 'Login failed. Please try again.');
+      setError(err.message || t('auth.loginFailedPleaseTryAgain') || 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -201,7 +207,7 @@ export default function Login() {
           {/* White wordmark for the dark branding panel. */}
           <img
             src="/new_white.png"
-            alt="OyeChats"
+            alt={t('auth.oyechats') || 'OyeChats'}
             className="h-9 w-auto object-contain"
           />
         </motion.div>
@@ -214,11 +220,20 @@ export default function Login() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-4xl xl:text-5xl font-bold text-white leading-[1.15] mb-4"
           >
-            AI chatbots that
-            <br />
-            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
-              know your business
-            </span>
+            <Trans
+              k="auth.loginHeadline"
+              fallback="AI chatbots that {highlight}"
+              values={{
+                highlight: (
+                  <>
+                    <br />
+                    <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
+                      {t('auth.loginHeadlineHighlight') || 'know your business'}
+                    </span>
+                  </>
+                ),
+              }}
+            />
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -226,7 +241,7 @@ export default function Login() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-white/45 text-lg mb-10 max-w-md leading-relaxed"
           >
-            Deploy intelligent chatbots trained on your data. Capture leads, support customers, and grow revenue. All on autopilot.
+            {t('auth.deployIntelligentChatbotsTrainedOn') || 'Deploy intelligent chatbots trained on your data. Capture leads, support customers, and grow revenue. All on autopilot.'}
           </motion.p>
 
           <div className="grid grid-cols-2 gap-3">
@@ -242,8 +257,12 @@ export default function Login() {
                   <f.icon size={15} className="text-white" />
                 </div>
                 <div>
-                  <p className="text-[13px] font-semibold text-white">{f.title}</p>
-                  <p className="text-[11px] text-white/60 mt-0.5">{f.desc}</p>
+                  <p className="text-[13px] font-semibold text-white">
+                    {t(`auth.feature.${f.id}.title`) || f.title}
+                  </p>
+                  <p className="text-[11px] text-white/60 mt-0.5">
+                    {t(`auth.feature.${f.id}.desc`) || f.desc}
+                  </p>
                 </div>
               </motion.div>
             ))}
@@ -258,9 +277,9 @@ export default function Login() {
           className="relative z-10 flex items-center gap-8"
         >
           {[
-            { val: 'RAG', label: 'Answers from your docs' },
-            { val: 'Live', label: 'Human handoff built in' },
-            { val: 'Secure', label: 'Encrypted in transit' },
+            { val: 'RAG', label: t('auth.answersFromYourDocs') || 'Answers from your docs' },
+            { val: t('auth.statLive') || 'Live', label: t('auth.humanHandoffBuiltIn') || 'Human handoff built in' },
+            { val: t('auth.statSecure') || 'Secure', label: t('auth.encryptedInTransit') || 'Encrypted in transit' },
           ].map((s) => (
             <div key={s.label}>
               <p className="text-xl font-bold text-white">{s.val}</p>
@@ -276,7 +295,7 @@ export default function Login() {
             centers in the full viewport height instead of only the space below
             it. Hidden on desktop, which has its own hero-panel logo. */}
         <div className="absolute left-6 top-6 flex items-center lg:hidden sm:left-10 sm:top-10">
-          <img src="/new_dark.png" alt="OyeChats" className="h-8 w-auto object-contain" />
+          <img src="/new_dark.png" alt={t('auth.oyechats') || 'OyeChats'} className="h-8 w-auto object-contain" />
         </div>
 
         <motion.div
@@ -287,10 +306,10 @@ export default function Login() {
         >
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-surface-900 tracking-tight">
-              Welcome back
+              {t('auth.welcomeBack') || 'Welcome back'}
             </h1>
             <p className="text-surface-500 mt-2 text-sm">
-              Sign in to your account to continue
+              {t('auth.signInToYourAccount') || 'Sign in to your account to continue'}
             </p>
           </div>
 
@@ -317,7 +336,7 @@ export default function Login() {
                 affiliate-token fallback stays as a lower-priority default
                 for the standalone affiliate-invite flow. */}
             <GoogleAuthButton
-              label="Sign in with Google"
+              label={t('auth.signInWithGoogle') || 'Sign in with Google'}
               mode="login"
               next={safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/')}
               tabIndex={0}
@@ -331,7 +350,7 @@ export default function Login() {
             <>
               <div className="flex items-center gap-3 my-5">
                 <div className="flex-1 h-px bg-surface-200" />
-                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <span className="text-xs text-surface-400 uppercase tracking-wider">{t('auth.or') || 'or'}</span>
                 <div className="flex-1 h-px bg-surface-200" />
               </div>
               <button
@@ -345,21 +364,23 @@ export default function Login() {
                 tabIndex={0}
               >
                 <Mail size={16} className="text-surface-400" />
-                Continue with email
+                {t('auth.continueWithEmail') || 'Continue with email'}
               </button>
             </>
           ) : (
             <>
               <div className="flex items-center gap-3 mb-5">
                 <div className="flex-1 h-px bg-surface-200" />
-                <span className="text-xs text-surface-400 uppercase tracking-wider">or continue with email</span>
+                <span className="text-xs text-surface-400 uppercase tracking-wider">
+                  {t('auth.orContinueWithEmail') || 'or continue with email'}
+                </span>
                 <div className="flex-1 h-px bg-surface-200" />
               </div>
 
               <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                Email address
+                {t('auth.emailAddress') || 'Email address'}
               </label>
               <div className="relative group">
                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -382,10 +403,10 @@ export default function Login() {
             <div>
               <div className="flex justify-between items-center mb-1.5">
                 <label className="block text-[13px] font-medium text-surface-600">
-                  Password
+                  {t('auth.password') || 'Password'}
                 </label>
                 <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
-                  Forgot password?
+                  {t('auth.forgotPassword') || 'Forgot password?'}
                 </Link>
               </div>
               <div className="relative group">
@@ -400,7 +421,7 @@ export default function Login() {
                     'focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                     'outline-none transition-all text-sm placeholder:text-surface-400'
                   )}
-                  placeholder="Enter your password"
+                  placeholder={t('auth.enterYourPassword') || 'Enter your password'}
                   tabIndex={2}
                 />
                 <button
@@ -408,7 +429,7 @@ export default function Login() {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 transition-colors"
                   tabIndex={0}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('auth.hidePassword') || 'Hide password' : t('auth.showPassword') || 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -428,7 +449,7 @@ export default function Login() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <span className="text-sm text-surface-500">Remember for 30 days</span>
+              <span className="text-sm text-surface-500">{t('auth.rememberFor30Days') || 'Remember for 30 days'}</span>
             </label>
 
             <button
@@ -445,7 +466,7 @@ export default function Login() {
                 <Loader2 size={18} className="animate-spin" />
               ) : (
                 <>
-                  Sign in
+                  {t('auth.signIn') || 'Sign in'}
                   <ArrowRight size={15} />
                 </>
               )}
@@ -455,10 +476,17 @@ export default function Login() {
           )}
 
           <p className="text-center text-sm text-surface-500 mt-8">
-            Don&apos;t have an account?{' '}
-            <Link to="/register" tabIndex={6} className="font-semibold text-primary-600 hover:text-primary-700 transition-colors">
-              Sign up free
-            </Link>
+            <Trans
+              k="auth.noAccountPrompt"
+              fallback="Don’t have an account? {link}"
+              values={{
+                link: (
+                  <Link to="/register" tabIndex={6} className="font-semibold text-primary-600 hover:text-primary-700 transition-colors">
+                    {t('auth.signUpFree') || 'Sign up free'}
+                  </Link>
+                ),
+              }}
+            />
           </p>
         </motion.div>
       </div>

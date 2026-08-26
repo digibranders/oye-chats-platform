@@ -1016,7 +1016,8 @@ function UploadCostPanel({
         })}
         {remainder > 0 && (
           <li className="py-2 text-[12px] text-[var(--ds-text-subtle)]">
-            + {remainder} more file{remainder === 1 ? '' : 's'}
+            {t('agents.moreFiles', { files: fileCountLabel(remainder) }) ||
+              `+ ${fileCountLabel(remainder)} more`}
           </li>
         )}
       </ul>

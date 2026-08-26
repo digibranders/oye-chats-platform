@@ -4,6 +4,8 @@ import { Sparkles, Loader2, Mail, Lock, KeyRound, Eye, EyeOff, ArrowLeft, ArrowR
 import { motion, AnimatePresence } from 'framer-motion';
 import { requestPasswordReset, resetPassword } from '../services/api';
 import { cn } from '../lib/utils';
+import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 const stepVariants = {
   enter: { opacity: 0, x: 20 },
@@ -12,6 +14,7 @@ const stepVariants = {
 };
 
 export default function ForgotPassword() {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
@@ -29,17 +32,17 @@ export default function ForgotPassword() {
     setSuccess('');
 
     if (!email) {
-      setError('Please enter your email address.');
+      setError(t('auth.pleaseEnterYourEmailAddress') || 'Please enter your email address.');
       return;
     }
 
     try {
       setIsLoading(true);
       const data = await requestPasswordReset(email);
-      setSuccess(data.message || 'If an account exists, a reset link has been sent.');
+      setSuccess(data.message || t('auth.ifAnAccountExistsA') || 'If an account exists, a reset link has been sent.');
       setStep(2);
     } catch (err) {
-      setError(err.message || 'Failed to send reset code.');
+      setError(err.message || t('auth.failedToSendResetCode') || 'Failed to send reset code.');
     } finally {
       setIsLoading(false);
     }
@@ -51,22 +54,22 @@ export default function ForgotPassword() {
     setSuccess('');
 
     if (!otp || !newPassword) {
-      setError('Please enter the reset code and your new password.');
+      setError(t('auth.pleaseEnterTheResetCode') || 'Please enter the reset code and your new password.');
       return;
     }
     if (newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      setError('Password must be at least 8 characters and include a letter and a number.');
+      setError(t('auth.passwordMustBeAtLeast') || 'Password must be at least 8 characters and include a letter and a number.');
       return;
     }
 
     try {
       setIsLoading(true);
       const data = await resetPassword(email, otp, newPassword);
-      setSuccess(data.message || 'Password successfully reset.');
+      setSuccess(data.message || t('auth.passwordSuccessfullyReset') || 'Password successfully reset.');
       setStep(3);
       setTimeout(() => navigate('/login'), 2500);
     } catch (err) {
-      setError(err.message || 'Failed to reset password.');
+      setError(err.message || t('auth.failedToResetPassword') || 'Failed to reset password.');
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +98,7 @@ export default function ForgotPassword() {
               and Register use. This page kept the older icon-plus-text lockup
               on an identical panel, so a customer resetting their password saw
               a different brand from the one they had just signed in against. */}
-          <img src="/new_white.png" alt="OyeChats" className="h-9 w-auto object-contain" />
+          <img src="/new_white.png" alt={t('auth.oyechats') || 'OyeChats'} className="h-9 w-auto object-contain" />
         </motion.div>
 
         <div className="relative z-10 my-auto max-w-sm">
@@ -105,11 +108,20 @@ export default function ForgotPassword() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-4xl xl:text-5xl font-bold text-white leading-[1.15] mb-4"
           >
-            Get back to
-            <br />
-            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
-              building
-            </span>
+            <Trans
+              k="auth.forgotHeadline"
+              fallback="Get back to {highlight}"
+              values={{
+                highlight: (
+                  <>
+                    <br />
+                    <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
+                      {t('auth.forgotHeadlineHighlight') || 'building'}
+                    </span>
+                  </>
+                ),
+              }}
+            />
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -117,7 +129,7 @@ export default function ForgotPassword() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-white/45 text-lg leading-relaxed"
           >
-            Don&apos;t let a forgotten password slow you down. Reclaim your access and continue engaging with your customers.
+            {t('auth.dontLetAForgottenPassword') || 'Don\'t let a forgotten password slow you down. Reclaim your access and continue engaging with your customers.'}
           </motion.p>
         </div>
 
@@ -132,7 +144,7 @@ export default function ForgotPassword() {
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
               <Sparkles size={20} />
             </div>
-            <span className="text-xl font-bold text-surface-900 tracking-tight">OyeChats</span>
+            <span className="text-xl font-bold text-surface-900 tracking-tight">{t('auth.oyechats') || 'OyeChats'}</span>
           </div>
 
           <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-sm border border-surface-200">
@@ -154,15 +166,15 @@ export default function ForgotPassword() {
                 to="/login"
                 className="inline-flex items-center text-sm font-medium text-surface-500 hover:text-surface-700 mb-4 transition-colors"
               >
-                <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to login
+                <ArrowLeft className="w-4 h-4 mr-1.5" /> {t('auth.backToLogin') || 'Back to login'}
               </Link>
               <h2 className="text-2xl font-bold text-surface-900 tracking-tight mb-1">
-                {step === 1 ? 'Reset password' : step === 2 ? 'Enter recovery code' : 'All set!'}
+                {step === 1 ? t('auth.resetPassword') || 'Reset password' : step === 2 ? t('auth.enterRecoveryCode') || 'Enter recovery code' : t('auth.allSet') || 'All set!'}
               </h2>
               <p className="text-sm text-surface-500">
-                {step === 1 && "Enter your email and we'll send you a recovery code."}
-                {step === 2 && 'Enter the code sent to your email and choose a new password.'}
-                {step === 3 && 'Your password has been successfully reset.'}
+                {step === 1 && t('auth.enterYourEmailAndWell') || 'Enter your email and we\'ll send you a recovery code.'}
+                {step === 2 && t('auth.enterTheCodeSentTo') || 'Enter the code sent to your email and choose a new password.'}
+                {step === 3 && t('auth.yourPasswordHasBeenSuccessfully') || 'Your password has been successfully reset.'}
               </p>
             </div>
 
@@ -201,7 +213,7 @@ export default function ForgotPassword() {
                 >
                   <div>
                     <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                      Email Address
+                      {t('auth.emailAddress') || 'Email address'}
                     </label>
                     <div className="relative group">
                       <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -226,7 +238,7 @@ export default function ForgotPassword() {
                       'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm'
                     )}
                   >
-                    {isLoading ? <><Loader2 size={16} className="animate-spin" /> Sending...</> : <>Send recovery code <ArrowRight size={15} /></>}
+                    {isLoading ? <><Loader2 size={16} className="animate-spin" /> {t('auth.sending') || 'Sending...'}</> : <>{t('auth.sendRecoveryCode') || 'Send recovery code'} <ArrowRight size={15} /></>}
                   </button>
                 </motion.form>
               )}
@@ -244,7 +256,7 @@ export default function ForgotPassword() {
                 >
                   <div>
                     <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                      Recovery Code
+                      {t('auth.recoveryCode') || 'Recovery Code'}
                     </label>
                     <div className="relative group">
                       <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -266,13 +278,13 @@ export default function ForgotPassword() {
                       disabled={isLoading}
                       className="mt-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Didn&apos;t receive a code? Resend
+                      {t('auth.didntReceiveACodeResend') || 'Didn\'t receive a code? Resend'}
                     </button>
                   </div>
 
                   <div>
                     <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
-                      New Password
+                      {t('auth.newPassword') || 'New password'}
                     </label>
                     <div className="relative group">
                       <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
@@ -283,7 +295,7 @@ export default function ForgotPassword() {
                           'border-surface-200 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                           'outline-none transition-all text-sm placeholder:text-surface-400'
                         )}
-                        placeholder="New password"
+                        placeholder={t('auth.newPassword') || 'New password'}
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                       />
@@ -305,7 +317,7 @@ export default function ForgotPassword() {
                       'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm'
                     )}
                   >
-                    {isLoading ? <><Loader2 size={16} className="animate-spin" /> Updating...</> : <>Reset Password <ArrowRight size={15} /></>}
+                    {isLoading ? <><Loader2 size={16} className="animate-spin" /> {t('auth.updating') || 'Updating...'}</> : <>{t('auth.resetPassword') || 'Reset password'} <ArrowRight size={15} /></>}
                   </button>
                 </motion.form>
               )}
@@ -326,8 +338,8 @@ export default function ForgotPassword() {
                   >
                     <CheckCircle2 size={32} className="text-emerald-600" />
                   </motion.div>
-                  <h3 className="text-lg font-bold text-surface-900 mb-1">Password Reset!</h3>
-                  <p className="text-sm text-surface-500">Redirecting you to login...</p>
+                  <h3 className="text-lg font-bold text-surface-900 mb-1">{t('auth.passwordReset') || 'Password Reset!'}</h3>
+                  <p className="text-sm text-surface-500">{t('auth.redirectingYouToLogin') || 'Redirecting you to login...'}</p>
                 </motion.div>
               )}
             </AnimatePresence>

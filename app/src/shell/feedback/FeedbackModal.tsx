@@ -686,7 +686,9 @@ export function FeedbackModal({
                       <ImagePlus size={15} aria-hidden="true" />
                       {t('shell.feedbackModal.addScreenshot') || 'Add screenshot'}
                     </button>
-                    <span className="text-[11px] text-[var(--ds-text-subtle)]">or paste from clipboard</span>
+                    <span className="text-[11px] text-[var(--ds-text-subtle)]">
+                      {t('shell.feedbackModal.orPasteFromClipboard') || 'or paste from clipboard'}
+                    </span>
                   </div>
 
                   {attachments.length > 0 && (

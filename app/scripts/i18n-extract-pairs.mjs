@@ -25,7 +25,9 @@ function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(full);
+    // .jsx/.js too: 88 legacy files are mid-migration and the pre-auth screens
+    // are among them. A .tsx-only glob silently extracted nothing for them.
+    else if (/\.(tsx?|jsx?)$/.test(e.name) && !/\.test\.(tsx?|jsx?)$/.test(e.name)) out.push(full);
   }
   return out;
 }

@@ -3,6 +3,11 @@
 //   - `key`   drives the ?m= URL param (resumability + deep-link)
 //   - `label` is the compact spine label
 //   - `title` is the milestone heading shown in the spine + guide pane
+// @i18n-exempt: these labels are not rendered anywhere. Build Studio was
+// replaced by Launch Studio; the only live exports of this module are
+// `STUDIO_RESUME_KEY` and `isMilestoneKey`, and the latter reads `key` alone
+// (a URL parameter, never translated). Translating dead copy would spend a
+// translator's time on strings no user can reach.
 export const MILESTONES = [
     { key: 'connect', label: 'Connect', title: 'Point me at your site' },
     { key: 'prove', label: 'Prove', title: 'Watch it learn - then prove it' },
