@@ -52,9 +52,11 @@ test.describe('Dashboard language selector', () => {
     await mockBackend(page);
     await openAppearance(page);
 
-    // Scoped to the sidebar: the breadcrumb renders its own "Home" link, so an
-    // unscoped query is ambiguous and would also conflate two surfaces.
-    const nav = page.getByLabel('Primary navigation');
+    // Scoped by ROLE, not by accessible name. The sidebar landmark's own label
+    // is itself localized, so scoping by "Primary navigation" stops matching
+    // the moment the test does the thing it is testing. Scoping is still
+    // required: the breadcrumb renders its own "Home" link.
+    const nav = page.getByRole('complementary');
     await expect(nav.getByRole('link', { name: 'Home' })).toBeVisible();
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
 

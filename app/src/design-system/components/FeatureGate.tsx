@@ -6,6 +6,7 @@ import { Button } from '../primitives/Button';
 import { PlanBadge } from './PlanBadge';
 import { LockedFeatureCard as RichLockedFeatureCard, type TeaserIntentKey } from './LockedFeatureCard';
 import type { FeatureKey } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface FeatureGateProps {
   /** The flag on `entitlements.features` this gate checks, e.g. "live_chat". */
@@ -56,6 +57,7 @@ interface DefaultLockedCardProps {
  * content areas - for sidebar items, pass `fallback={null}` to the gate
  * instead of relying on this. */
 function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: DefaultLockedCardProps): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-[var(--ds-radius-xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-6 py-10 text-center">
       <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
@@ -63,19 +65,23 @@ function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: Defau
       </span>
 
       <div className="max-w-md space-y-1.5">
-        <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">{humanize(feature)} is locked</h3>
+        <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
+          {t('ds.featureGate.locked', { feature: humanize(feature) }) || `${humanize(feature)} is locked`}
+        </h3>
         <p className="flex flex-wrap items-center justify-center gap-x-1 text-[13px] text-[var(--ds-text-muted)]">
           <span>
             {requiredPlan
-              ? `Available on ${requiredPlan}. Upgrade to unlock for your workspace.`
-              : 'Upgrade your plan to unlock this for your workspace.'}{' '}
-            You&rsquo;re on the
+              ? t('ds.featureGate.availableOn', { plan: requiredPlan }) ||
+                `Available on ${requiredPlan}. Upgrade to unlock for your workspace.`
+              : t('ds.featureGate.upgradePlan') ||
+                'Upgrade your plan to unlock this for your workspace.'}{' '}
+            {t('ds.featureGate.youreOn') || 'You’re on the'}
           </span>
           <PlanBadge planName={planName} />
         </p>
       </div>
 
-      <Button onClick={onUpgrade}>See plans</Button>
+      <Button onClick={onUpgrade}>{t('ds.featureGate.seePlans') || 'See plans'}</Button>
     </div>
   );
 }

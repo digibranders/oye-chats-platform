@@ -151,7 +151,39 @@ function isSentenceShaped(text) {
 const LOOKBEHIND = 220;
 function isLocalized(source, start) {
   const preceding = source.slice(Math.max(0, start - LOOKBEHIND), start);
-  return /\bt\(\s*['"`]/.test(preceding);
+  // `translateNow` is the same function imported directly, used inside
+  // callbacks where the hook's per-locale identity would break memoization.
+  return /\b(?:t|translateNow)\(\s*['"`]/.test(preceding);
+}
+
+/**
+ * Whether a literal is the English fallback of a KEYED CONSTANT.
+ *
+ * Module-level tables (PRIMARY_NAV and friends) cannot call `t()` at all: they
+ * are evaluated once at import, long before a locale exists. The pattern there
+ * is a sibling `<name>Key` property that the consumer resolves at render time
+ * -- `t(item.labelKey) || item.label`. The English stays in the table as the
+ * fallback, exactly as it does at a call site, so flagging it would report
+ * finished work as outstanding.
+ */
+function isKeyedConstant(node, ts, source) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isObjectLiteralExpression(p)) {
+      const names = p.properties.map((prop) => prop.name?.getText?.() ?? '');
+      // Explicit sibling key: `{ label, labelKey }`.
+      if (names.some((n) => /Key$/.test(n))) return true;
+      // Id-keyed table: `{ id, label }` resolved at the render site with a
+      // template key built from the id -- t(`ns.area.${option.id}`) || label.
+      // Adding a `labelKey` to every row would restate the id for no gain, so
+      // the presence of a template-literal t() call in the file is the signal.
+      // `{ id, label }` rows, and `Record<Id, { label }>` tables where the
+      // object KEY is the id and there is no `id` property to match on.
+      if (names.includes('label') && /\b(?:t|translateNow)\(\s*`/.test(source)) return true;
+      return false;
+    }
+    if (ts.isJsxElement(p) || ts.isFunctionDeclaration(p)) return false;
+  }
+  return false;
 }
 
 /**
@@ -165,6 +197,7 @@ const ALLOWED_ENGLISH = new Map([
   ['you@example.com', 'example address in a placeholder, not prose'],
   ['Custom request', 'mailto subject line, read by an English-speaking support team'],
   ['OyeChats', 'brand name; never translated'],
+  ['Wix', 'third-party product name; never translated'],
 ]);
 
 /** A single word that is still clearly UI copy (button labels etc.). */
@@ -240,7 +273,8 @@ function scanFile(file) {
           kind: 'jsx-text',
           text,
           attr: null,
-          localized: isLocalized(source, node.getStart(sf)),
+          localized:
+            isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
         });
       }
     }
@@ -297,7 +331,8 @@ function scanFile(file) {
           attr: null,
           inConsole,
           inThrow,
-          localized: isLocalized(source, node.getStart(sf)),
+          localized:
+            isLocalized(source, node.getStart(sf)) || isKeyedConstant(node, ts, source),
         });
       }
     }

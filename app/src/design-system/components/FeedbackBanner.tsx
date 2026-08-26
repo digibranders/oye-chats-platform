@@ -2,6 +2,7 @@ import { type ReactElement } from 'react';
 import { AlertTriangle, CheckCircle2, Info, X, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { type Feedback, type FeedbackTone } from '../hooks/useFeedback';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface FeedbackBannerProps {
   /** The message to show. `null` renders an empty (collapsed) live region. */
@@ -41,6 +42,7 @@ export function FeedbackBanner({
   onDismiss,
   className,
 }: FeedbackBannerProps): ReactElement {
+  const { t } = useTranslation();
   const style = feedback ? toneStyles[feedback.tone] : null;
   const Icon = style?.icon;
 
@@ -61,7 +63,7 @@ export function FeedbackBanner({
             <button
               type="button"
               onClick={onDismiss}
-              aria-label="Dismiss message"
+              aria-label={t('ds.dismissMessage') || 'Dismiss message'}
               className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
             >
               <X size={15} aria-hidden="true" />

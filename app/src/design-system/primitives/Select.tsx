@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface SelectOption {
   /** The value committed to `onChange` when this option is picked. */
@@ -69,6 +70,7 @@ export function Select({
   'aria-labelledby': ariaLabelledby,
   'aria-invalid': ariaInvalid,
 }: SelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -250,14 +252,16 @@ export function Select({
                   setActiveIndex(0);
                 }}
                 onKeyDown={handleListNavKeys}
-                placeholder="Search…"
+                placeholder={t('common.search') || 'Search…'}
                 className="w-full border-none bg-transparent p-0 text-sm text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
               />
             </div>
           )}
           <ul ref={listRef} id={listboxId} role="listbox" className="max-h-64 overflow-auto py-1">
             {visible.length === 0 && (
-              <li className="px-3 py-2 text-sm text-[var(--ds-text-subtle)]">No matches</li>
+              <li className="px-3 py-2 text-sm text-[var(--ds-text-subtle)]">
+                {t('ds.select.noMatches') || 'No matches'}
+              </li>
             )}
             {visible.map((opt, index) => {
               // Options take pointer, not keyboard, interaction - the trigger

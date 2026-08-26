@@ -9,6 +9,7 @@ import {
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export type DrawerWidth = 'sm' | 'md';
 
@@ -77,6 +78,7 @@ export function Drawer({
   children,
   className,
 }: DrawerProps) {
+  const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
   const titleId = `${baseId}-title`;
@@ -174,7 +176,7 @@ export function Drawer({
           <button
             type="button"
             onClick={requestClose}
-            aria-label="Close"
+            aria-label={t('common.close') || 'Close'}
             className="-mr-1.5 -mt-0.5 shrink-0 rounded-[var(--ds-radius-md)] p-1.5 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
           >
             <X size={18} aria-hidden="true" />

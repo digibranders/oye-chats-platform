@@ -17,6 +17,7 @@ import {
 import { cn, EmptyState, Popover, Skeleton } from '../design-system';
 import { useNotifications } from '../context/NotificationContext';
 import type { NotificationItem } from '../types/domain';
+import { useTranslation } from '../i18n/useTranslation';
 
 const MAX_BADGE = 99;
 
@@ -72,6 +73,7 @@ interface NotificationRowProps {
 }
 
 function NotificationRow({ item, onSelect, onDismiss }: NotificationRowProps) {
+  const { t } = useTranslation();
   const meta = TYPE_META[item.type] ?? DEFAULT_META;
   const Icon = meta.icon;
   return (
@@ -112,7 +114,7 @@ function NotificationRow({ item, onSelect, onDismiss }: NotificationRowProps) {
           event.stopPropagation();
           onDismiss();
         }}
-        aria-label="Dismiss notification"
+        aria-label={t('shell.notifications.dismissOne') || 'Dismiss notification'}
         className="absolute right-2 top-2 rounded-[var(--ds-radius-sm)] p-1 text-[var(--ds-text-subtle)] opacity-0 transition-opacity hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:opacity-100 focus-visible:outline-none group-hover:opacity-100"
       >
         <X size={12} aria-hidden="true" />
@@ -128,6 +130,7 @@ function NotificationRow({ item, onSelect, onDismiss }: NotificationRowProps) {
  * crashes even on a route that doesn't wrap it.
  */
 export function NotificationCenter() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { items, unreadCount, loading, markRead, markAllRead, dismiss, clearAll } = useNotifications();
 
@@ -182,7 +185,9 @@ export function NotificationCenter() {
       {(close) => (
         <div>
           <div className="flex items-center justify-between border-b border-[var(--ds-border)] px-4 py-3">
-            <span className="text-sm font-semibold text-[var(--ds-text)]">Notifications</span>
+            <span className="text-sm font-semibold text-[var(--ds-text)]">
+              {t('shell.notifications.title') || 'Notifications'}
+            </span>
             <div className="flex items-center gap-3">
               {hasUnread && (
                 <button
@@ -191,7 +196,7 @@ export function NotificationCenter() {
                   className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ds-accent-text)] transition-opacity hover:opacity-80"
                 >
                   <CheckCheck size={12} aria-hidden="true" />
-                  Mark all read
+                  {t('shell.notifications.markAllRead') || 'Mark all read'}
                 </button>
               )}
               {items.length > 0 && (
@@ -201,7 +206,7 @@ export function NotificationCenter() {
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-danger)]"
                 >
                   <Trash2 size={12} aria-hidden="true" />
-                  Clear all
+                  {t('shell.notifications.clearAll') || 'Clear all'}
                 </button>
               )}
             </div>
@@ -217,7 +222,7 @@ export function NotificationCenter() {
             ) : items.length === 0 ? (
               <EmptyState
                 icon={Bell}
-                title="You're all caught up"
+                title={t('shell.notifications.empty') || "You're all caught up"}
                 description="Handoffs, new leads and billing alerts will appear here."
                 className="border-0 px-2 py-8"
               />
@@ -225,7 +230,7 @@ export function NotificationCenter() {
               <>
                 {today.length > 0 && (
                   <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                    Today
+                    {t('shell.notifications.today') || 'Today'}
                   </div>
                 )}
                 {today.map((item) => (
@@ -238,7 +243,7 @@ export function NotificationCenter() {
                 ))}
                 {earlier.length > 0 && (
                   <div className="px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                    Earlier
+                    {t('shell.notifications.earlier') || 'Earlier'}
                   </div>
                 )}
                 {earlier.map((item) => (

@@ -9,6 +9,7 @@ import { useEntitlements } from '../../hooks/useEntitlements';
 import { getSubscriptionPlans } from '../../services/api';
 import { renderPriceLabel, type PlanRow } from '../../features/workspace/billing/planPricing';
 import type { UpgradeIntent } from '../../context/upgradeIntents';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Re-exported so existing imports of `UpgradeModalReason` from the barrel
  * keep resolving - the shape now lives in the context module (the single
@@ -52,6 +53,7 @@ function loadPlans(): Promise<PlanRow[]> {
  * substance (per-feature copy from the intent registry) is.
  */
 export function UpgradeModal({ open, content, onClose }: UpgradeModalProps): ReactElement | null {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { planName } = useEntitlements();
   const [plans, setPlans] = useState<PlanRow[] | null>(null);
@@ -96,10 +98,10 @@ export function UpgradeModal({ open, content, onClose }: UpgradeModalProps): Rea
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Maybe later
+            {t('ds.upgrade.later') || 'Maybe later'}
           </Button>
           <Button onClick={handleUpgrade}>
-            See plans &amp; upgrade
+            {t('ds.upgrade.seePlans') || 'See plans & upgrade'}
             <ArrowRight size={14} aria-hidden="true" />
           </Button>
         </>

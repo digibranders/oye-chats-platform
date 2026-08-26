@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { cn } from '../lib/cn';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export type ColumnAlign = 'left' | 'center' | 'right';
 
@@ -62,6 +63,7 @@ export function DataTable<T>({
   pageSize,
   className,
 }: DataTableProps<T>) {
+  const { t } = useTranslation();
   const interactive = Boolean(onRowClick);
 
   // Opt-in pagination. When `pageSize` is set, only that many rows render and a
@@ -127,7 +129,9 @@ export function DataTable<T>({
             <tr>
               <td colSpan={columns.length} className="px-4 py-10 text-center">
                 {empty ?? (
-                  <span className="text-[13px] text-[var(--ds-text-muted)]">No data yet.</span>
+                  <span className="text-[13px] text-[var(--ds-text-muted)]">
+                    {t('ds.table.empty') || 'No data yet.'}
+                  </span>
                 )}
               </td>
             </tr>
@@ -177,7 +181,7 @@ export function DataTable<T>({
               disabled={safePage <= 0}
               className="rounded-md px-2.5 py-1 font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Previous
+              {t('ds.table.previous') || 'Previous'}
             </button>
             <span className="px-1 tabular-nums text-[var(--ds-text-subtle)]">
               {safePage + 1} / {pageCount}
@@ -188,7 +192,7 @@ export function DataTable<T>({
               disabled={safePage >= pageCount - 1}
               className="rounded-md px-2.5 py-1 font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Next
+              {t('ds.table.next') || 'Next'}
             </button>
           </div>
         </div>
