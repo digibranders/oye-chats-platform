@@ -364,6 +364,12 @@ def create_topup_order(
     alias. Any ``usd`` on the pack is DISPLAY ONLY. Razorpay charges INR, so we
     must never bill the USD figure.
 
+    That ``inr`` is the BASE price, exclusive of GST. The order is created for
+    base + tax (see ``gross_charge_minor``), and the charged figure is stamped
+    into ``notes.charge_paise`` because the capture handler reconciles against
+    it. ``notes.amount_inr`` stays the base, which is what the invoice carves
+    back out and what the pack advertises.
+
     Top-ups intentionally do NOT honour referral discounts. That incentive
     fires only on subscription checkout. See subscription_routes.create_checkout.
     """

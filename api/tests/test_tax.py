@@ -269,7 +269,7 @@ _LIVE_BASE_PRICES = [
     119900,  # Standard monthly ₹1,199
     1150800,  # Standard annual ₹11,508
     299900,  # Professional monthly ₹2,999
-    2878800,  # Professional annual ₹28,788
+    2818800,  # Professional annual ₹28,188 (seed_plans.py is the charge source of truth)
     599900,  # Enterprise monthly ₹5,999
     5758800,  # Enterprise annual ₹57,588
     44900,  # Operator seat ₹449

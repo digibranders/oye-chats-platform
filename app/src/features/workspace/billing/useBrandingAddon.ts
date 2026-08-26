@@ -30,15 +30,18 @@ import { formatMoneyMinor } from '../billingModel';
  */
 
 /**
- * List price of the add-on, in minor units, per charge currency.
+ * List price of the add-on, in minor units, per charge currency. A BASE price,
+ * exclusive of tax, like every other price published by this platform.
  *
  * Mirrors `RAZORPAY_BRANDING_PLAN_PRICE_CENTS` / `BRANDING_ADDON_PRICE_USD_CENTS`
  * in `api/app/config.py`. No endpoint quotes this price before a purchase is
- * started (the server returns `price_cents` only alongside a minted mandate),
- * and a buy button with no price on it is not a purchase a customer can
- * consent to. Every response we DO get overrides this - see `priceMinor` below -
- * so a config change on the server corrects the label the moment the customer
- * acts, and only the pre-purchase label can ever be stale.
+ * started (the server returns `price_cents` / `gross_price_cents` only
+ * alongside a minted mandate), and a buy button with no price on it is not a
+ * purchase a customer can consent to. Every response we DO get overrides this -
+ * see `absorbQuote` below - so a config change on the server corrects the label
+ * the moment the customer acts, and only the pre-purchase label can ever be
+ * stale. Callers are told which kind of figure they hold via `priceIncludesTax`,
+ * so a base price is never presented as the amount payable.
  */
 const LIST_PRICE_MINOR: Readonly<Record<string, number>> = {
   INR: 49900,
@@ -98,6 +101,13 @@ export interface UseBrandingAddonResult {
    * reads as a price change on a surface with a buy button on it.
    */
   priceLabel: string | null;
+  /**
+   * True when `priceLabel` is the GROSS the mandate debits (the server quoted
+   * `gross_price_cents`), false while it is still the base list price. A
+   * surface showing a base price has to disclose that tax is added on top; one
+   * showing the gross must not, because nothing is added.
+   */
+  priceIncludesTax: boolean;
   /** Hard failure. Rendered in error styling. */
   error: string | null;
   /** Non-failure information: an abandoned checkout, or a policy notice. */
@@ -126,8 +136,12 @@ export function useBrandingAddon({
   const [notice, setNotice] = useState<string | null>(null);
   const [awaitingActivation, setAwaitingActivation] = useState(false);
   // Set from any add-on response, which quotes the real charge. Preferred over
-  // the list price the moment we have it.
-  const [quoted, setQuoted] = useState<{ minor: number; currency: string } | null>(null);
+  // the list price the moment we have it. `isGross` records whether the server
+  // sent `gross_price_cents` (base + tax) or only the base, so no caller has to
+  // guess which of the two it is holding.
+  const [quoted, setQuoted] = useState<{ minor: number; currency: string; isGross: boolean } | null>(
+    null,
+  );
 
   // A settle poll outlives a navigation, so it needs an unmount signal: without
   // it the poll keeps reading for its full budget and then notifies a surface
@@ -141,20 +155,36 @@ export function useBrandingAddon({
   }, []);
 
   // A server-quoted price is an answer whatever geo is doing; the list price is
-  // only trustworthy once the charge currency has resolved.
-  const price = quoted ?? (currencyLoading ? null : listPriceFor(currency));
+  // only trustworthy once the charge currency has resolved. The list price is
+  // always a base, so it never claims to include tax.
+  const price = quoted ?? (currencyLoading ? null : { ...listPriceFor(currency), isGross: false });
   const priceLabel = price ? formatMoneyMinor(price.minor, price.currency) : null;
+  const priceIncludesTax = price?.isGross ?? false;
 
   const reset = useCallback((): void => {
     setError(null);
     setNotice(null);
   }, []);
 
-  /** Record the price the server quoted so every later label matches the charge. */
+  /**
+   * Record the price the server quoted so every later label matches the charge.
+   *
+   * `gross_price_cents` is base + tax, which is what the mandate debits, so it
+   * wins wherever the server sends it. `price_cents` is the base and is only a
+   * fallback for a response that predates the tax fields; taking it is a
+   * deliberate understatement, flagged via `isGross: false` so the surface
+   * keeps disclosing that tax is added on top. Nothing is computed here: a
+   * response without a gross does not get one invented for it.
+   */
   const absorbQuote = useCallback((result: Record<string, unknown>): void => {
-    const minor = readNumber(result, 'price_cents');
+    const gross = readNumber(result, 'gross_price_cents');
+    const minor = gross ?? readNumber(result, 'price_cents');
     if (minor === null) return;
-    setQuoted({ minor, currency: (readString(result, 'currency') ?? FALLBACK_CURRENCY).toUpperCase() });
+    setQuoted({
+      minor,
+      currency: (readString(result, 'currency') ?? FALLBACK_CURRENCY).toUpperCase(),
+      isGross: gross !== null,
+    });
   }, []);
 
   /**
@@ -300,6 +330,7 @@ export function useBrandingAddon({
     loading,
     busy,
     priceLabel,
+    priceIncludesTax,
     error,
     notice,
     awaitingActivation,

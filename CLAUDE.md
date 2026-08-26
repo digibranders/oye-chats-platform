@@ -196,7 +196,7 @@ User Question
 - **BotGrowthEvent** — Per-bot business events
 
 **Billing (Razorpay, INR — single rail)**
-- **Plan** — Tier definition (price, credits_per_month, included seats, feature_flags, provider IDs)
+- **Plan** — Tier definition (base price exclusive of GST, credits_per_month, included seats, feature_flags, provider IDs)
 - **Subscription** — status: trialing|active|past_due|canceled|paused|expired
 - **UsageRecord** — Per-period counters
 - **Invoice** — Issued by OyeChats (Razorpay-triggered)
@@ -204,6 +204,15 @@ User Question
 - **CreditLedger** — Append-only event-sourced credit balance; FIFO topup expiry via self-FK `grant_id`
 - **PricingConfig** — Super-admin tunable key/value (credit costs, kill switch)
 - **ProcessedWebhook** — Idempotency for inbound provider webhooks
+
+> **Pricing is GST-exclusive.** Every price the product publishes is a base price. For an Indian
+> customer the GST is added at charge time by `api/app/core/tax.py::gross_charge_minor`, so ₹1,199
+> listed is ₹1,414.82 debited. For an international customer the sale is an export of services, no
+> Indian GST applies, and the listed USD price is the full charge. Because the charge is `base + tax`,
+> the invoicing engine was not changed: the captured amount is tax-inclusive of the base, so the
+> existing carve-out recovers the advertised base exactly, and `SellerProfile.price_inclusive` stays
+> pinned `true`. Razorpay Subscriptions have no tax layer, so every INR plan is minted at base + GST.
+> See `docs/billing/razorpay-plan-ids.md`.
 
 **Outbound webhooks**
 - **Webhook** — Customer registration (URL, secret, event_filter)

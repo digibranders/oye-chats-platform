@@ -110,9 +110,20 @@ sequenceDiagram
 
 The single most important property: webhooks are retried by both Razorpay and Stripe. The `processed_webhooks` composite PK `(event_id, provider)` ensures every event is applied exactly once. Both webhook handlers do the SELECT-then-INSERT in a transaction (`ON CONFLICT DO NOTHING` semantically).
 
-## Currencies
+## Currencies and tax
 
 - All money stored in **minor units** (paise / cents), `int` columns.
+- **Stored prices are BASE prices, exclusive of GST** (changed 2026-08-26). `Plan.monthly_price_cents`,
+  the add-on price env vars and `pricing_config.topup_packs` all hold the base. The tax is added at
+  charge time by `core/tax.py::gross_charge_minor`, so a domestic customer is debited base + GST.
+  ₹1,199 listed is ₹1,414.82 debited.
+- An international customer is an **export of services**: no Indian GST, and the listed USD price is
+  the full charge.
+- `GET /subscriptions/checkout/quote` returns both the base (`amount_minor`) and the charge
+  (`gross_minor`). Any surface quoting an amount payable must use the gross.
+- Razorpay Subscriptions have no tax layer, so every INR plan is minted at base + GST. The invoicing
+  engine was not changed: the charge is `base + tax`, so the captured amount is tax-inclusive of the
+  base and the existing carve-out recovers the advertised base exactly.
 - `Plan.currency` decides display; the active provider is a function of the customer's selection at checkout.
 - Razorpay handles INR end-to-end (UPI Autopay covers most of our launch market). Stripe handles every other currency.
 

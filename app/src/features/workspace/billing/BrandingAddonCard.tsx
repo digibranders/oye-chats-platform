@@ -27,8 +27,18 @@ export function BrandingAddonCard({
   hasPaidPlan,
   onSettled,
 }: BrandingAddonCardProps): ReactElement {
-  const { active, loading, busy, priceLabel, error, notice, awaitingActivation, purchase, cancel } =
-    useBrandingAddon({ botId, onSettled });
+  const {
+    active,
+    loading,
+    busy,
+    priceLabel,
+    priceIncludesTax,
+    error,
+    notice,
+    awaitingActivation,
+    purchase,
+    cancel,
+  } = useBrandingAddon({ botId, onSettled });
 
   const working = busy || awaitingActivation;
   // No price yet means the charge currency is still resolving. Quoting one now
@@ -51,7 +61,9 @@ export function BrandingAddonCard({
                 )}
               </p>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                {priceReady ? `${priceLabel}/mo add-on. ` : ''}
+                {priceReady
+                  ? `${priceLabel}/mo add-on${priceIncludesTax ? ', GST included' : ''}. `
+                  : ''}
                 {active
                   ? 'The “Powered by OyeChats” badge is hidden on your widget.'
                   : 'Hides the “Powered by OyeChats” badge on your widget.'}
@@ -83,10 +95,12 @@ export function BrandingAddonCard({
             : 'The add-on rides on a paid subscription. Choose a plan first, then add it here.'}
         </p>
 
-        {/* Only where the card actually quotes a price. Without a paid plan, or
-            before the charge currency resolves, no figure is shown and a tax
-            note would qualify nothing. */}
-        {hasPaidPlan && priceReady && <TaxNote className="-mt-2" />}
+        {/* Only where the card actually quotes a BASE price. Without a paid
+            plan, or before the charge currency resolves, no figure is shown and
+            a tax note would qualify nothing. Once the server has quoted the
+            gross, the figure above is already the amount payable and this note
+            would contradict it. */}
+        {hasPaidPlan && priceReady && !priceIncludesTax && <TaxNote className="-mt-2" />}
 
         {/* Aria-live so the wait for the activation webhook is announced rather
             than leaving a customer who has just paid staring at a static card. */}

@@ -15,9 +15,15 @@ import { describeTopupExpiry, parseCreditBalance } from '../usage-model';
 import { TaxNote } from './TaxNote';
 
 interface TopupPack {
-  /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
+  /**
+   * BASE INR price (major unit, rupees), exclusive of GST. This is the figure
+   * `initiateTopup` is called with: the server adds tax when it mints the
+   * order, so posting anything else would tax an already-taxed amount.
+   */
   inr?: number;
-  /** Legacy alias for the INR charge amount. */
+  /** Base + GST in rupees (major unit): what Razorpay debits. */
+  gross_inr?: number;
+  /** Legacy alias for the base INR price. */
   amount?: number;
   /** USD display price (shown to non-INR buyers) - never charged. */
   usd?: number;
@@ -29,9 +35,23 @@ interface TopupPack {
   badge?: string;
 }
 
-/** The INR amount Razorpay charges for a pack - never the USD display figure. */
+/**
+ * The BASE INR amount posted to the charge route - never the USD display figure
+ * and never the gross. The order route applies tax itself.
+ */
 function chargeInr(pack: TopupPack): number {
   return Number(pack.inr ?? pack.amount ?? 0);
+}
+
+/**
+ * The INR figure to PRINT on a tile: the gross the Razorpay sheet will show,
+ * falling back to the base when a response predates `gross_inr`. Never derived
+ * locally, so a tile can understate the charge but can never invent one.
+ */
+function displayInr(pack: TopupPack): { amount: number; isGross: boolean } {
+  const gross = Number(pack.gross_inr);
+  if (Number.isFinite(gross) && gross > 0) return { amount: gross, isGross: true };
+  return { amount: chargeInr(pack), isGross: false };
 }
 
 export interface TopupModalProps {
@@ -242,6 +262,10 @@ export function TopupModal({
   if (!open) return null;
 
   const featuredIndex = featuredPackIndex(packs);
+  // Only the INR rail can be showing a gross: a USD tile is an export price
+  // with no Indian GST on it, and the tax note there talks about the
+  // customer's own jurisdiction, which is never redundant.
+  const allPacksShowGross = isInr && packs.every((pack) => displayInr(pack).isGross);
   const description = [
     botName
       ? `Credits land in ${botName}'s isolated balance. One-time purchase.`
@@ -300,10 +324,14 @@ export function TopupModal({
             // a second badge can't create competing highlights.
             const isFeatured = idx === featuredIndex;
             const amount = chargeInr(pack);
-            // INR buyers see the INR charge; non-INR buyers see the USD display
-            // price (the Razorpay rail still charges INR - that gate lives on
-            // the server). Never show the USD number with a ₹ symbol.
-            const shownAmount = isInr ? amount : Number(pack.usd ?? pack.display_amount ?? amount);
+            // INR buyers see the INR charge, GST included, so the tile matches
+            // the Razorpay sheet; non-INR buyers see the USD display price (the
+            // Razorpay rail still charges INR - that gate lives on the server,
+            // and an export carries no Indian GST, so there is no gross twin to
+            // prefer). Never show the USD number with a ₹ symbol.
+            const shownAmount = isInr
+              ? displayInr(pack).amount
+              : Number(pack.usd ?? pack.display_amount ?? amount);
             const shownCurrency = isInr
               ? 'INR'
               : (pack.display_currency || pack.currency || 'USD').toUpperCase();
@@ -368,9 +396,12 @@ export function TopupModal({
         </div>
       )}
 
-      {/* Pack prices are base prices. Shown only once packs are on screen:
-          there is nothing to qualify while the grid is loading or empty. */}
-      {!loadingPacks && !currencyLoading && packs.length > 0 && (
+      {/* Shown only once packs are on screen: there is nothing to qualify while
+          the grid is loading or empty, and nothing to qualify once every tile
+          already prints the gross the sheet will charge. A mixed list (an older
+          response with the gross missing from some packs) keeps the note, since
+          at least one figure on screen is then a base price. */}
+      {!loadingPacks && !currencyLoading && packs.length > 0 && !allPacksShowGross && (
         <TaxNote className="mt-4 text-center" />
       )}
 

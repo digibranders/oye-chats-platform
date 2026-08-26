@@ -2,7 +2,12 @@ import { type ReactElement, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Check, ExternalLink, Gift, Info, Loader2, Sparkles } from 'lucide-react';
 import { Button, Input, Modal, Skeleton, cn } from '../../../design-system';
-import { applyReferralCode, getCheckoutQuote, getReferralStatus } from '../../../services/api';
+import {
+  applyReferralCode,
+  getCheckoutQuote,
+  getReferralStatus,
+  type CheckoutQuoteResponse,
+} from '../../../services/api';
 import {
   formatCredits,
   formatFreeMonths,
@@ -42,10 +47,52 @@ type Intent = 'trial' | 'subscribe' | 'upgrade' | 'downgrade' | 'downgrade_free'
 
 interface QuoteState {
   loading: boolean;
+  /**
+   * The headline figure: what the customer will actually be charged. Prices are
+   * published exclusive of tax, so this is the quote's `gross_display` wherever
+   * the server sends one, and only falls back to the base `amount_display` when
+   * it does not (a cached or older response). Falling back understates the
+   * charge, so `taxLine` is null in that case and the base-price TaxNote takes
+   * over the disclosure.
+   */
   amountDisplay: string | null;
+  /**
+   * "₹1,199 + ₹215.82 GST" - the base and the tax that make up `amountDisplay`,
+   * both formatted from server numbers. Null when the quote carries no tax
+   * (export rail, unregistered seller) or no gross at all.
+   */
+  taxLine: string | null;
   /** Non-null only when checkout is blocked (e.g. international USD-pending). */
   blockedReason: string | null;
   contactSales: string | null;
+}
+
+/**
+ * Read the honest headline + its tax breakdown off a checkout quote.
+ *
+ * Every number here comes from the server. Nothing is multiplied, added or
+ * derived locally: an amount this screen computes is an amount that can
+ * disagree with the mandate Razorpay mints a second later.
+ *
+ * A quote missing `gross_display` predates the tax fields, so we degrade to the
+ * base rather than blanking the price, and suppress the breakdown so the screen
+ * never labels a base price as tax-inclusive.
+ */
+function readQuoteAmounts(
+  quote: CheckoutQuoteResponse,
+  fallbackDisplay: string,
+): { amountDisplay: string; taxLine: string | null } {
+  const gross = typeof quote.gross_display === 'string' ? quote.gross_display : null;
+  const base = typeof quote.amount_display === 'string' ? quote.amount_display : null;
+  const amountDisplay = gross ?? base ?? fallbackDisplay;
+
+  const taxMinor = typeof quote.tax_minor === 'number' ? quote.tax_minor : 0;
+  const rateBps = typeof quote.tax_rate_bps === 'number' ? quote.tax_rate_bps : 0;
+  if (gross === null || base === null || taxMinor <= 0 || rateBps <= 0) {
+    return { amountDisplay, taxLine: null };
+  }
+  const currency = typeof quote.currency === 'string' ? quote.currency : 'INR';
+  return { amountDisplay, taxLine: `${base} + ${formatMoneyMinor(taxMinor, currency)} GST` };
 }
 
 interface ReferralState {
@@ -176,6 +223,7 @@ export function PlanConfirmModal({
   const [quote, setQuote] = useState<QuoteState>({
     loading: false,
     amountDisplay: null,
+    taxLine: null,
     blockedReason: null,
     contactSales: null,
   });
@@ -267,25 +315,39 @@ export function PlanConfirmModal({
       // Enterprise tier is NOT one of these: it is priced and quotes normally.
       if (plan.isContactSales) {
         if (!cancelled) {
-          setQuote({ loading: false, amountDisplay: 'Custom', blockedReason: null, contactSales: null });
+          setQuote({
+            loading: false,
+            amountDisplay: 'Custom',
+            taxLine: null,
+            blockedReason: null,
+            contactSales: null,
+          });
         }
         return;
       }
       if (!plan.isPaid) {
         if (!cancelled) {
-          setQuote({ loading: false, amountDisplay: 'Free', blockedReason: null, contactSales: null });
+          setQuote({
+            loading: false,
+            amountDisplay: 'Free',
+            taxLine: null,
+            blockedReason: null,
+            contactSales: null,
+          });
         }
         return;
       }
-      setQuote({ loading: true, amountDisplay: null, blockedReason: null, contactSales: null });
+      setQuote({ loading: true, amountDisplay: null, taxLine: null, blockedReason: null, contactSales: null });
       try {
-        const res = (await getCheckoutQuote(plan.id, cycle)) as Record<string, unknown>;
+        const res = await getCheckoutQuote(plan.id, cycle);
         if (cancelled) return;
         const supported = res?.checkout_supported !== false;
         const reason = String(res?.reason || '');
+        const amounts = readQuoteAmounts(res ?? {}, priceText(plan, cycle));
         setQuote({
           loading: false,
-          amountDisplay: (res?.amount_display as string) || priceText(plan, cycle),
+          amountDisplay: amounts.amountDisplay,
+          taxLine: amounts.taxLine,
           // free_plan is an expected "unsupported" (downgrade path); only a
           // genuine block like intl_usd_pending should stop the pay button.
           blockedReason: !supported && reason !== 'free_plan' ? reason : null,
@@ -293,7 +355,13 @@ export function PlanConfirmModal({
         });
       } catch {
         if (!cancelled) {
-          setQuote({ loading: false, amountDisplay: priceText(plan, cycle), blockedReason: null, contactSales: null });
+          setQuote({
+            loading: false,
+            amountDisplay: priceText(plan, cycle),
+            taxLine: null,
+            blockedReason: null,
+            contactSales: null,
+          });
         }
       }
     })();
@@ -315,6 +383,11 @@ export function PlanConfirmModal({
     currentSubscriptionStatus,
   );
   const blocked = quote.blockedReason !== null;
+  // The promo hero replaces the price with "Free ... ₹0 today" and quotes the
+  // post-promo price as a base, so the breakdown line is not on screen there
+  // and the base-price disclosure still has to be.
+  const showingPromoPrice = promoApplies && Boolean(promotion);
+  const showsTaxBreakdown = !showingPromoPrice && quote.taxLine !== null;
   // A bespoke contact-sales tier, or a genuinely blocked checkout (intl USD
   // pending), both route to the sales team rather than the pay button.
   const contactOnly = blocked || plan.isContactSales;
@@ -465,6 +538,12 @@ export function PlanConfirmModal({
                       </>
                     )}
                   </div>
+                  {/* The headline is the gross. This says what makes it up, so
+                      the base a customer saw on the plan card is still visible
+                      and the tax is named rather than absorbed silently. */}
+                  {quote.taxLine && (
+                    <p className="text-[12px] text-[var(--ds-text-muted)]">{quote.taxLine}</p>
+                  )}
                   {discountActive && savingsMinor > 0 && (
                     <p className="text-[12px] font-medium text-[var(--ds-success)]">
                       You save {formatMoneyMinor(savingsMinor)}
@@ -475,11 +554,15 @@ export function PlanConfirmModal({
               )}
             </div>
           )}
-          {/* The figure above is a base price. This is the last screen before
-              the Razorpay sheet, so the rail's tax treatment is stated here or
-              nowhere. Skipped where no figure is quoted: a free tier, a
-              contact-sales tier, and while the quote is still loading. */}
-          {plan.isPaid && !contactOnly && !quote.loading && <TaxNote className="mt-2" />}
+          {/* This is the last screen before the Razorpay sheet, so the rail's
+              tax treatment is stated here or nowhere. Suppressed once the
+              breakdown above has said it: that line already names the tax, and
+              "prices exclude GST" under a figure that includes it contradicts
+              the number beside it. Also skipped where no figure is quoted: a
+              free tier, a contact-sales tier, and while the quote loads. */}
+          {plan.isPaid && !contactOnly && !quote.loading && !showsTaxBreakdown && (
+            <TaxNote className="mt-2" />
+          )}
 
           <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
             <PlanHighlights plan={plan} />

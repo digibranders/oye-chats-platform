@@ -430,19 +430,72 @@ export function updateBillingDetails(patch: Record<string, unknown>): Promise<Re
  * `display_currency` tracks the charge path: `"INR"` for India and for an unresolved country
  * (an unconfirmed buyer is domestic), `"USD"` only for a stored/detected non-IN country.
  */
-export function getBillingGeo(overrideCountry?: string): Promise<Record<string, unknown>>;
+export interface BillingGeoResponse extends Record<string, unknown> {
+  /** ISO-2 billing country, or null when nothing resolved it. */
+  country?: string | null;
+  /** Trust grade of `country`. A 'detected' country is DISPLAY-ONLY. */
+  country_source?: 'stored' | 'detected' | null;
+  /** 'INR' | 'USD'. */
+  display_currency?: string;
+  display_rate?: number;
+  /**
+   * Tax ADDED to this caller's charges, in basis points (1800 = 18%), because
+   * every published price is exclusive of tax. Absent on builds that predate
+   * the field. **0 is a real answer**: an export pays no Indian GST, and an
+   * unregistered seller adds none. Never assume 18.
+   */
+  tax_rate_bps?: number;
+  checkout_available?: boolean;
+  razorpay_enabled?: boolean;
+  razorpay_key_id?: string | null;
+  contact_sales_email?: string;
+}
+export function getBillingGeo(overrideCountry?: string): Promise<BillingGeoResponse>;
 /** First-time checkout for a plan → provider payload (Razorpay `subscription_id`, `key_id`, …). */
 export function createCheckoutSession(
   planId: number,
   billingCycle?: 'monthly' | 'annual',
   billingCountry?: string | null,
 ): Promise<Record<string, unknown>>;
-/** Honest pre-checkout quote → `{ amount_display, checkout_supported, reason, contact_sales, … }`. No proration. */
+/**
+ * Honest pre-checkout quote. No proration.
+ *
+ * Carries THREE amounts on every branch, not one, because published prices are
+ * exclusive of tax: the taxable base (`amount_minor` / `amount_display`), the
+ * tax (`tax_minor` at `tax_rate_bps`), and the gross the mandate actually
+ * debits (`gross_minor` / `gross_display`). A surface showing the customer one
+ * number before the Razorpay sheet opens must show the GROSS; quoting
+ * `amount_display` as the amount payable understates it by the tax.
+ */
+export interface CheckoutQuoteResponse extends Record<string, unknown> {
+  country?: string | null;
+  /** 'INR' | 'USD' - the currency all four amounts below are denominated in. */
+  currency?: string;
+  /** BASE price, minor units, exclusive of tax. NOT the amount payable. */
+  amount_minor?: number;
+  /** BASE price, preformatted. NOT the amount payable. */
+  amount_display?: string;
+  /** Tax on the base, minor units. 0 on the export rail. */
+  tax_minor?: number;
+  /** Rate applied to the base, basis points (1800 = 18%). 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** Base + tax, minor units: what the mandate debits. */
+  gross_minor?: number;
+  /** Base + tax, preformatted: what the mandate debits. */
+  gross_display?: string;
+  billing_cycle?: string;
+  provider?: string | null;
+  methods?: string[];
+  /** False → render Contact Sales instead of a pay button. */
+  checkout_supported?: boolean;
+  reason?: string;
+  contact_sales?: string | null;
+}
 export function getCheckoutQuote(
   planId: number,
   billingCycle?: 'monthly' | 'annual',
   billingCountry?: string | null,
-): Promise<Record<string, unknown>>;
+): Promise<CheckoutQuoteResponse>;
 /** Change plan on an existing subscription → `{ status | provider, … }` (switched / downgrade_scheduled / checkout). */
 export function changePlan(
   planId: number,
@@ -463,17 +516,62 @@ export function verifyRazorpaySubscription(payload: {
   razorpay_subscription_id: string;
   razorpay_signature: string;
 }): Promise<Record<string, unknown>>;
-/** Add (delta > 0) or remove (delta < 0) operator seats; may return `{ requires_authorization, checkout }`. */
-export function changeOperatorSeats(delta: number, botId?: number | null): Promise<Record<string, unknown>>;
+/**
+ * Add (delta > 0) or remove (delta < 0) operator seats; may return
+ * `{ requires_authorization, checkout }` on the first extra seat.
+ *
+ * `extra_seat_price_cents` is the BASE per-seat price. The add-on mandate
+ * collects base + tax, so `gross_extra_seat_price_cents` is the figure that
+ * matches the Razorpay sheet opened from this same response.
+ */
+export interface SeatChangeResponse extends Record<string, unknown> {
+  message?: string;
+  requires_authorization?: boolean;
+  checkout?: Record<string, unknown>;
+  pending_seats?: number;
+  total_seats?: number;
+  extra_seats?: number;
+  operator_quantity?: number;
+  included_operator_seats?: number;
+  /** BASE per-seat price, minor units, exclusive of tax. */
+  extra_seat_price_cents?: number;
+  /** Base + tax per seat, minor units: what the seat mandate debits. */
+  gross_extra_seat_price_cents?: number;
+  /** Rate applied to the base, basis points. 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** ISO-4217 code the seat prices are denominated in. */
+  currency?: string;
+}
+export function changeOperatorSeats(delta: number, botId?: number | null): Promise<SeatChangeResponse>;
 /**
  * Buy the branding-removal add-on → `{ message, active, pending,
- * requires_authorization, checkout, price_cents, currency }`. The entitlement is
- * granted by the activation webhook, never by this response, so `active` stays
- * false until the mandate is authorized.
+ * requires_authorization, checkout, price_cents, gross_price_cents,
+ * tax_rate_bps, currency }`. The entitlement is granted by the activation
+ * webhook, never by this response, so `active` stays false until the mandate is
+ * authorized.
+ *
+ * `price_cents` is the BASE. `gross_price_cents` is base + tax, the figure the
+ * add-on mandate actually debits, and the one any label beside a buy button
+ * should quote.
  */
-export function purchaseBrandingAddon(botId?: number | null): Promise<Record<string, unknown>>;
+export interface BrandingAddonResponse extends Record<string, unknown> {
+  message?: string;
+  active?: boolean;
+  pending?: boolean;
+  requires_authorization?: boolean;
+  checkout?: Record<string, unknown>;
+  /** BASE add-on price, minor units, exclusive of tax. */
+  price_cents?: number;
+  /** Base + tax, minor units: what the add-on mandate debits. */
+  gross_price_cents?: number;
+  /** Rate applied to the base, basis points. 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** ISO-4217 code both prices are denominated in. */
+  currency?: string;
+}
+export function purchaseBrandingAddon(botId?: number | null): Promise<BrandingAddonResponse>;
 /** Cancel the branding-removal add-on → the same state shape as the purchase. */
-export function cancelBrandingAddon(botId?: number | null): Promise<Record<string, unknown>>;
+export function cancelBrandingAddon(botId?: number | null): Promise<BrandingAddonResponse>;
 /** Standing referral attribution on the account: `{ attributed, code, discount_pct }`. */
 export function getReferralStatus(): Promise<{ attributed?: boolean; code?: string | null; discount_pct?: number } | null>;
 /** Apply/validate a referral code. Non-null `code` ⇒ accepted. */
@@ -519,7 +617,29 @@ export function getCreditBalance(): Promise<Record<string, unknown>>;
 export function getCreditHistory(params?: { page?: number; limit?: number; botId?: number | null }): Promise<Record<string, unknown>>;
 /** Daily consumption trend → `{ days, series: [{ date, credits_used }] }` (zero-filled, ascending). */
 export function getCreditDaily(params?: { days?: number; botId?: number | null }): Promise<Record<string, unknown>>;
-export function getTopupPacks(): Promise<Array<Record<string, unknown>>>;
+/**
+ * One-off credit pack.
+ *
+ * `inr` is the BASE rupee price and stays the amount posted to
+ * {@link initiateTopup}; the server adds tax when it mints the order. `gross_inr`
+ * is base + tax, the figure the Razorpay sheet shows, and the one a tile should
+ * display. `usd` needs no gross twin: an export carries no Indian GST, so the
+ * listed dollar figure is already the full charge.
+ */
+export interface TopupPackResponse extends Record<string, unknown> {
+  /** BASE rupee price (major units). What {@link initiateTopup} is called with. */
+  inr?: number;
+  /** Base + tax in rupees (major units): what Razorpay debits. */
+  gross_inr?: number;
+  /** Legacy alias for `inr`. */
+  amount?: number;
+  /** USD display price. Export rail, so no Indian GST is added on top. */
+  usd?: number;
+  credits?: number;
+  bonus_pct?: number;
+  badge?: string;
+}
+export function getTopupPacks(): Promise<TopupPackResponse[]>;
 /** Start a top-up purchase → Razorpay order payload (`order_id`, `amount`, `key_id`, …). */
 export function initiateTopup(
   amount: number,

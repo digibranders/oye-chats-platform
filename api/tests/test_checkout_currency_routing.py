@@ -484,3 +484,96 @@ def test_contact_sales_quote_still_carries_the_tax_fields(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert body["reason"] == "inr_plan_unconfigured"
     assert body["gross_minor"] == 212282
+
+
+def test_intl_pending_quote_still_carries_the_tax_fields(db, monkeypatch):
+    """The fourth branch. `_tax_block` claims no branch can ship without the tax
+    fields; that claim is only true while every branch is actually pinned."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-tax-pending@e.com")
+    plan = _make_plan(db, slug="pending-tax", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    plan.razorpay_plan_id_monthly_usd = None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["reason"] == "intl_usd_pending"
+    assert body["tax_minor"] == 0  # export, no Indian GST
+    assert body["gross_minor"] == body["amount_minor"]
+
+
+def test_geo_publishes_the_rate_that_will_be_added(db, monkeypatch):
+    """The disclosure copy is rendered from this, so it must not be a guess."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="geo-tax@e.com")
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "charge_tax_rate_bps", return_value=1800),
+    ):
+        res = api.get("/subscriptions/geo")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["tax_rate_bps"] == 1800
+
+
+def test_geo_reports_zero_tax_on_the_export_rail(db, monkeypatch):
+    """A foreign customer is never charged Indian GST, so the UI must never say
+    they are. Also keeps this endpoint DB-free for them."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="geo-tax-us@e.com")
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get("/subscriptions/geo")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["display_currency"] == "USD"
+    assert res.json()["tax_rate_bps"] == 0
+
+
+def test_current_subscription_carries_the_gross_recurring_figures(db):
+    """Pre-purchase surfaces need the charge, not just the base.
+
+    The seat and branding cards quote a price before any purchase response
+    exists, and the Billing overview names the active subscription's recurring
+    charge. Without these the browser could only show the base or compute the
+    tax itself, and the browser must never compute tax.
+
+    Calls the handler directly: ``/current`` authenticates through a different
+    dependency than the shared harness overrides, and this is a payload-shape
+    contract, not a routing one.
+    """
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="current-tax@e.com")
+    # No subscription, so the handler falls back to the Free plan; it needs one
+    # to exist. The add-on grosses do not depend on the plan's own price.
+    _make_plan(db, slug="free", monthly_price_cents=0)
+    db.flush()
+
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "charge_tax_rate_bps", return_value=1800),
+    ):
+        body = subscription_routes.get_current_subscription(
+            auth={"type": "client", "client_id": client.id, "entity": client}
+        )
+
+    assert body["tax_rate_bps"] == 1800
+    # ₹449 seat and ₹499 branding bases, each plus 18%.
+    assert body["gross_extra_seat_price_cents"] == 52982
+    assert body["gross_branding_addon_price_cents"] == 58882

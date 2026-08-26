@@ -1,5 +1,25 @@
 # Launch Offer — "Sign up this month, get 3 months free"
 
+> ## ⚠️ Written before the 26 Aug 2026 switch to GST-EXCLUSIVE pricing
+>
+> This plan is left unedited. The `start_at` mechanic it specifies is unaffected: a deferred first
+> charge is still a deferred first charge. What changed is the **amount**. Every published price is
+> now a base price, exclusive of GST, and a domestic customer is debited base + GST. An international
+> customer is an export and pays the listed USD price.
+>
+> Three items in the plan below read differently now:
+> - **§6d and §8 checkout copy.** "then ₹X/mo" must quote the **gross** for a domestic customer, from
+>   `gross_display` on `GET /subscriptions/checkout/quote`. Quoting the base understates the month-4
+>   charge by the tax, on a charge the customer will not see for three months.
+> - **§4, AFA threshold (~₹15,000).** The threshold applies to the debit, which is the gross. A tier
+>   whose base sits just under ₹15,000 can cross it once GST is added, so audit plan prices at the
+>   gross, not the base.
+> - **§4, mandate max amount.** Still fine: it is derived from the Razorpay plan, and every INR plan
+>   is minted at base + GST, so the cap already includes the tax.
+>
+> Current source of truth: `api/app/core/tax.py` and
+> [`api-reference.md`](./api-reference.md#billing-and-pricing-routes).
+
 **Status:** Plan / ready for review
 **Author:** drafted with Claude, for Codex review → gpt-5.4 execution
 **Scope:** `platform/api` (backend), `platform/app` (customer checkout UI), `superadmin` (campaign admin)
