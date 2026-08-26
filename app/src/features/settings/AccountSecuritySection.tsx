@@ -453,6 +453,8 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): 
                 type="email"
                 required
                 autoComplete="email"
+                // i18n-exempt: an example address showing the expected FORMAT.
+                // The shape is the same in every language.
                 placeholder="you@example.com"
                 value={newEmail}
                 onChange={(event) => setNewEmail(event.target.value)}

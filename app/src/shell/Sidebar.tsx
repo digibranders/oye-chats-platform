@@ -218,12 +218,16 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           <>
             <img
               src="/new_dark.png"
+              // i18n-exempt: the product name is a brand mark, identical in every
+              // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}
               className="pointer-events-none block h-7 w-auto select-none object-contain object-left dark:hidden"
             />
             <img
               src="/new_white.png"
+              // i18n-exempt: the product name is a brand mark, identical in every
+              // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}
               className="pointer-events-none hidden h-7 w-auto select-none object-contain object-left dark:block"

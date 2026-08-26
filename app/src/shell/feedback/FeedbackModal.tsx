@@ -512,7 +512,7 @@ export function FeedbackModal({
               {isSubmitting ? (
                 <>
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                  Sending…
+                  {t('shell.feedback.sending') || 'Sending…'}
                 </>
               ) : uploading ? (
                 'Uploading…'

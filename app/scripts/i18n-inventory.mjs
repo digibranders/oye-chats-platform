@@ -231,14 +231,22 @@ function isLocalized(source, start) {
  * it is the right operand of a `||`/`??` whose left side actually calls t().
  */
 function isTranslationFallback(node, ts) {
+  // Walks through ANY intervening expression, not only a direct binary parent:
+  // the fallback is often a template literal or a ternary, and the literal then
+  // sits several nodes below the `||`. Stopping at the first non-binary parent
+  // reported those as unlocalized.
   let cur = node;
-  while (cur.parent && ts.isBinaryExpression(cur.parent)) {
-    const bin = cur.parent;
-    const op = bin.operatorToken.kind;
-    const isOr =
-      op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken;
-    if (isOr && bin.right === cur && callsTranslate(bin.left, ts)) return true;
-    cur = bin;
+  while (cur.parent) {
+    const parent = cur.parent;
+    if (ts.isBinaryExpression(parent)) {
+      const op = parent.operatorToken.kind;
+      const isOr =
+        op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken;
+      if (isOr && parent.right === cur && callsTranslate(parent.left, ts)) return true;
+    }
+    // A statement boundary means we have left the expression entirely.
+    if (ts.isStatement(parent) || ts.isJsxElement(parent) || ts.isJsxAttribute(parent)) break;
+    cur = parent;
   }
   return false;
 }
