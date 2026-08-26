@@ -170,6 +170,34 @@ function isExempt(sourceLines, lineIndex) {
   return false;
 }
 
+/**
+ * Block exemption: the marker on a declaration covers everything inside it.
+ *
+ * A line window can exempt one literal but not a TABLE of them - the marker
+ * sits above the opening brace and the entries are ten lines further down. The
+ * alternative, repeating the marker on every entry, puts the reason in twelve
+ * places and lets them drift apart. Anchoring on the declaration's own leading
+ * comment keeps one reason for one decision, and it still reads as a range
+ * rather than a blanket: only that declaration is covered.
+ */
+function isExemptBlock(node, ts, sf, source) {
+  for (let cur = node; cur; cur = cur.parent) {
+    if (
+      !ts.isVariableStatement(cur) &&
+      !ts.isFunctionDeclaration(cur) &&
+      !ts.isPropertyDeclaration(cur) &&
+      !ts.isMethodDeclaration(cur)
+    ) {
+      continue;
+    }
+    const ranges = ts.getLeadingCommentRanges(source, cur.getFullStart()) ?? [];
+    for (const r of ranges) {
+      if (source.slice(r.pos, r.end).includes('i18n-exempt:')) return true;
+    }
+  }
+  return false;
+}
+
 const LOOKBEHIND = 220;
 function isLocalized(source, start) {
   const preceding = source.slice(Math.max(0, start - LOOKBEHIND), start);
@@ -346,6 +374,7 @@ function scanFile(file) {
       const text = node.text.replace(/\s+/g, ' ').trim();
       if (text && /[A-Za-z]/.test(text) && (isSentenceShaped(text) || isSingleWordLabel(text))) {
         hits.push({
+          node,
           file: relPath,
           line: lineOf(node),
           kind: 'jsx-text',
@@ -374,6 +403,7 @@ function scanFile(file) {
         }
         if (value && LOCALIZABLE_ATTRS.has(attr) && /[A-Za-z]{2}/.test(value)) {
           hits.push({
+            node,
             file: relPath,
             line: lineOf(node),
             kind: 'attr',
@@ -405,6 +435,7 @@ function scanFile(file) {
       }
       if (!inImport && !isJsxAttrValue && !isPropertyKey && (isSentenceShaped(node.text))) {
         hits.push({
+          node,
           file: relPath,
           line: lineOf(node),
           kind: 'literal',
@@ -425,7 +456,9 @@ function scanFile(file) {
 
   const srcLines = source.split('\n');
   for (const h of hits) {
-    h.exempt = isExempt(srcLines, h.line - 1);
+    h.exempt =
+      isExempt(srcLines, h.line - 1) ||
+      (h.node ? isExemptBlock(h.node, ts, sf, source) : false);
     h.class = classify({
       relPath,
       kind: h.kind,
@@ -433,6 +466,9 @@ function scanFile(file) {
       ctx: { attr: h.attr, inConsole: h.inConsole, inThrow: h.inThrow, inImport: false, isPropertyKey: false },
     });
     h.phase = phaseFor(relPath);
+    // The AST node is circular and only needed for the block-exemption walk
+    // above. Drop it before anything tries to serialise a hit.
+    delete h.node;
   }
   return { relPath, hits, formatSites, tCalls };
 }

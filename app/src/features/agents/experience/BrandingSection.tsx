@@ -7,6 +7,7 @@ import { ColorField } from '../../launch-studio/customize/ColorField';
 import { AvatarPicker } from '../../launch-studio/customize/AvatarPicker';
 import { Toggle } from '../advanced/controls';
 import { type ExperienceDraft } from './types';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface BrandingSectionProps {
   draft: ExperienceDraft;
@@ -36,6 +37,7 @@ export function BrandingSection({
   onUpload,
   avatarIsLive,
 }: BrandingSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   const canRemoveBranding = hasFeature('branding_removable');
@@ -44,18 +46,18 @@ export function BrandingSection({
     <div className="space-y-8">
       <section className="space-y-5">
         <SectionHeader
-          title="Colours"
+          title={t('agents.colours') || 'Colours'}
           description="Match the widget to your brand. These drive the launcher, avatar and message bubbles."
         />
         <div className="grid gap-6 sm:grid-cols-2">
           <ColorField
-            label="Brand colour"
+            label={t('agents.brandColour') || 'Brand colour'}
             value={draft.primaryColor}
             onChange={(c) => onChange({ primaryColor: c })}
             swatches={swatches}
           />
           <ColorField
-            label="Visitor message colour"
+            label={t('agents.visitorMessageColour') || 'Visitor message colour'}
             value={draft.userBubbleColor}
             onChange={(c) => onChange({ userBubbleColor: c })}
             swatches={swatches}
@@ -65,7 +67,7 @@ export function BrandingSection({
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
-          title="Avatar"
+          title={t('agents.avatar') || 'Avatar'}
           description="The face of your chatbot - a photo, a glowing orb, or a friendly mascot."
         />
         <AvatarPicker
@@ -101,11 +103,11 @@ export function BrandingSection({
               </span>
             )}
             <div className="min-w-0">
-              <p className="text-[14px] font-medium text-[var(--ds-text)]">Remove branding</p>
+              <p className="text-[14px] font-medium text-[var(--ds-text)]">{t('agents.removeBranding') || 'Remove branding'}</p>
               <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
                 {canRemoveBranding
-                  ? 'Hide the “Powered by OyeChats” footer from the widget.'
-                  : 'Upgrade your plan to hide the “Powered by OyeChats” footer.'}
+                  ? t('agents.hideThePoweredByOyechats') || 'Hide the “Powered by OyeChats” footer from the widget.'
+                  : t('agents.upgradeYourPlanToHide') || 'Upgrade your plan to hide the “Powered by OyeChats” footer.'}
               </p>
             </div>
           </div>
@@ -113,7 +115,7 @@ export function BrandingSection({
             <Toggle
               checked={!draft.showBranding}
               onChange={(hide) => onChange({ showBranding: !hide })}
-              label="Remove OyeChats branding from the widget"
+              label={t('agents.removeOyechatsBrandingFromThe') || 'Remove OyeChats branding from the widget'}
             />
           ) : (
             <Button
@@ -122,7 +124,7 @@ export function BrandingSection({
               onClick={() => openUpgradeModal('branding_removable')}
             >
               <Lock size={13} aria-hidden="true" />
-              Upgrade to remove branding
+              {t('agents.upgradeToRemoveBranding') || 'Upgrade to remove branding'}
             </Button>
           )}
         </Card>

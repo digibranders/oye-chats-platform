@@ -5,6 +5,8 @@ import { useEntitlements } from '../../../hooks/useEntitlements';
 import { useBotContext } from '../../../context/BotContext';
 import { previewChatStream } from '../../../services/api';
 import { type ExperienceDraft } from './types';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface ExperiencePreviewProps {
   draft: ExperienceDraft;
@@ -32,6 +34,7 @@ const STATE_TABS: { key: PreviewState; label: string }[] = [
  * offline/unavailable view - not just the chat state.
  */
 export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps): ReactElement {
+  const { t } = useTranslation();
   const [state, setState] = useState<PreviewState>('chat');
   const [messages, setMessages] = useState<WidgetPreviewMessage[]>([]);
   const [pending, setPending] = useState(false);
@@ -78,7 +81,7 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
               return prev;
             }
             setPending(false);
-            return [...prev, { role: 'bot', text: 'Sorry, I couldn’t answer that just now.' }];
+            return [...prev, { role: 'bot', text: translateNow('agents.sorryICouldntAnswerThat') || 'Sorry, I couldn’t answer that just now.' }];
           }),
       });
     },
@@ -109,7 +112,7 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
     <div className="flex flex-col items-center gap-3">
       <div
         role="group"
-        aria-label="Preview state"
+        aria-label={t('agents.previewState') || 'Preview state'}
         className="flex w-full max-w-[380px] gap-1 rounded-lg bg-[var(--ds-bg-surface)] p-1"
       >
         {STATE_TABS.map(({ key, label }) => {
@@ -140,7 +143,7 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
         onSend={selectedBot ? ask : undefined}
       />
       <p className="text-[11px] text-[var(--ds-text-subtle)]">
-        Live preview - test your bot & watch edits update in real time
+        {t('agents.livePreviewTestYourBot') || 'Live preview - test your bot & watch edits update in real time'}
       </p>
     </div>
   );

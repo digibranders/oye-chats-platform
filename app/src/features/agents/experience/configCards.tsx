@@ -11,6 +11,7 @@ import { type ReactElement, type ReactNode, useId } from 'react';
 import { Check, Lock } from 'lucide-react';
 import { Button, Input, cn } from '../../../design-system';
 import { type SliceStatus } from './botConfig';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export function Card({ children }: { children: ReactNode }): ReactElement {
   return (
@@ -31,21 +32,22 @@ export function SaveFooter({
   onSave: () => void;
   label: string;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-border)] pt-4">
       <p role="status" aria-live="polite" className="min-w-0 truncate text-[12px]">
         {status.error ? (
           <span className="text-[var(--ds-danger)]">{status.error}</span>
         ) : status.saving ? (
-          <span className="text-[var(--ds-text-muted)]">Saving…</span>
+          <span className="text-[var(--ds-text-muted)]">{t('agents.saving') || 'Saving…'}</span>
         ) : status.saved && !dirty ? (
           <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
             <Check size={13} aria-hidden="true" /> Saved
           </span>
         ) : dirty ? (
-          <span className="text-[var(--ds-text-muted)]">Unsaved changes</span>
+          <span className="text-[var(--ds-text-muted)]">{t('agents.unsavedChanges') || 'Unsaved changes'}</span>
         ) : (
-          <span className="text-[var(--ds-text-subtle)]">Up to date</span>
+          <span className="text-[var(--ds-text-subtle)]">{t('agents.upToDate') || 'Up to date'}</span>
         )}
       </p>
       <Button size="sm" onClick={onSave} disabled={!dirty || status.saving}>

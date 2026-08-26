@@ -1,5 +1,6 @@
 import { type ReactElement } from 'react';
 import { Languages } from 'lucide-react';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * Tells a customer that the copy they are about to write will NOT be
@@ -18,6 +19,7 @@ import { Languages } from 'lucide-react';
  * it is noise.
  */
 export function CustomCopyNotice({ multilingual }: { multilingual: boolean }): ReactElement | null {
+  const { t } = useTranslation();
   if (!multilingual) return null;
   return (
     <div
@@ -27,7 +29,7 @@ export function CustomCopyNotice({ multilingual }: { multilingual: boolean }): R
       <Languages size={14} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
       <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
         <span className="font-medium text-[var(--ds-text)]">
-          Custom text is shown unchanged in all languages.
+          {t('agents.customTextIsShownUnchanged') || 'Custom text is shown unchanged in all languages.'}
         </span>{' '}
         Anything you write here replaces the built-in wording, which your chatbot would otherwise
         translate for each visitor. Leave a field empty to keep the translated default.
