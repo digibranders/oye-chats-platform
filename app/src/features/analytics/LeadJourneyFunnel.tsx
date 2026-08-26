@@ -2,6 +2,7 @@ import { type ReactElement, useEffect, useState } from 'react';
 import { cn } from '../../design-system';
 import { getQualificationFunnel } from '../../services/api';
 import { type FunnelStageView, funnelHasData, readFunnel } from '../leads/leadModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Reporting windows the funnel selector offers (mirrors the backend params). */
 type FunnelPeriod = '7d' | '30d' | '90d' | 'all';
@@ -17,12 +18,15 @@ const DEFAULT_FUNNEL_PERIOD: FunnelPeriod = '30d';
 
 /** Left-to-right funnel summary: each qualification stage with its drop-off. */
 function FunnelSummary({ stages }: { stages: FunnelStageView[] }): ReactElement {
+  const { t } = useTranslation();
   return (
     <ol className="space-y-2.5">
       {stages.map((stage) => (
         <li key={stage.key} className="flex items-center gap-3">
           <div className="w-32 shrink-0">
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">{stage.label}</p>
+            <p className="text-[13px] font-medium text-[var(--ds-text)]">
+              {t(`analytics.funnelStage.${stage.key ?? stage.label}`) || stage.label}
+            </p>
             <p className="text-[11px] text-[var(--ds-text-subtle)]">{stage.sublabel}</p>
           </div>
           <div className="relative h-7 flex-1">
@@ -45,7 +49,7 @@ function FunnelSummary({ stages }: { stages: FunnelStageView[] }): ReactElement 
               </span>
             ) : (
               <span className="text-[11px] uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                Top
+                {t('analytics.top') || 'Top'}
               </span>
             )}
           </div>
@@ -68,6 +72,7 @@ export interface LeadJourneyFunnelProps {
  * state; the funnel must never break the page hosting it.
  */
 export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactElement {
+  const { t } = useTranslation();
   const [funnelPeriod, setFunnelPeriod] = useState<FunnelPeriod>(DEFAULT_FUNNEL_PERIOD);
   const [funnel, setFunnel] = useState<FunnelStageView[]>([]);
 
@@ -98,7 +103,7 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-[14px] font-semibold text-[var(--ds-text)]">
-            How visitors become buyers
+            {t('analytics.howVisitorsBecomeBuyers') || 'How visitors become buyers'}
           </h2>
           <p className="text-[12px] text-[var(--ds-text-muted)]">
             Where people drop off on the way from a first visit to a booked call ·{' '}
@@ -107,7 +112,7 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
         </div>
         <div
           role="group"
-          aria-label="Funnel time range"
+          aria-label={t('analytics.funnelTimeRange') || 'Funnel time range'}
           className="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--ds-bg-sunken)] p-0.5"
         >
           {FUNNEL_PERIOD_OPTIONS.map((option) => (
@@ -123,7 +128,7 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
                   : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
               )}
             >
-              {option.label}
+              {t(`analytics.range.${option.value}`) || option.label}
             </button>
           ))}
         </div>
@@ -132,7 +137,7 @@ export function LeadJourneyFunnel({ botId }: LeadJourneyFunnelProps): ReactEleme
         <FunnelSummary stages={funnel} />
       ) : (
         <p className="rounded-lg border border-dashed border-[var(--ds-border)] px-4 py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
-          No funnel activity in this period yet.
+          {t('analytics.noFunnelActivityInThis') || 'No funnel activity in this period yet.'}
         </p>
       )}
     </section>

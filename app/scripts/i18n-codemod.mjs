@@ -106,6 +106,11 @@ for (const [file, fileHits] of byFile) {
     const key = `${NS}.${keyFor(text)}`;
     usedKeys.set(key, text);
     const call = `${FN}(${jsQuote(key)})`;
+    // `a ?? t('k') || 'b'` is a TS5076 error: ?? cannot be mixed with || without
+    // parentheses. Wrapping unconditionally on such lines is cheaper than
+    // reasoning about precedence per site, and reads no worse.
+    const needsParens = line.includes('??');
+    const wrap = (expr) => (needsParens ? `(${expr})` : expr);
 
     let next = null;
     if (h.kind === 'attr') {
@@ -116,8 +121,8 @@ for (const [file, fileHits] of byFile) {
     } else if (h.kind === 'literal') {
       const sq = `'${text}'`;
       const dq = `"${text}"`;
-      if (line.split(sq).length === 2) next = line.replace(sq, `${call} || ${jsQuote(text)}`);
-      else if (line.split(dq).length === 2) next = line.replace(dq, `${call} || ${jsQuote(text)}`);
+      if (line.split(sq).length === 2) next = line.replace(sq, wrap(`${call} || ${jsQuote(text)}`));
+      else if (line.split(dq).length === 2) next = line.replace(dq, wrap(`${call} || ${jsQuote(text)}`));
     } else if (h.kind === 'jsx-text') {
       // Only single-line, unbraced JSX text. Multi-line nodes and anything
       // already inside an expression are left for a human.

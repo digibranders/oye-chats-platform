@@ -13,6 +13,9 @@ import {
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { getUnansweredQuestions } from '../../services/api';
 import type { UnansweredQuestion } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
+import { formatNumber } from '../../i18n/formatters';
+import { t as translateNow } from '../../i18n/i18n';
 
 const LIMIT = 50;
 
@@ -40,6 +43,9 @@ function formatRelativeDate(iso?: string | null): string {
   });
 }
 
+// Module constant: evaluated at import, before a locale exists. Headers are
+// resolved at the render site from the column key; the English here is the
+// inline fallback.
 const COLUMNS: Column<UnansweredQuestion>[] = [
   {
     key: 'question',
@@ -64,7 +70,7 @@ const COLUMNS: Column<UnansweredQuestion>[] = [
     width: '8rem',
     render: (row) => (
       <span className="tabular-nums font-medium text-[var(--ds-text)]">
-        {row.count.toLocaleString()}
+        {formatNumber(row.count)}
       </span>
     ),
   },
@@ -85,6 +91,7 @@ export function UnansweredQuestionsPanel({
 }: {
   botId: number | null;
 }): ReactElement {
+  const { t } = useTranslation();
   const [gaps, setGaps] = useState<UnansweredQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<DayRange>('30');
@@ -105,7 +112,7 @@ export function UnansweredQuestionsPanel({
       } catch (err) {
         if (!cancelled && activeBotRef.current === botId) {
           setError(
-            err instanceof Error ? err.message : 'Failed to load unanswered questions.',
+            err instanceof Error ? err.message : translateNow('analytics.failedToLoadUnansweredQuestions') || 'Failed to load unanswered questions.',
           );
         }
       }
@@ -120,7 +127,7 @@ export function UnansweredQuestionsPanel({
     <Card>
       <CardHeader>
         <SectionHeader
-          title="Unanswered questions"
+          title={t('analytics.unansweredQuestions') || 'Unanswered questions'}
           description="Questions visitors asked that your AI couldn't answer from its knowledge base, ranked by frequency."
           actions={
             <div className="flex items-center gap-2">
@@ -137,7 +144,7 @@ export function UnansweredQuestionsPanel({
                 disabled={gaps === null && error === null}
               >
                 <RefreshCw size={14} aria-hidden="true" />
-                Refresh
+                {t('analytics.refresh') || 'Refresh'}
               </Button>
             </div>
           }
@@ -147,12 +154,12 @@ export function UnansweredQuestionsPanel({
         {error !== null ? (
           <EmptyState
             icon={TriangleAlert}
-            title="Couldn't load unanswered questions"
+            title={t('analytics.couldntLoadUnansweredQuestions') || 'Couldn\'t load unanswered questions'}
             description={error}
             action={
               <Button variant="primary" onClick={() => setReloadToken((t) => t + 1)}>
                 <RefreshCw size={16} aria-hidden="true" />
-                Try again
+                {t('analytics.tryAgain') || 'Try again'}
               </Button>
             }
           />
@@ -165,12 +172,15 @@ export function UnansweredQuestionsPanel({
         ) : gaps.length === 0 ? (
           <EmptyState
             icon={CheckCircle2}
-            title="No unanswered questions"
+            title={t('analytics.noUnansweredQuestions') || 'No unanswered questions'}
             description="Your AI is answering everything visitors throw at it. Questions it can't answer will appear here so you know what content to add."
           />
         ) : (
           <DataTable
-            columns={COLUMNS}
+            columns={COLUMNS.map((col) => ({
+              ...col,
+              header: t(`analytics.column.${col.key}`) || col.header,
+            }))}
             rows={gaps}
             rowKey={(row) => row.question}
             caption="Questions your AI couldn't answer from its knowledge base"

@@ -6,6 +6,7 @@ import { useEntitlements } from '../../hooks/useEntitlements';
 import { JourneyOutcomes } from './JourneyOutcomes';
 import { PageInfluence } from './PageInfluence';
 import { UserJourneyFlow } from './UserJourneyFlow';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Plan slugs allowed to view the Journey surface. Mirrors
@@ -37,6 +38,7 @@ const JOURNEY_PLAN_SLUGS = new Set<string>(['standard', 'professional', 'enterpr
  * upgrade surfaces prior history immediately.
  */
 export function JourneyPage(): ReactElement {
+  const { t } = useTranslation();
   const { selectedBot } = useBotContext();
   const { planSlug, loading: entitlementsLoading } = useEntitlements();
   const botId = selectedBot?.id ?? null;
@@ -47,7 +49,7 @@ export function JourneyPage(): ReactElement {
   const gated = !entitlementsLoading && !JOURNEY_PLAN_SLUGS.has(planSlug);
 
   return (
-    <PageContainer title="Journey" description="Visitor journey flow.">
+    <PageContainer title={t('analytics.journey') || 'Journey'} description="Visitor journey flow.">
       {entitlementsLoading ? (
         <Skeleton className="h-[540px]" />
       ) : gated ? (

@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../i18n/i18n';/**
  * Pure derivations behind the Journeys diagram's outcome column.
  *
  * Kept free of React so the arithmetic that reaches a customer's screen can be
@@ -39,11 +40,11 @@ export function isFilterableOutcome(id: string): id is FilterableOutcome {
 export function outcomeLabel(id: string): string {
   switch (id) {
     case 'meeting_booked':
-      return 'Book Meeting';
+      return translateNow('analytics.bookMeeting') || 'Book Meeting';
     case 'handoff_requested':
-      return 'Live Chat';
+      return translateNow('analytics.liveChat') || 'Live Chat';
     case 'offline_message_sent':
-      return 'Offline Message';
+      return translateNow('analytics.offlineMessage') || 'Offline Message';
     case 'exit':
       return 'Drop-off';
     default:
@@ -137,7 +138,7 @@ export interface FilterEmptyInput {
 /** Description for the "no journeys match this filter" state. */
 export function filterEmptyDescription(input: FilterEmptyInput): string {
   if (!input.hasTrackedJourneys) {
-    return 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
+    return translateNow('analytics.noPageJourneysWereTracked') || 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
   }
   const scope = input.startPage ? ` starting on ${input.startPage}` : '';
   if (input.outcome) {
@@ -149,5 +150,5 @@ export function filterEmptyDescription(input: FilterEmptyInput): string {
   if (input.startPage) {
     return `No tracked journeys started on ${input.startPage} in this window.`;
   }
-  return 'No tracked journeys match the current filters.';
+  return translateNow('analytics.noTrackedJourneysMatchThe') || 'No tracked journeys match the current filters.';
 }

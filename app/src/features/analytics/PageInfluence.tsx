@@ -3,6 +3,7 @@ import { BarChart3, Compass, Info, RefreshCw, Sparkles, TriangleAlert } from 'lu
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
 import type { JourneyTopPageRow } from '../../services/api';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * PageInfluence. Ranked list of the actual pages visitors were on
@@ -130,6 +131,7 @@ export interface PageInfluenceProps {
 }
 
 export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
+  const { t } = useTranslation();
   const { status, data, error, reload } = useJourneyAnalytics(botId);
 
   const rows = useMemo(() => (data ? composeRows(data.topPages.pre.rows) : []), [data]);
@@ -153,7 +155,7 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title="Pick a chatbot to see which pages drive chats"
+        title={t('analytics.pickAChatbotToSee') || 'Pick a chatbot to see which pages drive chats'}
         description="Page Influence is scoped per chatbot. Use the chatbot switcher above to focus this view."
       />
     );
@@ -168,12 +170,12 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     return (
       <EmptyState
         icon={TriangleAlert}
-        title="We couldn’t load Page Influence"
-        description={error ?? 'Something went wrong.'}
+        title={t('analytics.weCouldntLoadPageInfluence') || 'We couldn’t load Page Influence'}
+        description={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')}
         action={
           <Button variant="primary" onClick={reload}>
             <RefreshCw size={16} aria-hidden="true" />
-            Try again
+            {t('analytics.tryAgain') || 'Try again'}
           </Button>
         }
       />
@@ -183,7 +185,7 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     return (
       <EmptyState
         icon={BarChart3}
-        title="No page influence data yet"
+        title={t('analytics.noPageInfluenceDataYet') || 'No page influence data yet'}
         description="Once visitors browse your site and open the chatbot, the pages that led them here will show up."
       />
     );
@@ -193,9 +195,9 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     <div className="relative overflow-hidden rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-6">
       <div className="relative mb-5 flex items-center gap-1.5">
         <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
-          Page Influence{' '}
+          {t('analytics.pageInfluence') || 'Page Influence'}{' '}
           <span className="text-[13px] font-normal text-[var(--ds-text-muted)]">
-            (Leads to Chatbot)
+            {t('analytics.leadsToChatbot') || '(Leads to Chatbot)'}
           </span>
         </h3>
         <PageInfluenceHelp />
@@ -267,13 +269,14 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
  *    focus (no preceding pointerdown) still opens normally.
  */
 function PageInfluenceHelp(): ReactElement {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const pointerRef = useRef(false);
   return (
     <>
       <button
         type="button"
-        aria-label="What does Page Influence mean?"
+        aria-label={t('analytics.whatDoesPageInfluenceMean') || 'What does Page Influence mean?'}
         aria-expanded={open}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
@@ -301,19 +304,19 @@ function PageInfluenceHelp(): ReactElement {
           className="absolute left-0 top-full z-30 mt-2 w-[18rem] rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 text-[13px] leading-relaxed text-[var(--ds-text-muted)] shadow-[var(--ds-shadow-lg)]"
         >
           <p className="mb-2 text-[13px] font-semibold text-[var(--ds-text)]">
-            What is Page Influence?
+            {t('analytics.whatIsPageInfluence') || 'What is Page Influence?'}
           </p>
           <p className="mb-2">
             These are the pages people were reading right before they opened your chatbot.
             The higher a page sits, the more visitors it sent into a chat.
           </p>
           <p className="mb-2">
-            Use it to spot which pages spark the most conversations, then make sure your
-            best answers and offers live on those pages.
+            {t('analytics.pageInfluenceUse') ||
+              'Use it to spot which pages spark the most conversations, then make sure your best answers and offers live on those pages.'}
           </p>
           <p>
-            <span className="font-medium text-[var(--ds-text)]">Visitors</span> is how many
-            people. <span className="font-medium text-[var(--ds-text)]">Visits</span> is the
+            <span className="font-medium text-[var(--ds-text)]">{t('analytics.visitors') || 'Visitors'}</span> is how many
+            people. <span className="font-medium text-[var(--ds-text)]">{t('analytics.visits') || 'Visits'}</span> is the
             total page views, since one person can reload or come back more than once.
           </p>
         </div>

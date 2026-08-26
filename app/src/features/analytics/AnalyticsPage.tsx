@@ -48,6 +48,9 @@ import { SatisfactionBreakdown } from './SatisfactionBreakdown';
 import { LanguageBreakdown, TranslationUsage } from './LanguageBreakdown';
 import { FeedbackPanel } from '../feedback/FeedbackPanel';
 import { UnansweredQuestionsPanel } from './UnansweredQuestionsPanel';
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'language' | 'feedback' | 'uaq';
 
@@ -111,8 +114,10 @@ function deriveInsight(
   if (leads.sql > 0) {
     return {
       tone: 'accent',
-      title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
-      body: 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
+      title:
+        translateNow('analytics.readyToBuyCaptured', { count: formatNumber(leads.sql) }) ||
+        `${formatNumber(leads.sql)} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
+      body: translateNow('analytics.yourChatbotsAreTurningConversations') || 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
     };
   }
 
@@ -134,15 +139,16 @@ function LoadingState(): ReactElement {
 }
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): ReactElement {
+  const { t } = useTranslation();
   return (
     <EmptyState
       icon={TriangleAlert}
-      title="We couldn’t load your analytics"
+      title={t('analytics.weCouldntLoadYourAnalytics') || 'We couldn’t load your analytics'}
       description={message}
       action={
         <Button variant="primary" onClick={onRetry}>
           <RefreshCw size={16} aria-hidden="true" />
-          Try again
+          {t('analytics.tryAgain') || 'Try again'}
         </Button>
       }
     />
@@ -156,6 +162,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
  * three progressive-disclosure tabs (Conversations · Leads · Satisfaction).
  */
 export function AnalyticsPage(): ReactElement {
+  const { t } = useTranslation();
   const { bots, selectedBot, loading: botsLoading } = useBotContext();
   // When the shell BotSwitcher is set to a specific agent, scope the whole
   // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
@@ -247,11 +254,11 @@ export function AnalyticsPage(): ReactElement {
   if (!botsLoading && bots.length === 0) {
     return (
       <PageContainer
-        title="Analytics"
+        title={t('analytics.analytics') || 'Analytics'}
       >
         <EmptyState
           icon={BarChart3}
-          title="No performance data yet"
+          title={t('analytics.noPerformanceDataYet') || 'No performance data yet'}
           description="Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here."
           action={
             <Link
@@ -259,7 +266,7 @@ export function AnalyticsPage(): ReactElement {
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <BotIcon size={16} aria-hidden="true" />
-              Create an AI chatbot
+              {t('analytics.createAnAiChatbot') || 'Create an AI chatbot'}
             </Link>
           }
         />
@@ -274,14 +281,14 @@ export function AnalyticsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="Analytics"
+      title={t('analytics.analytics') || 'Analytics'}
       description="How your whole workspace is performing across every AI chatbot."
       actions={actions}
     >
       {showLoading ? (
         <LoadingState />
       ) : status === 'error' || !data ? (
-        <ErrorState message={error ?? 'Something went wrong.'} onRetry={reload} />
+        <ErrorState message={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')} onRetry={reload} />
       ) : (
         <>
           {insight && (
@@ -318,11 +325,14 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Message volume"
+                    title={t('analytics.messageVolume') || 'Message volume'}
                     description="Daily messages across every chatbot"
                     actions={
                       <SegmentedControl
-                        options={TREND_RANGES}
+                        options={TREND_RANGES.map((r) => ({
+                          ...r,
+                          label: t(`analytics.range.${r.value}`) || r.label,
+                        }))}
                         value={range}
                         onChange={setRange}
                         ariaLabel="Message trend time range"
@@ -334,7 +344,7 @@ export function AnalyticsPage(): ReactElement {
                   <div className="mb-4 grid grid-cols-3 gap-3">
                     <MetricCard
                       size="sm"
-                      label="Messages"
+                      label={t('analytics.messages') || 'Messages'}
                       value={trendSummary.total.toLocaleString()}
                       icon={MessageSquare}
                       delta={messagesTrend.delta}
@@ -342,13 +352,13 @@ export function AnalyticsPage(): ReactElement {
                     />
                     <MetricCard
                       size="sm"
-                      label="Daily average"
+                      label={t('analytics.dailyAverage') || 'Daily average'}
                       value={trendSummary.dailyAverage.toLocaleString()}
                       icon={BarChart3}
                     />
                     <MetricCard
                       size="sm"
-                      label="Busiest day"
+                      label={t('analytics.busiestDay') || 'Busiest day'}
                       value={
                         trendSummary.peak > 0
                           ? `${trendSummary.peak.toLocaleString()} · ${trendSummary.peakLabel}`
@@ -360,7 +370,7 @@ export function AnalyticsPage(): ReactElement {
                   {trendWindow.length === 0 || trendSummary.total === 0 ? (
                     <EmptyState
                       icon={Activity}
-                      title="No messages in this range"
+                      title={t('analytics.noMessagesInThisRange') || 'No messages in this range'}
                       description="Try a wider time range, or come back once your chatbots have handled more conversations."
                     />
                   ) : (
@@ -372,7 +382,7 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Top questions"
+                    title={t('analytics.topQuestions') || 'Top questions'}
                     description="What visitors ask your chatbots most"
                   />
                 </CardHeader>
@@ -413,7 +423,7 @@ export function AnalyticsPage(): ReactElement {
                 <Card>
                   <CardHeader>
                     <SectionHeader
-                      title="Visitor satisfaction"
+                      title={t('analytics.visitorSatisfaction') || 'Visitor satisfaction'}
                       description="Post-chat ratings from live conversations, across every chatbot"
                     />
                   </CardHeader>
@@ -446,14 +456,17 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Languages"
+                    title={t('analytics.languages') || 'Languages'}
                     description={`What visitors chat to ${selectedBot?.name ?? 'this chatbot'} in, and how each language performs`}
                     actions={
                       // The SAME state the message trend uses, rendered here so
                       // the control is reachable from the tab it affects. Not a
                       // second selector: moving it on either tab moves it on both.
                       <SegmentedControl
-                        options={TREND_RANGES}
+                        options={TREND_RANGES.map((r) => ({
+                          ...r,
+                          label: t(`analytics.range.${r.value}`) || r.label,
+                        }))}
                         value={range}
                         onChange={setRange}
                         ariaLabel="Language breakdown time range"
@@ -470,7 +483,7 @@ export function AnalyticsPage(): ReactElement {
                 <Card>
                   <CardHeader>
                     <SectionHeader
-                      title="Translation"
+                      title={t('analytics.translation') || 'Translation'}
                       description="Live chat translated between your visitors and your team"
                     />
                   </CardHeader>

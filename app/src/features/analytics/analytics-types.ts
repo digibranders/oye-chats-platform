@@ -7,6 +7,7 @@
  * every field defaulted, so a missing key never crashes a card.
  */
 import { type ActivityPoint } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Coerce an unknown value into a finite number, defaulting to 0. */
 function toNumber(value: unknown): number {
@@ -188,6 +189,9 @@ export type TrendRange = '7d' | '30d' | '90d' | 'all';
  */
 export type AnalyticsPeriod = TrendRange;
 
+// i18n-exempt: module constant evaluated at import, before a locale exists.
+// The labels are English fallbacks; AnalyticsPage resolves them at render with
+// t(`analytics.range.${value}`).
 export const TREND_RANGES: ReadonlyArray<{ value: TrendRange; label: string }> = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
@@ -330,7 +334,7 @@ export function parseLanguageBreakdown(record: Record<string, unknown>): Languag
       label:
         typeof row.label === 'string' && row.label
           ? row.label
-          : (code?.toUpperCase() ?? 'Not detected'),
+          : (code?.toUpperCase() ?? (translateNow('analytics.notDetected') || 'Not detected')),
       total: toNumber(row.total),
       resolved: toNumber(row.resolved),
       liveChat: toNumber(row.live_chat),

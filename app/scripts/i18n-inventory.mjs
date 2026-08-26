@@ -162,9 +162,12 @@ function isSentenceShaped(text) {
  * greppable.
  */
 function isExempt(sourceLines, lineIndex) {
-  const here = sourceLines[lineIndex] ?? '';
-  const above = sourceLines[lineIndex - 1] ?? '';
-  return /i18n-exempt:/.test(here) || /i18n-exempt:/.test(above);
+  // The marker's reason often runs to a second or third comment line, so scan
+  // a small window above rather than only the immediately preceding line.
+  for (let i = lineIndex; i >= Math.max(0, lineIndex - 3); i -= 1) {
+    if (/i18n-exempt:/.test(sourceLines[i] ?? '')) return true;
+  }
+  return false;
 }
 
 const LOOKBEHIND = 220;

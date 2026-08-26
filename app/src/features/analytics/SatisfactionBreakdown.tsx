@@ -2,6 +2,7 @@ import { type ReactElement } from 'react';
 import { Star } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type RatingsSummary } from './analytics-types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface SatisfactionBreakdownProps {
   ratings: RatingsSummary;
@@ -21,11 +22,12 @@ function barColor(star: number): string {
  * assistive tech (e.g. "5 stars, 62%").
  */
 export function SatisfactionBreakdown({ ratings }: SatisfactionBreakdownProps): ReactElement {
+  const { t } = useTranslation();
   if (ratings.total === 0) {
     return (
       <EmptyState
         icon={Star}
-        title="No ratings yet"
+        title={t('analytics.noRatingsYet') || 'No ratings yet'}
         description="After a live chat, visitors can rate their experience. Those ratings will appear here."
       />
     );

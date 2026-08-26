@@ -14,6 +14,11 @@ import {
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
 import { useAnimatedProgress } from '../../hooks/useAnimatedProgress';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
+// `translateNow` in memos/effects: the hook's `t` changes identity per locale,
+// which breaks the compiler's memoization analysis and would add a dependency
+// that recomputes on every language change. This resolves at call time.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * JourneyOutcomes. Donut + legend that answers "what did visitors
@@ -112,6 +117,7 @@ export interface JourneyOutcomesProps {
 }
 
 export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
+  const { t } = useTranslation();
   const { status, data, error, refreshing, reload, lastUpdatedAt } = useJourneyAnalytics(botId);
 
   // Compose the outcome rows.
@@ -146,7 +152,7 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
       <PanelShell>
         <EmptyState
           icon={Compass}
-          title="Pick a chatbot to see outcomes"
+          title={t('analytics.pickAChatbotToSee') || 'Pick a chatbot to see outcomes'}
           description="Journey outcomes are always per-chatbot. Use the chatbot switcher above to focus this view."
         />
       </PanelShell>
@@ -171,12 +177,12 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
       <PanelShell>
         <EmptyState
           icon={TriangleAlert}
-          title="We couldn’t load outcomes"
-          description={error ?? 'Something went wrong.'}
+          title={t('analytics.weCouldntLoadOutcomes') || 'We couldn’t load outcomes'}
+          description={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')}
           action={
             <Button variant="primary" onClick={reload}>
               <RefreshCw size={16} aria-hidden="true" />
-              Try again
+              {t('analytics.tryAgain') || 'Try again'}
             </Button>
           }
         />
@@ -189,7 +195,7 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
         <Header lastUpdatedAt={lastUpdatedAt} refreshing={refreshing} onReload={reload} />
         <EmptyState
           icon={BarChart3}
-          title="No chat sessions yet"
+          title={t('analytics.noChatSessionsYet') || 'No chat sessions yet'}
           description="Once visitors start opening the chatbot, their outcomes will land here."
         />
       </PanelShell>
@@ -226,27 +232,29 @@ function Header({
   refreshing: boolean;
   onReload: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   // Rerender the label once a second so "Updated Xs ago" keeps ticking
   // between polls. Matches the UserJourneyFlow panel; without the tick
   // this label froze at whatever second the last poll landed on and
   // silently disagreed with the flow panel on the same page.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 1_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNowTick(Date.now()), 1_000);
+    return () => clearInterval(timer);
   }, []);
   const freshness = useMemo(() => {
     if (lastUpdatedAt == null) return null;
     const secs = Math.max(0, Math.round((nowTick - lastUpdatedAt) / 1_000));
-    if (secs < 5) return 'Updated just now';
-    if (secs < 60) return `Updated ${secs}s ago`;
-    return `Updated ${Math.round(secs / 60)}m ago`;
+    if (secs < 5) return translateNow('analytics.updatedJustNow') || 'Updated just now';
+    if (secs < 60) return translateNow('analytics.updatedSecsAgo', { secs }) || `Updated ${secs}s ago`;
+    const mins = Math.round(secs / 60);
+    return translateNow('analytics.updatedMinsAgo', { mins }) || `Updated ${mins}m ago`;
   }, [lastUpdatedAt, nowTick]);
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
-          Journey Outcomes <span className="text-[var(--ds-text-muted)]">(After Chat)</span>
+          {t('analytics.journeyOutcomes') || 'Journey Outcomes'} <span className="text-[var(--ds-text-muted)]">(After Chat)</span>
         </h3>
       </div>
       <div className="flex items-center gap-2">
@@ -257,7 +265,7 @@ function Header({
           type="button"
           onClick={onReload}
           disabled={refreshing}
-          aria-label="Refresh"
+          aria-label={t('analytics.refresh') || 'Refresh'}
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-sunken)] hover:text-[var(--ds-text)] disabled:opacity-60"
         >
           <RefreshCw
@@ -274,6 +282,7 @@ function Header({
 // ── Donut ───────────────────────────────────────────────────────────────────
 
 function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: number }): ReactElement {
+  const { t } = useTranslation();
   // Tally the centre "Chat Opens" figure up from 0 when the page loads (and
   // whenever it changes), matching the count-up used on the other metric tiles.
   // One continuous eased progress drives both the centre figure and the ring so
@@ -354,7 +363,7 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
         <p className="tabular-nums text-[18px] font-semibold leading-none text-[var(--ds-text)]">
           {animatedTotal.toLocaleString()}
         </p>
-        <p className="mt-1 text-[10px] text-[var(--ds-text-muted)]">Chat Opens</p>
+        <p className="mt-1 text-[10px] text-[var(--ds-text-muted)]">{t('analytics.chatOpens') || 'Chat Opens'}</p>
       </div>
     </div>
   );
@@ -363,6 +372,7 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
 // ── Legend ──────────────────────────────────────────────────────────────────
 
 function Legend({ outcomes }: { outcomes: readonly Outcome[] }): ReactElement {
+  const { t } = useTranslation();
   return (
     <ul className="w-full min-w-0 space-y-1.5">
       {outcomes.map((o) => {
@@ -385,7 +395,7 @@ function Legend({ outcomes }: { outcomes: readonly Outcome[] }): ReactElement {
                 aria-hidden="true"
               />
               <span className="truncate text-[12.5px] font-medium text-[var(--ds-text)]">
-                {o.label}
+                {t(`analytics.outcome.${o.key}`) || o.label}
               </span>
             </div>
             <span className="shrink-0 tabular-nums text-[12.5px] font-semibold text-[var(--ds-text)]">
