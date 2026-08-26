@@ -21,6 +21,7 @@ import { cn, platformLogos, Skeleton } from '../../../design-system';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getEmbedEnvironment } from './embedEnvironment';
 import { buildInstallPrompt } from './installPrompt';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /** A copyable code block. Clipboard write is best-effort; the code is always selectable. */
 function CopyableCode({ code, label }: { code: string; label: string }) {
@@ -73,6 +74,7 @@ export interface WebsiteInstallProps {
  * for the original drawer); only the presentation is rebuilt on the design system.
  */
 export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
+  const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
   const [demoCopied, setDemoCopied] = useState(false);
@@ -83,10 +85,12 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const demoUrl = getBotDemoUrl(botKey);
   const env = getEmbedEnvironment(getApiBaseUrl());
 
-  // Plans entitled to remove branding get a snippet with no attribution anchor.
+  // A workspace that has bought the branding-removal add-on gets a snippet with
+  // no attribution anchor. The entitlement comes from the add-on, not from the
+  // plan tier: no tier bundles it, and it can be bought on top of any paid plan.
   // Note this keys off the entitlement, not the bot's live `showBranding` flag,
-  // which this screen does not load - a paid customer who chooses to keep the
-  // badge still gets an anchor-free snippet.
+  // which this screen does not load - a customer who owns the add-on but chooses
+  // to keep the badge still gets an anchor-free snippet.
   //
   // `loading` guards this: the entitlements fallback defaults `branding_removable`
   // to `false`, so a not-yet-resolved fetch would otherwise compute `attribution
@@ -148,13 +152,13 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
         <div>
           <div className="mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-              <Key size={11} aria-hidden="true" /> Embed key
+              <Key size={11} aria-hidden="true" /> {t('agents.embedKey') || 'Embed key'}
             </span>
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
-                aria-label={showKey ? 'Hide embed key' : 'Show embed key'}
+                aria-label={showKey ? t('agents.hideEmbedKey') || 'Hide embed key' : t('agents.showEmbedKey') || 'Show embed key'}
                 className="flex h-6 w-6 items-center justify-center rounded text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -168,7 +172,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
                 {keyCopied ? 'Copied' : 'Copy'}
               </button>
               <span role="status" aria-live="polite" className="sr-only">
-                {keyCopied ? 'Embed key copied' : ''}
+                {keyCopied ? t('agents.embedKeyCopied') || 'Embed key copied' : ''}
               </span>
             </div>
           </div>
@@ -181,23 +185,23 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
 
         <div>
           <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Preview
+            {t('agents.preview') || 'Preview'}
           </span>
           <div className="flex flex-wrap items-center gap-2">
             <a
               href={demoUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="See your chatbot live (opens in a new tab)"
+              aria-label={t('agents.seeYourChatbotLiveOpens') || 'See your chatbot live (opens in a new tab)'}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <ExternalLink size={14} aria-hidden="true" />
-              See your chatbot live
+              {t('agents.seeYourChatbotLive') || 'See your chatbot live'}
             </a>
             <button
               type="button"
               onClick={copyDemoLink}
-              aria-label={demoCopied ? 'Demo link copied' : 'Copy demo link'}
+              aria-label={demoCopied ? t('agents.demoLinkCopied') || 'Demo link copied' : t('agents.copyDemoLink') || 'Copy demo link'}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               {demoCopied ? (
@@ -205,7 +209,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               ) : (
                 <Link2 size={14} aria-hidden="true" />
               )}
-              {demoCopied ? 'Copied' : 'Copy demo link'}
+              {demoCopied ? 'Copied' : t('agents.copyDemoLink') || 'Copy demo link'}
             </button>
             <button
               type="button"
@@ -213,12 +217,12 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               disabled={entitlementsLoading}
               aria-label={
                 entitlementsLoading
-                  ? 'Copy prompt for AI agent (resolving your plan…)'
+                  ? t('agents.copyPromptResolving') || 'Copy prompt for AI agent (resolving your plan…)'
                   : promptCopied
-                    ? 'Install prompt copied'
+                    ? t('agents.installPromptCopied') || 'Install prompt copied'
                     : platform
                       ? `Copy the ${platform.name} install prompt for a coding agent`
-                      : 'Copy the install prompt for a coding agent'
+                      : t('agents.copyTheInstallPromptFor') || 'Copy the install prompt for a coding agent'
               }
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[var(--ds-bg-surface)]"
             >
@@ -227,11 +231,11 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               ) : (
                 <Bot size={14} aria-hidden="true" />
               )}
-              {promptCopied ? 'Copied' : 'Copy prompt for AI agent'}
+              {promptCopied ? 'Copied' : t('agents.copyPromptForAiAgent') || 'Copy prompt for AI agent'}
             </button>
             <span role="status" aria-live="polite" className="sr-only">
-              {demoCopied ? 'Demo link copied' : ''}
-              {promptCopied ? 'Install prompt copied' : ''}
+              {demoCopied ? t('agents.demoLinkCopied') || 'Demo link copied' : ''}
+              {promptCopied ? t('agents.installPromptCopied') || 'Install prompt copied' : ''}
             </span>
           </div>
         </div>
@@ -240,7 +244,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
       {/* Platform-specific install steps */}
       <div>
         <span className="mb-3 block text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-          Install steps
+          {t('agents.installSteps') || 'Install steps'}
         </span>
 
         {platform ? (
@@ -251,11 +255,11 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <ChevronLeft size={14} aria-hidden="true" />
-              Change platform
+              {t('agents.changePlatform') || 'Change platform'}
             </button>
 
             {entitlementsLoading ? (
-              <div className="space-y-4" aria-busy="true" aria-label="Resolving your plan">
+              <div className="space-y-4" aria-busy="true" aria-label={t('agents.resolvingYourPlan') || 'Resolving your plan'}>
                 <Skeleton className="h-16 w-full rounded-lg" />
                 <Skeleton className="h-16 w-full rounded-lg" />
                 <Skeleton className="h-16 w-full rounded-lg" />

@@ -2,6 +2,7 @@ import { type ReactElement } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import { Card, EmptyState, SectionHeader, Skeleton } from '../../../design-system';
 import { type TopQuestion } from '../../../types/domain';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 interface TopQuestionsProps {
   questions: TopQuestion[];
@@ -14,12 +15,13 @@ interface TopQuestionsProps {
  * knows which answers matter most.
  */
 export function TopQuestions({ questions, loading }: TopQuestionsProps): ReactElement {
+  const { t } = useTranslation();
   const max = questions.reduce((m, q) => Math.max(m, q.count), 0) || 1;
 
   return (
     <Card className="p-5">
       <SectionHeader
-        title="Top questions"
+        title={t('agents.topQuestions') || 'Top questions'}
         description="What visitors ask your AI most often."
       />
 
@@ -35,7 +37,7 @@ export function TopQuestions({ questions, loading }: TopQuestionsProps): ReactEl
         ) : questions.length === 0 ? (
           <EmptyState
             icon={MessagesSquare}
-            title="No recurring questions yet"
+            title={t('agents.noRecurringQuestionsYet') || 'No recurring questions yet'}
             description="Once visitors start chatting, the questions they ask most will appear here."
           />
         ) : (

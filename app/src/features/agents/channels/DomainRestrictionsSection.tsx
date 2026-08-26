@@ -16,6 +16,9 @@ import { AlertCircle, Globe, Shield, ShieldCheck, ShieldOff, Sparkles, X } from 
 import { Button, cn } from '../../../design-system';
 import { InsightCard } from '../../../design-system/components/InsightCard';
 import { getBot, updateBot } from '../../../services/api';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
+import { Trans } from '../../../i18n/Trans';
 
 const MAX_DOMAINS = 50;
 
@@ -69,6 +72,7 @@ export function DomainRestrictionsSection({
   initialDomainCheckEnabled,
   onSaved,
 }: DomainRestrictionsSectionProps): ReactElement {
+  const { t } = useTranslation();
   const [domains, setDomains] = useState<string[]>(initialAllowedDomains || []);
   const [enabled, setEnabled] = useState<boolean>(Boolean(initialDomainCheckEnabled));
   const [draft, setDraft] = useState('');
@@ -83,27 +87,30 @@ export function DomainRestrictionsSection({
       return {
         tone: 'warning' as const,
         icon: ShieldOff,
-        title: 'Your widget is unprotected',
-        body: 'Anyone with your embed key can load the widget on any site. Turn this on to lock it down.',
+        title: translateNow('agents.yourWidgetIsUnprotected') || 'Your widget is unprotected',
+        body: translateNow('agents.anyoneWithYourEmbedKey') || 'Anyone with your embed key can load the widget on any site. Turn this on to lock it down.',
       };
     }
     if (domains.length === 0) {
       return {
         tone: 'danger' as const,
         icon: AlertCircle,
-        title: 'Widget will be blocked everywhere',
-        body: 'Domain restriction is on but no domains are listed. Add at least one, or the widget won’t load anywhere.',
+        title: translateNow('agents.widgetWillBeBlockedEverywhere') || 'Widget will be blocked everywhere',
+        body: translateNow('agents.domainRestrictionIsOnBut') || 'Domain restriction is on but no domains are listed. Add at least one, or the widget won’t load anywhere.',
       };
     }
     return {
       tone: 'success' as const,
       icon: ShieldCheck,
       title: `Widget locked to ${domains.length} domain${domains.length === 1 ? '' : 's'}`,
-      body: 'Requests from any other site are rejected.',
+      body: translateNow('agents.requestsFromAnyOtherSite') || 'Requests from any other site are rejected.',
     };
   }, [enabled, domains]);
 
   const websiteSuggestions = useMemo(() => deriveFromWebsite(website), [website]);
+  const detectSource = website
+    ? website.replace(/^https?:\/\//, '').split('/')[0]
+    : t('agents.myWebsite') || 'my website';
   const canDetect = websiteSuggestions.some((d) => !domains.includes(d));
 
   const markDirty = (): void => {
@@ -115,11 +122,11 @@ export function DomainRestrictionsSection({
   const tryAdd = (raw: string): boolean => {
     const normalized = normalizeDomain(raw);
     if (!normalized) {
-      setDraftError('Enter a valid domain like acme.com or *.acme.com');
+      setDraftError(t('agents.enterAValidDomainWildcard') || 'Enter a valid domain like acme.com or *.acme.com');
       return false;
     }
     if (domains.includes(normalized)) {
-      setDraftError('Already added');
+      setDraftError(t('agents.alreadyAdded') || 'Already added');
       return false;
     }
     if (domains.length >= MAX_DOMAINS) {
@@ -189,7 +196,7 @@ export function DomainRestrictionsSection({
       setDirty(false);
       setSaved(true);
     } catch (err: unknown) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save domain restrictions.');
+      setSaveError(err instanceof Error ? err.message : t('agents.failedToSaveDomainRestrictions') || 'Failed to save domain restrictions.');
     } finally {
       setSaving(false);
     }
@@ -202,14 +209,14 @@ export function DomainRestrictionsSection({
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-text)]">
           <Shield size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-          Allowed domains
+          {t('agents.allowedDomains') || 'Allowed domains'}
         </span>
         <button
           type="button"
           onClick={toggleEnabled}
           role="switch"
           aria-checked={enabled}
-          aria-label="Toggle domain restriction"
+          aria-label={t('agents.toggleDomainRestriction') || 'Toggle domain restriction'}
           className={cn(
             'rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors',
             'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
@@ -225,9 +232,21 @@ export function DomainRestrictionsSection({
       <InsightCard tone={status.tone} icon={StatusIcon} title={status.title} body={status.body} />
 
       <p className="mb-3 mt-4 text-[12px] text-[var(--ds-text-muted)]">
-        Lock the widget to the sites below. Prefix an entry with{' '}
-        <code className="rounded bg-[var(--ds-bg-sunken)] px-1 py-0.5 font-mono text-[11px]">*.</code> to include
-        every subdomain (e.g. <code className="font-mono text-[11px]">*.acme.com</code> covers www, blog, shop).
+        {/* The two <code> samples sit INSIDE the sentence, so it stays one key
+            with them interpolated - the prefix/suffix split only reads as
+            English. The samples themselves are syntax, not copy. */}
+        <Trans
+          k="agents.domainAllowlistHint"
+          fallback="Lock the widget to the sites below. Prefix an entry with {wildcard} to include every subdomain (e.g. {example} covers www, blog, shop)."
+          values={{
+            wildcard: (
+              <code className="rounded bg-[var(--ds-bg-sunken)] px-1 py-0.5 font-mono text-[11px]">
+                *.
+              </code>
+            ),
+            example: <code className="font-mono text-[11px]">*.acme.com</code>,
+          }}
+        />
       </p>
 
       {/* Chip field */}
@@ -261,8 +280,8 @@ export function DomainRestrictionsSection({
             onBlur={() => {
               if (draft.trim() && tryAdd(draft)) setDraft('');
             }}
-            placeholder={domains.length ? 'Add another…' : 'acme.com'}
-            aria-label="Add a domain"
+            placeholder={domains.length ? t('agents.addAnother') || 'Add another…' : 'acme.com'}
+            aria-label={t('agents.addADomain') || 'Add a domain'}
             className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 font-mono text-[12px] text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
           />
         </div>
@@ -282,19 +301,19 @@ export function DomainRestrictionsSection({
           className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-accent)] transition-opacity hover:opacity-80"
         >
           <Sparkles size={13} aria-hidden="true" />
-          Detect from {website ? website.replace(/^https?:\/\//, '').split('/')[0] : 'my website'}
+          {t('agents.detectFromSite', { site: detectSource }) || `Detect from ${detectSource}`}
         </button>
       )}
 
       {/* Save row */}
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={saving || !dirty} size="sm">
-          {saving ? 'Saving…' : 'Save domains'}
+          {saving ? 'Saving…' : t('agents.saveDomains') || 'Save domains'}
         </Button>
         {saved && !dirty && (
           <span className="flex items-center gap-1 text-[12px] text-[var(--ds-success)]">
             <ShieldCheck size={13} aria-hidden="true" />
-            Saved
+            {t('agents.saved') || 'Saved'}
           </span>
         )}
         {saveError && (

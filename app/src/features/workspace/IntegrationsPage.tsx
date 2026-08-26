@@ -54,6 +54,7 @@ import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain';
 import { ChannelCard } from '../agents/channels/ChannelCard';
 import { COMING_SOON_CHANNELS } from '../agents/channels/channels.data';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Bot integration fields ────────────────────────────────────────────────────
 // The shared `Bot` shim intentionally types only the core columns. Email routing
@@ -1636,7 +1637,12 @@ export function IntegrationsPage(): ReactElement {
               iconTone="neutral"
               brand={channel.brand}
               name={channel.name}
-              description={channel.description}
+              // The table is built at import, so its description is the English
+              // fallback and the real one resolves here, from the channel id.
+              // (This page's own copy is localized in a later phase.)
+              description={
+                translateNow(`agents.channel.${channel.id}`) || channel.description
+              }
               status={<StatusBadge tone="neutral">Coming soon</StatusBadge>}
             />
           ))}

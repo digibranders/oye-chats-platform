@@ -8,6 +8,13 @@
  * `platformIntegrations`, so the prompt can never drift from what the UI shows),
  * how to verify against the API, and the failure modes we already know about.
  *
+ * i18n-exempt-file: this is not dashboard chrome. It is a briefing
+ * PASTED INTO the user's own coding agent, carrying markdown, code fences, HTML
+ * snippets and API instructions. Translating it would degrade the instructions
+ * the agent acts on, and it embeds `platformIntegrations` steps verbatim, which
+ * are English by design. The operator reads the dashboard in their language;
+ * their coding agent reads this in English.
+ *
  * Verification deliberately leads with `GET /bots/settings/public` because it is
  * free; the `/chat` probe is called out as costing a credit so an agent doesn't
  * loop on it. Neither call may spoof an `Origin` header - the backend stamps

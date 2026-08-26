@@ -171,6 +171,21 @@ function isExempt(sourceLines, lineIndex) {
 }
 
 /**
+ * File exemption: `i18n-exempt-file: reason` in the module's own header.
+ *
+ * A deliberately different marker from the declaration-level one, because it is
+ * a much larger claim: the WHOLE module is not dashboard chrome. It exists for
+ * modules whose English is not read by the operator at all - the install
+ * briefing pasted into the user's coding agent carries markdown, code fences
+ * and API instructions, and translating it would degrade what the agent acts
+ * on. Only the header counts, so it cannot be smuggled in halfway down a file.
+ */
+function isFileExempt(source) {
+  const header = source.split('\n').slice(0, 60).join('\n');
+  return /i18n-exempt-file:/.test(header);
+}
+
+/**
  * Block exemption: the marker on a declaration covers everything inside it.
  *
  * A line window can exempt one literal but not a TABLE of them - the marker
@@ -514,8 +529,10 @@ function scanFile(file) {
   visit(sf);
 
   const srcLines = source.split('\n');
+  const fileExempt = isFileExempt(source);
   for (const h of hits) {
     h.exempt =
+      fileExempt ||
       isExempt(srcLines, h.line - 1) ||
       (h.node ? isExemptBlock(h.node, ts, sf, source) : false);
     h.class = classify({

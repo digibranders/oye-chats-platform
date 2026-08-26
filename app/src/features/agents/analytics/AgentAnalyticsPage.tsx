@@ -24,6 +24,9 @@ import { TopQuestions } from './TopQuestions';
 import { LeadsBreakdown } from './LeadsBreakdown';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
 import { FeedbackPanel } from '../../feedback/FeedbackPanel';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
+import { formatNumber } from '../../../i18n/formatters';
 
 type PanelKey = 'engagement' | 'questions' | 'leads' | 'satisfaction' | 'feedback';
 
@@ -47,6 +50,42 @@ interface Insight {
   icon: LucideIcon;
 }
 
+/**
+ * Count labels for the insight sentences.
+ *
+ * English pluralises by appending "s" and the markup used to do that inline.
+ * Hindi does not, so each has a singular and a plural key.
+ */
+function ratedChatsLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.ratedChatOne' : 'agents.ratedChatMany', { count }) ||
+    `${count} rated chat${n === 1 ? '' : 's'}`
+  );
+}
+
+function responseCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.responseOne' : 'agents.responseMany', { count }) ||
+    `${count} response${n === 1 ? '' : 's'}`
+  );
+}
+
+function messageCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.messageOne' : 'agents.messageMany', { count }) ||
+    `${count} message${n === 1 ? '' : 's'}`
+  );
+}
+
+/**
+ * Not a component, so a hook is illegal here: every lookup uses the stable
+ * module-level function, which resolves at call time. The sentences that carry
+ * a figure are one key each with the count as a parameter - assembling them
+ * from fragments only ever read as English - and the plural is its own key.
+ */
 function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
   const { ratings, resolution, leads } = data;
   const hasAnything =
@@ -58,8 +97,8 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
 
   if (!hasAnything) {
     return {
-      title: 'No conversations yet',
-      body: 'Once your chatbot is deployed and visitors start chatting, performance insights will appear here automatically.',
+      title: translateNow('agents.noConversationsYet') || 'No conversations yet',
+      body: translateNow('agents.onceYourChatbotIsDeployed') || 'Once your chatbot is deployed and visitors start chatting, performance insights will appear here automatically.',
       tone: 'info',
       icon: Rocket,
     };
@@ -67,28 +106,40 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
 
   if (ratings.total > 0 && ratings.avg !== null) {
     const strong = ratings.avg >= 4;
+    const ratedChats = ratedChatsLabel(ratings.total);
     return {
-      title: `Visitors rate this chatbot ${ratings.avg} out of 5`,
+      title:
+        translateNow('agents.insightRating', { score: formatNumber(ratings.avg) }) ||
+        `Visitors rate this chatbot ${formatNumber(ratings.avg)} out of 5`,
       body: strong
-        ? `Across ${ratings.total.toLocaleString()} rated chat${ratings.total === 1 ? '' : 's'}, satisfaction is strong. Keep your knowledge fresh to hold the score.`
-        : `Across ${ratings.total.toLocaleString()} rated chat${ratings.total === 1 ? '' : 's'}, there's room to improve. Review low-rated chats and fill knowledge gaps.`,
+        ? translateNow('agents.insightRatingStrong', { chats: ratedChats }) ||
+          `Across ${ratedChats}, satisfaction is strong. Keep your knowledge fresh to hold the score.`
+        : translateNow('agents.insightRatingWeak', { chats: ratedChats }) ||
+          `Across ${ratedChats}, there's room to improve. Review low-rated chats and fill knowledge gaps.`,
       tone: strong ? 'success' : 'warning',
       icon: strong ? ThumbsUp : Star,
     };
   }
 
   if (resolution.total > 0 && resolution.rate !== null) {
+    const responses = responseCountLabel(resolution.total);
     return {
-      title: `${resolution.rate}% of answered chats were resolved`,
-      body: `Based on ${resolution.total.toLocaleString()} response${resolution.total === 1 ? '' : 's'}. Unresolved chats are the fastest place to improve your AI.`,
+      title:
+        translateNow('agents.insightResolution', { rate: formatNumber(resolution.rate) }) ||
+        `${formatNumber(resolution.rate)}% of answered chats were resolved`,
+      body:
+        translateNow('agents.insightResolutionBody', { responses }) ||
+        `Based on ${responses}. Unresolved chats are the fastest place to improve your AI.`,
       tone: resolution.rate >= 70 ? 'success' : 'warning',
       icon: CheckCircle2,
     };
   }
 
   return {
-    title: `Your AI has handled ${totalMessages.toLocaleString()} message${totalMessages === 1 ? '' : 's'}`,
-    body: 'Engagement is building. Ask visitors to rate their chats to unlock satisfaction and resolution insights.',
+    title:
+      translateNow('agents.insightMessages', { messages: messageCountLabel(totalMessages) }) ||
+      `Your AI has handled ${messageCountLabel(totalMessages)}`,
+    body: translateNow('agents.engagementIsBuildingAskVisitors') || 'Engagement is building. Ask visitors to rate their chats to unlock satisfaction and resolution insights.',
     tone: 'accent',
     icon: Sparkles,
   };
@@ -101,6 +152,7 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
  * satisfaction without leaving the page.
  */
 export function AgentAnalyticsPage(): ReactElement {
+  const { t } = useTranslation();
   const { agent, agentId, loading: agentLoading, error: agentError } = useAgent();
   const state = useAgentAnalytics(agent?.id ?? null);
   const [panel, setPanel] = useState<PanelKey>('engagement');
@@ -147,7 +199,7 @@ export function AgentAnalyticsPage(): ReactElement {
   // Agent list still resolving - hold the layout with skeletons.
   if (agentLoading && !agent) {
     return (
-      <PageContainer title="Analytics" description="How your AI is performing.">
+      <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
@@ -161,14 +213,14 @@ export function AgentAnalyticsPage(): ReactElement {
   // Route points at an agent that doesn't exist (or the list failed to load).
   if (!agent) {
     return (
-      <PageContainer title="Analytics">
+      <PageContainer title={t('agents.analytics') || 'Analytics'}>
         <EmptyState
           icon={AlertTriangle}
-          title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
+          title={agentError ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             agentError
-              ? 'Something went wrong loading this chatbot. Please try again.'
-              : 'This chatbot may have been deleted or you don’t have access to it.'
+              ? t('agents.loadFailedTryAgain') || 'Something went wrong loading this chatbot. Please try again.'
+              : t('agents.thisChatbotMayHaveBeen') || 'This chatbot may have been deleted or you don’t have access to it.'
           }
         />
       </PageContainer>
@@ -179,14 +231,14 @@ export function AgentAnalyticsPage(): ReactElement {
 
   if (error) {
     return (
-      <PageContainer title="Analytics" description="How your AI is performing.">
+      <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
         <EmptyState
           icon={AlertTriangle}
-          title="Couldn’t load analytics"
+          title={t('agents.couldntLoadAnalytics') || 'Couldn’t load analytics'}
           description={error}
           action={
             <Button variant="outline" onClick={state.reload}>
-              Try again
+              {t('agents.tryAgain') || 'Try again'}
             </Button>
           }
         />
@@ -213,27 +265,27 @@ export function AgentAnalyticsPage(): ReactElement {
     : 0;
 
   return (
-    <PageContainer title="Analytics" description="How your AI is performing.">
+    <PageContainer title={t('agents.analytics') || 'Analytics'} description="How your AI is performing.">
       {/* KPI row - the four numbers that summarise agent health. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard
           icon={MessageSquare}
-          label="Messages"
+          label={t('agents.messages') || 'Messages'}
           value={loading ? '-' : totalMessages.toLocaleString()}
         />
         <MetricCard
           icon={Users}
-          label="Leads"
+          label={t('agents.leads') || 'Leads'}
           value={loading ? '-' : qualifiedLeads.toLocaleString()}
         />
         <MetricCard
           icon={CheckCircle2}
-          label="Resolution rate"
+          label={t('agents.resolutionRate') || 'Resolution rate'}
           value={loading || analytics.resolution.rate === null ? '-' : `${analytics.resolution.rate}%`}
         />
         <MetricCard
           icon={Star}
-          label="Avg. rating"
+          label={t('agents.avgRating') || 'Avg. rating'}
           value={loading || analytics.ratings.avg === null ? '-' : `${analytics.ratings.avg} / 5`}
         />
       </div>

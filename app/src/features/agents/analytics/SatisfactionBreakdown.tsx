@@ -4,6 +4,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
 import { Card, EmptyState, SectionHeader, Skeleton } from '../../../design-system';
 import { CHART } from './chartTheme';
 import { type RatingStar, type RatingsSummary, type ResolutionSummary } from './analytics.types';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 interface SatisfactionBreakdownProps {
   ratings: RatingsSummary;
@@ -29,11 +30,12 @@ export function SatisfactionBreakdown({
   resolution,
   loading,
 }: SatisfactionBreakdownProps): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <Card className="p-5">
         <SectionHeader
-          title="Rating distribution"
+          title={t('agents.ratingDistribution') || 'Rating distribution'}
           description="How visitors rated their chats."
           actions={
             !loading && ratings.avg !== null ? (
@@ -56,7 +58,7 @@ export function SatisfactionBreakdown({
           ) : ratings.total === 0 ? (
             <EmptyState
               icon={Star}
-              title="No ratings yet"
+              title={t('agents.noRatingsYet') || 'No ratings yet'}
               description="Ratings appear once visitors leave feedback at the end of a chat."
             />
           ) : (
@@ -101,7 +103,7 @@ export function SatisfactionBreakdown({
 
       <Card className="p-5">
         <SectionHeader
-          title="Resolution rate"
+          title={t('agents.resolutionRate') || 'Resolution rate'}
           description="Were visitor issues resolved?"
           actions={
             !loading && resolution.rate !== null ? (
@@ -117,7 +119,7 @@ export function SatisfactionBreakdown({
           ) : resolution.total === 0 ? (
             <EmptyState
               icon={CheckCircle2}
-              title="No resolution data yet"
+              title={t('agents.noResolutionDataYet') || 'No resolution data yet'}
               description="This fills in when visitors confirm whether their question was answered."
             />
           ) : (
@@ -151,7 +153,7 @@ export function SatisfactionBreakdown({
                       className="h-2 w-2 rounded-full bg-[var(--ds-success)]"
                       aria-hidden="true"
                     />
-                    Resolved
+                    {t('agents.resolved') || 'Resolved'}
                   </dt>
                   <dd className="mt-0.5 text-[15px] font-bold tabular-nums text-[var(--ds-text)]">
                     {resolution.resolved.toLocaleString()}
@@ -163,7 +165,7 @@ export function SatisfactionBreakdown({
                       className="h-2 w-2 rounded-full bg-[var(--ds-danger)]"
                       aria-hidden="true"
                     />
-                    Unresolved
+                    {t('agents.unresolved') || 'Unresolved'}
                   </dt>
                   <dd className="mt-0.5 text-[15px] font-bold tabular-nums text-[var(--ds-text)]">
                     {resolution.unresolved.toLocaleString()}

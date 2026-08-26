@@ -2,6 +2,8 @@ import { useMemo, type ReactElement } from 'react';
 import { Users } from 'lucide-react';
 import { Card, EmptyState, SectionHeader, Skeleton } from '../../../design-system';
 import { type LeadStats } from './analytics.types';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 interface LeadsBreakdownProps {
   leads: LeadStats | null;
@@ -21,30 +23,31 @@ interface FunnelStage {
  * Bars are proportional to the total so drop-off between stages is visible.
  */
 export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactElement {
+  const { t } = useTranslation();
   const stages = useMemo<FunnelStage[]>(() => {
     if (!leads) return [];
     return [
       {
-        label: 'All conversations',
-        hint: 'Everyone who chatted',
+        label: translateNow('agents.allConversations') || 'All conversations',
+        hint: translateNow('agents.everyoneWhoChatted') || 'Everyone who chatted',
         value: leads.total,
         color: 'var(--ds-text-subtle)',
       },
       {
-        label: 'Warm lead',
-        hint: 'Showed early interest',
+        label: translateNow('agents.warmLead') || 'Warm lead',
+        hint: translateNow('agents.showedEarlyInterest') || 'Showed early interest',
         value: leads.mql + leads.sal + leads.sql,
         color: 'var(--ds-info)',
       },
       {
-        label: 'Strong interest',
-        hint: 'Worth a sales follow-up',
+        label: translateNow('agents.strongInterest') || 'Strong interest',
+        hint: translateNow('agents.worthASalesFollowUp') || 'Worth a sales follow-up',
         value: leads.sal + leads.sql,
         color: 'var(--ds-warning)',
       },
       {
-        label: 'Ready to buy',
-        hint: 'Ready to buy',
+        label: translateNow('agents.readyToBuy') || 'Ready to buy',
+        hint: translateNow('agents.readyToBuy') || 'Ready to buy',
         value: leads.sql,
         color: 'var(--ds-success)',
       },
@@ -56,7 +59,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
   return (
     <Card className="p-5">
       <SectionHeader
-        title="Lead funnel"
+        title={t('agents.leadFunnel') || 'Lead funnel'}
         description="How conversations turn into qualified leads."
       />
 
@@ -70,7 +73,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
         ) : !leads || total === 0 ? (
           <EmptyState
             icon={Users}
-            title="No leads captured yet"
+            title={t('agents.noLeadsCapturedYet') || 'No leads captured yet'}
             description="When visitors share their details or show buying intent, they'll appear here as leads."
           />
         ) : (

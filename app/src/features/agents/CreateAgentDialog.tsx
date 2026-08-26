@@ -429,7 +429,7 @@ export function CreateAgentDialog({
                   {submitting ? (
                     <>
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                      Creating…
+                      {t('agents.creating') || 'Creating…'}
                     </>
                   ) : limitNotice ? (
                     t('agents.continueToPlans') || 'Continue to plans'

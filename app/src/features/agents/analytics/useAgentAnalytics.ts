@@ -16,6 +16,7 @@ import {
   type RatingsSummary,
   type ResolutionSummary,
 } from './analytics.types';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface AgentAnalytics {
   /** Continuous, gap-filled daily message timeline (oldest → newest). */
@@ -172,7 +173,7 @@ export function useAgentAnalytics(
         });
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Failed to load analytics.';
+        const message = err instanceof Error ? err.message : translateNow('agents.failedToLoadAnalytics') || 'Failed to load analytics.';
         setState({ status: 'error', data: null, error: message });
       }
     })();

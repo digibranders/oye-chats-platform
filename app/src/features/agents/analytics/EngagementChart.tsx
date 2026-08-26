@@ -12,9 +12,13 @@ import {
 import { Card, SectionHeader, Skeleton, cn } from '../../../design-system';
 import { type EngagementPoint } from './analytics.types';
 import { CHART, ChartTooltip } from './chartTheme';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 type Range = '7d' | '30d' | '90d' | 'all';
 
+// Built at import, before a locale exists; the render sites resolve each label
+// from the range id and the English here is the fallback.
 const RANGES: readonly { id: Range; label: string; days: number | null }[] = [
   { id: '7d', label: '7 days', days: 7 },
   { id: '30d', label: '30 days', days: 30 },
@@ -33,6 +37,7 @@ interface EngagementChartProps {
  * instant and never refetches.
  */
 export function EngagementChart({ data, loading }: EngagementChartProps): ReactElement {
+  const { t } = useTranslation();
   // Default to the full (already-capped) window so the headline "Messages" KPI
   // - which sums the whole series - reconciles with the chart's own total.
   const [range, setRange] = useState<Range>('all');
@@ -47,7 +52,12 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
   // Screen-reader equivalent for the SVG trend: the timeline is otherwise
   // conveyed only visually (WCAG 1.1.1). Summarise the window's total and peak.
   const chartLabel = useMemo(() => {
-    const rangeLabel = (RANGES.find((r) => r.id === range)?.label ?? '').toLowerCase();
+    const found = RANGES.find((r) => r.id === range);
+    const rangeLabel = (
+      (found ? translateNow(`agents.range.${found.id}`) : null) ??
+      found?.label ??
+      ''
+    ).toLowerCase();
     const peak = windowed.reduce<EngagementPoint | null>(
       (best, point) => (best === null || point.messages > best.messages ? point : best),
       null,
@@ -61,12 +71,12 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
   return (
     <Card className="p-5">
       <SectionHeader
-        title="Message volume"
+        title={t('agents.messageVolume') || 'Message volume'}
         description="How many messages your AI handled each day."
         actions={
           <div
             role="group"
-            aria-label="Time range"
+            aria-label={t('agents.timeRange') || 'Time range'}
             className="flex items-center gap-1 rounded-lg bg-[var(--ds-bg-sunken)] p-1"
           >
             {RANGES.map((r) => (
@@ -82,7 +92,7 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
                     : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
                 )}
               >
-                {r.label}
+                {t(`agents.range.${r.id}`) || r.label}
               </button>
             ))}
           </div>
@@ -96,7 +106,7 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
           <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-[var(--ds-border)] text-center">
             <Activity className="mb-2 text-[var(--ds-text-subtle)]" size={26} aria-hidden="true" />
             <p className="text-[13px] text-[var(--ds-text-muted)]">
-              No messages in this range yet.
+              {t('agents.noMessagesInThisRange') || 'No messages in this range yet.'}
             </p>
           </div>
         ) : (
