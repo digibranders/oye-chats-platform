@@ -278,8 +278,8 @@ export function JourneyDiagram({
         cx={CENTER.x}
         cy={centerY}
         r={CENTER.r}
-        fill="var(--color-accent)"
-        stroke="var(--color-accent-hover)"
+        fill="var(--color-accent-500)"
+        stroke="var(--color-accent-600)"
         strokeWidth={2}
       />
       <foreignObject
