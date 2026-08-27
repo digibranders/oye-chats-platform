@@ -144,7 +144,13 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
 
   return (
     <div className={cn('overflow-hidden rounded-md border border-border', className)}>
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken py-1 pl-3 pr-1">
+      {/* `pr-1.5`, not `pr-1`. The focus ring is 2px at a 2px offset, so a
+          focused control needs 4px of clearance — and this bar sits inside an
+          `overflow-hidden` box, which clips at the padding edge. At 4px the
+          Copy button's ring fitted with nothing to spare, and it sits in the
+          rounded top-right corner where the clip closes in sooner than the
+          straight edge. 6px gives it room. */}
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken py-1 pl-3 pr-1.5">
         <span className="min-w-0 truncate text-xs text-text-secondary">{caption}</span>
         <Button
           size="sm"

@@ -71,6 +71,17 @@ const VARIANT: Record<ButtonVariant, string> = {
  * places across `features/` and `superadmin/` had hand-rolled because the
  * system's smallest was 28. It carries `HIT_AREA` so a 24px control still clears
  * the 24px target with slop for touch.
+ *
+ * **A button nested inside a bordered control takes the size rung BELOW it.**
+ * Every box here is `box-sizing: border-box`, so a bordered container is two
+ * pixels smaller inside than its height class says: `h-control-sm` (28) is 26
+ * of content. Matching the container's own rung therefore makes the child a
+ * pixel taller than the room it has at each end, and `ghost`'s hover fill is
+ * opaque — so hovering it paints over the container's border and the outline
+ * appears to break under the pointer. `CopyField` shipped exactly that (28
+ * inside 28) across nine surfaces before anyone traced it. Pair `icon-xs` with
+ * a `sm` container and `icon-sm` with an `md` one, and leave `overflow-hidden`
+ * out of it — that hides the symptom and squares off the child's corners.
  */
 const SIZE: Record<ButtonSize, string> = {
   sm: controlClass('sm', CONTROL_SIZE.sm.gap),
