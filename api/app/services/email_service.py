@@ -900,53 +900,77 @@ def _format_money(currency: str, value: object) -> str:
     return f"{symbol}{rounded:,.2f}"
 
 
-def _plural_unit(unit: str, qty: object) -> str:
-    """Agree a unit label with its quantity (``1 unit`` / ``2 units``). Labels
-    that already read as plural (end in ``s``) are left untouched."""
-    unit = (unit or "").strip()
-    if not unit:
-        return ""
-    try:
-        n = int(qty)
-    except (TypeError, ValueError):
-        return unit
-    if n == 1 or unit[-1].lower() == "s":
-        return unit
-    return f"{unit}s"
-
-
 def _grouped_quote_html(currency: str, line_items: list[dict], total: object) -> str:
-    """Render the priced quote as service sections of requirement rows
-    (``label × qty → subtotal``) plus a bold total. Line items are the
-    requirement rows from ``quotation_routes.build_quotation_summary``."""
-    groups: dict[str, list[tuple[str, str]]] = {}
+    """Render the priced quote as a document-style grid: an ITEM / QTY /
+    UNIT PRICE / AMOUNT table whose rows are grouped under each service name and
+    closed by a highlighted Total bar. Line items are the requirement rows from
+    ``quotation_routes.build_quotation_summary``. Table markup + inline styles so
+    it survives across email clients (no CSS grid, no external assets)."""
+    f = ed.FONT
+    groups: dict[str, list[dict]] = {}
     order: list[str] = []
     for item in line_items or []:
         service_name = item.get("service_name") or "Service"
         if service_name not in groups:
             groups[service_name] = []
             order.append(service_name)
-        qty = item.get("quantity")
-        unit = item.get("unit_label") or ""
-        label = esc(item.get("label") or "Item")
-        if unit:
-            label = f"{label} &times; {esc(qty)} {esc(_plural_unit(unit, qty))}"
-        elif qty and int(qty) != 1:
-            label = f"{label} &times; {esc(qty)}"
-        groups[service_name].append((label, _format_money(currency, item.get("subtotal", 0))))
+        groups[service_name].append(item)
 
-    total_row = ("Total", strong(_format_money(currency, total)))
-    html = ""
-    for i, service_name in enumerate(order):
-        rows = list(groups[service_name])
-        # Keep the total inside the same box as the line items (on the last
-        # service group) rather than floating it in a separate box.
-        if i == len(order) - 1:
-            rows.append(total_row)
-        html += ed.section_label(esc(service_name)) + info_table(rows, right=True)
-    if not order:
-        html += info_table([total_row], right=True)
-    return html
+    head = (
+        f"font-family:{f};font-size:11px;font-weight:700;letter-spacing:0.07em;"
+        f"text-transform:uppercase;color:{ed.INK400};padding:0 0 9px 0;border-bottom:2px solid {ed.INK900};"
+    )
+    header = (
+        "<tr>"
+        f'<td width="42%" style="{head}width:42%;text-align:left;">Item</td>'
+        f'<td width="13%" style="{head}width:13%;text-align:left;padding-left:8px;">Qty</td>'
+        f'<td width="22%" style="{head}width:22%;text-align:left;padding-left:8px;">Unit price</td>'
+        f'<td width="23%" style="{head}width:23%;text-align:right;padding-right:16px;">Amount</td>'
+        "</tr>"
+    )
+
+    rows_html = ""
+    for service_name in order:
+        rows_html += (
+            "<tr>"
+            f'<td colspan="4" style="font-family:{f};font-size:11px;font-weight:700;letter-spacing:0.10em;'
+            f'text-transform:uppercase;color:{ed.ACCENT};padding:16px 0 8px 0;">{esc(service_name)}</td>'
+            "</tr>"
+        )
+        for item in groups[service_name]:
+            qty = item.get("quantity")
+            qty_str = esc(qty)
+            label = esc(item.get("label") or "Item")
+            unit_price = esc(_format_money(currency, item.get("price", 0)))
+            amount = esc(_format_money(currency, item.get("subtotal", 0)))
+            base = f"border-bottom:1px solid {ed.RULE};padding:11px 0;font-family:{f};font-size:14px;"
+            rows_html += (
+                "<tr>"
+                f'<td style="{base}color:{ed.INK900};font-weight:600;line-height:1.4;">{label}</td>'
+                f'<td style="{base}color:{ed.INK500};text-align:left;padding-left:8px;white-space:nowrap;">{qty_str}</td>'
+                f'<td style="{base}color:{ed.INK500};text-align:left;padding-left:8px;white-space:nowrap;">{unit_price}</td>'
+                f'<td style="{base}color:{ed.INK900};font-weight:600;text-align:right;'
+                f'padding-right:16px;white-space:nowrap;">{amount}</td>'
+                "</tr>"
+            )
+
+    # The Total is a row INSIDE the same fixed-layout table so its amount lands
+    # in the exact same 23% column as the line-item amounts (a separate table
+    # would not right-align to the same guide).
+    tint = f"background-color:{ed.ACCENT_TINT};border-top:2px solid {ed.ACCENT};"
+    total_row = (
+        "<tr>"
+        f'<td colspan="3" style="{tint}padding:14px 0 14px 16px;font-family:{f};font-size:16px;'
+        f'font-weight:700;color:{ed.INK900};">Total</td>'
+        f'<td style="{tint}padding:14px 16px 14px 0;font-family:{f};font-size:16px;font-weight:700;'
+        f'color:{ed.ACCENT};text-align:right;white-space:nowrap;">{esc(_format_money(currency, total))}</td>'
+        "</tr>"
+    )
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="width:100%;table-layout:fixed;margin:6px 0 6px 0;border-collapse:collapse;">'
+        f"{header}{rows_html}{total_row}</table>"
+    )
 
 
 def _next_steps_callout(body: str) -> str:

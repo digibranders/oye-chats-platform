@@ -1075,7 +1075,7 @@ class TestQuotationEmailBuilders:
         # The quotation ships inline in the body — never as a PDF attachment.
         assert kwargs.get("attachments") is None
 
-    def test_document_email_pluralizes_unit_with_quantity(self, _sent):
+    def test_document_email_qty_is_plain_number_without_unit_label(self, _sent):
         from app.services import email_service
 
         line_items = [
@@ -1089,21 +1089,12 @@ class TestQuotationEmailBuilders:
                 "price": 5000.0,
                 "subtotal": 10000.0,
             },
-            {
-                "service_id": "s1",
-                "service_name": "Development",
-                "requirement_id": "r2",
-                "label": "Server",
-                "unit_label": "unit",
-                "quantity": 1,
-                "price": 3000.0,
-                "subtotal": 3000.0,
-            },
         ]
-        email_service.send_quotation_document_email("jason@buyer.com", "Acme Co", "Jason", "INR", line_items, 13000.0)
+        email_service.send_quotation_document_email("jason@buyer.com", "Acme Co", "Jason", "INR", line_items, 10000.0)
         _, _, body, _kw = _sent[0]
-        assert "2 units" in body  # plural agrees with quantity
-        assert "1 unit" in body and "1 units" not in body  # singular stays singular
+        # The QTY column shows the bare number — the unit label is not rendered.
+        assert "2 unit" not in body and "2 units" not in body
+        assert "Laptop" in body and "₹5,000" in body and "₹10,000" in body
 
     def test_client_email_renders_grouped_total(self, _sent):
         from app.services import email_service
