@@ -121,6 +121,7 @@ export function HomePage() {
       <PageHeader
         eyebrow={hello}
         title="Home"
+        titleVisuallyHidden
         actions={
           <Link
             to="/chatbots?new=1"

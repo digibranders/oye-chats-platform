@@ -60,9 +60,12 @@ export interface PageProps {
  * `@3xl/page:` always means "the box I am actually in is at least 768 wide",
  * wherever it is written. There is one name because there is one question.
  *
- * Padding is 24 below `lg` and 32 at and above, on **both** axes, from one
- * token pair that `TopBar` and `ShellBanners` also consume — so the breadcrumb,
- * the banner and the page title stand on one left edge instead of three.
+ * Horizontal padding is 24 below `lg` and 32 at and above, from one token pair
+ * that `TopBar` and `ShellBanners` also consume — so the breadcrumb, the banner
+ * and the page title stand on one left edge instead of three. Vertical padding
+ * is its own, smaller number: nothing else lines up against the page's top or
+ * bottom edge the way three surfaces line up against its left one, so there is
+ * no shared alignment to preserve, and no reason to pay 32px for it.
  */
 export function Page({
   children,
@@ -75,7 +78,7 @@ export function Page({
     <div
       data-density={density === 'dense' ? 'dense' : undefined}
       className={cn(
-        '@container/page w-full py-gutter lg:py-gutter-lg',
+        '@container/page w-full py-4 lg:py-5',
         gutter && 'px-gutter lg:px-gutter-lg',
         WIDTHS[width],
         className,
@@ -99,6 +102,23 @@ export interface PageHeaderProps {
   actions?: ReactNode;
   /** A tab row, filter bar or scope switcher, rendered under the title block. */
   toolbar?: ReactNode;
+  /**
+   * Keep the `h1` for screen-reader heading navigation, but do not print it.
+   *
+   * The shell's own top-bar breadcrumb already names a top-level page — for
+   * a single-segment route like `/leads` that trail is exactly one crumb,
+   * "Leads" — and this component's `title` prop restates the identical word
+   * in 20px type six lines down. That is the same defect its own docstring
+   * describes for two `h1`s on one page, in reverse: not a missing heading,
+   * a heading that is also printed as chrome a few pixels above itself.
+   *
+   * Only set this when `title` is the *same word* the breadcrumb already
+   * shows — a nested page (`/settings/workspace`, whose crumb reads
+   * "Settings, Workspace") still needs its own visible title, because the
+   * breadcrumb's last segment and the page's title are the one place that
+   * word appears.
+   */
+  titleVisuallyHidden?: boolean;
   /**
    * Run the toolbar's own hairline to the edges of the content area.
    *
@@ -131,28 +151,67 @@ export function PageHeader({
   actions,
   toolbar,
   toolbarBleed = false,
+  titleVisuallyHidden = false,
   className,
 }: PageHeaderProps) {
+  // `titleVisuallyHidden` hides the title text, not the title BLOCK — the row
+  // it sits in, and the `mb-6` this component always used to carry below it,
+  // are a separate question. A guard state that passes nothing else (no
+  // eyebrow, no description, no actions, no toolbar) has, once the title is
+  // hidden, nothing left to show at all — and reserving 24px of margin below
+  // an invisible line is the exact defect `titleVisuallyHidden` exists to fix,
+  // just relocated from "duplicate text" to "dead space where the text was."
+  const hasContentWorthTheFullGap = Boolean(eyebrow) || !titleVisuallyHidden || Boolean(description);
+  const hasVisibleTopRow = hasContentWorthTheFullGap || Boolean(actions);
+  const hasVisibleContent = hasVisibleTopRow || Boolean(toolbar);
+  // A page whose header is otherwise nothing but a hidden title and a single
+  // right-aligned `actions` control (no eyebrow, no description, no toolbar
+  // below it to lean on) reads as a floating button over a blank shelf — the
+  // full `mb-6` a real title block earns was tuned for *that* block, not for
+  // one button with nothing to its left. Tighter margin, same control.
+  const marginClass = !hasVisibleContent
+    ? undefined
+    : hasContentWorthTheFullGap || toolbar
+      ? 'mb-6'
+      : 'mb-4';
+
   return (
-    <header className={cn('mb-6', className)}>
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0">
-          {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
-          <h1 className={cn('text-xl font-semibold text-text-primary', eyebrow && 'mt-1')}>
-            {title}
-          </h1>
-          {description ? (
-            <p className="mt-1 max-w-reading text-sm text-text-secondary">{description}</p>
+    <header className={cn(marginClass, className)}>
+      {hasVisibleTopRow ? (
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+          <div className="min-w-0">
+            {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+            <h1
+              className={cn(
+                titleVisuallyHidden
+                  ? 'sr-only'
+                  : cn('text-xl font-semibold text-text-primary', eyebrow && 'mt-1'),
+              )}
+            >
+              {title}
+            </h1>
+            {description ? (
+              <p className="mt-1 max-w-reading text-sm text-text-secondary">{description}</p>
+            ) : null}
+          </div>
+          {actions ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
           ) : null}
         </div>
-        {actions ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
-        ) : null}
-      </div>
+      ) : (
+        // Nothing to show, but the `h1` still has to exist — a screen-reader
+        // user tabbing between pages must still hear the page's name.
+        <h1 className="sr-only">{title}</h1>
+      )}
       {toolbar ? (
         <div
           className={cn(
-            'mt-6',
+            // `mt-6` separates the toolbar from a visible title/actions row
+            // above it. A page like Analytics — hidden title, no eyebrow, no
+            // actions, the tab row *is* the header — has no such row, so that
+            // margin was pure top-padding stacked on the page's own, paid
+            // twice for the same gap.
+            hasVisibleTopRow && 'mt-6',
             toolbarBleed && '-mx-gutter px-gutter lg:-mx-gutter-lg lg:px-gutter-lg',
           )}
         >
@@ -234,12 +293,12 @@ export function Stack({
   className,
 }: {
   children: ReactNode;
-  /** 24 between sections (default), 16 between the bands of one section. */
+  /** 16 between sections (default), 12 between the bands of one section. */
   gap?: 'section' | 'card';
   className?: string;
 }) {
   return (
-    <div className={cn('flex flex-col', gap === 'card' ? 'gap-4' : 'gap-6', className)}>
+    <div className={cn('flex flex-col', gap === 'card' ? 'gap-3' : 'gap-4', className)}>
       {children}
     </div>
   );

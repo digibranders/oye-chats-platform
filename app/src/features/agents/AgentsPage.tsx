@@ -497,6 +497,7 @@ export function AgentsPage() {
     <Page width="wide">
       <PageHeader
         title="Chatbots"
+        titleVisuallyHidden
         actions={
           <Button variant="primary" iconLeft={<Plus aria-hidden />} onClick={() => setParam('new', '1')}>
             New chatbot

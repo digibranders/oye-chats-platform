@@ -25,6 +25,17 @@ export interface NavTabsProps {
   items: readonly NavTabItem[];
   /** Names the tab set, e.g. "Revenue views". */
   label: string;
+  /**
+   * A scope control, rendered on the same line as the tabs, right-aligned.
+   *
+   * A page whose only other header content was a right-aligned control (a
+   * period selector, a Refresh button) used to get its own row for it, above
+   * this one — a second, mostly-empty band, because nothing sat on that row's
+   * left once the title stopped repeating what the breadcrumb already said.
+   * The tabs are already the row this control is scoped to, so it shares the
+   * row rather than floating alone above it.
+   */
+  trailing?: ReactNode;
   className?: string;
 }
 
@@ -49,9 +60,16 @@ export interface NavTabsProps {
  * as the structural division the tabs sit on. `PageHeader toolbarBleed` runs it
  * the full width of the content area.
  */
-export function NavTabs({ items, label, className }: NavTabsProps) {
+export function NavTabs({ items, label, trailing, className }: NavTabsProps) {
   return (
-    <nav aria-label={label} className={cn('border-b border-border', className)}>
+    <nav
+      aria-label={label}
+      className={cn(
+        'border-b border-border',
+        trailing && 'flex items-center justify-between gap-4',
+        className,
+      )}
+    >
       <ul className={TAB_LIST}>
         {items.map((item) => (
           <li key={item.to} className="flex">
@@ -69,6 +87,7 @@ export function NavTabs({ items, label, className }: NavTabsProps) {
           </li>
         ))}
       </ul>
+      {trailing ? <div className="flex shrink-0 items-center gap-2">{trailing}</div> : null}
     </nav>
   );
 }

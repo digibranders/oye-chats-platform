@@ -120,7 +120,7 @@ export function BillingPage() {
     return (
       <Page width="wide">
         <PageHeader
-          title="Billing"
+          title="Billing" titleVisuallyHidden
           toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
         />
         <LockedState
@@ -134,23 +134,28 @@ export function BillingPage() {
   return (
     <Page width="wide">
       <PageHeader
-        title="Billing"
-        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
-        actions={
-          scopeOptions.length > 1 ? (
-            <Select
-              label="Billing scope"
-              size="sm"
-              options={scopeOptions}
-              value={scopeParam ?? ''}
-              onValueChange={(value) => {
-                const next = new URLSearchParams(params);
-                if (value) next.set('chatbot', value);
-                else next.delete('chatbot');
-                setParams(next, { replace: true });
-              }}
-            />
-          ) : undefined
+        title="Billing" titleVisuallyHidden
+        toolbar={
+          <NavTabs
+            label="Billing sections"
+            items={BILLING_SECTIONS}
+            trailing={
+              scopeOptions.length > 1 ? (
+                <Select
+                  label="Billing scope"
+                  size="sm"
+                  options={scopeOptions}
+                  value={scopeParam ?? ''}
+                  onValueChange={(value) => {
+                    const next = new URLSearchParams(params);
+                    if (value) next.set('chatbot', value);
+                    else next.delete('chatbot');
+                    setParams(next, { replace: true });
+                  }}
+                />
+              ) : undefined
+            }
+          />
         }
       />
 

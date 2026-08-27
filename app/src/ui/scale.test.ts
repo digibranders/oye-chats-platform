@@ -157,12 +157,11 @@ const PAPER_STATUS = /\b(?:bg|text|border|ring|from|to|via)-(?:success|warning|d
 /**
  * The two shell files that paint on ink and nothing else.
  *
- * The rest of `src/shell` is mixed on purpose — `AccountMenu` and
- * `WorkspaceSwitcher` have a trigger on the rail and a menu on paper, and
- * `ImpersonationBanner` is a paper-ground bar that is *correctly*
- * `bg-danger-fill` — so those files are checked line by line instead: a paper
- * status token is an offence only where it shares a class string with a rail
- * token.
+ * The rest of `src/shell` is mixed on purpose — `AccountMenu` has a trigger on
+ * the rail and a menu on paper, and `ImpersonationBanner` is a paper-ground bar
+ * that is *correctly* `bg-danger-fill` — so those files are checked line by
+ * line instead: a paper status token is an offence only where it shares a
+ * class string with a rail token.
  */
 const INK_GROUND = ['shell/Rail.tsx', 'shell/SetupProgress.tsx'];
 

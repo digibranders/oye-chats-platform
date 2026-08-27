@@ -1,10 +1,12 @@
 import { render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { Card, CardBody, CardHeader, Well } from './Card';
 import { Measure } from './Measure';
 import { Columns } from './Columns';
 import { Grid } from './Grid';
-import { Page, Toolbar } from './Page';
+import { NavTabs } from './NavTabs';
+import { Page, PageHeader, Toolbar } from './Page';
 import { PaneHeader } from './PaneHeader';
 import { SidebarLayout } from './SidebarLayout';
 
@@ -33,6 +35,82 @@ describe('Page', () => {
 
     rerender(<Page>Ops</Page>);
     expect(container.firstElementChild).not.toHaveAttribute('data-density');
+  });
+});
+
+describe('PageHeader', () => {
+  it('keeps the title for screen readers when it is visually hidden', () => {
+    render(<PageHeader title="Leads" titleVisuallyHidden />);
+    expect(screen.getByRole('heading', { name: 'Leads', level: 1 })).toHaveClass('sr-only');
+  });
+
+  it('reserves no margin when a hidden title leaves nothing else to show', () => {
+    // A guard state that passes only `title` + `titleVisuallyHidden` — no
+    // eyebrow, no description, no actions, no toolbar — used to still render
+    // the header's `mb-6`, a 24px gap under a line nothing rendered any more.
+    // That is the same defect `titleVisuallyHidden` exists to fix, just moved
+    // from duplicate text to dead space where the text used to be.
+    const { container } = render(<PageHeader title="Analytics" titleVisuallyHidden />);
+    expect(container.firstElementChild?.className).not.toMatch(/\bmb-6\b/);
+  });
+
+  it('still reserves its margin when the title is hidden but something else shows', () => {
+    const { container, rerender } = render(
+      <PageHeader title="Home" titleVisuallyHidden eyebrow="Good afternoon" />,
+    );
+    expect(container.firstElementChild?.className).toMatch(/\bmb-6\b/);
+
+    rerender(
+      <PageHeader
+        title="Billing"
+        titleVisuallyHidden
+        toolbar={<span>Usage · Reports</span>}
+      />,
+    );
+    expect(container.firstElementChild?.className).toMatch(/\bmb-6\b/);
+  });
+
+  it('still shows a visible title when it is not marked hidden', () => {
+    render(<PageHeader title="Settings" />);
+    const heading = screen.getByRole('heading', { name: 'Settings', level: 1 });
+    expect(heading).not.toHaveClass('sr-only');
+  });
+
+  it('tightens the margin when the only visible thing is one right-aligned action', () => {
+    // No eyebrow, no description, no toolbar to lean on below it — a lone
+    // button reads as a floating control over a blank shelf at the full
+    // title-block margin, so this case gets a smaller one instead.
+    const { container } = render(
+      <PageHeader title="Leads" titleVisuallyHidden actions={<button type="button">Export</button>} />,
+    );
+    expect(container.firstElementChild?.className).toMatch(/\bmb-4\b/);
+    expect(container.firstElementChild?.className).not.toMatch(/\bmb-6\b/);
+  });
+});
+
+describe('NavTabs', () => {
+  it('puts a trailing control on the same row as the tabs, not a row of its own', () => {
+    render(
+      <MemoryRouter>
+        <NavTabs
+          label="Analytics views"
+          items={[{ to: '/analytics', label: 'Overview', end: true }]}
+          trailing={<button type="button">Refresh</button>}
+        />
+      </MemoryRouter>,
+    );
+    const nav = screen.getByRole('navigation', { name: 'Analytics views' });
+    expect(within(nav).getByRole('link', { name: 'Overview' })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+  });
+
+  it('renders no trailing wrapper at all when nothing is passed', () => {
+    render(
+      <MemoryRouter>
+        <NavTabs label="Billing sections" items={[{ to: '/billing', label: 'Usage' }]} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
 

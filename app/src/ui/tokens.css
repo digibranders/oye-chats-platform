@@ -252,8 +252,11 @@
   --spacing-gutter-lg: 2rem;        /* 32 — lg and above                       */
 
   /* Card padding and table-cell padding are ONE value. They were 20 and 16,
-     which left every table inside a card 4px out of line with its own header. */
-  --spacing-cell: 1.25rem;          /* 20                                      */
+     which left every table inside a card 4px out of line with its own header.
+     20 tightened to 16 for the same density pass that took `Stack`'s default
+     gap from 24 to 16 — one card's own edge and the gap to its neighbour are
+     now the same number, not two different ones a reader has to notice. */
+  --spacing-cell: 1rem;             /* 16                                      */
   --spacing-cell-dense: 0.75rem;    /* 12 — under [data-density='dense']       */
 
   /* Content widths. `--container-*` is Tailwind's namespace for `max-w-*`, so a
