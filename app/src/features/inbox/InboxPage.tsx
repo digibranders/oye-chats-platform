@@ -491,7 +491,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       {/* A status strip, not a title bar. The shell's breadcrumb already renders
           "Inbox" in the 56px top bar; a second bordered bar under it repeating
           the word cost ~100px of chrome before any conversation. */}
-      <header className="flex h-row shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-cell">
+      <header className="flex min-h-row shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-cell">
         <h1 className="sr-only">Inbox</h1>
         {liveChat && !operator.unavailable ? (
           <Badge tone={connection.tone} dot>

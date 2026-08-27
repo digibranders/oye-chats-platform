@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Field, Select, Spinner, type SelectOption } from '../../ui';
+import { Info } from 'lucide-react';
+import { Select, Spinner, Tooltip, type SelectOption } from '../../ui';
 import { setMyLanguage } from '../../services/api';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
 
@@ -71,28 +72,45 @@ export function OperatorLanguagePicker({
     },
   });
 
+  const hint = value
+    ? `Visitor messages are translated into ${labelFor(value) ?? value}.`
+    : 'Messages show in the language they were written in.';
+
   return (
-    <Field
-      label="Read live chat in"
-      error={error}
-      hint={
-        error
-          ? undefined
-          : value
-            ? `Visitor messages are translated into ${labelFor(value) ?? value}.`
-            : 'Messages show in the language they were written in.'
-      }
-    >
-      <span className="flex items-center gap-2">
-        <Select
-          label="Read live chat in"
-          value={value ?? ''}
-          options={options}
-          disabled={disabled || save.isPending}
-          onValueChange={(next) => save.mutate(next)}
-        />
-        {save.isPending ? <Spinner size="sm" label="Saving your language" /> : null}
+    <div className="flex items-center gap-2">
+      {/* `Field` stacks label, control and hint on three lines — right for a
+          settings form, wrong for a row in the inbox's own status strip. Same
+          shape as the "Month" label beside Journey's own picker: a small
+          label the control's own `aria-label` already carries for
+          assistive tech, so this span is decoration, not a second name for
+          screen readers to hear. */}
+      <span aria-hidden className="text-xs text-text-tertiary">
+        Read live chat in
       </span>
-    </Field>
+      <Select
+        size="sm"
+        label="Read live chat in"
+        value={value ?? ''}
+        options={options}
+        disabled={disabled || save.isPending}
+        onValueChange={(next) => save.mutate(next)}
+      />
+      {save.isPending ? <Spinner size="sm" label="Saving your language" /> : null}
+      {error ? (
+        <span className="text-xs text-danger" role="alert">
+          {error}
+        </span>
+      ) : (
+        <Tooltip content={hint}>
+          <button
+            type="button"
+            aria-label={hint}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
+          >
+            <Info aria-hidden className="h-icon-sm w-icon-sm" />
+          </button>
+        </Tooltip>
+      )}
+    </div>
   );
 }
