@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { getCurrentUser } from '../services/api';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, setAuthItem } from '../utils/authStorage';
+import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * Maps the machine-readable error codes returned by the backend OAuth
@@ -11,6 +12,8 @@ import { setAuthBundle, setAuthItem } from '../utils/authStorage';
  * back to a generic message - keeps the surface area for accidental
  * disclosure tight.
  */
+// @i18n-exempt: keyed by the OAuth error code and resolved at the render site
+// (`auth.oauthError.<code>`); the English here is that lookup's fallback.
 const ERROR_MESSAGES = {
     oauth_unavailable: 'Google sign-in is not configured. Please use your email and password.',
     oauth_cancelled: 'Sign-in was cancelled. You can try again any time.',
@@ -25,6 +28,14 @@ const ERROR_MESSAGES = {
         'An account with this email already exists. Please sign in with your password first, then link Google from your account settings.',
     oauth_internal_error: 'Something went wrong on our end. Please try again.',
 };
+
+/** The message for one OAuth error code, in the active language. */
+function oauthErrorMessage(code) {
+    const known = code && Object.prototype.hasOwnProperty.call(ERROR_MESSAGES, code);
+    const key = known ? code : 'oauth_internal_error';
+    return translateNow(`auth.oauthError.${key}`) || ERROR_MESSAGES[key];
+}
+
 
 /**
  * Post-OAuth landing page. The backend lands the browser here with the
@@ -56,7 +67,10 @@ function classifyCallback(searchParams) {
     if (errorCode) {
         return {
             kind: 'error',
-            message: ERROR_MESSAGES[errorCode] || ERROR_MESSAGES.oauth_internal_error,
+            // The code comes from the provider, so both the lookup and the
+            // fallback are keyed on it; an unknown code lands on the generic
+            // message rather than showing the raw code to the user.
+            message: oauthErrorMessage(errorCode),
         };
     }
 
@@ -78,6 +92,7 @@ function classifyCallback(searchParams) {
 }
 
 export default function OAuthCallback() {
+  const { t } = useTranslation();
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     // Lazy initializer runs once per mount - classifies the URL the
@@ -106,11 +121,6 @@ export default function OAuthCallback() {
         // exact set of keys the password-login flow writes so every
         // downstream guard (ProtectedRoute, ClientOnlyPage, etc.)
         // keeps working without special-casing OAuth users.
-        try {
-            clearTrialBannerDismissals();
-        } catch {
-            // banner cleanup is best-effort
-        }
         // OAuth defaults to ``persistent=true`` - Google sign-in users
         // expect to stay logged in across browser restarts (matches how
         // Google itself handles its own sessions).
@@ -172,14 +182,14 @@ export default function OAuthCallback() {
                     <div className="mx-auto w-12 h-12 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mb-4">
                         <AlertCircle size={22} className="text-rose-600" />
                     </div>
-                    <h1 className="text-xl font-semibold text-surface-900 mb-2">Sign-in failed</h1>
+                    <h1 className="text-xl font-semibold text-surface-900 mb-2">{t('auth.signInFailed') || 'Sign-in failed'}</h1>
                     <p className="text-surface-500 text-sm mb-6">{classified.message}</p>
                     <button
                         type="button"
                         onClick={() => navigate('/login', { replace: true })}
                         className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]"
                     >
-                        Back to sign in
+                        {t('auth.backToSignIn') || 'Back to sign in'}
                     </button>
                 </div>
             </div>
@@ -190,7 +200,7 @@ export default function OAuthCallback() {
         <div className="min-h-screen flex items-center justify-center bg-surface-50">
             <div className="text-center">
                 <Loader2 size={28} className="animate-spin text-primary-600 mx-auto mb-4" />
-                <p className="text-surface-500 text-sm">Signing you in…</p>
+                <p className="text-surface-500 text-sm">{t('auth.signingYouIn') || 'Signing you in…'}</p>
             </div>
         </div>
     );

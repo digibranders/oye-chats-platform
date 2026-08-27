@@ -13,9 +13,14 @@ import {
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { getUnansweredQuestions } from '../../services/api';
 import type { UnansweredQuestion } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
+import { formatDate, formatNumber } from '../../i18n/formatters';
+import { t as translateNow } from '../../i18n/i18n';
 
 const LIMIT = 50;
 
+// @i18n-exempt: resolved at the render site from the option value
+// (`analytics.range.<value>`); the labels here are that lookup's fallback.
 const DAY_OPTIONS = [
   { value: '7', label: '7 days' },
   { value: '30', label: '30 days' },
@@ -30,16 +35,24 @@ function formatRelativeDate(iso?: string | null): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '-';
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 30) return `${days} days ago`;
-  return new Date(then).toLocaleDateString(undefined, {
+  if (days <= 0) return translateNow('analytics.today') || 'Today';
+  if (days === 1) return translateNow('analytics.yesterday') || 'Yesterday';
+  if (days < 30) {
+    const count = formatNumber(days);
+    return translateNow('analytics.daysAgo', { count }) || `${count} days ago`;
+  }
+  return formatDate(new Date(then), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   });
 }
 
+// Module constant: evaluated at import, before a locale exists. Headers are
+// resolved at the render site from the column key; the English here is the
+// inline fallback.
+// @i18n-exempt: resolved at the render site from the column key
+// (`analytics.column.<key>`); the headers here are that lookup's fallback.
 const COLUMNS: Column<UnansweredQuestion>[] = [
   {
     key: 'question',
@@ -64,7 +77,7 @@ const COLUMNS: Column<UnansweredQuestion>[] = [
     width: '8rem',
     render: (row) => (
       <span className="tabular-nums font-medium text-[var(--ds-text)]">
-        {row.count.toLocaleString()}
+        {formatNumber(row.count)}
       </span>
     ),
   },
@@ -85,6 +98,7 @@ export function UnansweredQuestionsPanel({
 }: {
   botId: number | null;
 }): ReactElement {
+  const { t } = useTranslation();
   const [gaps, setGaps] = useState<UnansweredQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<DayRange>('30');
@@ -105,7 +119,7 @@ export function UnansweredQuestionsPanel({
       } catch (err) {
         if (!cancelled && activeBotRef.current === botId) {
           setError(
-            err instanceof Error ? err.message : 'Failed to load unanswered questions.',
+            err instanceof Error ? err.message : translateNow('analytics.failedToLoadUnansweredQuestions') || 'Failed to load unanswered questions.',
           );
         }
       }
@@ -120,15 +134,15 @@ export function UnansweredQuestionsPanel({
     <Card>
       <CardHeader>
         <SectionHeader
-          title="Unanswered questions"
-          description="Questions visitors asked that your AI couldn't answer from its knowledge base, ranked by frequency."
+          title={t('analytics.unansweredQuestions') || 'Unanswered questions'}
+          description={t('analytics.questionsVisitorsAskedThatYour') || 'Questions visitors asked that your AI couldn\'t answer from its knowledge base, ranked by frequency.'}
           actions={
             <div className="flex items-center gap-2">
               <SegmentedControl
                 options={DAY_OPTIONS}
                 value={range}
                 onChange={(v) => setRange(v as DayRange)}
-                ariaLabel="Time range for unanswered questions"
+                ariaLabel={t('analytics.timeRangeForUnansweredQuestions') || 'Time range for unanswered questions'}
               />
               <Button
                 variant="outline"
@@ -137,7 +151,7 @@ export function UnansweredQuestionsPanel({
                 disabled={gaps === null && error === null}
               >
                 <RefreshCw size={14} aria-hidden="true" />
-                Refresh
+                {t('analytics.refresh') || 'Refresh'}
               </Button>
             </div>
           }
@@ -147,12 +161,12 @@ export function UnansweredQuestionsPanel({
         {error !== null ? (
           <EmptyState
             icon={TriangleAlert}
-            title="Couldn't load unanswered questions"
+            title={t('analytics.couldntLoadUnansweredQuestions') || 'Couldn\'t load unanswered questions'}
             description={error}
             action={
               <Button variant="primary" onClick={() => setReloadToken((t) => t + 1)}>
                 <RefreshCw size={16} aria-hidden="true" />
-                Try again
+                {t('analytics.tryAgain') || 'Try again'}
               </Button>
             }
           />
@@ -165,15 +179,18 @@ export function UnansweredQuestionsPanel({
         ) : gaps.length === 0 ? (
           <EmptyState
             icon={CheckCircle2}
-            title="No unanswered questions"
-            description="Your AI is answering everything visitors throw at it. Questions it can't answer will appear here so you know what content to add."
+            title={t('analytics.noUnansweredQuestions') || 'No unanswered questions'}
+            description={t('analytics.yourAiIsAnsweringEverything') || 'Your AI is answering everything visitors throw at it. Questions it can\'t answer will appear here so you know what content to add.'}
           />
         ) : (
           <DataTable
-            columns={COLUMNS}
+            columns={COLUMNS.map((col) => ({
+              ...col,
+              header: t(`analytics.column.${col.key}`) || col.header,
+            }))}
             rows={gaps}
             rowKey={(row) => row.question}
-            caption="Questions your AI couldn't answer from its knowledge base"
+            caption={t('analytics.questionsYourAiCouldntAnswer') || 'Questions your AI couldn\'t answer from its knowledge base'}
           />
         )}
       </CardContent>

@@ -9,6 +9,7 @@ import {
 } from '../../../services/api';
 import { type ActivityPoint, type Bot, type TopQuestion } from '../../../types/domain';
 import { parseRatingsSummary, parseResolutionSummary } from '../../analytics/analytics-types';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * The subset of overview analytics and stats.
@@ -76,7 +77,7 @@ function parseStats(
 /** Narrows an unknown error to a human-readable message. */
 function toMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return 'We couldn’t load your latest metrics. Please try again.';
+  return translateNow('agents.weCouldntLoadYourLatest') || 'We couldn’t load your latest metrics. Please try again.';
 }
 
 /**

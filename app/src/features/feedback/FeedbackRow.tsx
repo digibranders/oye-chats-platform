@@ -2,13 +2,14 @@ import { type ReactElement } from 'react';
 import { ChevronDown, ChevronUp, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { cn } from '../../design-system';
 import { type FeedbackItem } from './types';
+import { formatDateTime } from '../../i18n/formatters';
 
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-});
+// Built per call, not once at import: a module-level Intl instance captures
+// whatever locale was active when the module first loaded and never changes
+// again, so a language switch would leave every row in the old language.
+function formatFeedbackDate(value: string | number | Date): string {
+  return formatDateTime(value, { year: undefined });
+}
 
 interface FeedbackRowProps {
   item: FeedbackItem;
@@ -57,7 +58,7 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps): Rea
           <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{item.question}</p>
           <div className="mt-1 flex items-center gap-3">
             <span className="text-[11px] text-[var(--ds-text-subtle)]">
-              {dateFormatter.format(new Date(item.created_at))}
+              {formatFeedbackDate(item.created_at)}
             </span>
             <span className="text-[11px] font-medium text-[var(--ds-accent-text)]">{item.user}</span>
           </div>

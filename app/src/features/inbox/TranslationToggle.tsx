@@ -2,6 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { Languages, Loader2 } from 'lucide-react';
 import { cn } from '../../design-system';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Per-message original/translated control shown under a bubble.
@@ -30,6 +31,7 @@ export function TranslationToggle({
   onRetry?: () => Promise<void> | void;
   className?: string;
 }): ReactElement | null {
+  const { t } = useTranslation();
   const [retrying, setRetrying] = useState(false);
   const { labelFor } = useLocaleCatalog();
   const label = labelFor(sourceLanguage);
@@ -47,7 +49,7 @@ export function TranslationToggle({
   if (onRetry) {
     return (
       <span className={cn('inline-flex items-center gap-1.5 text-[11px] text-[var(--ds-text-subtle)]', className)}>
-        <span>Translation unavailable</span>
+        <span>{t('inbox.translationUnavailable') || 'Translation unavailable'}</span>
         <button
           type="button"
           onClick={() => void handleRetry()}
@@ -55,7 +57,7 @@ export function TranslationToggle({
           className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-[var(--ds-text)] disabled:opacity-60"
         >
           {retrying ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : null}
-          {retrying ? 'Translating' : 'Retry'}
+          {retrying ? t('inbox.translating') || 'Translating' : t('inbox.retry') || 'Retry'}
         </button>
       </span>
     );
@@ -75,7 +77,9 @@ export function TranslationToggle({
       )}
     >
       <Languages size={11} aria-hidden="true" />
-      {showOriginal ? 'View translation' : `View original${label ? ` (${label})` : ''}`}
+      {showOriginal ? t('inbox.viewTranslation') || 'View translation' : label
+            ? t('inbox.viewOriginalIn', { language: label }) || `View original (${label})`
+            : t('inbox.viewOriginal') || 'View original'}
     </button>
   );
 }

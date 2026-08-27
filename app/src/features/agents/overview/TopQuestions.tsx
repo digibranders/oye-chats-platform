@@ -1,7 +1,9 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { MessageSquare } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type TopQuestion } from '../../../types/domain';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface TopQuestionsProps {
   readonly questions: readonly TopQuestion[];
@@ -14,13 +16,14 @@ export interface TopQuestionsProps {
  * my AI for?" at a glance. Shows an empty state before any traffic.
  */
 export function TopQuestions({ questions, className }: TopQuestionsProps): ReactElement {
+  const { t } = useTranslation();
   if (questions.length === 0) {
     return (
       <Card className={cn('p-6', className)}>
         <EmptyState
           icon={MessageSquare}
-          title="No questions yet"
-          description="The questions visitors ask your AI most often will show up here."
+          title={t('agents.noQuestionsYet') || 'No questions yet'}
+          description={t('agents.theQuestionsVisitorsAskYour') || 'The questions visitors ask your AI most often will show up here.'}
         />
       </Card>
     );
@@ -62,7 +65,7 @@ export function TopQuestions({ questions, className }: TopQuestionsProps): React
                 </div>
               </div>
               <span className="shrink-0 text-[13px] font-semibold text-[var(--ds-text-muted)]">
-                {item.count.toLocaleString()}
+                {formatNumber(item.count)}
                 <span className="ml-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
                   {item.count === 1 ? 'ask' : 'asks'}
                 </span>

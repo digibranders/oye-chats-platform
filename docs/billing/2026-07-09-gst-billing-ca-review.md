@@ -1,5 +1,32 @@
 # OyeChats Billing & GST Invoicing — Senior CA / Tax & Billing-Systems Code Review
 
+> ## ⚠️ Superseded on one point: pricing became GST-EXCLUSIVE on 26 Aug 2026
+>
+> This review was written on 2026-07-09 against a **GST-inclusive** catalogue: the listed price was
+> the amount debited, and the invoice carved 18% back out of it. That is no longer how OyeChats
+> charges. Every published price is now a **base** price, exclusive of GST. A domestic customer is
+> debited base + GST (`core/tax.py::gross_charge_minor`); an international customer is an export,
+> pays no Indian GST, and is charged the listed USD price. Discounts apply to the base and GST is
+> computed on the discounted base, per Section 15(3) of the CGST Act.
+>
+> **The review is left unedited.** It is the record of what was decided in July and why, and the
+> trade-off it names in Q8 is exactly the one that drove the change.
+>
+> Read with that in mind:
+> - **Q7 (inclusive vs exclusive)** describes the model that was replaced. Its recommendation, that
+>   B2B buyers prefer tax shown on top, is what shipped.
+> - **Q8** and the `tax_rate_bps` row in the §3 checklist are inverted under the new model: a rate
+>   change now moves the **customer's** price, not net realisation. It also breaks every existing
+>   mandate, because each Razorpay plan is minted at base + GST and is immutable, so a rate change
+>   means re-minting every plan and re-authorising every customer.
+> - **The `price_inclusive = true` lock still holds, and is still correct.** The charge is
+>   `base + tax`, so the captured amount is itself tax-inclusive of the base, and the existing
+>   `inclusive=True` carve-out recovers the advertised base exactly. Unlocking it would invoice
+>   `base × 1.18 × 1.18` against a `base × 1.18` charge. The invoicing engine was not changed.
+>
+> Current source of truth: `api/app/core/tax.py`, `api/app/services/seller_profile_service.py`, and
+> [`razorpay-plan-ids.md`](./razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+
 > **Reviewer posture:** Chartered Accountant + billing-systems architect, reviewing for GST correctness, cross-border/FEMA exposure, and industry-standard invoicing practice.
 > **Codebase:** `development` @ `e594f6d` (2026-07-09) · **Evidence:** read of `core/tax.py`, `core/gstin.py`, `seller_profile_service.py`, `invoice_service.py`, `subscription_routes.py`, `razorpay_service.py`, `invoice_reports.py`.
 > **Legal frame:** CGST/IGST Acts 2017, IGST §2(6) (export of service), §2(17) (OIDAR), §12–13 (place of supply), §15 (value), §34 (credit notes), Rule 34/46/53/96A, FEMA (forex realisation), Notif. 12/2024 (B2CL ₹1L).

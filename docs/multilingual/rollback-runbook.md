@@ -40,9 +40,47 @@ behaviour.
 | 4 | Widget manifest rollback | All widgets, interface only | ~1 min | No |
 | 5 | Backend rollback (revert + redeploy) | Everything | ~10 min | Yes (WS restart) |
 
+### How to actually flip a switch
+
+`PUT /superadmin/pricing-config/{key}` upserts
+(`api/app/api/superadmin_routes_v2.py:880-886`), so a key works whether or not
+a row already exists, and the write is recorded in the audit log.
+
+```bash
+curl -X PUT https://api.oyechats.com/superadmin/pricing-config/feature.translation_enabled \
+  -H "X-API-Key: <superadmin key>" -H "Content-Type: application/json" \
+  -d '{"value": false}'
+```
+
+Two things about this that will surprise you mid-incident, both verified against
+production on 2026-08-25:
+
+1. **Neither multilingual flag exists as a row.** `pricing_config` holds ten
+   rows and no `feature.*` keys at all. Both switches currently resolve to
+   `true` through the fail-open default in `_DEFAULT_PRICING`, which is the
+   intended ON state, but it means `GET /superadmin/pricing-config` does not
+   list them: that endpoint returns stored rows only and never merges the
+   defaults. You cannot discover these keys from the API. Take them from here.
+
+2. **Do NOT run `scripts/seed_pricing_config.py` to create the rows.** It
+   upserts every key it knows about, not just the missing ones, and its values
+   have drifted from production. Against the 2026-08-25 state it would have
+   changed `credit_cost.document_upload` from 3 to 1, `topup_expiry_months`
+   from 12 to 0, and replaced the entire `topup_packs` catalogue with different
+   prices and credit amounts. That is a live pricing change, not a seed. Write
+   the single key you want, with the call above.
+
+Confirm the switch landed by reading the widget's own view of a bot:
+`GET /bots/settings/public` with that bot's `X-Bot-Key` and an allowed `Origin`
+reports `language_config.enabled: false` once lever 2 is off. Allow up to 60
+seconds (`_PRICING_CACHE_TTL_SECONDS`), per process.
+
 ### 1. Translation kill switch
 
-Super-admin pricing panel, `feature.translation_enabled` to `false`.
+Set `feature.translation_enabled` to `false`. **There is no super-admin pricing
+panel** in Admin Platform 2.0: nothing in `app/src` calls the pricing-config
+endpoints. This lever is an authenticated API call, and it is the only way to
+pull it. See "How to actually flip a switch" below before you need it.
 
 Stops every operator-translation call platform-wide. Live chat continues in the
 original languages: the visitor sees the operator's actual words, the operator
@@ -56,7 +94,7 @@ conversations are otherwise fine.
 
 ### 2. Multilingual kill switch
 
-Super-admin pricing panel, `feature.multilingual_chat_enabled` to `false`.
+Set `feature.multilingual_chat_enabled` to `false`, the same way as lever 1.
 
 Stops visitor language resolution and the AI's answer-language behaviour for
 every bot. Each bot behaves exactly as one whose owner never enabled

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Trans } from '../i18n/Trans';
+import { formatTime } from '../i18n/formatters';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import {
     IMPERSONATION_BODY_CLASS,
@@ -8,6 +10,8 @@ import {
     isImpersonating,
 } from '../utils/impersonation';
 import ImpersonationNotice from './ImpersonationNotice.jsx';
+import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * Persistent bar shown on every page while a super-admin is impersonating an
@@ -48,13 +52,14 @@ function parseExpiry(expiresAt) {
 /** Format the expiry as a local wall-clock time, e.g. "12:30". */
 function formatExpiry(expiresAt) {
     const at = parseExpiry(expiresAt);
-    return at ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+    return at ? formatTime(at, { hour: '2-digit', minute: '2-digit' }) : null;
 }
 
 /** `setTimeout` saturates past this - clamp so a far-future expiry doesn't fire immediately. */
 const MAX_TIMEOUT_MS = 2147483647;
 
 export default function ImpersonationBanner() {
+  const { t } = useTranslation();
     // A tab holding the credential ALWAYS gets the bar, even if the stored
     // profile is missing or corrupt - an unlabelled impersonated session is the
     // one state this component exists to prevent. Empty object → the field
@@ -72,7 +77,7 @@ export default function ImpersonationBanner() {
     useEffect(() => {
         function onEnded(event) {
             setProfile(null);
-            setEndedMessage(event?.detail?.message || 'Impersonation session ended.');
+            setEndedMessage(event?.detail?.message || translateNow('app.impersonationEnded') || 'Impersonation session ended.');
         }
         window.addEventListener(IMPERSONATION_ENDED_EVENT, onEnded);
         return () => window.removeEventListener(IMPERSONATION_ENDED_EVENT, onEnded);
@@ -97,21 +102,21 @@ export default function ImpersonationBanner() {
 
         const delay = Math.min(Math.max(expiresAt.getTime() - Date.now(), 0), MAX_TIMEOUT_MS);
         const timer = setTimeout(
-            () => endImpersonationSession('This impersonation session expired.'),
+            () => endImpersonationSession(translateNow('app.thisImpersonationSessionExpired') || 'This impersonation session expired.'),
             delay,
         );
         return () => clearTimeout(timer);
     }, [active, profile]);
 
     const handleExit = useCallback(() => {
-        endImpersonationSession('Impersonation session ended. You can close this tab.');
+        endImpersonationSession(translateNow('app.impersonationSessionEndedYouCan') || 'Impersonation session ended. You can close this tab.');
         // Only works for tabs opened by script - which is how the super-admin
         // console launches this one. When it doesn't, the notice stands in.
         window.close();
     }, []);
 
     if (endedMessage) {
-        return <ImpersonationNotice title="Impersonation session ended" message={endedMessage} />;
+        return <ImpersonationNotice title={t('app.impersonationEnded') || 'Impersonation session ended'} message={endedMessage} />;
     }
     if (!active) return null;
 
@@ -122,7 +127,11 @@ export default function ImpersonationBanner() {
     const expiry = formatExpiry(profile.expires_at);
     // Narrow viewports truncate the line, so keep the full sentence reachable.
     const fullText = [
-        `Viewing ${accountName}${actorEmail ? ` as super-admin ${actorEmail}` : ''}`,
+        actorEmail
+            ? translateNow('app.viewingAsSuperAdmin', { account: accountName, actor: actorEmail }) ||
+              `Viewing ${accountName} as super-admin ${actorEmail}`
+            : translateNow('app.viewingAccount', { account: accountName }) ||
+              `Viewing ${accountName}`,
         'limited actions',
         expiry && `expires ${expiry}`,
     ].filter(Boolean).join(' · ');
@@ -135,17 +144,32 @@ export default function ImpersonationBanner() {
         >
             <ShieldAlert size={15} aria-hidden="true" className="shrink-0" />
             <p className="min-w-0 flex-1 truncate text-[12.5px] leading-none">
-                Viewing <span className="font-semibold">{accountName}</span>
-                {actorEmail && (
-                    <>
-                        {' '}as super-admin <span className="font-semibold">{actorEmail}</span>
-                    </>
+                {actorEmail ? (
+                    <Trans
+                        k="app.viewingAsSuperAdmin"
+                        fallback="Viewing {account} as super-admin {actor}"
+                        values={{
+                            account: <span className="font-semibold">{accountName}</span>,
+                            actor: <span className="font-semibold">{actorEmail}</span>,
+                        }}
+                    />
+                ) : (
+                    <Trans
+                        k="app.viewingAccount"
+                        fallback="Viewing {account}"
+                        values={{ account: <span className="font-semibold">{accountName}</span> }}
+                    />
                 )}
                 {/* "limited", not "safe": the allowlist admits real config writes
                     (agent settings, canned responses, conversation triage), so
                     the honest claim is scope-limited, not harmless. */}
-                <span className="text-white/80"> · limited actions</span>
-                {expiry && <span className="text-white/80 tabular-nums"> · expires {expiry}</span>}
+                <span className="text-white/80"> {t('app.limitedActions') || '· limited actions'}</span>
+                {expiry && (
+                    <span className="text-white/80 tabular-nums">
+                        {' '}
+                        {t('app.expiresAt', { when: expiry }) || `· expires ${expiry}`}
+                    </span>
+                )}
             </p>
             <button
                 type="button"
@@ -153,7 +177,7 @@ export default function ImpersonationBanner() {
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-white/15 px-2.5 py-1 text-[12px] font-semibold transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70"
             >
                 <LogOut size={13} aria-hidden="true" />
-                Exit
+                {t('app.exit') || 'Exit'}
             </button>
         </div>
     );

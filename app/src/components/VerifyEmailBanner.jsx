@@ -4,6 +4,7 @@ import { Mail, X } from 'lucide-react';
 import { getCurrentUser, resendVerification } from '../services/api';
 import { getAuthItem, setAuthItem } from '../utils/authStorage';
 import { getAuthState } from '../utils/auth';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Slim, dismissible "verify your email" nudge shown at the top of every
@@ -40,6 +41,7 @@ import { getAuthState } from '../utils/auth';
  * layout thrash, default hidden.
  */
 export default function VerifyEmailBanner() {
+  const { t } = useTranslation();
     const isOperator = getAuthState().isOperator;
 
     // Show only when we positively know the account is unverified. ``null``
@@ -98,12 +100,12 @@ export default function VerifyEmailBanner() {
 
     const resendLabel =
         resendState === 'sending'
-            ? 'Sending…'
+            ? t('app.sending') || 'Sending…'
             : resendState === 'sent'
-                ? 'Code sent'
+                ? t('app.codeSent') || 'Code sent'
                 : resendState === 'error'
-                    ? 'Retry send'
-                    : 'Resend';
+                    ? t('app.retrySend') || 'Retry send'
+                    : t('app.resend') || 'Resend';
 
     return (
         // Design-system tokens, not the legacy `primary-*` scale: this sits
@@ -115,10 +117,10 @@ export default function VerifyEmailBanner() {
         >
             <Mail size={16} aria-hidden="true" className="shrink-0 text-[var(--ds-warning)]" />
             <p className="min-w-0 flex-1 text-[13px] text-[var(--ds-text)]">
-                <span className="font-medium">Verify your email</span>
+                <span className="font-medium">{t('app.verifyYourEmail') || 'Verify your email'}</span>
                 <span className="text-[var(--ds-text-muted)]">
                     {' '}
-                    to unlock checkout, plan changes, and team invites.
+                    {t('app.toUnlockCheckoutPlanChanges') || 'to unlock checkout, plan changes, and team invites.'}
                 </span>
             </p>
             <button
@@ -133,12 +135,12 @@ export default function VerifyEmailBanner() {
                 to={verifyHref}
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--ds-accent)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-accent-fg)] transition-opacity hover:opacity-90"
             >
-                Verify now
+                {t('app.verifyNow') || 'Verify now'}
             </Link>
             <button
                 type="button"
                 onClick={handleDismiss}
-                aria-label="Dismiss verify-email banner"
+                aria-label={t('app.dismissVerifyEmailBanner') || 'Dismiss verify-email banner'}
                 className="shrink-0 rounded-md p-1 text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-subtle)] hover:text-[var(--ds-text)]"
             >
                 <X size={14} aria-hidden="true" />

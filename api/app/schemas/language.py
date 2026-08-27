@@ -22,6 +22,16 @@ class LocaleInfo(BaseModel):
             "renders in English."
         ),
     )
+    admin_ui_translated: bool = Field(
+        default=False,
+        description=(
+            "Whether the ADMIN DASHBOARD's own interface is translated into this language. "
+            "Deliberately separate from ``ui_translated``, which describes the chat widget: "
+            "the two surfaces ship different dictionaries and reach different launch "
+            "languages, so reusing one flag would offer a customer a language one of them "
+            "cannot render."
+        ),
+    )
 
 
 class LanguageContext(BaseModel):

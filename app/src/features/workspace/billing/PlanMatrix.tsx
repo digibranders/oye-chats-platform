@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
 import {
@@ -25,7 +26,7 @@ type FeatureRow = { group: string; label: string } & (
 function limitText(value: number | undefined): string {
   if (value === -1) return 'Unlimited';
   if (value == null) return '-';
-  return value.toLocaleString();
+  return formatNumber(value);
 }
 
 function historyText(value: number | undefined): string {
@@ -100,7 +101,10 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
   { group: 'Features', label: 'Live chat & handoff', kind: 'bool', value: (p) => Boolean(p.features.live_chat) },
   { group: 'Features', label: 'BANT lead qualification', kind: 'bool', value: (p) => Boolean(p.features.bant) },
   { group: 'Features', label: 'Webhooks + REST API', kind: 'bool', value: (p) => Boolean(p.features.webhooks) },
-  { group: 'Features', label: 'Remove OyeChats branding', kind: 'bool', value: (p) => Boolean(p.features.branding_removable) },
+  // No "Remove OyeChats branding" row. Branding removal is a paid add-on bought
+  // on top of any paid plan, not a plan inclusion, so a row here would compare
+  // tiers on something no tier carries - a column of crosses that reads as "you
+  // cannot have this", next to a Billing card that sells it on every paid plan.
   { group: 'Features', label: 'Online support', kind: 'bool', value: (p) => Boolean(p.features.online_support) },
   // These two are gated by SLUG on the server (`plan_entitlements_service`),
   // not by a `features` flag, no plan row carries a key for either, so reading

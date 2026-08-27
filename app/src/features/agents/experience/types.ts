@@ -23,9 +23,10 @@ export interface ExperienceDraft {
    * showing it as though someone uploaded it. */
   botLogoSource: string | null;
   /** `feature_flags.show_branding` - true shows the "Powered by OyeChats"
-   * footer. Only a workspace with the `branding_removable` plan feature can
-   * turn this off; the backend force-sets it back to `true` on save
-   * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
+   * footer. Only a workspace that has bought the branding-removal add-on (which
+   * grants `branding_removable`; no plan tier bundles it) can turn this off.
+   * The backend rejects the write with 403 `branding_addon_required` otherwise
+   * (see `bot_routes.py` `_bot_has_branding_addon`). */
   showBranding: boolean;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────
@@ -73,6 +74,11 @@ export const FIELD_LIMITS = {
   companyDescription: 1000,
 } as const;
 
+// @i18n-exempt: widget copy, not dashboard chrome. These are the initial values
+// SAVED into the customer's bot config and rendered to their visitors, so the
+// dashboard's own language must never reach them - a Hindi-speaking operator
+// creating an agent would otherwise ship a Hindi launcher to an English site.
+// The widget has its own locale, driven by the visitor's session.
 const DEFAULTS = {
   primaryColor: '#ba68c8',
   userBubbleColor: '#DBE9FF',

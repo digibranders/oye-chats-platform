@@ -26,24 +26,24 @@ function isUnconverted(status: string | null | undefined): boolean {
  * Two tiers of copy, not one list:
  *
  * 1. A FOUR-bullet budget of graded entitlements (credits, seats, then whichever
- *    feature flags this plan carries). Four is a deliberate cap - the seeded
- *    Standard and Professional tiers already produce five candidates and drop
- *    "Remove OyeChats branding" off the end.
+ *    feature flags this plan carries). Four is a deliberate cap on how much one
+ *    card may claim, not an accident of how many candidates exist today.
  * 2. The unlimited-agents headline, prepended ABOVE that budget rather than
  *    competing inside it.
  *
- * The prepend is what keeps the card honest. Enterprise carries `live_chat`,
- * `bant` AND `branding_removable`, so it already fills the budget; pushing a
- * fifth candidate into a fixed four displaces a real entitlement whatever order
- * they sit in, and the one it displaced was "BANT lead qualification" - leaving
- * the ₹5,999 tier advertising strictly less than the ₹1,199 one. No ordering
- * fixes that; only the cap can give.
+ * The prepend is what keeps the card honest. A tier carrying every graded flag
+ * already fills the budget, so pushing a fifth candidate into a fixed four
+ * displaces a real entitlement whatever order they sit in. That is not
+ * hypothetical: it used to displace "BANT lead qualification" on Enterprise,
+ * leaving the ₹5,999 tier advertising strictly less than the ₹1,199 one. No
+ * ordering fixes that; only the cap can give, and it gives for the unlimited
+ * tier alone - one extra line, above the budget, for the thing that tier is
+ * sold on.
  *
- * It gives for the unlimited tier alone. Raising the cap to five for everyone
- * would hand Standard and Professional back a branding bullet they were
- * deliberately truncated out of - changing four cards to fix one. So the budget
- * stays at four differentiating bullets, and the single tier with an unlimited
- * agent entitlement gets one extra line above it for the thing it is sold on.
+ * Branding removal is deliberately NOT a candidate. It is a paid add-on bought
+ * on top of any paid plan, not a plan inclusion, so a bullet here would sell an
+ * entitlement the plan does not carry - and a stale `branding_removable` flag
+ * left on a hand-provisioned plan row must not resurrect one.
  *
  * Deliberately asymmetric with the comparison matrix, which carries an "AI
  * agents included" row for EVERY tier. These cards sell one plan at a time
@@ -51,6 +51,8 @@ function isUnconverted(status: string | null | undefined): boolean {
  * spend a line restating the platform default. "1" is information only when it
  * sits next to "Unlimited" - which is the matrix's job, not the cards'.
  */
+export const GRADED_BULLET_BUDGET = 4;
+
 function highlights(plan: PlanView): string[] {
   const budget: string[] = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
@@ -58,8 +60,7 @@ function highlights(plan: PlanView): string[] {
   ];
   if (plan.features.live_chat) budget.push('Live chat & handoff');
   if (plan.features.bant) budget.push('BANT lead qualification');
-  if (plan.features.branding_removable) budget.push('Remove OyeChats branding');
-  const graded = budget.slice(0, 4);
+  const graded = budget.slice(0, GRADED_BULLET_BUDGET);
   return planGrantsUnlimitedAgents(plan) ? ['Unlimited AI chatbots', ...graded] : graded;
 }
 

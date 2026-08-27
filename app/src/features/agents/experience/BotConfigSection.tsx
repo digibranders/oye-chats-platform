@@ -50,6 +50,8 @@ import {
   servicesPatch,
   sliceEqual,
 } from './botConfig';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /** Which cluster of config cards this instance renders. */
 export type BotConfigVariant = 'handoff' | 'content' | 'language';
@@ -80,6 +82,7 @@ export interface BotConfigSectionProps {
  * saved / error state and surfaces feedback inline.
  */
 export function BotConfigSection({ variant }: BotConfigSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { agent, loading: agentLoading, error: agentError } = useAgent();
   const botId = agent?.id ?? null;
   // The pre-chat lead form is a paid feature (leads are Free-plan-gated across
@@ -115,7 +118,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : 'Could not load this chatbot’s configuration.');
+        setLoadError(err instanceof Error ? err.message : translateNow('agents.couldNotLoadConfiguration') || 'Could not load this chatbot’s configuration.');
       });
     return () => {
       cancelled = true;
@@ -155,7 +158,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
           ...s,
           [key]: {
             saving: false,
-            error: err instanceof Error ? err.message : 'Could not save. Please try again.',
+            error: err instanceof Error ? err.message : translateNow('agents.couldNotSavePleaseTry') || 'Could not save. Please try again.',
             saved: false,
           },
         }));
@@ -172,11 +175,11 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
     return (
       <EmptyState
         icon={AlertCircle}
-        title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
+        title={agentError ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
         description={
           agentError
-            ? 'We hit a problem loading your chatbots. Refresh to try again.'
-            : 'This chatbot doesn’t exist or you don’t have access to it.'
+            ? t('agents.weHitAProblemLoading') || 'We hit a problem loading your chatbots. Refresh to try again.'
+            : t('agents.thisChatbotDoesntExistOr') || 'This chatbot doesn’t exist or you don’t have access to it.'
         }
       />
     );
@@ -186,11 +189,11 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
     return (
       <EmptyState
         icon={AlertCircle}
-        title="Couldn’t load configuration"
+        title={t('agents.couldntLoadConfiguration') || 'Couldn’t load configuration'}
         description={loadError}
         action={
           <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)}>
-            Try again
+            {t('agents.tryAgain') || 'Try again'}
           </Button>
         }
       />
@@ -313,6 +316,7 @@ function LiveChatCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const delayId = useId();
   const timeoutId = useId();
   const queueId = useId();
@@ -325,13 +329,13 @@ function LiveChatCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="Live chat"
-        description="Let visitors ask for a human, and control the wait-time copy and queue behaviour."
+        title={t('agents.liveChat') || 'Live chat'}
+        description={t('agents.letVisitorsAskForA') || 'Let visitors ask for a human, and control the wait-time copy and queue behaviour.'}
       />
       <Card>
         <ToggleRow
-          title="Enable live chat"
-          description='Shows a "Talk to a human" option in the widget during a chat.'
+          title={t('agents.enableLiveChat') || 'Enable live chat'}
+          description={t('agents.showsATalkToA') || 'Shows a "Talk to a human" option in the widget during a chat.'}
           checked={value.enabled}
           onChange={(enabled) => onChange((prev) => ({ ...prev, enabled }))}
         />
@@ -341,8 +345,8 @@ function LiveChatCard({
             <CustomCopyNotice multilingual={multilingual} />
 
             <TextField
-              label="Waiting message"
-              hint="Shown while the visitor waits for an operator to accept."
+              label={t('agents.waitingMessage') || 'Waiting message'}
+              hint={t('agents.shownWhileTheVisitorWaits') || 'Shown while the visitor waits for an operator to accept.'}
               value={value.waitingMessage}
               placeholder={LIVE_CHAT_PLACEHOLDERS.waitingMessage}
               maxLength={200}
@@ -350,8 +354,8 @@ function LiveChatCard({
             />
 
             <TextField
-              label="No-operators handoff message"
-              hint="The live-chat handoff reply shown when a visitor asks for a human but live chat is off or every operator is offline. Different from the widget's general “Offline banner” (under Services & copy)."
+              label={t('agents.noOperatorsHandoffMessage') || 'No-operators handoff message'}
+              hint={t('agents.theLiveChatHandoffReply') || 'The live-chat handoff reply shown when a visitor asks for a human but live chat is off or every operator is offline. Different from the widget\'s general “Offline banner” (under Services & copy).'}
               value={value.offlineMessage}
               placeholder={LIVE_CHAT_PLACEHOLDERS.offlineMessage}
               maxLength={200}
@@ -360,7 +364,7 @@ function LiveChatCard({
 
             <div className="space-y-1.5">
               <label htmlFor={delayId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-                Handoff delay
+                {t('agents.handoffDelayLabel') || 'Handoff delay'}
               </label>
               <Select
                 id={delayId}
@@ -368,18 +372,18 @@ function LiveChatCard({
                 onChange={(next) => onChange((prev) => ({ ...prev, handoffDelaySeconds: parseInt10(next) }))}
                 options={HANDOFF_DELAY_OPTIONS.map((option) => ({
                   value: String(option.value),
-                  label: option.label,
+                  label: t(`agents.handoffDelay.${option.value}`) || option.label,
                 }))}
               />
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                Time before the handoff form appears after the AI Chatbot suggests live chat.
+                {t('agents.timeBeforeTheHandoffForm') || 'Time before the handoff form appears after the AI Chatbot suggests live chat.'}
               </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label htmlFor={timeoutId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-                  Queue timeout
+                  {t('agents.queueTimeout') || 'Queue timeout'}
                 </label>
                 <div className="relative">
                   <Input
@@ -399,17 +403,18 @@ function LiveChatCard({
                     aria-hidden="true"
                     className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] font-medium text-[var(--ds-text-subtle)]"
                   >
-                    sec
+                    {t('agents.sec') || 'sec'}
                   </span>
                 </div>
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                  How long a visitor waits before timing out ({QUEUE_TIMEOUT.default}s default).
+                  {t('agents.queueTimeoutHint', { seconds: QUEUE_TIMEOUT.default }) ||
+                    `How long a visitor waits before timing out (${QUEUE_TIMEOUT.default}s default).`}
                 </p>
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor={queueId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-                  Max queue size
+                  {t('agents.maxQueueSize') || 'Max queue size'}
                 </label>
                 <Input
                   id={queueId}
@@ -422,14 +427,15 @@ function LiveChatCard({
                   onChange={(e) => onChange((prev) => ({ ...prev, maxQueueSize: parseInt10(e.target.value) }))}
                 />
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                  Most visitors allowed to wait in the queue at once ({MAX_QUEUE.default} default).
+                  {t('agents.maxQueueHint', { count: MAX_QUEUE.default }) ||
+                    `Most visitors allowed to wait in the queue at once (${MAX_QUEUE.default} default).`}
                 </p>
               </div>
             </div>
           </>
         )}
 
-        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save live chat" />
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveLiveChat') || 'Save live chat'} />
       </Card>
     </section>
   );
@@ -454,6 +460,7 @@ function LeadFormCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const toggleField = (name: LeadFieldName, enabled: boolean): void => {
     if (enabled) {
       if (fields.some((f) => f.field === name)) return;
@@ -470,13 +477,13 @@ function LeadFormCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="Pre-chat lead form"
-        description="Ask new visitors for their details before the conversation starts."
+        title={t('agents.preChatLeadForm') || 'Pre-chat lead form'}
+        description={t('agents.askNewVisitorsForTheir') || 'Ask new visitors for their details before the conversation starts.'}
       />
       <Card>
         <ToggleRow
-          title="Enable lead form"
-          description="New visitors fill out a short form before chatting."
+          title={t('agents.enableLeadForm') || 'Enable lead form'}
+          description={t('agents.newVisitorsFillOutA') || 'New visitors fill out a short form before chatting.'}
           checked={value}
           onChange={onToggle}
         />
@@ -484,7 +491,7 @@ function LeadFormCard({
         {value && (
           <div className="space-y-1">
             <p className="text-[12px] text-[var(--ds-text-muted)]">
-              Choose which fields to collect and whether each one is required.
+              {t('agents.chooseWhichFieldsToCollect') || 'Choose which fields to collect and whether each one is required.'}
             </p>
             <ul className="divide-y divide-[var(--ds-border)]">
               {LEAD_FIELD_ORDER.map((name) => {
@@ -496,10 +503,13 @@ function LeadFormCard({
                       <Toggle
                         checked={enabled}
                         onChange={(next) => toggleField(name, next)}
-                        label={`Collect ${LEAD_FIELD_LABELS[name]}`}
+                        label={
+                          t('agents.collectField', { field: leadFieldLabel(name) }) ||
+                          `Collect ${leadFieldLabel(name)}`
+                        }
                       />
                       <span className="text-[13px] font-medium text-[var(--ds-text)]">
-                        {LEAD_FIELD_LABELS[name]}
+                        {leadFieldLabel(name)}
                       </span>
                     </div>
                     {enabled && (
@@ -510,7 +520,7 @@ function LeadFormCard({
                           onChange={(e) => setRequired(name, e.target.checked)}
                           className="h-4 w-4 rounded border-[var(--ds-border)] accent-[var(--ds-accent)]"
                         />
-                        Required
+                        {t('agents.required') || 'Required'}
                       </label>
                     )}
                   </li>
@@ -520,7 +530,7 @@ function LeadFormCard({
           </div>
         )}
 
-        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save lead form" />
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveLeadForm') || 'Save lead form'} />
       </Card>
     </section>
   );
@@ -541,6 +551,7 @@ function ServicesCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const updateAt = (index: number, patch: Partial<ServiceEntry>): void => {
     onChange(services.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
@@ -554,14 +565,14 @@ function ServicesCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="Services"
-        description="Scope what the bot may answer about. Add a page link and it shows an ↗ next to the service when mentioned."
+        title={t('agents.services') || 'Services'}
+        description={t('agents.scopeWhatTheBotMay') || 'Scope what the bot may answer about. Add a page link and it shows an ↗ next to the service when mentioned.'}
       />
       <Card>
         {services.length === 0 ? (
           <p className="rounded-[var(--ds-radius-lg)] border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
-            No services listed - the bot answers about anything in your knowledge base. Add one or more to
-            scope its answers.
+            {t('agents.noServicesListed') ||
+              'No services listed - the bot answers about anything in your knowledge base. Add one or more to scope its answers.'}
           </p>
         ) : (
           <div className="space-y-2">
@@ -573,23 +584,26 @@ function ServicesCard({
               >
                 <Input
                   value={service.name}
-                  aria-label={`Service ${index + 1} name`}
-                  placeholder={`Service ${index + 1} name (e.g. SEO Audit)`}
+                  aria-label={t('agents.serviceNameLabel', { n: index + 1 }) || `Service ${index + 1} name`}
+                  placeholder={
+                    t('agents.serviceNamePlaceholder', { n: index + 1 }) ||
+                    `Service ${index + 1} name (e.g. SEO Audit)`
+                  }
                   onChange={(e) => updateAt(index, { name: e.target.value })}
                   className="flex-1 bg-[var(--ds-bg-surface)]"
                 />
                 <Input
                   type="url"
                   value={service.url}
-                  aria-label={`Service ${index + 1} link`}
-                  placeholder="https://example.com/services/seo (optional)"
+                  aria-label={t('agents.serviceLinkLabel', { n: index + 1 }) || `Service ${index + 1} link`}
+                  placeholder={t('agents.httpsExampleComServicesSeo') || 'https://example.com/services/seo (optional)'}
                   onChange={(e) => updateAt(index, { url: e.target.value })}
                   className="flex-1 bg-[var(--ds-bg-surface)]"
                 />
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Remove service ${index + 1}`}
+                  aria-label={t('agents.removeServiceLabel', { n: index + 1 }) || `Remove service ${index + 1}`}
                   onClick={() => removeAt(index)}
                   className="shrink-0 hover:text-[var(--ds-danger)]"
                 >
@@ -603,15 +617,15 @@ function ServicesCard({
         <div>
           <Button variant="outline" size="sm" onClick={add}>
             <Plus size={15} />
-            Add service
+            {t('agents.addService') || 'Add service'}
           </Button>
         </div>
 
         <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          Once you save at least one service, the bot refuses questions outside this list. Links are optional.
+          {t('agents.onceYouSaveAtLeast') || 'Once you save at least one service, the bot refuses questions outside this list. Links are optional.'}
         </p>
 
-        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save services" />
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveServices') || 'Save services'} />
       </Card>
     </section>
   );
@@ -632,6 +646,7 @@ function SmartLinksCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const updateAt = (index: number, patch: Partial<SmartLink>): void => {
     onChange(links.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   };
@@ -645,14 +660,14 @@ function SmartLinksCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="Smart links"
-        description="Map a keyword to a page. When the bot's answer mentions it, the word becomes a link to that page. Separate from Services - this never limits what the bot can answer."
+        title={t('agents.smartLinks') || 'Smart links'}
+        description={t('agents.mapAKeywordToA') || 'Map a keyword to a page. When the bot\'s answer mentions it, the word becomes a link to that page. Separate from Services - this never limits what the bot can answer.'}
       />
       <Card>
         {links.length === 0 ? (
           <p className="rounded-[var(--ds-radius-lg)] border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
-            No smart links yet. Add one - for example, keyword “pricing” linking to your pricing page - and
-            the bot will hyperlink it whenever it naturally comes up in an answer.
+            {t('agents.noSmartLinksYet') ||
+              'No smart links yet. Add one - for example, keyword “pricing” linking to your pricing page - and the bot will hyperlink it whenever it naturally comes up in an answer.'}
           </p>
         ) : (
           <div className="space-y-2">
@@ -667,8 +682,8 @@ function SmartLinksCard({
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       value={link.keyword}
-                      aria-label={`Smart link ${index + 1} keyword`}
-                      placeholder="Keyword (e.g. pricing)"
+                      aria-label={t('agents.smartLinkKeywordLabel', { n: index + 1 }) || `Smart link ${index + 1} keyword`}
+                      placeholder={t('agents.keywordEGPricing') || 'Keyword (e.g. pricing)'}
                       maxLength={80}
                       onChange={(e) => updateAt(index, { keyword: e.target.value })}
                       className="flex-1 bg-[var(--ds-bg-surface)] sm:max-w-[40%]"
@@ -676,8 +691,8 @@ function SmartLinksCard({
                     <Input
                       type="url"
                       value={link.url}
-                      aria-label={`Smart link ${index + 1} URL`}
-                      placeholder="https://example.com/pricing"
+                      aria-label={t('agents.smartLinkUrlLabel', { n: index + 1 }) || `Smart link ${index + 1} URL`}
+                      placeholder={t('agents.httpsExampleComPricing') || 'https://example.com/pricing'}
                       aria-invalid={urlInvalid || undefined}
                       onChange={(e) => updateAt(index, { url: e.target.value })}
                       className="flex-1 bg-[var(--ds-bg-surface)]"
@@ -685,7 +700,7 @@ function SmartLinksCard({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Remove smart link ${index + 1}`}
+                      aria-label={t('agents.removeSmartLinkLabel', { n: index + 1 }) || `Remove smart link ${index + 1}`}
                       onClick={() => removeAt(index)}
                       className="shrink-0 hover:text-[var(--ds-danger)]"
                     >
@@ -694,8 +709,8 @@ function SmartLinksCard({
                   </div>
                   {urlInvalid && (
                     <p className="px-1 text-[11px] text-[var(--ds-danger)]">
-                      Enter a full link starting with http:// or https:// - other rows are saved but this
-                      one is skipped until it is valid.
+                      {t('agents.enterAFullLink') ||
+                        'Enter a full link starting with http:// or https:// - other rows are saved but this one is skipped until it is valid.'}
                     </p>
                   )}
                 </div>
@@ -707,16 +722,16 @@ function SmartLinksCard({
         <div>
           <Button variant="outline" size="sm" onClick={add}>
             <Plus size={15} />
-            Add smart link
+            {t('agents.addSmartLink') || 'Add smart link'}
           </Button>
         </div>
 
         <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          The bot links a keyword only where it fits the sentence, at most once per reply. Every row needs a
-          keyword and an http(s) link; blank or invalid rows are dropped when you save.
+          {t('agents.smartLinkRules') ||
+            'The bot links a keyword only where it fits the sentence, at most once per reply. Every row needs a keyword and an http(s) link; blank or invalid rows are dropped when you save.'}
         </p>
 
-        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save smart links" />
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveSmartLinks') || 'Save smart links'} />
       </Card>
     </section>
   );
@@ -739,6 +754,7 @@ function WidgetCopyCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const offlineId = useId();
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
@@ -747,8 +763,8 @@ function WidgetCopyCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="More widget copy"
-        description="The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts."
+        title={t('agents.moreWidgetCopy') || 'More widget copy'}
+        description={t('agents.theRemainingVisitorFacingStrings') || 'The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts.'}
       />
       <CustomCopyNotice multilingual={multilingual} />
       {!liveChatUnlocked && (
@@ -764,17 +780,17 @@ function WidgetCopyCard({
             className="text-[var(--ds-text-subtle)]"
           />
           <span className="text-[12.5px] text-[var(--ds-text-muted)]">
-            Live-chat copy is available on Starter and up.
+            {t('agents.liveChatCopyIsAvailable') || 'Live-chat copy is available on Starter and up.'}
           </span>
           <span className="ml-auto text-[12.5px] font-medium text-[var(--ds-accent-text)] transition-colors group-hover:text-[var(--ds-accent)]">
-            Upgrade
+            {t('agents.upgrade') || 'Upgrade'}
           </span>
         </button>
       )}
       <Card>
         <TextField
-          label="Live-chat button label"
-          hint="Label for the button that starts a live chat."
+          label={t('agents.liveChatButtonLabel') || 'Live-chat button label'}
+          hint={t('agents.labelForTheButtonThat2') || 'Label for the button that starts a live chat.'}
           value={value.liveChatLabel}
           placeholder={COPY_PLACEHOLDERS.liveChatLabel}
           maxLength={40}
@@ -782,8 +798,8 @@ function WidgetCopyCard({
           onChange={(liveChatLabel) => onChange((prev) => ({ ...prev, liveChatLabel }))}
         />
         <TextField
-          label="Greeting bubble message"
-          hint="The teaser bubble that pops up next to the launcher after a short delay."
+          label={t('agents.greetingBubbleMessage') || 'Greeting bubble message'}
+          hint={t('agents.theTeaserBubbleThatPops') || 'The teaser bubble that pops up next to the launcher after a short delay.'}
           value={value.greetingMessage}
           placeholder={COPY_PLACEHOLDERS.greetingMessage}
           maxLength={160}
@@ -798,7 +814,7 @@ function WidgetCopyCard({
             )}
           >
             {!liveChatUnlocked && <Lock size={11} strokeWidth={1.75} aria-hidden="true" />}
-            Offline banner
+            {t('agents.offlineBanner') || 'Offline banner'}
           </label>
           <Textarea
             id={offlineId}
@@ -810,14 +826,13 @@ function WidgetCopyCard({
             onChange={(e) => onChange((prev) => ({ ...prev, offlineMessage: e.target.value }))}
           />
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-            The widget's general offline notice shown when no operators are online. Different from the
-            live-chat “No-operators handoff message” (under Live chat &amp; leads). Keep it warm and
-            action-oriented.
+            {t('agents.offlineNoticeHint') ||
+              'The widget\'s general offline notice shown when no operators are online. Different from the live-chat “No-operators handoff message” (under Live chat & leads). Keep it warm and action-oriented.'}
           </p>
         </div>
         <TextField
-          label="Rating prompt"
-          hint="Prompt shown in the post-chat rating card."
+          label={t('agents.ratingPrompt') || 'Rating prompt'}
+          hint={t('agents.promptShownInThePost') || 'Prompt shown in the post-chat rating card.'}
           value={value.ratingPrompt}
           placeholder={COPY_PLACEHOLDERS.ratingPrompt}
           maxLength={120}
@@ -825,8 +840,8 @@ function WidgetCopyCard({
           onChange={(ratingPrompt) => onChange((prev) => ({ ...prev, ratingPrompt }))}
         />
         <TextField
-          label="End-chat button label"
-          hint="Label for the button that ends a live chat and returns to the AI."
+          label={t('agents.endChatButtonLabel') || 'End-chat button label'}
+          hint={t('agents.labelForTheButtonThat') || 'Label for the button that ends a live chat and returns to the AI.'}
           value={value.endChatLabel}
           placeholder={COPY_PLACEHOLDERS.endChatLabel}
           maxLength={40}
@@ -834,10 +849,16 @@ function WidgetCopyCard({
           onChange={(endChatLabel) => onChange((prev) => ({ ...prev, endChatLabel }))}
         />
 
-        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save copy" />
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label={t('agents.saveCopy') || 'Save copy'} />
       </Card>
     </section>
   );
+}
+
+
+/** A lead-form field's label in the active language. */
+function leadFieldLabel(name: LeadFieldName): string {
+  return translateNow(`agents.leadField.${name}`) || LEAD_FIELD_LABELS[name];
 }
 
 function LoadingState(): ReactElement {

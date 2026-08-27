@@ -1,3 +1,6 @@
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
+
 /**
  * The client-side mirror of the server's add-an-agent decision, so the create
  * flow can tell the user what it will cost BEFORE they fill in a form.
@@ -66,8 +69,16 @@ export function resolveAgentCreationGate(agentCount: number, agentLimit: number)
   return { kind: 'requires_plan', agentCount, agentLimit };
 }
 
-/** The half of the notice that never varies - what the user is being told to expect. */
-const PER_AGENT_BILLING = 'Each additional chatbot runs on its own plan, with its own credits and knowledge base.';
+/**
+ * The half of the notice that never varies - what the user is being told to
+ * expect. Resolved per call rather than at import, so it follows the locale.
+ */
+function perAgentBilling(): string {
+  return (
+    translateNow('agents.perAgentBilling') ||
+    'Each additional chatbot runs on its own plan, with its own credits and knowledge base.'
+  );
+}
 
 /**
  * One sentence explaining why the next agent is a paid one, for the notice
@@ -80,8 +91,23 @@ const PER_AGENT_BILLING = 'Each additional chatbot runs on its own plan, with it
  */
 export function describeAgentLimit(gate: AgentCreationGate, planName: string): string | null {
   if (gate.kind !== 'requires_plan') return null;
-  if (gate.agentLimit < 1) return PER_AGENT_BILLING;
-  const plan = planName.trim() || 'Your plan';
-  const quota = gate.agentLimit === 1 ? '1 chatbot' : `${gate.agentLimit} chatbots`;
-  return `${plan} includes ${quota} and you already have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
+  if (gate.agentLimit < 1) return perAgentBilling();
+  const plan = planName.trim() || translateNow('agents.yourPlan') || 'Your plan';
+  // Built from one key rather than concatenated fragments: the clause order
+  // here is English word order, and Hindi does not share it. Plural is a
+  // separate key for the same reason - languages that inflect the noun cannot
+  // reuse the singular string.
+  const quotaKey = gate.agentLimit === 1 ? 'agents.quotaOne' : 'agents.quotaMany';
+  const quota =
+    translateNow(quotaKey, { count: formatNumber(gate.agentLimit) }) ||
+    (gate.agentLimit === 1 ? '1 chatbot' : `${formatNumber(gate.agentLimit)} chatbots`);
+  return (
+    translateNow('agents.planQuotaNotice', {
+      plan,
+      quota,
+      count: formatNumber(gate.agentCount),
+      billing: perAgentBilling(),
+    }) ||
+    `${plan} includes ${quota} and you already have ${formatNumber(gate.agentCount)}. ${perAgentBilling()}`
+  );
 }

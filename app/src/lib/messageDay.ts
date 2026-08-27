@@ -9,6 +9,9 @@
  * the day rolls over. All comparisons are in the viewer's LOCAL timezone.
  */
 
+import { formatDate } from '../i18n/formatters';
+import { t as translateNow } from '../i18n/i18n';
+
 /**
  * Stable local-day key ("2026-8-14") for a timestamp, or null when the
  * timestamp is missing/unparseable. Used to detect a day boundary between two
@@ -37,13 +40,16 @@ export function formatDayLabel(iso: string | null | undefined, now: Date = new D
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
 
-  if (key(d) === key(now)) return 'Today';
-  if (key(d) === key(yesterday)) return 'Yesterday';
+  if (key(d) === key(now)) return translateNow('app.today') || 'Today';
+  if (key(d) === key(yesterday)) return translateNow('app.yesterday') || 'Yesterday';
 
-  return d.toLocaleDateString('en-US', {
+  return formatDate(d, {
     month: 'short',
     day: 'numeric',
-    ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+    // Explicit `undefined` rather than a conditional spread: `formatDate`
+    // merges its own defaults, so an ABSENT year is not the same as a
+    // suppressed one - the default would put the year back.
+    year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
   });
 }
 

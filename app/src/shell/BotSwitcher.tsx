@@ -10,6 +10,8 @@ import {
   shouldShowAgentFilter,
   swapAgentInPath,
 } from './agentSwitcherModel';
+import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * BotSwitcher - the TopBar control that scopes the whole dashboard to one
@@ -89,7 +91,7 @@ export function BotSwitcher() {
   // an empty control.
   if (bots.length < 2 || !activeBot) return null;
 
-  const label = activeBot.name || 'Chatbot';
+  const label = activeBot.name || translateNow('shell.chatbot') || 'Chatbot';
 
   return (
     <Popover
@@ -104,7 +106,10 @@ export function BotSwitcher() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label={`Current chatbot: ${label}. Switch chatbot`}
+          aria-label={
+            translateNow('shell.currentChatbotSwitch', { name: label }) ||
+            `Current chatbot: ${label}. Switch chatbot`
+          }
           className="flex h-9 max-w-[42vw] items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] md:max-w-[200px]"
         >
           <BotAvatar
@@ -148,6 +153,7 @@ function AgentPickerPanel({
   activeBotId: number;
   onSelect: (bot: Bot) => void;
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   // Short lists are scannable at a glance; the input would be pure chrome.
   const showFilter = shouldShowAgentFilter(bots.length);
@@ -159,7 +165,7 @@ function AgentPickerPanel({
   return (
     <div>
       <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-        Switch chatbot
+        {t('shell.botSwitcher.title') || 'Switch chatbot'}
       </p>
 
       {showFilter && (
@@ -176,8 +182,8 @@ function AgentPickerPanel({
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            aria-label="Filter chatbots"
-            placeholder="Filter chatbots"
+            aria-label={t('shell.botSwitcher.filter') || 'Filter chatbots'}
+            placeholder={t('shell.botSwitcher.filter') || 'Filter chatbots'}
             autoComplete="off"
             className="h-9 pl-8 text-[13px]"
           />
@@ -187,7 +193,8 @@ function AgentPickerPanel({
       <div className="max-h-80 overflow-y-auto p-1">
         {visibleBots.length === 0 ? (
           <p role="status" className="px-3 py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
-            No chatbots match &ldquo;{query.trim()}&rdquo;
+            {t('shell.botSwitcher.noMatch', { query: query.trim() }) ||
+              `No chatbots match \u201c${query.trim()}\u201d`}
           </p>
         ) : (
           visibleBots.map((bot) => (

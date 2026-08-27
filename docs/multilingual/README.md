@@ -3,9 +3,9 @@
 This directory is the phased implementation plan for adding multilingual support to
 OyeChats: the visitor widget, the AI/RAG pipeline, live operator chat, and the admin
 dashboard. It replaces the flat 44-section planning draft
-(`oyechats_multilingual_detailed_implementation_plan.md`) with six independently
-reviewable phase documents, each grounded in the actual repository state as of
-2026-08-22 (branch `development`).
+(`oyechats_multilingual_detailed_implementation_plan.md`) with seven
+independently reviewable phase documents, each grounded in the actual repository
+state as of 2026-08-22 (branch `development`), with Phase 7 added on 2026-08-25.
 
 Each phase document (`phase-N-*.md`) follows the same template: Objective, Scope /
 Non-scope, Existing files affected, New files required, DB/schema changes, API/
@@ -13,7 +13,28 @@ WebSocket changes, Frontend changes, Backend/service changes, Dependencies on
 previous phases, Exact implementation steps, Acceptance criteria, Testing/QA
 requirements, Risks and edge cases, Rollback considerations.
 
-## Why six phases, not one plan
+## Phase ownership
+
+Each phase owns exactly one body of work. They are not interchangeable, and two
+of them have been confused for each other before, so the boundary is stated
+explicitly here.
+
+| Phase | Owns | Document |
+|---|---|---|
+| **Phase 1** | Language Foundation | [phase-1-language-foundation.md](phase-1-language-foundation.md) |
+| **Phase 2** | Widget + Visitor Language | [phase-2-widget-localization.md](phase-2-widget-localization.md) |
+| **Phase 3** | Multilingual AI/RAG | [phase-3-multilingual-ai-rag.md](phase-3-multilingual-ai-rag.md) |
+| **Phase 4** | Operator Translation | [phase-4-operator-translation.md](phase-4-operator-translation.md) |
+| **Phase 5** | Admin Language Configuration + Analytics | [phase-5-admin-analytics.md](phase-5-admin-analytics.md) |
+| **Phase 6** | Hardening, Testing & Production Rollout | [phase-6-testing-rollout.md](phase-6-testing-rollout.md) |
+| **Phase 7** | Admin Dashboard i18n | [phase-7-admin-dashboard-i18n.md](phase-7-admin-dashboard-i18n.md) |
+
+**Phase 6 and Phase 7 are separate bodies of work and must not be merged.**
+Phase 6 hardens and rolls out the conversation-language feature built in Phases
+1 to 5; it ships no new product surface. Phase 7 localizes the admin SPA's own
+interface, which is a new product surface and was unplanned until 2026-08-25.
+
+## Why seven phases, not one plan
 
 The original draft is directionally correct — three independent language layers
 (widget UI locale, conversation language, operator/dashboard locale), an ordered
@@ -55,6 +76,13 @@ Live Chat (ChatMessage/Operator         │
         ▼
 Phase 6: Hardening, Testing & Production Rollout
    (feature flags, E2E coverage, perf/telemetry, staged rollout)
+
+
+Phase 7: Admin Dashboard i18n            <- independent of Phase 6
+   (app/src/i18n runtime, admin_ui_translated,
+   Settings language selector, formatter layer)
+        ▲
+        └── depends on Phase 5's GET /locales catalogue only
 ```
 
 - **Phase 1 is a hard prerequisite for everything else.** It is pure foundation:
@@ -74,9 +102,16 @@ Phase 6: Hardening, Testing & Production Rollout
   parallel with Phase 3 if needed, since it touches a disjoint set of files
   (`live_chat_service.py`, `ws_routes.py`, `translation_service.py` vs.
   `rag_service.py`, `response_style.py`).
-- **Phase 6 runs last** and is mostly non-code: feature-flag gating, the test
-  matrix, performance telemetry, and the staged rollout sequence. It touches
-  every phase's code but adds no new product surface.
+- **Phase 6 runs last for the conversation-language feature** and is mostly
+  non-code: feature-flag gating, the test matrix, performance telemetry, and the
+  staged rollout sequence. It touches every phase's code but adds no new product
+  surface.
+- **Phase 7 is independent of Phase 6** and does not block it. It depends only on
+  Phase 5's `GET /locales` catalogue, so the two may run in either order or in
+  parallel. Phase 6 hardens what visitors and operators experience; Phase 7
+  translates the chrome the customer administers it through. Phase 7 must not
+  modify anything Phases 1 to 5 own, and in particular must never touch
+  `Operator.preferred_locale`.
 
 ## Release mapping
 
@@ -85,6 +120,7 @@ Phase 6: Hardening, Testing & Production Rollout
 | Release 1 — AI multilingual MVP | 1, 2, 3 (+ Phase 6 flag/testing work scoped to these) | Bot language config, widget auto-detect + manual selector, AI answers natively in the visitor's language, localized widget/system copy, RTL foundation. No operator translation. |
 | Release 2 — Multilingual live chat | 4 (+ Phase 6 scoped to it) | Operator language preference, incoming/outgoing translation, translation caching, original/translated toggle, WebSocket language metadata. |
 | Release 3 — Global intelligence | 5 (routing/analytics slices) | Language analytics, language-aware operator routing, localized knowledge metadata (optional, not required). |
+| Release 4: Localized dashboard | 7 | The admin application's own interface in the customer's language: UI-language selector, localized shell and daily-operational surfaces, locale-aware date/number formatting. Independent of Releases 1 to 3. |
 
 ## Non-negotiable architectural rules (carried from the source plan, verified against the repo)
 
@@ -94,9 +130,13 @@ Phase 6: Hardening, Testing & Production Rollout
    change it again.
 2. **Language is a conversation property**, not an app-wide setting. Widget UI
    locale, conversation language, and operator/dashboard locale are three
-   independent state slices — confirmed nowhere conflated in the current
-   codebase (no locale/i18n infrastructure exists anywhere in `api/app/` or
-   `widget/src/` today — this is genuinely greenfield).
+   independent state slices, confirmed nowhere conflated in the current
+   codebase. **This was greenfield when written; it no longer is.** As of
+   2026-08-25 the shipped infrastructure is `api/app/services/language_service.py`
+   (`KNOWN_LOCALES`, `WIDGET_UI_LANGUAGES`), `api/app/api/locale_routes.py`
+   (`GET /locales`), `widget/src/i18n/` (the full widget runtime), and
+   `app/src/services/localeCatalog.ts` (the dashboard's registry client). Phase 7
+   extends that, and must not start a second registry.
 3. **No per-language vector indexes.** The existing pgvector schema and
    `gemini-embedding-001` embeddings are multilingual-capable already; RAG stays
    unified (`api/app/services/rag_service.py`).

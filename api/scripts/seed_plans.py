@@ -186,7 +186,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,
@@ -231,7 +231,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,
@@ -282,7 +282,7 @@ _PLANS: list[dict] = [
         "features": {
             "live_chat": True,
             "bant": True,
-            "branding_removable": True,
+            "branding_removable": False,
             "webhooks": True,
             "api_access": True,
             "online_support": True,
@@ -330,7 +330,7 @@ def _would_be_wired(data: dict, plan: Plan | None) -> bool:
     )
 
 
-def _emandate_warnings(data: dict) -> list[str]:
+def _emandate_warnings(data: dict, rate_bps: int) -> list[str]:
     """Warnings for every amount this catalogue entry can debit in one charge.
 
     ``run`` writes ``currency="INR"`` on every row it touches, so the paise
@@ -344,8 +344,8 @@ def _emandate_warnings(data: dict) -> list[str]:
     return [
         f"{data['slug']} {cycle}: {warning}"
         for cycle, warning in (
-            ("monthly", emandate_warning(data["monthly_price_cents"], "INR")),
-            ("annual", emandate_warning(data["annual_price_cents"], "INR")),
+            ("monthly", emandate_warning(data["monthly_price_cents"], "INR", rate_bps=rate_bps)),
+            ("annual", emandate_warning(data["annual_price_cents"], "INR", rate_bps=rate_bps)),
         )
         if warning
     ]
@@ -379,6 +379,11 @@ def _print_emandate_warnings(warnings: list[str]) -> None:
 
 def run(*, apply: bool) -> int:
     with get_session() as session:
+        # The RBI e-mandate ceiling applies to what is DEBITED, and prices are
+        # stored exclusive of GST, so the ceiling check needs the tax rate.
+        from app.services.seller_profile_service import charge_tax_rate_bps
+
+        seller_rate_bps = charge_tax_rate_bps(session)
         existing = {p.slug: p for p in session.scalars(select(Plan)).all()}
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}\n")
@@ -398,7 +403,7 @@ def run(*, apply: bool) -> int:
                 contact_sales_only.append(slug)
             state = "self-serve" if wired else "CONTACT SALES, no Razorpay plan id"
             print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
-            ceiling_warnings.extend(_emandate_warnings(data))
+            ceiling_warnings.extend(_emandate_warnings(data, seller_rate_bps))
 
             if not apply:
                 continue

@@ -51,6 +51,8 @@ import {
   totalWebsitePages,
   unitLabelOf,
 } from './knowledge-utils';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Plan slugs that unlock delta ("updated pages only") recrawl. Mirrors
@@ -74,6 +76,7 @@ const DELTA_RECRAWL_SLUGS: ReadonlySet<string> = new Set([
  * crawl finishes.
  */
 export function KnowledgePage(): ReactElement {
+  const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const agentId = agent?.id ?? null;
   const agentName = agent?.name ?? null;
@@ -148,7 +151,7 @@ export function KnowledgePage(): ReactElement {
     } catch (err) {
       if (activeAgentIdRef.current !== requestedFor) return;
       setActionError(
-        err instanceof Error ? err.message : "We couldn't refresh your knowledge sources.",
+        err instanceof Error ? err.message : translateNow('agents.weCouldntRefreshYourKnowledge') || 'We couldn\'t refresh your knowledge sources.',
       );
     }
   }, [agentId, refreshKnowledgeState]);
@@ -172,7 +175,7 @@ export function KnowledgePage(): ReactElement {
       } catch (err) {
         if (!cancelled) {
           setLoadError(
-            err instanceof Error ? err.message : "We couldn't load what your AI knows.",
+            err instanceof Error ? err.message : translateNow('agents.weCouldntLoadWhatYour') || 'We couldn\'t load what your AI knows.',
           );
         }
       }
@@ -226,15 +229,15 @@ export function KnowledgePage(): ReactElement {
           detail?.feature === 'delta_recrawl'
         ) {
           openUpgradeModal({
-            title: 'Updated-pages-only re-train',
+            title: translateNow('agents.updatedPagesOnlyReTrain') || 'Updated-pages-only re-train',
             description:
-              'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+              translateNow('agents.reTrainingOnlyThePages') || 'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
           });
           return;
         }
         if (apiErr.status === 429) {
           setActionError(
-            'Too many training requests - please wait a few minutes before training again.',
+            translateNow('agents.tooManyTrainingRequestsPlease') || 'Too many training requests - please wait a few minutes before training again.',
           );
           return;
         }
@@ -259,7 +262,7 @@ export function KnowledgePage(): ReactElement {
         });
         setRecrawlDiffError(
           apiErr.message ??
-            (typeof apiErr.detail === 'string' ? apiErr.detail : "We couldn't preview the changes."),
+            (typeof apiErr.detail === 'string' ? apiErr.detail : translateNow('agents.weCouldntPreviewTheChanges') || 'We couldn\'t preview the changes.'),
         );
       } finally {
         setRecrawlLoadingFor(null);
@@ -285,7 +288,7 @@ export function KnowledgePage(): ReactElement {
     // unaffected - it reconciles against stored URLs at ingest time.
     if (diff.mode === 'full' && diff.sitemapTotal === 0 && recrawlDiffError === null) {
       setActionError(
-        "No pages discovered - the site's sitemap may be temporarily unavailable; try again shortly.",
+        translateNow('agents.noPagesDiscoveredTheSites') || 'No pages discovered - the site\'s sitemap may be temporarily unavailable; try again shortly.',
       );
       return;
     }
@@ -324,7 +327,7 @@ export function KnowledgePage(): ReactElement {
       closeRecrawlModal();
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : "We couldn't start the re-train. Please try again.",
+        err instanceof Error ? err.message : translateNow('agents.weCouldntStartTheRe') || 'We couldn\'t start the re-train. Please try again.',
       );
     } finally {
       setRecrawlStarting(false);
@@ -334,8 +337,8 @@ export function KnowledgePage(): ReactElement {
   const handleGetCredits = useCallback((): void => {
     closeRecrawlModal();
     openUpgradeModal({
-      title: 'Not enough credits',
-      description: 'Upgrade your plan or buy a top-up to run this full re-train.',
+      title: translateNow('agents.notEnoughCredits') || 'Not enough credits',
+      description: translateNow('agents.upgradeYourPlanOrBuy') || 'Upgrade your plan or buy a top-up to run this full re-train.',
     });
   }, [closeRecrawlModal, openUpgradeModal]);
 
@@ -352,7 +355,7 @@ export function KnowledgePage(): ReactElement {
         // Leave the key unset so reopening the drawer retries the fetch, and
         // surface the failure instead of silently showing an empty list.
         setActionError(
-          err instanceof Error ? err.message : "We couldn't load this source's pages.",
+          err instanceof Error ? err.message : translateNow('agents.weCouldntLoadThisSources') || 'We couldn\'t load this source\'s pages.',
         );
       }
     },
@@ -369,7 +372,7 @@ export function KnowledgePage(): ReactElement {
         setSources((prev) => (prev ? prev.filter((s) => s.name !== name) : prev));
       } catch (err) {
         setActionError(
-          err instanceof Error ? err.message : "We couldn't remove this source. Please try again.",
+          err instanceof Error ? err.message : translateNow('agents.weCouldntRemoveThisSource') || 'We couldn\'t remove this source. Please try again.',
         );
       } finally {
         setDeleting(null);
@@ -424,23 +427,23 @@ export function KnowledgePage(): ReactElement {
     () => [
       {
         key: 'name',
-        header: 'Source',
+        header: translateNow('agents.source') || 'Source',
         render: (row) => <SourceCell source={row} />,
       },
       {
         // Display-only column - the real field is unused; `render` supplies the cell.
         key: 'doc_page_count',
-        header: 'Type',
+        header: translateNow('agents.type') || 'Type',
         width: '8rem',
         render: (row) => (
           <span className="text-[var(--ds-text-muted)]">
-            {isUrlSource(row.name) ? 'Website' : 'Document'}
+            {isUrlSource(row.name) ? translateNow('agents.website') || 'Website' : translateNow('agents.document') || 'Document'}
           </span>
         ),
       },
       {
         key: 'page_count',
-        header: 'Size',
+        header: translateNow('agents.size') || 'Size',
         width: '8rem',
         render: (row) => (
           <span className="tabular-nums text-[var(--ds-text-muted)]">{unitLabelOf(row)}</span>
@@ -448,7 +451,7 @@ export function KnowledgePage(): ReactElement {
       },
       {
         key: 'ingested_at',
-        header: 'Added',
+        header: translateNow('agents.added') || 'Added',
         width: '9rem',
         render: (row) => (
           <span className="text-[var(--ds-text-subtle)]">{formatRelativeDate(row.ingested_at)}</span>
@@ -457,14 +460,14 @@ export function KnowledgePage(): ReactElement {
       {
         // Display-only column for row actions.
         key: 'chunk_count',
-        header: 'Actions',
+        header: translateNow('agents.actions') || 'Actions',
         align: 'right',
         width: '13rem',
         render: (row) =>
           confirmingDelete === row.name ? (
             <div
               role="group"
-              aria-label={`Confirm removing ${row.name}`}
+              aria-label={translateNow('agents.confirmRemoving', { name: row.name }) || `Confirm removing ${row.name}`}
               className="flex items-center justify-end gap-2"
             >
               <Button
@@ -474,10 +477,10 @@ export function KnowledgePage(): ReactElement {
                 onClick={() => void handleDelete(row.name)}
                 disabled={deleting === row.name}
               >
-                {deleting === row.name ? 'Removing…' : 'Remove'}
+                {deleting === row.name ? translateNow('agents.removing') || 'Removing…' : translateNow('agents.remove') || 'Remove'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => cancelConfirm(row.name)}>
-                Cancel
+                {translateNow('agents.cancel') || 'Cancel'}
               </Button>
             </div>
           ) : (
@@ -485,7 +488,7 @@ export function KnowledgePage(): ReactElement {
               {isUrlSource(row.name) && (
                 <>
                   <Button variant="ghost" size="sm" onClick={() => void openPages(row.name)}>
-                    View pages
+                    {translateNow('agents.viewPages') || 'View pages'}
                   </Button>
                   <RecrawlMenu
                     canUseDelta={canUseDeltaRecrawl}
@@ -495,9 +498,9 @@ export function KnowledgePage(): ReactElement {
                     onDeltaRecrawl={() => void requestRecrawl(row.name, 'delta')}
                     onUpgrade={() =>
                       openUpgradeModal({
-                        title: 'Updated-pages-only re-train',
+                        title: translateNow('agents.updatedPagesOnlyReTrain') || 'Updated-pages-only re-train',
                         description:
-                          'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+                          translateNow('agents.reTrainingOnlyThePages') || 'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
                       })
                     }
                   />
@@ -543,19 +546,19 @@ export function KnowledgePage(): ReactElement {
       ) : loadError ? (
         <EmptyState
           icon={BookOpen}
-          title="We couldn't load your knowledge"
+          title={t('agents.weCouldntLoadYourKnowledge') || 'We couldn\'t load your knowledge'}
           description={loadError}
           action={
             <Button variant="outline" onClick={() => void refresh()}>
-              Try again
+              {t('agents.tryAgain') || 'Try again'}
             </Button>
           }
         />
       ) : agentId == null ? (
         <EmptyState
           icon={BookOpen}
-          title="Chatbot not found"
-          description="We couldn't find this chatbot. Pick a chatbot from the list and try again."
+          title={t('agents.chatbotNotFound') || 'Chatbot not found'}
+          description={t('agents.weCouldntFindThisChatbot') || 'We couldn\'t find this chatbot. Pick a chatbot from the list and try again.'}
         />
       ) : (
         <div className="space-y-6">
@@ -572,12 +575,11 @@ export function KnowledgePage(): ReactElement {
               </span>
               <div className="min-w-0">
                 <p className="text-[14px] font-semibold text-[var(--ds-text)]">
-                  Your knowledge is paused on Free
+                  {t('agents.yourKnowledgeIsPausedOn') || 'Your knowledge is paused on Free'}
                 </p>
                 <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-                  Your assistant kept its data but stopped answering from it when your plan moved to
-                  Free. Re-crawl your website or upload documents below to reactivate it on Free.
-                  Upgrade to restore all of your previous knowledge instantly.
+                  {t('agents.knowledgePausedExplanation') ||
+                    'Your assistant kept its data but stopped answering from it when your plan moved to Free. Re-crawl your website or upload documents below to reactivate it on Free. Upgrade to restore all of your previous knowledge instantly.'}
                 </p>
               </div>
             </div>
@@ -585,21 +587,23 @@ export function KnowledgePage(): ReactElement {
 
 <section aria-labelledby="knowledge-quotas-heading" className="space-y-3">
             <SectionHeader
-              title={<span id="knowledge-quotas-heading">Plan limits</span>}
-              description="How much of your plan's knowledge capacity is in use."
+              title={
+                <span id="knowledge-quotas-heading">{t('agents.planLimits') || 'Plan limits'}</span>
+              }
+              description={t('agents.howMuchOfYourPlans') || 'How much of your plan\'s knowledge capacity is in use.'}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <QuotaMeter label="Documents" used={documentsUsed} limit={documentsLimit} />
+                <QuotaMeter label={t('agents.documents') || 'Documents'} used={documentsUsed} limit={documentsLimit} />
                 {/* The `documents` limit is workspace-scoped, so this count spans
                     every agent - not just the rows visible on this agent's page. */}
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                  Across all chatbots in your workspace
+                  {t('agents.acrossAllChatbotsInYour') || 'Across all chatbots in your workspace'}
                 </p>
               </div>
               <div className="space-y-1">
-                <QuotaMeter label="Website pages" used={pagesUsed} limit={pagesLimit} />
-                <p className="text-[11px] text-[var(--ds-text-subtle)]">This chatbot</p>
+                <QuotaMeter label={t('agents.websitePages') || 'Website pages'} used={pagesUsed} limit={pagesLimit} />
+                <p className="text-[11px] text-[var(--ds-text-subtle)]">{t('agents.thisChatbot') || 'This chatbot'}</p>
               </div>
             </div>
           </section>
@@ -615,21 +619,23 @@ export function KnowledgePage(): ReactElement {
 
           <section aria-labelledby="knowledge-sources-heading" className="space-y-4">
             <SectionHeader
-              title={<span id="knowledge-sources-heading">Sources</span>}
-              description="Websites and documents your AI has learned from."
+              title={
+                <span id="knowledge-sources-heading">{t('agents.sources') || 'Sources'}</span>
+              }
+              description={t('agents.websitesAndDocumentsYourAi') || 'Websites and documents your AI has learned from.'}
             />
             {stats.total === 0 ? (
               <EmptyState
                 icon={BookOpen}
-                title="Your AI hasn't learned anything yet"
-                description="Add your first website or document below. As soon as it's processed, your AI can answer questions about it."
+                title={t('agents.yourAiHasntLearnedAnything') || 'Your AI hasn\'t learned anything yet'}
+                description={t('agents.addYourFirstWebsiteOr') || 'Add your first website or document below. As soon as it\'s processed, your AI can answer questions about it.'}
               />
             ) : (
               <DataTable
                 columns={columns}
                 rows={sources ?? []}
                 rowKey={(row) => row.name}
-                caption="Your AI's knowledge sources"
+                caption={t('agents.yourAisKnowledgeSources') || 'Your AI\'s knowledge sources'}
               />
             )}
           </section>
@@ -650,9 +656,9 @@ export function KnowledgePage(): ReactElement {
             reloadToken={recrawlReloadToken}
             onUpgrade={() =>
               openUpgradeModal({
-                title: 'Weekly auto-retrain',
+                title: t('agents.weeklyAutoRetrain') || 'Weekly auto-retrain',
                 description:
-                  'Automatically refresh your trained websites every week on the Standard plan. Upgrade to enable it.',
+                  t('agents.automaticallyRefreshYourTrainedWebsites') || 'Automatically refresh your trained websites every week on the Standard plan. Upgrade to enable it.',
               })
             }
           />
@@ -685,6 +691,7 @@ export function KnowledgePage(): ReactElement {
 // ── Local presentational helpers ────────────────────────────────────
 
 function SourceCell({ source }: { source: KnowledgeSource }): ReactElement {
+  const { t } = useTranslation();
   const isWebsite = isUrlSource(source.name);
   return (
     <div className="flex items-center gap-3">
@@ -699,7 +706,7 @@ function SourceCell({ source }: { source: KnowledgeSource }): ReactElement {
           {source.name}
         </span>
         <StatusBadge tone="success" dot>
-          Ready
+          {t('agents.ready') || 'Ready'}
         </StatusBadge>
       </div>
     </div>

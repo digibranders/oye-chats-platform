@@ -11,6 +11,7 @@
  * Prices are stored in minor units (paise for INR, cents for USD).
  */
 import { FALLBACK_USD_TO_INR } from '../../../lib/currency';
+import { formatNumber } from '../../../i18n/formatters';
 
 /** A subscription plan row as returned by `getSubscriptionPlans`. */
 export interface PlanRow {
@@ -109,6 +110,6 @@ export function renderPriceLabel(
   }
   if (!cents) return compact ? 'Free' : `${sym}0`;
   const major = cents / 100;
-  const value = `${sym}${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;
+  const value = `${sym}${Number.isInteger(major) ? formatNumber(major) : major.toFixed(2)}`;
   return compact ? value : `${value} / ${billingCycle === 'annual' ? 'yr' : 'mo'}`;
 }

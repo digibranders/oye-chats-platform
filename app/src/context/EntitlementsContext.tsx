@@ -12,6 +12,7 @@ import {
 import { getEntitlements } from '../services/api';
 import { WORKSPACE_SWITCHED_EVENT } from './WorkspaceContext';
 import type { Entitlements } from '../types/domain';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * EntitlementsContext - the single source of truth for "what can this
@@ -37,6 +38,9 @@ import type { Entitlements } from '../types/domain';
 /** Most-restrictive Free-plan defaults - matches the backend's seeded Free
  * plan (`_FREE_FALLBACK_LIMITS` / `_FREE_FALLBACK_FEATURES` in
  * `plan_entitlements_service.py`) and the legacy hook's `FREE_FALLBACK`. */
+// @i18n-exempt: `plan_name` mirrors a value the BILLING API returns. Plan
+// names are product identifiers shown verbatim on invoices and in Razorpay, so
+// they are not translated anywhere in the product.
 const FREE_FALLBACK: Entitlements = {
   plan_slug: 'free',
   plan_name: 'Free',
@@ -101,7 +105,7 @@ export function EntitlementsProvider({ children }: { children: ReactNode }): Rea
       // crash or leave a stale, possibly-paid entitlements snapshot in
       // place. Deny-by-default matches the backend resolver's own policy.
       setEntitlements(FREE_FALLBACK);
-      setError(err instanceof Error ? err : new Error('Failed to load entitlements'));
+      setError(err instanceof Error ? err : new Error(translateNow('app.failedToLoadEntitlements') || 'Failed to load entitlements'));
     } finally {
       if (requestIdRef.current === requestId) setLoading(false);
     }

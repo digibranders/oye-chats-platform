@@ -1,4 +1,5 @@
 import { type ReactElement, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Link } from 'react-router-dom';
 import { BarChart3, Bot as BotIcon, CalendarRange, Download, TriangleAlert } from 'lucide-react';
 import {
@@ -26,7 +27,7 @@ import { useAgentReport } from './useAgentReport';
 
 /** Format a metric for display. Grouped digits, never a bare `NaN`. */
 function metric(value: number): string {
-  return Number.isFinite(value) ? value.toLocaleString() : '0';
+  return Number.isFinite(value) ? formatNumber(value) : '0';
 }
 
 /** The reporting windows as `SegmentedControl` options. */

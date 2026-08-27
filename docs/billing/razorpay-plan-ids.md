@@ -16,6 +16,31 @@ minted on 13 Aug (see the USD plans section below).
 > immutable Razorpay object carries each amount. If a table and the seed file disagree, the
 > plan needs re-minting — the table is never the thing to "correct".
 
+> ## ⚠️ Pricing is now GST-EXCLUSIVE. Every INR plan below needs re-minting.
+>
+> **Changed 26 Aug 2026.** Every price OyeChats publishes is a **base price, exclusive of GST**.
+> `seed_plans.py` and the add-on price env vars hold the BASE. The tax is added at charge time by
+> `api/app/core/tax.py::gross_charge_minor`, so the amount debited on the domestic rail is
+> **base + GST**.
+>
+> Razorpay Subscriptions have no tax layer: a plan's `item` accepts and stores `tax_inclusive` and
+> `tax_rate`, but they are **metadata only**. This was measured, not assumed. `api/scripts/razorpay_tax_probe.py`
+> put two subscriptions on identical ₹1,199 bases, one plan carrying `tax_rate: 1800` and one
+> carrying nothing, and the hosted checkout quoted the customer the identical amount for both. The
+> script records the result; re-run it before believing any future claim that Razorpay supports it.
+>
+> **Consequence: every INR plan must be minted at base + GST.** Every id in the INR tables below was
+> minted at the base, so each one now under-collects by the GST. See
+> [Re-minting for GST-exclusive pricing](#re-minting-for-gst-exclusive-pricing) for the procedure and
+> the expected amounts.
+>
+> **USD plans are unaffected.** An international sale is an export of services, carries no Indian
+> GST, and is minted at the base. The listed USD price is the full charge.
+>
+> This welds the tax rate to every immutable mandate. Changing the GST rate means re-minting every
+> plan and re-authorising every customer, which is why the super-admin seller-profile save now
+> returns a warning when the rate moves.
+
 > **Test Mode and Live Mode are fully isolated** — separate keys, separate plans, separate IDs.
 > A plan created in one mode does not exist in the other, and you cannot tell test vs live from
 > the `plan_…` string alone (only from the dashboard mode toggle). Each environment's database
@@ -26,16 +51,21 @@ minted on 13 Aug (see the USD plans section below).
 
 ---
 
-## Test Mode — INR rail (`rzp_test_…`) ✅ CURRENT
+## Test Mode — INR rail (`rzp_test_…`) ⚠️ MINTED AT THE BASE, NEEDS RE-MINTING
 
-Created **14 Aug 2026**, re-minted from `scripts/seed_plans.py`. Amounts are **GST-inclusive**
-(plan amount == displayed price); annual is the full yearly charge, discounted 20.0% off monthly
-on Starter, Standard and Enterprise and **21.7% on Professional** (₹28,188 vs ₹35,988 — the plan
-row rounds that to `annual_discount_percent: 22`). Each carries
+Created **14 Aug 2026** from `scripts/seed_plans.py`, before the switch to GST-exclusive pricing.
+The amounts below are the **base** prices, so each of these plans debits the base while the checkout
+sheet quotes base + GST. They stay listed because they are what the Test DB currently has attached;
+see [Re-minting for GST-exclusive pricing](#re-minting-for-gst-exclusive-pricing) for the
+replacements.
+
+Annual is the full yearly charge, discounted 20.0% off monthly on Starter, Standard and Enterprise
+and **21.7% on Professional** (₹28,188 vs ₹35,988, which the plan row rounds to
+`annual_discount_percent: 22`). Each carries
 `notes = {"oyechats_slug": …, "cycle": …, "rail": "INR"}`.
 
-| Plan | Plan ID | Amount | Cycle |
-|------|---------|--------|-------|
+| Plan | Plan ID | Amount minted (base) | Cycle |
+|------|---------|----------------------|-------|
 | Starter Monthly | `plan_TPWQmN57OaBc5k` | ₹599 | Monthly |
 | Starter Annual | `plan_TPWQoAGVD82M3K` | ₹5,748 | **Yearly** |
 | Standard Monthly | `plan_TPWQpxMT7XNnNf` | ₹1,199 | Monthly |
@@ -167,8 +197,16 @@ This is what production currently charges.
 > customers — so it was intentionally left alone here.
 > **Before any prod reseed:** mint the Live replacements, record them in this table, and
 > re-point the prod DB, or explicitly revert `seed_plans.py` to the amounts Live charges.
+>
+> **The GST-exclusive switch adds a second gap on top of this one.** The seed file's amounts are now
+> bases, so the Live replacements must be minted at base + GST, not at the seed figure. Do the two
+> corrections in one pass: the amounts to mint are in
+> [Re-minting for GST-exclusive pricing](#re-minting-for-gst-exclusive-pricing).
 
-Seat add-on (live, unchanged ₹499): `RAZORPAY_SEAT_PLAN_ID=plan_T5rNFpt3vSkl4R` (GHA variable).
+Seat add-on (live): `RAZORPAY_SEAT_PLAN_ID=plan_T5rNFpt3vSkl4R` (GHA variable). This plan was minted
+at ₹499. `RAZORPAY_SEAT_PLAN_PRICE_CENTS` defaults to `44900` (₹449), which is the base every surface
+displays, and the expected charge for it is ₹529.82. Confirm what the live plan actually carries
+before re-minting, and repoint the id and the price env var together.
 
 ---
 
@@ -315,13 +353,94 @@ until then.
 
 ---
 
+## Re-minting for GST-exclusive pricing
+
+Razorpay plans are immutable and Razorpay Subscriptions add no tax of their own, so the GST has to
+be inside the minted amount. **Every INR plan** (all four tiers, both cycles, plus the operator-seat
+and branding-removal add-on plans) must be re-minted at **base + GST** and repointed. USD plans are
+exports, carry no Indian GST, and are left exactly as they are.
+
+### Amounts to mint (INR, at 18%)
+
+The base column is `scripts/seed_plans.py` and the add-on price env vars. The charge column is
+`gross_charge_minor(base, rate_bps=1800, kind="intra")`, which is what the new plan's `item.amount`
+must equal, in paise.
+
+| Plan | Base | Charge to mint | Paise |
+|------|------|----------------|-------|
+| Starter monthly | ₹599 | ₹706.82 | `70682` |
+| Starter annual | ₹5,748 | ₹6,782.64 | `678264` |
+| Standard monthly | ₹1,199 | ₹1,414.82 | `141482` |
+| Standard annual | ₹11,508 | ₹13,579.44 | `1357944` |
+| Professional monthly | ₹2,999 | ₹3,538.82 | `353882` |
+| Professional annual | ₹28,188 | ₹33,261.84 | `3326184` |
+| Enterprise monthly | ₹5,999 | ₹7,078.82 | `707882` |
+| Enterprise annual | ₹57,588 | ₹67,953.84 | `6795384` |
+| Operator seat | ₹449 | ₹529.82 | `52982` |
+| Branding add-on | ₹499 | ₹588.82 | `58882` |
+
+> **Confirm Professional annual before minting it.** `scripts/seed_plans.py` holds `2818800`
+> (₹28,188, ₹2,349/mo × 12) and the table above follows it. `api/tests/test_tax.py` lists `2878800`
+> (₹28,788) in its live-base-price list. One of the two is wrong. Settle it against the seed file,
+> which this runbook treats as the price source of truth, before a plan is minted at either figure.
+
+### Procedure
+
+1. **Assert the mode.** Confirm `RAZORPAY_KEY_ID` starts with `rzp_test` before any API call.
+   Parse `api/.env` in Python, never `source` it.
+2. **Read the bases from `seed_plans.py` and `config.py`, never retype them.** Compute each charge
+   with `gross_charge_minor` rather than multiplying by hand, so there is one rounding rule.
+3. **Do not set `tax_inclusive` or `tax_rate` on the plan item.** They are metadata only and change
+   nothing about the debit (`api/scripts/razorpay_tax_probe.py`). Setting them invites a future
+   reader to assume the gateway is handling tax when it is not.
+4. **Mint the tier plans, both cycles**, then the two add-on plans.
+5. **Re-fetch every new plan individually** and assert amount, currency, period and interval. The
+   create response is not proof.
+6. **Record the new ids in the tables above at creation time**, and move the old rows into the
+   retired tables.
+7. **Repoint.** Tiers via `scripts/set_razorpay_plan_ids.py --apply`; the two add-ons via their env
+   vars (`RAZORPAY_SEAT_PLAN_ID`, `RAZORPAY_BRANDING_PLAN_ID`), each moved together with its price
+   variable.
+8. **Invalidate `discounted_plan_cache`.** Cached discounted plans were minted off the old amounts.
+9. **Verify against Razorpay, not the script output:**
+   ```
+   GET /subscriptions/admin/plan-price-check
+   ```
+   It compares each live Razorpay amount against `expected_charge_minor` (the **gross**), covers all
+   four cycles per tier, and covers the seat and branding add-on plan ids. Every row must report
+   `in_sync: true`. A row still reporting the base amount is a plan that was not re-minted.
+
+### Discounts
+
+A discount applies to the **base**, and GST is computed on the discounted base. This is required by
+Section 15(3) of the CGST Act: a discount given at or before the time of supply is excluded from the
+transaction value. Discounted plans are minted automatically and cached in `discounted_plan_cache`,
+so they follow the same base + GST rule without manual work, but the cache must be cleared whenever
+a base price changes.
+
+### The invoicing engine was NOT changed
+
+`SellerProfile.price_inclusive` stays pinned `true`, and setting it false is still refused. That is
+correct, not a leftover. Because the charge is `base + tax`, the captured amount is itself
+tax-inclusive of the base, so the existing `inclusive=True` carve-out recovers the advertised base
+exactly. Flipping the flag would invoice `base × 1.18 × 1.18` against a `base × 1.18` charge.
+
+---
+
 ## Add-on / internal plans (to (re)create)
 
 | Purpose | Env var | Status |
 |---------|---------|--------|
-| Extra seat (₹499/mo add-on) | `RAZORPAY_SEAT_PLAN_ID` | Create in Test + Live; env-driven, **no hardcoded default** in `config.py` |
-| Extra seat ($5/mo add-on, USD rail) | `RAZORPAY_SEAT_PLAN_ID_USD` | ✅ Created in Test + Live (ids in the USD section above); env-driven, no hardcoded default |
+| Extra seat (₹449 base add-on) | `RAZORPAY_SEAT_PLAN_ID` | Create in Test + Live at ₹529.82; env-driven, **no hardcoded default** in `config.py` |
+| Extra seat ($5/mo add-on, USD rail) | `RAZORPAY_SEAT_PLAN_ID_USD` | ✅ Created in Test + Live (ids in the USD section above); env-driven, no hardcoded default. Export, minted at the base |
+| Branding removal (₹499 base add-on) | `RAZORPAY_BRANDING_PLAN_ID` | Create in Test + Live at ₹588.82; env-driven, no hardcoded default |
+| Branding removal ($5/mo add-on, USD rail) | `RAZORPAY_BRANDING_PLAN_ID_USD` | Create in Test + Live at $5.00; export, minted at the base |
 | ₹1 test checkout | `RAZORPAY_TEST_PLAN_ID` | Create in Live if `CHECKOUT_TEST_CLIENT_IDS` is used; env-driven |
+
+Branding removal is a standalone add-on subscription, not a plan inclusion: every plan seeds
+`features.branding_removable = false` and the entitlement is granted only by an authorized add-on
+mandate. Prices come from `RAZORPAY_BRANDING_PLAN_PRICE_CENTS` (`49900`) and
+`BRANDING_ADDON_PRICE_USD_CENTS` (`500`).
 
 ---
 
@@ -354,7 +473,10 @@ A checkout will happily *display* the new price and *charge* the old one.
    Parse `api/.env` in Python — never `source` it.
 2. **Do both rails.** Check `*_cents` **and** `*_usd_cents`. An "INR-only" re-price has twice
    silently invalidated USD plans.
-3. **Print, then reconcile, then create.** Amounts come from `seed_plans.py`, never retyped.
+3. **Print, then reconcile, then create.** Amounts come from `seed_plans.py`, never retyped. The
+   seed file holds the **base**; an INR plan is minted at `gross_charge_minor(base, rate_bps,
+   "intra")` and a USD plan at the base. See
+   [Re-minting for GST-exclusive pricing](#re-minting-for-gst-exclusive-pricing).
 4. **Re-fetch every new plan individually** and assert amount, currency, period *and* interval.
    The create response is not proof — the 3 Aug live batch produced a wrong-currency and a
    wrong-cycle plan that were only caught later.
@@ -363,4 +485,6 @@ A checkout will happily *display* the new price and *charge* the old one.
 6. **Confirm `DB_URL` is local** before `seed_plans.py --apply`, then attach with
    `set_razorpay_plan_ids.py --apply`.
 7. **Verify against the DB**, not the script output: every tier's price and id, cross-checked
-   against the live plan the id resolves to.
+   against the live plan the id resolves to. Then run `GET /subscriptions/admin/plan-price-check`,
+   which does the same cross-check against the expected gross and also covers the seat and branding
+   add-on plan ids.

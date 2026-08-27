@@ -193,6 +193,7 @@ export function WixLogo({ size = 24, className, 'aria-hidden': a = true }: Platf
         fill="currentColor"
         letterSpacing="-0.5"
       >
+        {/* @i18n-exempt: a wordmark inside the brand's own logo, not copy. */}
         Wix
       </text>
     </svg>

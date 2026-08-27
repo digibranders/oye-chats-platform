@@ -25,6 +25,9 @@ import { AlertCircle, Info, Link2, Network, ShieldCheck } from 'lucide-react';
 import { Button, StatusBadge } from '../../../design-system';
 import { InsightCard } from '../../../design-system/components/InsightCard';
 import { getBot, updateBot } from '../../../services/api';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface SubdomainSessionSectionProps {
   botId: number;
@@ -66,6 +69,7 @@ export function SubdomainSessionSection({
   initialShareDomain,
   onSaved,
 }: SubdomainSessionSectionProps): ReactElement {
+  const { t } = useTranslation();
   const seededDomain = (initialShareDomain || '').trim();
   const [domain, setDomain] = useState<string>(seededDomain);
   const [inputError, setInputError] = useState('');
@@ -87,25 +91,30 @@ export function SubdomainSessionSection({
       return {
         tone: 'warning' as const,
         icon: AlertCircle,
-        title: 'That does not look like a domain',
-        body: 'Enter a parent domain like example.com, or clear the field to detect it automatically.',
+        title: translateNow('agents.thatDoesNotLookLike') || 'That does not look like a domain',
+        body: translateNow('agents.enterAParentDomainLike') || 'Enter a parent domain like example.com, or clear the field to detect it automatically.',
       };
     }
     if (normalizedDomain) {
       return {
         tone: 'success' as const,
         icon: ShieldCheck,
-        title: `Scoped to *.${normalizedDomain}`,
-        body: `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
+        title:
+          translateNow('agents.scopedTo', { domain: normalizedDomain }) ||
+          `Scoped to *.${normalizedDomain}`,
+        body:
+          translateNow('agents.scopedToBody', { domain: normalizedDomain }) ||
+          `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
       };
     }
     return {
       tone: 'success' as const,
       icon: ShieldCheck,
-      title: 'On automatically',
+      title: translateNow('agents.onAutomatically') || 'On automatically',
       body: websiteDomain
-        ? `Conversations follow visitors across all your subdomains. We detect ${websiteDomain} automatically, so there is nothing to set up.`
-        : 'Conversations follow visitors across all your subdomains automatically. There is nothing to set up.',
+        ? translateNow('agents.autoDetectedDomainBody', { domain: websiteDomain }) ||
+          `Conversations follow visitors across all your subdomains. We detect ${websiteDomain} automatically, so there is nothing to set up.`
+        : translateNow('agents.conversationsFollowVisitorsAcrossAll') || 'Conversations follow visitors across all your subdomains automatically. There is nothing to set up.',
     };
   }, [hasOverride, normalizedDomain, websiteDomain]);
 
@@ -135,7 +144,7 @@ export function SubdomainSessionSection({
     if (hasOverride) {
       const normalized = normalizeParentDomain(domain);
       if (!normalized) {
-        setInputError('Enter a valid domain like example.com');
+        setInputError(t('agents.enterAValidDomainLike') || 'Enter a valid domain like example.com');
         return;
       }
     }
@@ -160,7 +169,7 @@ export function SubdomainSessionSection({
       setDirty(false);
       setSaved(true);
     } catch (err: unknown) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save session sharing.');
+      setSaveError(err instanceof Error ? err.message : t('agents.failedToSaveSessionSharing') || 'Failed to save session sharing.');
     } finally {
       setSaving(false);
     }
@@ -174,13 +183,13 @@ export function SubdomainSessionSection({
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-text)]">
           <Link2 size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-          Continue sessions across subdomains
+          {t('agents.continueSessionsAcrossSubdomains') || 'Continue sessions across subdomains'}
         </span>
         {/* Not a toggle: continuity is always on. The pill just reports
             whether it is running on auto-detect or a pinned override. Uses
             the shared StatusBadge so it matches every other pill in the
             admin (quiet chip, tone carried by the dot). */}
-        <StatusBadge tone="success">{hasOverride ? 'Custom' : 'Automatic'}</StatusBadge>
+        <StatusBadge tone="success">{hasOverride ? t('agents.custom') || 'Custom' : t('agents.automatic') || 'Automatic'}</StatusBadge>
       </div>
 
       <InsightCard tone={status.tone} icon={StatusIcon} title={status.title} body={status.body} />
@@ -188,7 +197,7 @@ export function SubdomainSessionSection({
       {/* Optional override. Most owners never touch this; auto-detect covers
           the common case, so it is framed as opt-in refinement, not setup. */}
       <p className="mb-2 mt-4 text-[12px] text-[var(--ds-text-muted)]">
-        Optional: pin a specific parent domain. Leave blank to detect it automatically.
+        {t('agents.optionalPinASpecificParent') || 'Optional: pin a specific parent domain. Leave blank to detect it automatically.'}
       </p>
 
       <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2">
@@ -200,8 +209,8 @@ export function SubdomainSessionSection({
             if (inputError) setInputError('');
             markDirty();
           }}
-          placeholder="Auto-detect (e.g. example.com)"
-          aria-label="Parent domain for session sharing (optional override)"
+          placeholder={t('agents.autoDetectEGExample') || 'Auto-detect (e.g. example.com)'}
+          aria-label={t('agents.parentDomainForSessionSharing') || 'Parent domain for session sharing (optional override)'}
           className="w-full bg-transparent font-mono text-[12px] text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
         />
       </div>
@@ -222,7 +231,7 @@ export function SubdomainSessionSection({
               className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-accent)] transition-opacity hover:opacity-80"
             >
               <Network size={13} aria-hidden="true" />
-              Use {websiteDomain}
+              {t('agents.useDomain', { domain: websiteDomain }) || `Use ${websiteDomain}`}
             </button>
           )}
           {hasOverride && (
@@ -231,7 +240,7 @@ export function SubdomainSessionSection({
               onClick={clearOverride}
               className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-muted)] transition-opacity hover:opacity-80"
             >
-              Reset to automatic
+              {t('agents.resetToAutomatic') || 'Reset to automatic'}
             </button>
           )}
         </div>
@@ -243,26 +252,43 @@ export function SubdomainSessionSection({
       <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2.5">
         <Info size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" />
         <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
-          This keeps the <span className="font-medium text-[var(--ds-text)]">conversation</span> going across
-          your subdomains. It does not place the widget on them. For the chat to{' '}
-          <span className="font-medium text-[var(--ds-text)]">appear</span> on a subdomain like{' '}
-          <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
-            academy.{normalizedDomain || websiteDomain || 'example.com'}
-          </code>
-          , add the same embed snippet (with this chatbot’s key) to that subdomain too. It is the copyable code
-          up in the install steps above.
+          {/* One key for the whole paragraph. It emphasises three things inside
+              itself, so splitting it into fragments bakes English clause order
+              into the markup - and the codemod had already produced exactly
+              that fragment ("This keeps the"). */}
+          <Trans
+            k="agents.subdomainSessionHint"
+            fallback="This keeps the {conversation} going across your subdomains. It does not place the widget on them. For the chat to {appear} on a subdomain like {example}, add the same embed snippet (with this chatbot’s key) to that subdomain too. It is the copyable code up in the install steps above."
+            values={{
+              conversation: (
+                <span className="font-medium text-[var(--ds-text)]">
+                  {t('agents.conversationWord') || 'conversation'}
+                </span>
+              ),
+              appear: (
+                <span className="font-medium text-[var(--ds-text)]">
+                  {t('agents.appearWord') || 'appear'}
+                </span>
+              ),
+              example: (
+                <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
+                  {`academy.${normalizedDomain || websiteDomain || 'example.com'}`}
+                </code>
+              ),
+            }}
+          />
         </p>
       </div>
 
       {/* Save row */}
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={saving || !dirty} size="sm">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('agents.saving') || 'Saving…' : t('agents.save') || 'Save'}
         </Button>
         {saved && !dirty && (
           <span className="flex items-center gap-1 text-[12px] text-[var(--ds-success)]">
             <ShieldCheck size={13} aria-hidden="true" />
-            Saved
+            {t('agents.saved') || 'Saved'}
           </span>
         )}
         {saveError && (

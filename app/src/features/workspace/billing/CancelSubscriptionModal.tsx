@@ -64,7 +64,7 @@ export function CancelSubscriptionModal({
   // Read the real position of the customer's purchased credits from their own
   // ledger: `soonest_expiry` is non-null exactly when a top-up grant they hold
   // carries an `expires_at` for the daily sweep to act on. Same rule as
-  // `UsageHero` and the top-up dialog, so no two screens can disagree. A failed
+  // `AgentCreditHero` and the top-up dialog, so no two screens can disagree. A failed
   // call leaves the unevidenced note standing - never a guess.
   useEffect(() => {
     if (!open) return undefined;

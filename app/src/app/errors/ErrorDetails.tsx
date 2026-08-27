@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../design-system';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface ErrorDetailsProps {
   detail?: string;
@@ -14,6 +15,7 @@ interface ErrorDetailsProps {
  * on-brand panel.
  */
 export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
   if (!import.meta.env.DEV || !detail) return null;
@@ -26,7 +28,9 @@ export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
         className="inline-flex items-center gap-1 text-xs font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text-muted)]"
       >
         <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
-        {open ? 'Hide' : 'Show'} technical details
+        {open
+          ? t('app.hideTechnicalDetails') || 'Hide technical details'
+          : t('app.showTechnicalDetails') || 'Show technical details'}
       </button>
       {open && (
         <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-3 text-[11px] leading-relaxed text-[var(--ds-text-muted)]">

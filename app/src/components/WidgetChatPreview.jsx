@@ -1,4 +1,12 @@
+/**
+ * @i18n-exempt-file: this is a MOCK OF THE WIDGET, so every string in it is
+ * copy the VISITOR sees, not dashboard chrome. The widget has its own locale,
+ * driven by the visitor's session; rendering the preview in the operator's
+ * language would misrepresent what their visitors will actually get. Same rule
+ * as the widget defaults in `features/agents/experience/types.ts`.
+ */
 import { useEffect, useRef, useState } from 'react';
+import { formatDate, formatTime } from '../i18n/formatters';
 import ReactMarkdown from 'react-markdown';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
 import { formatBotMarkdown } from '../lib/formatBotMarkdown';
@@ -217,7 +225,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 never appears here. */}
             <div className="bg-[#F8F8F8] px-5 py-2 flex items-center justify-between shrink-0">
                 <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                    {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                    {formatDate(new Date(), { weekday: 'short', month: 'short', day: 'numeric', year: undefined })} &middot; {formatTime(new Date(), { hour: '2-digit', minute: '2-digit' })}
                 </span>
                 <div className="flex items-center gap-1">
                     {state === 'chat' && !settings.live_chat_enabled && (

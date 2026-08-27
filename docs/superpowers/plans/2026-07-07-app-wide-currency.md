@@ -1,5 +1,24 @@
 # App-Wide Currency Implementation Plan
 
+> ## ⚠️ Written before the 26 Aug 2026 switch to GST-EXCLUSIVE pricing
+>
+> This plan is dated 2026-07-07 and is left unedited. It solves currency, not tax, and that half of
+> it still stands. What it cannot know is that **the price columns it reads are now base prices**.
+> `monthly_price_cents`, `annual_price_cents`, `extra_seat_price_cents` and the top-up pack amounts
+> are all exclusive of GST. A domestic customer is debited base + GST; an international customer is
+> an export and pays the listed USD price.
+>
+> So picking the right column and formatting it is no longer sufficient. Any surface that tells a
+> customer what they will pay must render the **gross**, which the API now returns alongside the base:
+> `gross_minor` / `gross_display` on `GET /subscriptions/checkout/quote`,
+> `gross_extra_seat_price_cents` on `POST /subscriptions/seats`, `gross_price_cents` on the branding
+> add-on routes, and `gross_inr` per pack on `GET /credits/packs`. `GET /subscriptions/geo`, which
+> this plan already makes the single currency source, also returns `tax_rate_bps`, so the disclosure
+> copy never has to hardcode a second 18%.
+>
+> Current source of truth: `api/app/core/tax.py`, and the billing endpoints in
+> [`api-reference.md`](../../api-reference.md#billing-and-pricing-routes).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) or superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax. **Phase A is fully specified; Phases B–D are design-locked** — expand at kickoff.
 
 **Goal:** Make the customer's currency a single account-level concept so **every** price in the admin app (billing page, top-ups, seats, overview, invoices, plan modal) renders in the currency they are actually charged — INR for India, USD elsewhere — instead of hardcoding `$`.

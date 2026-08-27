@@ -1,5 +1,6 @@
 import { Menu, PanelLeft, Search } from 'lucide-react';
 import { Breadcrumbs } from '../design-system';
+import { useTranslation } from '../i18n/useTranslation';
 import { useBreadcrumbs } from './useBreadcrumbs';
 import { NotificationCenter } from './NotificationCenter';
 import { ThemeToggle } from './ThemeToggle';
@@ -21,6 +22,7 @@ export interface TopBarProps {
  */
 export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps) {
   const crumbs = useBreadcrumbs();
+  const { t } = useTranslation();
 
   // `data-app-topbar` below is the layout hook for the impersonation bar: this
   // header is `sticky top-0`, so it has to stick below the bar rather than
@@ -33,7 +35,11 @@ export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps)
       <button
         type="button"
         onClick={onToggleSidebar}
-        aria-label={isMobile ? 'Open navigation' : 'Toggle sidebar'}
+        aria-label={
+          isMobile
+            ? t('shell.topbar.openNavigation') || 'Open navigation'
+            : t('shell.topbar.toggleSidebar') || 'Toggle sidebar'
+        }
         className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
       >
         {isMobile ? <Menu size={18} /> : <PanelLeft size={18} />}
@@ -55,11 +61,11 @@ export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps)
         <button
           type="button"
           onClick={onOpenSearch}
-          aria-label="Open command palette"
+          aria-label={t('shell.topbar.openCommandPalette') || 'Open command palette'}
           className="flex h-9 items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
         >
           <Search size={15} />
-          <span className="hidden text-[13px] lg:inline">Search</span>
+          <span className="hidden text-[13px] lg:inline">{t('common.search') || 'Search'}</span>
           <kbd className="hidden rounded border border-[var(--ds-border)] px-1.5 py-0.5 text-[10px] font-medium lg:inline">
             ⌘K
           </kbd>

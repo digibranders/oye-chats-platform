@@ -17,8 +17,14 @@ import {
   type HealthCheck,
   type HealthLevel,
 } from './agent-health';
+import { useTranslation } from '../../../i18n/useTranslation';
 
+// Visual treatment per overall health level. Built at import, before a locale
+// exists, so the English label here is the fallback and the render site below
+// resolves the real one from the level key.
 /** Visual treatment per overall health level. */
+// @i18n-exempt: resolved at the render site from the level key
+// (`agents.health.level.<level>`); the English here is that lookup's fallback.
 const LEVEL_STYLE: Record<
   HealthLevel,
   { icon: LucideIcon; tone: IconTileTone; spin?: boolean; badge: StatusBadgeProps['tone']; badgeLabel: string }
@@ -30,7 +36,11 @@ const LEVEL_STYLE: Record<
   critical: { icon: AlertTriangle, tone: 'danger', badge: 'danger', badgeLabel: 'Needs attention' },
 };
 
+// Same as LEVEL_STYLE: the icon and tone are design, the label is copy, and
+// the label is resolved where it is rendered.
 /** Per-check marker treatment. */
+// @i18n-exempt: resolved at the render site from the check status
+// (`agents.health.check.<status>`); the English here is that lookup's fallback.
 const CHECK_STYLE: Record<
   CheckStatus,
   { icon: LucideIcon; tone: IconTileTone; spin?: boolean; srLabel: string }
@@ -46,6 +56,7 @@ interface HealthCheckRowProps {
 }
 
 function HealthCheckRow({ check }: HealthCheckRowProps): ReactElement {
+  const { t } = useTranslation();
   const style = CHECK_STYLE[check.status];
   return (
     <li className="flex items-start gap-3">
@@ -55,7 +66,7 @@ function HealthCheckRow({ check }: HealthCheckRowProps): ReactElement {
         size="xs"
         shape="circle"
         spin={style.spin}
-        srLabel={`${style.srLabel}:`}
+        srLabel={`${t(`agents.health.check.${check.status}`) || style.srLabel}:`}
         className="mt-0.5"
       />
       <span className="min-w-0">
@@ -80,6 +91,7 @@ export interface HealthHeroProps {
  * something needs doing) a single next-step action.
  */
 export function HealthHero({ health, agentBasePath }: HealthHeroProps): ReactElement {
+  const { t } = useTranslation();
   const style = LEVEL_STYLE[health.level];
 
   return (
@@ -93,7 +105,7 @@ export function HealthHero({ health, agentBasePath }: HealthHeroProps): ReactEle
               {health.title}
             </h2>
             <StatusBadge tone={style.badge} dot>
-              {style.badgeLabel}
+              {t(`agents.health.level.${health.level}`) || style.badgeLabel}
             </StatusBadge>
           </div>
           <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--ds-text-muted)]">

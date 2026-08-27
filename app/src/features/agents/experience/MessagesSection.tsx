@@ -8,6 +8,7 @@ import {
 import { Button, Input, SectionHeader, cn } from '../../../design-system';
 import { type ExperienceDraft, type SuggestionsLayout, FIELD_LIMITS } from './types';
 import { CustomCopyNotice } from './CustomCopyNotice';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface MessagesSectionProps {
   draft: ExperienceDraft;
@@ -16,6 +17,8 @@ export interface MessagesSectionProps {
   onChange: (patch: Partial<ExperienceDraft>) => void;
 }
 
+// @i18n-exempt: resolved at the render site from the option id
+// (`agents.layout.<id>`); the English here is that lookup's fallback.
 const LAYOUT_OPTIONS: { id: SuggestionsLayout; label: string; icon: typeof AlignHorizontalDistributeCenter }[] = [
   { id: 'horizontal', label: 'Horizontal', icon: AlignHorizontalDistributeCenter },
   { id: 'vertical', label: 'Vertical', icon: AlignVerticalDistributeCenter },
@@ -66,6 +69,7 @@ function Field({
  * widget reads from `widget_messages`.
  */
 export function MessagesSection({ draft, onChange, multilingual = false }: MessagesSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { quickActions, suggestionsLayout } = draft;
 
   const setAction = (index: number, value: string): void => {
@@ -86,22 +90,25 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
 
       <section className="space-y-5">
         <SectionHeader
-          title="Widget identity"
-          description="The name shown in the widget header and the tooltip beside the launcher button."
+          title={t('agents.widgetIdentity') || 'Widget identity'}
+          description={t('agents.theNameShownInThe') || 'The name shown in the widget header and the tooltip beside the launcher button.'}
         />
         <Field
-          label="Display name"
-          hint="Shown in the widget header - also your chatbot's name across the dashboard."
+          label={t('agents.displayName') || 'Display name'}
+          hint={t('agents.shownInTheWidgetHeader') || 'Shown in the widget header - also your chatbot\'s name across the dashboard.'}
           value={draft.displayName}
           maxLength={FIELD_LIMITS.displayName}
-          placeholder="e.g. Acme Assistant"
+          placeholder={t('agents.eGAcmeAssistant') || 'e.g. Acme Assistant'}
           onChange={(v) => onChange({ displayName: v })}
         />
         <Field
-          label="Launcher text"
-          hint="The tooltip shown next to the launcher button before the chat opens."
+          label={t('agents.launcherText') || 'Launcher text'}
+          hint={t('agents.theTooltipShownNextTo') || 'The tooltip shown next to the launcher button before the chat opens.'}
           value={draft.launcherName}
           maxLength={FIELD_LIMITS.launcherName}
+          // @i18n-exempt: the WIDGET's default, shown so the operator knows what
+          // their visitors get if this is left blank. Translating it would promise
+          // one sentence and render another.
           placeholder="Have Questions?"
           onChange={(v) => onChange({ launcherName: v })}
         />
@@ -109,20 +116,22 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
 
       <section className="space-y-5 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
-          title="Welcome screen"
-          description="The greeting visitors see the moment the chat opens."
+          title={t('agents.welcomeScreen') || 'Welcome screen'}
+          description={t('agents.theGreetingVisitorsSeeThe') || 'The greeting visitors see the moment the chat opens.'}
         />
         <Field
-          label="Greeting"
-          hint="The headline that welcomes visitors."
+          label={t('agents.greeting') || 'Greeting'}
+          hint={t('agents.theHeadlineThatWelcomesVisitors') || 'The headline that welcomes visitors.'}
           value={draft.welcomeGreeting}
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Hi there, how can I help you today?"
           onChange={(v) => onChange({ welcomeGreeting: v })}
         />
         <Field
-          label="Subtitle"
-          hint="A short line of context under the greeting."
+          label={t('agents.subtitle') || 'Subtitle'}
+          hint={t('agents.aShortLineOfContext') || 'A short line of context under the greeting.'}
           value={draft.welcomeSubtitle}
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Ask me anything - I answer from your knowledge base."
           onChange={(v) => onChange({ welcomeSubtitle: v })}
         />
@@ -130,15 +139,16 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
-          title="Quick actions"
-          description="Tappable prompts that give visitors a head start. Leave empty to hide them."
+          title={t('agents.quickActions') || 'Quick actions'}
+          description={t('agents.tappablePromptsThatGiveVisitors') || 'Tappable prompts that give visitors a head start. Leave empty to hide them.'}
           actions={
             <div
               role="group"
-              aria-label="Quick-action layout"
+              aria-label={t('agents.quickActionLayout') || 'Quick-action layout'}
               className="inline-flex overflow-hidden rounded-lg border border-[var(--ds-border)]"
             >
-              {LAYOUT_OPTIONS.map(({ id, label, icon: Icon }) => {
+              {LAYOUT_OPTIONS.map(({ id, label: fallbackLabel, icon: Icon }) => {
+                const label = t(`agents.layout.${id}`) || fallbackLabel;
                 const active = suggestionsLayout === id;
                 return (
                   <button
@@ -167,7 +177,7 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
         <div className="space-y-2">
           {quickActions.length === 0 ? (
             <p className="rounded-lg border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
-              No quick actions yet. Add a few common questions to guide visitors.
+              {t('agents.noQuickActionsYetAdd') || 'No quick actions yet. Add a few common questions to guide visitors.'}
             </p>
           ) : (
             quickActions.map((action, index) => (
@@ -176,14 +186,17 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
               <div key={index} className="flex items-center gap-2">
                 <Input
                   value={action}
-                  aria-label={`Quick action ${index + 1}`}
-                  placeholder={`Quick action ${index + 1}`}
+                  aria-label={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
+                  placeholder={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
                   onChange={(e) => setAction(index, e.target.value)}
                 />
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Remove quick action ${index + 1}`}
+                  aria-label={
+                    t('agents.removeQuickActionLabel', { n: index + 1 }) ||
+                    `Remove quick action ${index + 1}`
+                  }
                   onClick={() => removeAction(index)}
                   className="shrink-0 hover:text-[var(--ds-danger)]"
                 >
@@ -196,16 +209,17 @@ export function MessagesSection({ draft, onChange, multilingual = false }: Messa
 
         <Button variant="outline" size="sm" onClick={addAction}>
           <Plus size={15} />
-          Add quick action
+          {t('agents.addQuickAction') || 'Add quick action'}
         </Button>
       </section>
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader title="Chat input" description="The placeholder shown in the message box." />
+        <SectionHeader title={t('agents.chatInput') || 'Chat input'} description={t('agents.thePlaceholderShownInThe') || 'The placeholder shown in the message box.'} />
         <Field
-          label="Input placeholder"
-          hint="Hint text inside the message field."
+          label={t('agents.inputPlaceholder') || 'Input placeholder'}
+          hint={t('agents.hintTextInsideTheMessage') || 'Hint text inside the message field.'}
           value={draft.inputPlaceholder}
+          // @i18n-exempt: the widget's own default. See launcher text above.
           placeholder="Write a message…"
           onChange={(v) => onChange({ inputPlaceholder: v })}
         />

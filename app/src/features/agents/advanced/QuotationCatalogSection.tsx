@@ -1,4 +1,5 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import {
   Receipt,
   Plus,
@@ -180,7 +181,7 @@ function normalize(raw: QuotationCatalog | null | undefined): QuotationCatalog {
 function formatMoney(currency: string, value: number): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? currency;
   const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-  return `${symbol}${rounded.toLocaleString()}`;
+  return `${symbol}${formatNumber(rounded)}`;
 }
 
 interface QuotationCatalogSectionProps {
@@ -686,7 +687,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                               Price per {service.unit_label || 'unit'}
                               <Hint
                                 what="Cost of one unit. The final subtotal is this × quantity. Stored in the currency you picked at the top."
-                                example={`Landing page @ 15000 per page → 3 pages = ${(15000 * 3).toLocaleString()}`}
+                                example={`Landing page @ 15000 per page → 3 pages = ${formatNumber((15000 * 3))}`}
                               />
                             </label>
                             <Input

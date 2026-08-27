@@ -4,6 +4,12 @@ import { Button, Modal, Skeleton, cn } from '../../design-system';
 import { getDepartments, getOperators, transferChat } from '../../services/api';
 import type { Department, Operator } from '../../types/domain';
 import { initials } from './liveChatHelpers';
+// `translateNow` inside effects and async handlers: the hook's `t` changes
+// identity per locale, so capturing it there adds a dependency that would
+// re-run a data load on every language change. The module-level function is
+// stable and still resolves against the current locale when called.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface TransferDialogProps {
   sessionId: string;
@@ -30,6 +36,7 @@ export function TransferDialog({
   onClose,
   onTransferred,
 }: TransferDialogProps): ReactElement {
+  const { t } = useTranslation();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +56,7 @@ export function TransferDialog({
       })
       .catch(() => {
         if (!active) return;
-        setError('Couldn’t load transfer targets.');
+        setError(translateNow('inbox.couldntLoadTransferTargets') || 'Couldn’t load transfer targets.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -75,7 +82,7 @@ export function TransferDialog({
       onTransferred();
     } catch (err) {
       setError(
-        err instanceof Error ? `Transfer failed: ${err.message}` : 'Transfer failed. Please try again.',
+        err instanceof Error ? (translateNow('inbox.transferFailedDetail', { reason: err.message }) || `Transfer failed: ${err.message}`) : t('inbox.transferFailedPleaseTryAgain') || 'Transfer failed. Please try again.',
       );
       setSubmitting(false);
     }
@@ -88,17 +95,20 @@ export function TransferDialog({
     <Modal
       open
       onClose={onClose}
-      title="Transfer conversation"
-      description={`Hand ${visitorName} to an operator or department.`}
+      title={t('inbox.transferConversation') || 'Transfer conversation'}
+      description={
+          t('inbox.handToOperator', { name: visitorName }) ||
+          `Hand ${visitorName} to an operator or department.`
+        }
       size="sm"
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('inbox.cancel') || 'Cancel'}
           </Button>
           <Button size="sm" onClick={() => void submit()} disabled={!target || submitting}>
             <ArrowRightLeft size={14} aria-hidden="true" />
-            {submitting ? 'Transferring…' : 'Transfer'}
+            {submitting ? t('inbox.transferring') || 'Transferring…' : t('inbox.transfer') || 'Transfer'}
           </Button>
         </div>
       }
@@ -119,10 +129,10 @@ export function TransferDialog({
 
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-              Online operators
+              {t('inbox.onlineOperators') || 'Online operators'}
             </p>
             {eligibleOperators.length === 0 ? (
-              <p className="text-[13px] text-[var(--ds-text-muted)]">No other operators are online right now.</p>
+              <p className="text-[13px] text-[var(--ds-text-muted)]">{t('inbox.noOtherOperatorsAreOnline') || 'No other operators are online right now.'}</p>
             ) : (
               <div className="space-y-1.5">
                 {eligibleOperators.map((op) => (
@@ -143,7 +153,8 @@ export function TransferDialog({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{op.name}</span>
                       <span className="block text-[11px] text-[var(--ds-text-muted)]">
-                        {op.active_chats ?? 0} active
+                        {t('inbox.activeChats', { count: op.active_chats ?? 0 }) ||
+                          `${op.active_chats ?? 0} active`}
                       </span>
                     </span>
                     <User size={14} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
@@ -156,7 +167,7 @@ export function TransferDialog({
           {departments.length > 0 && (
             <div>
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                Departments
+                {t('inbox.departments') || 'Departments'}
               </p>
               <div className="space-y-1.5">
                 {departments.map((dept) => (

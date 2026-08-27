@@ -9,6 +9,7 @@
  * and returned to the trigger on close, and a click-away scrim.
  */
 import { Fragment, type ReactElement, useEffect, useRef, useState } from 'react';
+import { formatTime } from '../../i18n/formatters';
 import Markdown from 'react-markdown';
 import {
   AlertCircle,
@@ -51,6 +52,8 @@ import {
   normalizeTier,
   scoreTone,
 } from './leadModel';
+import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface LeadDetailDrawerProps {
   data: LeadDetailData;
@@ -105,7 +108,10 @@ function ScoreRing({ score }: { score: number }): ReactElement {
       height={size}
       viewBox={`0 0 ${size} ${size}`}
       role="img"
-      aria-label={`Qualification score ${clamped} out of 100`}
+      aria-label={
+        translateNow('leads.qualificationScoreOutOf', { score: clamped }) ||
+        `Qualification score ${clamped} out of 100`
+      }
     >
       <circle
         cx={size / 2}
@@ -202,7 +208,7 @@ function formatClock(iso: string | null | undefined): string {
   if (!iso) return '';
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return '';
-  return new Date(parsed).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatTime(new Date(parsed), { hour: 'numeric', minute: '2-digit' });
 }
 
 /**
@@ -242,9 +248,10 @@ function messageTime(message: ChatMessage): string | null | undefined {
 }
 
 function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
+  const { t } = useTranslation();
   const text = message.content ?? message.message ?? '';
   const isVisitor = message.role === 'user';
-  const roleLabel = isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
+  const roleLabel = isVisitor ? t('leads.visitor') || 'Visitor' : message.role === 'operator' ? t('leads.operator') || 'Operator' : t('leads.chatbot') || 'Chatbot';
   const time = formatClock(messageTime(message));
   return (
     <div className={cn('flex', isVisitor ? 'justify-end' : 'justify-start')}>
@@ -274,7 +281,7 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
             </div>
           )
         ) : (
-          <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>
+          <p className="italic text-[var(--ds-text-subtle)]">{t('leads.noText') || '(no text)'}</p>
         )}
       </div>
     </div>
@@ -291,6 +298,7 @@ function LeadAnnotationsSection({
 }: {
   controller: LeadAnnotationController;
 }): ReactElement {
+  const { t } = useTranslation();
   const { note, tags, saveNote, saveTags } = controller;
   const [noteDraft, setNoteDraft] = useState(note?.text ?? '');
   const [tagDraft, setTagDraft] = useState(tags.join(', '));
@@ -316,11 +324,11 @@ function LeadAnnotationsSection({
     <section className="space-y-3">
       <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
         <StickyNote size={13} aria-hidden="true" />
-        Private notes
+        {t('leads.privateNotes') || 'Private notes'}
       </h3>
       <div className="space-y-4 rounded-xl border border-[var(--ds-border)] p-4">
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          Only your team sees these - they stay in this browser and aren&rsquo;t sent to the visitor.
+          {t('leads.onlyYourTeamSeesThese') || 'Only your team sees these - they stay in this browser and aren’t sent to the visitor.'}
         </p>
 
         {/* Note editor */}
@@ -329,13 +337,13 @@ function LeadAnnotationsSection({
             htmlFor="lead-note"
             className="block text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
           >
-            Note
+            {t('leads.note') || 'Note'}
           </label>
           <Textarea
             id="lead-note"
             rows={3}
             value={noteDraft}
-            placeholder="Add context for your team - next steps, who to loop in…"
+            placeholder={t('leads.addContextForYourTeam') || 'Add context for your team - next steps, who to loop in…'}
             onChange={(event) => {
               setNoteDraft(event.target.value);
               setNoteJustSaved(false);
@@ -346,16 +354,16 @@ function LeadAnnotationsSection({
               {noteJustSaved && !noteChanged ? (
                 <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
                   <Check size={12} aria-hidden="true" />
-                  Saved
+                  {t('leads.saved') || 'Saved'}
                 </span>
               ) : note ? (
-                `Last edited ${formatDateTime(note.ts)}`
+                (t('leads.lastEdited', { when: formatDateTime(note.ts) }) || `Last edited ${formatDateTime(note.ts)}`)
               ) : (
-                'Not saved yet'
+                t('leads.notSavedYet') || 'Not saved yet'
               )}
             </span>
             <Button size="sm" variant="outline" onClick={handleSaveNote} disabled={!noteChanged}>
-              Save note
+              {t('leads.saveNote') || 'Save note'}
             </Button>
           </div>
         </div>
@@ -367,10 +375,10 @@ function LeadAnnotationsSection({
             className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
           >
             <Tag size={12} aria-hidden="true" />
-            Tags
+            {t('leads.tags') || 'Tags'}
           </label>
           {tags.length > 0 && (
-            <ul className="flex flex-wrap gap-1.5" aria-label="Saved tags">
+            <ul className="flex flex-wrap gap-1.5" aria-label={t('leads.savedTags') || 'Saved tags'}>
               {tags.map((tag) => (
                 <li
                   key={tag}
@@ -385,7 +393,7 @@ function LeadAnnotationsSection({
             id="lead-tags"
             type="text"
             value={tagDraft}
-            placeholder="e.g. enterprise, follow-up, demo-requested"
+            placeholder={t('leads.eGEnterpriseFollowUp') || 'e.g. enterprise, follow-up, demo-requested'}
             onChange={(event) => {
               setTagDraft(event.target.value);
               setTagsJustSaved(false);
@@ -403,14 +411,14 @@ function LeadAnnotationsSection({
               {tagsJustSaved && !tagsChanged ? (
                 <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
                   <Check size={12} aria-hidden="true" />
-                  Saved
+                  {t('leads.saved') || 'Saved'}
                 </span>
               ) : (
-                'Separate tags with commas'
+                t('leads.separateTagsWithCommas') || 'Separate tags with commas'
               )}
             </span>
             <Button size="sm" variant="outline" onClick={handleSaveTags} disabled={!tagsChanged}>
-              Save tags
+              {t('leads.saveTags') || 'Save tags'}
             </Button>
           </div>
         </div>
@@ -427,6 +435,7 @@ export function LeadDetailDrawer({
   visitorIntelligenceUnlocked = false,
   annotations,
 }: LeadDetailDrawerProps): ReactElement {
+  const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
   const headingId = 'lead-detail-heading';
 
@@ -490,7 +499,7 @@ export function LeadDetailDrawer({
       {/* Scrim */}
       <button
         type="button"
-        aria-label="Close lead details"
+        aria-label={t('leads.closeLeadDetails') || 'Close lead details'}
         onClick={onClose}
         className="absolute inset-0 bg-black/30 backdrop-blur-[1px] dark:bg-black/50"
       />
@@ -506,9 +515,9 @@ export function LeadDetailDrawer({
       >
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-5 py-4">
           <h2 id={headingId} className="text-base font-bold text-[var(--ds-text)]">
-            {view === 'chat' ? 'Conversation' : 'Lead details'}
+            {view === 'chat' ? t('leads.conversation') || 'Conversation' : t('leads.leadDetails') || 'Lead details'}
           </h2>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('leads.close') || 'Close'}>
             <X size={18} aria-hidden="true" />
           </Button>
         </header>
@@ -525,8 +534,8 @@ export function LeadDetailDrawer({
           <div className="p-5">
             <EmptyState
               icon={AlertCircle}
-              title="Couldn't load this lead"
-              description={error ?? 'Please close this panel and try again.'}
+              title={t('leads.couldntLoadThisLead') || 'Couldn\'t load this lead'}
+              description={error ?? (t('leads.pleaseCloseThisPanelAnd') || 'Please close this panel and try again.')}
             />
           </div>
         )}
@@ -543,12 +552,13 @@ export function LeadDetailDrawer({
               <>
             {/* Quality verdict */}
             {(() => {
-              const tier = TIER_META[normalizeTier(detail.status)];
+              const tierKey = normalizeTier(detail.status);
+              const tier = TIER_META[tierKey];
               return (
                 <section className="flex items-center gap-4 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
                   <ScoreRing score={detail.score} />
                   <div className="min-w-0">
-                    <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>
+                    <StatusBadge tone={tier.tone}>{t(`leads.tier.${tierKey}`) || tier.label}</StatusBadge>
                     <p className="mt-2 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
                       {tier.hint}
                     </p>
@@ -560,7 +570,7 @@ export function LeadDetailDrawer({
             {/* Contact */}
             <section className="space-y-3">
               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                Contact
+                {t('leads.contact') || 'Contact'}
               </h3>
               <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
                 {detail.contact?.name && <ContactRow icon={User} value={detail.contact.name} />}
@@ -595,7 +605,7 @@ export function LeadDetailDrawer({
                   !detail.contact?.phone &&
                   !detail.contact?.company && (
                     <p className="text-[13px] text-[var(--ds-text-subtle)]">
-                      This visitor didn't share contact details.
+                      {t('leads.thisVisitorDidntShareContact') || 'This visitor didn\'t share contact details.'}
                     </p>
                   )}
               </div>
@@ -605,7 +615,7 @@ export function LeadDetailDrawer({
             {detail.bant && Object.keys(detail.bant).length > 0 && (
               <section className="space-y-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                  What we learned
+                  {t('leads.whatWeLearned') || 'What we learned'}
                 </h3>
                 <div className="space-y-2.5">
                   {(() => {
@@ -701,7 +711,7 @@ export function LeadDetailDrawer({
               <div className="flex items-center justify-between gap-2">
                 <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
                   <MessageSquare size={13} aria-hidden="true" />
-                  Conversation
+                  {t('leads.conversation') || 'Conversation'}
                 </h3>
                 {detail.messages && detail.messages.length > 0 && (
                   <span className="text-[11px] text-[var(--ds-text-subtle)]">
@@ -735,7 +745,7 @@ export function LeadDetailDrawer({
                 </div>
               ) : (
                 <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[13px] text-[var(--ds-text-subtle)]">
-                  No conversation was recorded for this lead.
+                  {t('leads.noConversationWasRecordedFor') || 'No conversation was recorded for this lead.'}
                 </p>
               )}
             </section>
@@ -747,7 +757,7 @@ export function LeadDetailDrawer({
             )}
 
             <footer className="border-t border-[var(--ds-border)] pt-4 text-[12px] text-[var(--ds-text-subtle)]">
-              Last active {formatDateTime(detail.last_active_at)}
+              {t('leads.lastActive') || 'Last active'} {formatDateTime(detail.last_active_at)}
             </footer>
           </div>
         )}

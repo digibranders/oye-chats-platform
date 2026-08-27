@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import { Link } from 'react-router-dom';
 import {
   Globe,
@@ -691,9 +692,9 @@ export function TrainStep(props: StepProps) {
                     )}
                     {siteOverPlanCap && (
                       <p className="text-[12px] text-[var(--ds-warning)]">
-                        Your plan covers {siteCap.toLocaleString()} more page
+                        Your plan covers {formatNumber(siteCap)} more page
                         {siteCap === 1 ? '' : 's'}. Deselect{' '}
-                        {(siteSelectedCount - siteCap).toLocaleString()} to continue.
+                        {formatNumber((siteSelectedCount - siteCap))} to continue.
                       </p>
                     )}
                     <div className="flex items-center justify-between gap-3">
@@ -701,15 +702,15 @@ export function TrainStep(props: StepProps) {
                         {siteHasPageList ? (
                           <>
                             <span className="font-medium text-[var(--ds-text)]">
-                              {siteSelectedCount.toLocaleString()}
+                              {formatNumber(siteSelectedCount)}
                             </span>{' '}
-                            of {siteEstimate.total_found.toLocaleString()} pages ·{' '}
+                            of {formatNumber(siteEstimate.total_found)} pages ·{' '}
                             <span className="font-medium text-[var(--ds-text)]">
-                              {siteCost.toLocaleString()} credits
+                              {formatNumber(siteCost)} credits
                             </span>
                           </>
                         ) : siteEstimate.total_found > 0 ? (
-                          `${siteEstimate.total_found.toLocaleString()}${siteEstimate.capped ? '+' : ''} pages · ~${siteCost.toLocaleString()} credits`
+                          `${formatNumber(siteEstimate.total_found)}${siteEstimate.capped ? '+' : ''} pages · ~${formatNumber(siteCost)} credits`
                         ) : (
                           "We'll follow links from the homepage."
                         )}
@@ -839,7 +840,7 @@ export function TrainStep(props: StepProps) {
             <div className="max-w-sm space-y-1">
               <p className="text-[14px] font-semibold text-[var(--ds-text)]">Page limit reached</p>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                You&apos;ve used all {pagesLimit.toLocaleString()} website pages included on your
+                You&apos;ve used all {formatNumber(pagesLimit)} website pages included on your
                 plan. Upgrade to train more pages, or upload documents below.
               </p>
             </div>
@@ -909,7 +910,7 @@ export function TrainStep(props: StepProps) {
                     <>
                       Found{' '}
                       <span className="font-semibold text-[var(--ds-text)]">
-                        {estimate.total_found.toLocaleString()}
+                        {formatNumber(estimate.total_found)}
                         {estimate.capped ? '+' : ''} page
                         {estimate.total_found === 1 ? '' : 's'}
                       </span>
@@ -935,9 +936,9 @@ export function TrainStep(props: StepProps) {
                 {overPlanCap && (
                   <div className="rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
                     <p className="text-[12px] text-[var(--ds-text)]">
-                      Your plan covers {pageCap.toLocaleString()} more page
-                      {pageCap === 1 ? '' : 's'}, but {selectedCount.toLocaleString()} are selected.
-                      Deselect {(selectedCount - pageCap).toLocaleString()} to continue, or upgrade
+                      Your plan covers {formatNumber(pageCap)} more page
+                      {pageCap === 1 ? '' : 's'}, but {formatNumber(selectedCount)} are selected.
+                      Deselect {formatNumber((selectedCount - pageCap))} to continue, or upgrade
                       for more.
                     </p>
                     <Button
@@ -961,7 +962,7 @@ export function TrainStep(props: StepProps) {
                 {overAffordable && !overPlanCap && (
                   <p className="text-[12px] text-[var(--ds-warning)]">
                     You&apos;ve selected more pages than your credits cover (about{' '}
-                    {affordable.toLocaleString()} affordable). We&apos;ll train as many as your
+                    {formatNumber(affordable)} affordable). We&apos;ll train as many as your
                     balance allows, in order.
                   </p>
                 )}
@@ -984,12 +985,12 @@ export function TrainStep(props: StepProps) {
                   <div>
                     <p className="text-[13px] font-semibold text-[var(--ds-text)]">
                       {hasPageList
-                        ? `${selectedCount.toLocaleString()} of ${estimate.total_found.toLocaleString()} page${estimate.total_found === 1 ? '' : 's'} selected`
+                        ? `${formatNumber(selectedCount)} of ${formatNumber(estimate.total_found)} page${estimate.total_found === 1 ? '' : 's'} selected`
                         : 'Training on your website'}
                     </p>
                     <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
                       {chargeablePages > 0
-                        ? `About ${estimatedCost.toLocaleString()} credit${estimatedCost === 1 ? '' : 's'} · ${costPerPage} per page`
+                        ? `About ${formatNumber(estimatedCost)} credit${estimatedCost === 1 ? '' : 's'} · ${costPerPage} per page`
                         : `${costPerPage} credit${costPerPage === 1 ? '' : 's'} per page we learn`}
                     </p>
                   </div>

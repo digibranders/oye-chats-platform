@@ -105,6 +105,20 @@ def is_multilingual_enabled(bot) -> bool:
 # locales directory and fails if the two drift.
 WIDGET_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
 
+# Base languages the ADMIN DASHBOARD ships an interface for (Phase 7).
+#
+# Separate from WIDGET_UI_LANGUAGES above and never derived from it. They are
+# different applications with different dictionaries: the widget translates a
+# visitor's chat chrome, the dashboard translates the customer's own console.
+# Either can reach a language before the other, and reusing one flag for both
+# would offer a language that one of the two surfaces renders in English.
+#
+# The authority is app/src/i18n/i18n.ts's DICTIONARY_LOADERS plus English,
+# which needs no runtime dictionary because every call site carries an inline
+# English default. tests/test_admin_ui_languages_contract.py reads the admin's
+# locales directory and fails if the two drift.
+ADMIN_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
+
 # Standard locale catalog with metadata
 KNOWN_LOCALES: dict[str, LocaleInfo] = {
     "en-IN": LocaleInfo(
@@ -176,6 +190,7 @@ KNOWN_LOCALES: dict[str, LocaleInfo] = {
 # repeated per row is a drift waiting to happen, and the rule is one line.
 for _info in KNOWN_LOCALES.values():
     _info.ui_translated = _info.code in WIDGET_UI_LANGUAGES
+    _info.admin_ui_translated = _info.code in ADMIN_UI_LANGUAGES
 del _info
 
 

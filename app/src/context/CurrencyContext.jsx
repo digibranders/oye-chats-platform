@@ -23,6 +23,24 @@ function chargeCurrencyFor(country) {
 }
 
 /**
+ * The tax rate GET /subscriptions/geo says will be ADDED to this account's
+ * charges, in basis points (1800 = 18%).
+ *
+ * Zero is a real answer, not a placeholder: an export pays no Indian GST, and
+ * a seller who is not GST-registered adds none. Anything missing, negative or
+ * unparseable also reads as zero, because the only safe thing to say about a
+ * rate we cannot read is nothing at all. Consumers gate disclosure copy on
+ * `loading`, never on this value.
+ *
+ * @param {unknown} geo - the /geo envelope, or undefined.
+ * @returns {number} basis points, >= 0.
+ */
+function readTaxRateBps(geo) {
+  const raw = Number(geo?.tax_rate_bps);
+  return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 0;
+}
+
+/**
  * Single source of truth for the account's display currency across the admin
  * app. Currency follows the account's billing country (IN -> INR, else USD),
  * as resolved by GET /subscriptions/geo.
@@ -50,6 +68,10 @@ export function CurrencyProvider({ children }) {
   // only ever receive a non-'detected' country as billing_country.
   const [countrySource, setCountrySource] = useState(null);
   const [currency, setCurrency] = useState(chargeCurrencyFor(null));
+  // Tax added on top of every listed price, in basis points. Starts at 0 and
+  // stays there unless /geo names a rate: quoting a tax the seller does not
+  // charge is a worse failure than quoting none.
+  const [taxRateBps, setTaxRateBps] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,6 +88,7 @@ export function CurrencyProvider({ children }) {
             ? String(geo.display_currency).toLowerCase()
             : chargeCurrencyFor(geo?.country),
         );
+        setTaxRateBps(readTaxRateBps(geo));
       })
       .catch(() => {
         /* Keep the charge-currency default - never block the UI on geo, and
@@ -87,6 +110,8 @@ export function CurrencyProvider({ children }) {
       countrySource, // 'stored' | 'detected' | 'user' | null
       currency, // 'inr' | 'usd'
       isInr: currency === 'inr',
+      // Basis points added to every listed price at checkout. 0 is an answer.
+      taxRateBps,
       loading,
       format: (minor) => formatMoney(minor, currency),
       // Local override for a country the SERVER has already accepted (the
@@ -98,10 +123,16 @@ export function CurrencyProvider({ children }) {
         const c = String(next || '').toUpperCase() || null;
         setCountryState(c);
         setCountrySource(c ? 'user' : null);
-        setCurrency(chargeCurrencyFor(c));
+        const nextCurrency = chargeCurrencyFor(c);
+        setCurrency(nextCurrency);
+        // An export carries no Indian GST whatever the seller's rate is, so a
+        // foreign country zeroes the rate here and now. Moving TO the domestic
+        // rail keeps the last rate /geo served: the seller's registration is
+        // not knowable locally, and /geo re-confirms it on the next load.
+        if (nextCurrency !== 'inr') setTaxRateBps(0);
       },
     }),
-    [country, countrySource, currency, loading],
+    [country, countrySource, currency, taxRateBps, loading],
   );
 
   return <CurrencyContext.Provider value={value}>{children}</CurrencyContext.Provider>;

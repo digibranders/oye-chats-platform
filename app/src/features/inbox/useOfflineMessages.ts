@@ -6,6 +6,7 @@ import {
 } from '../../services/api';
 import { type OfflineMessage } from '../../types/domain';
 import { type OfflineStatus } from './inboxHelpers';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Status filter values surfaced in the toolbar. `'all'` clears the filter. */
 export type StatusFilter = 'all' | OfflineStatus;
@@ -107,7 +108,7 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
         if (!active || token !== tokenRef.current) return;
         setMessages([]);
         setTotal(0);
-        setError(err instanceof Error ? err.message : 'Could not load your messages.');
+        setError(err instanceof Error ? err.message : translateNow('inbox.couldNotLoadYourMessages') || 'Could not load your messages.');
       } finally {
         if (active && token === tokenRef.current) setLoading(false);
       }

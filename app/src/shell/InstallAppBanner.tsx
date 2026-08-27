@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Download, Share, X } from 'lucide-react';
 import { Button } from '../design-system';
+import { useTranslation } from '../i18n/useTranslation';
 
 /** Once dismissed, stay hidden for this long so we never nag. */
 const DISMISS_KEY = 'oyechats:install_banner_dismissed_at';
@@ -54,6 +55,7 @@ export interface InstallAppBannerProps {
  * Dismissal persists for 7 days. Mounted once in {@link AppShell}.
  */
 export function InstallAppBanner({ isMobile }: InstallAppBannerProps): ReactElement | null {
+  const { t } = useTranslation();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState<boolean>(readInstalled);
   const [dismissed, setDismissed] = useState<boolean>(wasDismissedRecently);
@@ -119,7 +121,7 @@ export function InstallAppBanner({ isMobile }: InstallAppBannerProps): ReactElem
   return (
     <div
       role="region"
-      aria-label="Install OyeChats"
+      aria-label={t('settings.install.install') || 'Install OyeChats'}
       className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-[55] rounded-[var(--ds-radius-xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)] md:hidden"
     >
       <div className="flex items-center gap-3 p-3">
@@ -127,17 +129,21 @@ export function InstallAppBanner({ isMobile }: InstallAppBannerProps): ReactElem
           <Download size={18} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-[var(--ds-text)]">Install OyeChats</p>
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">
+            {t('settings.install.install') || 'Install OyeChats'}
+          </p>
           <p className="mt-0.5 text-[12px] leading-snug text-[var(--ds-text-subtle)]">
-            Add to your home screen for quick access.
+            {t('shell.installBanner.body') || 'Add to your home screen for quick access.'}
           </p>
         </div>
         <Button size="sm" onClick={() => void handleInstall()} disabled={installing}>
-          {installing ? 'Installing…' : 'Install'}
+          {installing
+            ? t('settings.install.installing') || 'Installing…'
+            : t('shell.installBanner.action') || 'Install'}
         </Button>
         <button
           type="button"
-          aria-label="Dismiss"
+          aria-label={t('common.dismiss') || 'Dismiss'}
           onClick={dismiss}
           className="-mr-0.5 shrink-0 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
         >
@@ -148,8 +154,8 @@ export function InstallAppBanner({ isMobile }: InstallAppBannerProps): ReactElem
         <p className="flex items-center gap-1.5 border-t border-[var(--ds-border)] px-3 py-2 text-[12px] text-[var(--ds-text-muted)]">
           <Share size={13} aria-hidden="true" className="shrink-0" />
           <span>
-            Tap the Share icon, then choose{' '}
-            <strong className="font-medium text-[var(--ds-text)]">Add to Home Screen</strong>.
+            {t('shell.installBanner.iosHint') ||
+              'Tap the Share icon, then choose Add to Home Screen.'}
           </span>
         </p>
       )}

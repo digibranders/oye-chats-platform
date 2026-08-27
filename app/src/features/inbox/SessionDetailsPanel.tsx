@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Building2, Globe, Link2, Mail, MapPin, Monitor, Phone, Receipt, Star, Tag, User } from 'lucide-react';
 import { Button, Skeleton, StatusBadge, Textarea } from '../../design-system';
 import { getSessionDetails } from '../../services/api';
@@ -6,6 +7,12 @@ import { useLeadAnnotations, type LeadAnnotationController } from '../leads/useL
 import type { SessionDetails } from './liveChatProtocol';
 import { relativeTime } from './liveChatHelpers';
 import { ConversationLanguageBadge } from './ConversationLanguageBadge';
+// `translateNow` inside effects and async handlers: the hook's `t` changes
+// identity per locale, so capturing it there adds a dependency that would
+// re-run a data load on every language change. The module-level function is
+// stable and still resolves against the current locale when called.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const CURRENCY_SYMBOL: Record<string, string> = {
   INR: '₹',
@@ -21,7 +28,7 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 function formatMoney(currency: string, value: number): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? currency;
   const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-  return `${symbol}${rounded.toLocaleString()}`;
+  return `${symbol}${formatNumber(rounded)}`;
 }
 
 type QuotationStatus = 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';
@@ -35,6 +42,8 @@ const QUOTATION_STATUS_TONE: Record<QuotationStatus, 'success' | 'warning' | 'ne
   idle: 'neutral',
 };
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`inbox.quotationStatus.<status>`); the English here is that lookup's fallback.
 const QUOTATION_STATUS_LABEL: Record<QuotationStatus, string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
@@ -120,6 +129,7 @@ function Field({ label, children }: { label: string; children: ReactElement }): 
  * conversations remounts this and resets the drafts - no effect needed.
  */
 function PrivateNotesSection({ controller }: { controller: LeadAnnotationController }): ReactElement {
+  const { t } = useTranslation();
   const { note, tags, saveNote, saveTags } = controller;
   const [noteDraft, setNoteDraft] = useState(note?.text ?? '');
   const [tagDraft, setTagDraft] = useState(tags.join(', '));
@@ -130,7 +140,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
   return (
     <div className="space-y-3">
       <p className="text-[12px] text-[var(--ds-text-subtle)]">
-        Only your team sees this - it stays in this browser and is shared with the Leads page for this session.
+        {t('inbox.onlyYourTeamSeesThis') || 'Only your team sees this - it stays in this browser and is shared with the Leads page for this session.'}
       </p>
 
       {/* Note editor */}
@@ -139,21 +149,24 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
           htmlFor="session-note"
           className="block text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
         >
-          Note
+          {t('inbox.note') || 'Note'}
         </label>
         <Textarea
           id="session-note"
           rows={3}
           value={noteDraft}
-          placeholder="Add context for your team - next steps, who to loop in…"
+          placeholder={t('inbox.addContextForYourTeam') || 'Add context for your team - next steps, who to loop in…'}
           onChange={(event) => setNoteDraft(event.target.value)}
         />
         <div className="flex items-center justify-between gap-2">
           <span className="text-[11px] text-[var(--ds-text-subtle)]">
-            {note ? `Last edited ${relativeTime(note.ts)} ago` : 'Not saved yet'}
+            {note
+            ? t('inbox.lastEditedAgo', { when: relativeTime(note.ts) }) ||
+              `Last edited ${relativeTime(note.ts)} ago`
+            : t('inbox.notSavedYet') || 'Not saved yet'}
           </span>
           <Button size="sm" variant="outline" onClick={() => saveNote(noteDraft)} disabled={!noteChanged}>
-            Save note
+            {t('inbox.saveNote') || 'Save note'}
           </Button>
         </div>
       </div>
@@ -165,10 +178,10 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
           className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
         >
           <Tag size={12} aria-hidden="true" />
-          Tags
+          {t('inbox.tags') || 'Tags'}
         </label>
         {tags.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5" aria-label="Saved tags">
+          <ul className="flex flex-wrap gap-1.5" aria-label={t('inbox.savedTags') || 'Saved tags'}>
             {tags.map((tag) => (
               <li
                 key={tag}
@@ -183,7 +196,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
           id="session-tags"
           type="text"
           value={tagDraft}
-          placeholder="e.g. enterprise, follow-up, demo-requested"
+          placeholder={t('inbox.eGEnterpriseFollowUp') || 'e.g. enterprise, follow-up, demo-requested'}
           onChange={(event) => setTagDraft(event.target.value)}
           onBlur={() => {
             if (tagsChanged) saveTags(tagDraft);
@@ -197,9 +210,9 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
           className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
         />
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-[var(--ds-text-subtle)]">Separate tags with commas</span>
+          <span className="text-[11px] text-[var(--ds-text-subtle)]">{t('inbox.separateTagsWithCommas') || 'Separate tags with commas'}</span>
           <Button size="sm" variant="outline" onClick={() => saveTags(tagDraft)} disabled={!tagsChanged}>
-            Save tags
+            {t('inbox.saveTags') || 'Save tags'}
           </Button>
         </div>
       </div>
@@ -213,6 +226,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
  * live chat via `getSessionDetails`.
  */
 export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): ReactElement {
+  const { t } = useTranslation();
   const [details, setDetails] = useState<SessionDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -234,7 +248,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
       })
       .catch(() => {
         if (!active) return;
-        setError('Couldn’t load visitor details.');
+        setError(translateNow('inbox.couldntLoadVisitorDetails') || 'Couldn’t load visitor details.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -256,7 +270,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
   }
 
   if (error || !details) {
-    return <div className="p-4 text-[13px] text-[var(--ds-text-muted)]">{error ?? 'No details available.'}</div>;
+    return <div className="p-4 text-[13px] text-[var(--ds-text-muted)]">{error ?? (t('inbox.noDetailsAvailable') || 'No details available.')}</div>;
   }
 
   const lead = details.lead_info;
@@ -282,9 +296,9 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
 
   return (
     <div className="space-y-5 overflow-y-auto p-4">
-      <Field label="Visitor">
+      <Field label={t('inbox.visitor') || 'Visitor'}>
         <div className="space-y-1.5">
-          <Row icon={<User size={14} />} value={lead?.name || 'Anonymous'} />
+          <Row icon={<User size={14} />} value={lead?.name || t('inbox.anonymous') || 'Anonymous'} />
           {lead?.email && <Row icon={<Mail size={14} />} value={lead.email} />}
           {lead?.phone && <Row icon={<Phone size={14} />} value={lead.phone} />}
           {lead?.company && <Row icon={<Building2 size={14} />} value={lead.company} />}
@@ -292,8 +306,11 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
       </Field>
 
       {typeof details.visitor_rating === 'number' && (
-        <Field label="Satisfaction">
-          <div className="flex items-center gap-1" aria-label={`Rated ${details.visitor_rating} out of 5`}>
+        <Field label={t('inbox.satisfaction') || 'Satisfaction'}>
+          <div className="flex items-center gap-1" aria-label={
+                t('inbox.ratedOutOfFive', { rating: details.visitor_rating }) ||
+                `Rated ${details.visitor_rating} out of 5`
+              }>
             {[1, 2, 3, 4, 5].map((n) => (
               <Star
                 key={n}
@@ -311,7 +328,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
         </Field>
       )}
 
-      <Field label="Context">
+      <Field label={t('inbox.context') || 'Context'}>
         <div className="space-y-1.5">
           {details.location && <Row icon={<MapPin size={14} />} value={details.location} />}
           {details.device && <Row icon={<Monitor size={14} />} value={details.device} />}
@@ -323,14 +340,17 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
             {details.bot_name && <StatusBadge tone="neutral">{details.bot_name}</StatusBadge>}
             {details.department_name && <StatusBadge tone="neutral">{details.department_name}</StatusBadge>}
             {typeof details.message_count === 'number' && (
-              <StatusBadge tone="neutral">{details.message_count} messages</StatusBadge>
+              <StatusBadge tone="neutral">
+                  {t('inbox.messageCount', { count: details.message_count }) ||
+                    `${details.message_count} messages`}
+                </StatusBadge>
             )}
           </div>
         </div>
       </Field>
 
       {bantEntries.length > 0 && (
-        <Field label="Qualification">
+        <Field label={t('inbox.qualification') || 'Qualification'}>
           <div className="space-y-2">
             {bantEntries.map(([dim, value]) => (
               <div key={dim}>
@@ -343,10 +363,12 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
       )}
 
       {details.quotation && (
-        <Field label="Quotation">
+        <Field label={t('inbox.quotation') || 'Quotation'}>
           <div className="space-y-3">
             <StatusBadge tone={QUOTATION_STATUS_TONE[details.quotation.status as QuotationStatus] ?? 'neutral'}>
-              {QUOTATION_STATUS_LABEL[details.quotation.status as QuotationStatus] ?? details.quotation.status}
+              {t(`inbox.quotationStatus.${details.quotation.status}`) ||
+                QUOTATION_STATUS_LABEL[details.quotation.status as QuotationStatus] ||
+                details.quotation.status}
             </StatusBadge>
             {details.quotation.line_items.length > 0 ? (
               <>
@@ -381,7 +403,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
                 <div className="flex items-center justify-between rounded-md bg-[var(--ds-bg-sunken)] px-2.5 py-2">
                   <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--ds-text-subtle)]">
                     <Receipt size={12} aria-hidden="true" />
-                    Estimated total
+                    {t('inbox.estimatedTotal') || 'Estimated total'}
                   </span>
                   <span className="text-[14px] font-semibold text-[var(--ds-text)]">
                     {formatMoney(details.quotation.currency, details.quotation.total)}
@@ -391,24 +413,30 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
             ) : (
               <p className="text-[12px] text-[var(--ds-text-subtle)]">
                 {details.quotation.status === 'skipped'
-                  ? 'The visitor skipped the quotation flow.'
-                  : 'The visitor started but did not finish a quote.'}
+                  ? t('inbox.theVisitorSkippedTheQuotation') || 'The visitor skipped the quotation flow.'
+                  : t('inbox.theVisitorStartedButDid') || 'The visitor started but did not finish a quote.'}
               </p>
             )}
           </div>
         </Field>
       )}
 
-      <Field label="Conversation">
+      <Field label={t('inbox.conversation') || 'Conversation'}>
         <div className="space-y-1 text-[12px] text-[var(--ds-text-muted)]">
-          {details.created_at && <p>Started {relativeTime(details.created_at)} ago</p>}
-          {details.last_active_at && <p>Last active {relativeTime(details.last_active_at)} ago</p>}
-          {details.operator_name && <p>Handled by {details.operator_name}</p>}
+          {details.created_at && (
+            <p>{t('inbox.startedAgo', { time: relativeTime(details.created_at) }) || `Started ${relativeTime(details.created_at)} ago`}</p>
+          )}
+          {details.last_active_at && (
+            <p>{t('inbox.lastActiveAgo', { time: relativeTime(details.last_active_at) }) || `Last active ${relativeTime(details.last_active_at)} ago`}</p>
+          )}
+          {details.operator_name && (
+            <p>{t('inbox.handledBy', { name: details.operator_name }) || `Handled by ${details.operator_name}`}</p>
+          )}
         </div>
       </Field>
 
       {controller && (
-        <Field label="Private notes">
+        <Field label={t('inbox.privateNotes') || 'Private notes'}>
           <PrivateNotesSection key={sessionId} controller={controller} />
         </Field>
       )}

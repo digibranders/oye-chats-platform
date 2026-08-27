@@ -39,6 +39,17 @@ export interface LocaleEntry {
    * The language picker offers only the true ones.
    */
   uiTranslated: boolean;
+  /**
+   * Whether the ADMIN DASHBOARD's own interface is translated into this
+   * language (Phase 7).
+   *
+   * Deliberately NOT `uiTranslated`, which describes the chat widget. The two
+   * surfaces ship different dictionaries and can reach a language at different
+   * times, so reusing one flag would offer a language the other renders in
+   * English. `api/tests/test_admin_ui_languages_contract.py` holds the pair
+   * apart on the backend side.
+   */
+  adminUiTranslated: boolean;
 }
 
 export interface LocaleCatalog {
@@ -121,6 +132,22 @@ export function isUiTranslated(locale: string | null | undefined): boolean {
   return base ? snapshot.locales.some((e) => e.code === base && e.uiTranslated) : false;
 }
 
+/**
+ * Whether the dashboard itself is translated into this locale.
+ *
+ * Gates the Settings language selector, exactly as {@link isUiTranslated}
+ * gates the widget's. Unknown tags return false: an unrecognised locale
+ * certainly has no dictionary.
+ */
+export function isAdminUiTranslated(locale: string | null | undefined): boolean {
+  if (!locale || typeof locale !== 'string') return false;
+  const normalized = locale.trim().replace(/_/g, '-').toLowerCase();
+  const match = snapshot.locales.find((entry) => entry.locale.toLowerCase() === normalized);
+  if (match) return match.adminUiTranslated;
+  const base = baseLanguage(locale);
+  return base ? snapshot.locales.some((e) => e.code === base && e.adminUiTranslated) : false;
+}
+
 /** Text direction for a locale or bare language code. */
 export function directionForLocale(locale: string | null | undefined): 'ltr' | 'rtl' {
   if (!locale || typeof locale !== 'string') return 'ltr';
@@ -166,6 +193,11 @@ function parseLocale(value: unknown): LocaleEntry | null {
     // seconds a deploy is in flight. Failing OPEN there shows the full list
     // briefly; failing closed would empty the picker and read as broken.
     uiTranslated: typeof row.ui_translated === 'boolean' ? row.ui_translated : true,
+    // Absent means an API older than the field. Fails CLOSED, unlike
+    // `uiTranslated` above: offering a dashboard language that turns out to
+    // have no dictionary produces a half-translated console, whereas briefly
+    // offering one language too few is invisible.
+    adminUiTranslated: typeof row.admin_ui_translated === 'boolean' ? row.admin_ui_translated : false,
   };
 }
 

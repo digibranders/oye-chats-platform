@@ -1,6 +1,9 @@
 import type { CSSProperties, ReactElement } from 'react';
 import { Progress } from '../primitives/Progress';
 import { cn } from '../lib/cn';
+import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
 
 /** Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`. */
 const UNLIMITED = -1;
@@ -28,6 +31,7 @@ export interface QuotaMeterProps {
  * note so the red reads as a clear signal, never a broken-looking slab.
  */
 export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): ReactElement {
+  const { t } = useTranslation();
   const isUnlimited = limit === UNLIMITED;
   const hasLimit = !isUnlimited && limit > 0;
   const percent = hasLimit ? Math.min(100, (used / limit) * 100) : 0;
@@ -48,20 +52,36 @@ export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): 
         <span className="font-medium text-[var(--ds-text)]">{label}</span>
         <span className={cn('font-medium tabular-nums', valueTone)}>
           {isUnlimited
-            ? `${used.toLocaleString()} used`
-            : `${used.toLocaleString()} / ${limit.toLocaleString()}`}
+            ? translateNow('ds.quota.usedCount', { count: formatNumber(used) }) ||
+              `${formatNumber(used)} used`
+            : `${formatNumber(used)} / ${formatNumber(limit)}`}
         </span>
       </div>
       {isUnlimited ? (
-        <p className="text-[11px] font-medium text-[var(--ds-success)]">Unlimited</p>
+        <p className="text-[11px] font-medium text-[var(--ds-success)]">
+          {t('ds.quota.unlimited') || 'Unlimited'}
+        </p>
       ) : (
         <div style={fillOverride}>
-          <Progress value={percent} label={`${label}: ${used} of ${limit} used`} />
+          <Progress
+              value={percent}
+              label={
+                translateNow('ds.quota.meterLabel', {
+                  label,
+                  used: formatNumber(used),
+                  limit: formatNumber(limit),
+                }) || `${label}: ${formatNumber(used)} of ${formatNumber(limit)} used`
+              }
+            />
         </div>
       )}
       {over && (
         <p className="text-[11px] font-medium text-[var(--ds-danger)]">
-          Over by {(used - limit).toLocaleString()}
+          {/* `toLocaleString()` with no argument follows the BROWSER's locale,
+              not the dashboard's, so the number could disagree with the language
+              around it. Routed through the shared formatter. */}
+          {t('ds.quota.overByCount', { count: formatNumber(used - limit) }) ||
+            `Over by ${formatNumber(used - limit)}`}
         </p>
       )}
     </div>

@@ -15,6 +15,8 @@
  * TODO(multi-currency): switch the price source once the USD rail ships.
  */
 
+import { formatCurrency, formatDate as i18nFormatDate, formatNumber } from '../../i18n/formatters';
+
 /**
  * Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`.
  * Plan rows serialize it raw (`included_operator_seats: -1`, `limits.bots: -1`),
@@ -425,20 +427,20 @@ export function formatMoneyMinor(minorUnits: number, currency = 'INR'): string {
   const major = minorUnits / 100;
   const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : 'INR';
   try {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: safeCurrency,
+    // `safeCurrency` is a real ISO code carried by the data; a workspace billed
+    // in INR is billed in INR whatever language the dashboard is read in.
+    return formatCurrency(major, safeCurrency, {
       minimumFractionDigits: Number.isInteger(major) ? 0 : 2,
       maximumFractionDigits: 2,
-    }).format(major);
+    });
   } catch {
     // Unknown currency code → fall back to a plain number with the code.
-    return `${safeCurrency} ${major.toLocaleString('en-IN')}`;
+    return `${safeCurrency} ${formatNumber(major)}`;
   }
 }
 
 export function formatCredits(count: number): string {
-  return count.toLocaleString('en-IN');
+  return formatNumber(count);
 }
 
 /**
@@ -543,7 +545,7 @@ export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return i18nFormatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export interface RenewalDisplay {

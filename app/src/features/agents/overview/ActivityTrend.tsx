@@ -2,6 +2,8 @@ import { useMemo, type ReactElement } from 'react';
 import { Activity } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type ActivityPoint } from '../../../types/domain';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { formatDate, formatNumber } from '../../../i18n/formatters';
 
 /**
  * Formats a backend day string as a short "Mon 5" label; falls back to raw.
@@ -17,7 +19,7 @@ function formatDayLabel(date: string): string {
     ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
     : new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
-  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDate(parsed, { month: 'short', day: 'numeric', year: undefined });
 }
 
 export interface ActivityTrendProps {
@@ -32,6 +34,7 @@ export interface ActivityTrendProps {
  * native tooltip. Renders an empty state when there's no traffic yet.
  */
 export function ActivityTrend({ points, className }: ActivityTrendProps): ReactElement {
+  const { t } = useTranslation();
   const { maxMessages, total } = useMemo(() => {
     let max = 0;
     let sum = 0;
@@ -48,19 +51,28 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
       <Card className={cn('p-6', className)}>
         <EmptyState
           icon={Activity}
-          title="No activity yet"
-          description="Once visitors start chatting with your AI, daily message volume will appear here."
+          title={t('agents.noActivityYet') || 'No activity yet'}
+          description={t('agents.onceVisitorsStartChattingWith') || 'Once visitors start chatting with your AI, daily message volume will appear here.'}
         />
       </Card>
     );
   }
 
+  const messageLabel =
+    t(total === 1 ? 'agents.messageOne' : 'agents.messageMany', { count: formatNumber(total) }) ||
+    `${formatNumber(total)} message${total === 1 ? '' : 's'}`;
+  const dayLabel =
+    t(points.length === 1 ? 'agents.dayOne' : 'agents.dayMany', {
+      count: formatNumber(points.length),
+    }) || `${formatNumber(points.length)} day${points.length === 1 ? '' : 's'}`;
+
   return (
     <Card className={cn('p-6', className)}>
       <figure
-        aria-label={`Message activity: ${total.toLocaleString()} ${
-          total === 1 ? 'message' : 'messages'
-        } over the last ${points.length} ${points.length === 1 ? 'day' : 'days'}.`}
+        aria-label={
+          t('agents.activityChartSummary', { messages: messageLabel, days: dayLabel }) ||
+          `Message activity: ${messageLabel} over the last ${dayLabel}.`
+        }
       >
         <div className="flex h-40 items-end gap-1.5" role="presentation">
           {points.map((point) => {
@@ -73,7 +85,7 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
                 <div
                   className="w-full rounded-t-sm bg-[var(--ds-accent)] transition-[height]"
                   style={{ height: `${heightPct}%` }}
-                  title={`${dayLabel}: ${value.toLocaleString()} ${value === 1 ? 'message' : 'messages'}`}
+                  title={`${dayLabel}: ${formatNumber(value)} ${value === 1 ? 'message' : 'messages'}`}
                 />
               </div>
             );
@@ -87,18 +99,18 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
             native bar tooltips carry, surfaced to keyboard and screen-reader
             users who can't hover. */}
         <table className="sr-only">
-          <caption>Daily message volume</caption>
+          <caption>{t('agents.dailyMessageVolume') || 'Daily message volume'}</caption>
           <thead>
             <tr>
-              <th scope="col">Day</th>
-              <th scope="col">Messages</th>
+              <th scope="col">{t('agents.day') || 'Day'}</th>
+              <th scope="col">{t('agents.messages') || 'Messages'}</th>
             </tr>
           </thead>
           <tbody>
             {points.map((point) => (
               <tr key={point.date}>
                 <td>{formatDayLabel(point.date)}</td>
-                <td>{(point.messages ?? 0).toLocaleString()}</td>
+                <td>{formatNumber((point.messages ?? 0))}</td>
               </tr>
             ))}
           </tbody>

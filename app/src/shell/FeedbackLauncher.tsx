@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * FeedbackLauncher - the right-edge "Feedback" tab (desktop-only) that opens
@@ -14,6 +15,7 @@ import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
  * gradient/glow (the mandate forbids purple overload and giant gradients).
  */
 export function FeedbackLauncher(): ReactElement {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -52,8 +54,8 @@ export function FeedbackLauncher(): ReactElement {
       <button
         type="button"
         onClick={openLauncher}
-        aria-label="Send feedback"
-        title="Send feedback"
+        aria-label={t('shell.feedback.send') || 'Send feedback'}
+        title={t('shell.feedback.send') || 'Send feedback'}
         className="fixed right-0 top-1/2 z-40 hidden w-11 -translate-y-1/2 flex-col items-center justify-center gap-3.5 rounded-l-[var(--ds-radius-lg)] bg-[var(--ds-accent)] py-6 text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-md)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] md:flex"
       >
         <MessageCircle size={18} aria-hidden="true" />
@@ -61,7 +63,7 @@ export function FeedbackLauncher(): ReactElement {
           className="select-none whitespace-nowrap text-[13px] font-semibold tracking-[0.08em]"
           style={{ writingMode: 'vertical-lr', transform: 'rotate(360deg)' }}
         >
-          Feedback
+          {t('shell.feedback.label') || 'Feedback'}
         </span>
       </button>
 

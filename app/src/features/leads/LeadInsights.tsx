@@ -15,9 +15,15 @@
  *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { formatDate, formatNumber } from '../../i18n/formatters';
 import { Activity, Compass, Maximize2, Receipt } from 'lucide-react';
 import { Modal, StatusBadge, cn } from '../../design-system';
 import { type LeadDetail } from './useLeadDetail';
+// `translateNow` in pure helpers: these are not components, so a hook is
+// illegal here. The module-level function is stable and resolves against the
+// active locale at call time, which is what these need.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const CURRENCY_SYMBOL: Record<string, string> = {
   INR: '₹',
@@ -33,7 +39,7 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 function formatMoney(currency: string, value: number): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? currency;
   const rounded = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-  return `${symbol}${rounded.toLocaleString()}`;
+  return `${symbol}${formatNumber(rounded)}`;
 }
 
 interface QuotationLineItem {
@@ -64,6 +70,8 @@ const QUOTATION_STATUS_TONE: Record<QuotationSummary['status'], 'success' | 'war
   idle: 'neutral',
 };
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`leads.quotationStatus.<status>`); the English here is that lookup's fallback.
 const QUOTATION_STATUS_LABEL: Record<QuotationSummary['status'], string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
@@ -80,20 +88,24 @@ const QUOTATION_STATUS_LABEL: Record<QuotationSummary['status'], string> = {
  * call with the visitor's stated scope in front of them.
  */
 function QuotationSummarySection({ detail }: { detail: LeadDetail }): ReactElement | null {
+  const { t } = useTranslation();
   const quotation = (detail as unknown as { quotation?: QuotationSummary }).quotation ?? null;
   const hasQuote = Boolean(quotation && quotation.line_items && quotation.line_items.length > 0);
   const explicitlyEnded = quotation && (quotation.status === 'skipped' || quotation.status === 'complete');
   if (!quotation || (!hasQuote && !explicitlyEnded)) return null;
 
   const tone = QUOTATION_STATUS_TONE[quotation.status] ?? 'neutral';
-  const label = QUOTATION_STATUS_LABEL[quotation.status] ?? quotation.status;
+  const label =
+    t(`leads.quotationStatus.${quotation.status}`) ||
+    QUOTATION_STATUS_LABEL[quotation.status] ||
+    quotation.status;
 
   return (
     <section className="space-y-3">
       <header className="flex items-center justify-between gap-2">
         <h4 className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--ds-text)]">
           <Receipt size={14} aria-hidden="true" className="text-[var(--ds-accent)]" />
-          Quotation
+          {t('leads.quotation') || 'Quotation'}
         </h4>
         <StatusBadge tone={tone}>{label}</StatusBadge>
       </header>
@@ -129,7 +141,7 @@ function QuotationSummarySection({ detail }: { detail: LeadDetail }): ReactEleme
           </ul>
           <div className="flex items-center justify-between rounded-md bg-[var(--ds-bg-sunken)] px-3 py-2">
             <span className="text-[11px] uppercase tracking-wider text-[var(--ds-text-subtle)]">
-              Estimated total
+              {t('leads.estimatedTotal') || 'Estimated total'}
             </span>
             <span className="text-[15px] font-semibold text-[var(--ds-text)]">
               {formatMoney(quotation.currency, quotation.total)}
@@ -138,7 +150,7 @@ function QuotationSummarySection({ detail }: { detail: LeadDetail }): ReactEleme
         </>
       ) : (
         <p className="rounded-md border border-dashed border-[var(--ds-border)] p-3 text-[12px] text-[var(--ds-text-subtle)]">
-          The visitor {quotation.status === 'skipped' ? 'skipped the quotation flow' : 'started but did not complete a quote'}.
+          {t('leads.theVisitor') || 'The visitor'} {quotation.status === 'skipped' ? 'skipped the quotation flow' : 'started but did not complete a quote'}.
         </p>
       )}
     </section>
@@ -211,9 +223,9 @@ interface JourneyGroup {
 
 /** A friendly day bucket for a journey timestamp ("Today" / "Yesterday" / date). */
 function dayBucket(ts: string | null): { key: string; label: string } {
-  if (!ts) return { key: 'unknown', label: 'Unknown date' };
+  if (!ts) return { key: 'unknown', label: translateNow('leads.unknownDate') || 'Unknown date' };
   const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return { key: 'unknown', label: 'Unknown date' };
+  if (Number.isNaN(d.getTime())) return { key: 'unknown', label: translateNow('leads.unknownDate') || 'Unknown date' };
   const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   const today = new Date();
   const yesterday = new Date(today);
@@ -223,10 +235,10 @@ function dayBucket(ts: string | null): { key: string; label: string } {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
   const label = sameDay(d, today)
-    ? 'Today'
+    ? translateNow('leads.today') || 'Today'
     : sameDay(d, yesterday)
-      ? 'Yesterday'
-      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      ? translateNow('leads.yesterday') || 'Yesterday'
+      : formatDate(d, { day: 'numeric', month: 'short', year: 'numeric' });
   return { key, label };
 }
 
@@ -292,7 +304,7 @@ function JourneyList({
                   <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
                   {row.isLast ? (
                     <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
-                      opened chat here
+                      {translateNow('leads.openedChatHere') || 'opened chat here'}
                     </span>
                   ) : row.durationLabel ? (
                     <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">
@@ -332,6 +344,7 @@ function AttrRow({ label, value }: { label: string; value: string }): ReactEleme
 // ── Sections ─────────────────────────────────────────────────────────────────
 
 function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | null {
+  const { t } = useTranslation();
   const [journeyOpen, setJourneyOpen] = useState(false);
   const source = asRecord(detail.source);
   // `source` is only attached on eligible plans - absent means "not available".
@@ -353,9 +366,9 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
   if (!hasAttribution) {
     return (
       <section className="space-y-3">
-        <SectionTitle icon={Compass}>Source</SectionTitle>
+        <SectionTitle icon={Compass}>{t('leads.source') || 'Source'}</SectionTitle>
         <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-muted)]">
-          Direct / Organic - no UTM tags or referrer were captured for this visitor.
+          {t('leads.directOrganicNoUtmTags') || 'Direct / Organic - no UTM tags or referrer were captured for this visitor.'}
         </p>
       </section>
     );
@@ -366,7 +379,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <SectionTitle icon={Compass}>Source</SectionTitle>
+        <SectionTitle icon={Compass}>{t('leads.source') || 'Source'}</SectionTitle>
         {utmSource && (
           <StatusBadge tone="info" className="capitalize">
             {utmSource}
@@ -375,24 +388,29 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
       </div>
 
       <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-        {utmCampaign && <AttrRow label="Campaign" value={utmCampaign} />}
-        {utmMedium && <AttrRow label="Medium" value={utmMedium} />}
-        {adDetail && <AttrRow label="Ad detail" value={adDetail} />}
-        {referrer && <AttrRow label="Referrer" value={truncate(referrer)} />}
-        {landing && <AttrRow label="Landed on" value={truncate(landing)} />}
+        {utmCampaign && <AttrRow label={t('leads.campaign') || 'Campaign'} value={utmCampaign} />}
+        {utmMedium && <AttrRow label={t('leads.medium') || 'Medium'} value={utmMedium} />}
+        {adDetail && <AttrRow label={t('leads.adDetail') || 'Ad detail'} value={adDetail} />}
+        {referrer && <AttrRow label={t('leads.referrer') || 'Referrer'} value={truncate(referrer)} />}
+        {landing && <AttrRow label={t('leads.landedOn') || 'Landed on'} value={truncate(landing)} />}
       </div>
 
       {rows.length > 0 && (
         <div className="rounded-xl border border-[var(--ds-border)] p-4">
           <div className="mb-2.5 flex items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-              Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
+              {t(
+                rows.length === 1
+                  ? 'leads.journeyBeforeChatCountOne'
+                  : 'leads.journeyBeforeChatCountMany',
+                { count: rows.length },
+              ) || `Journey before chat · ${rows.length} pages`}
             </p>
             <button
               type="button"
               onClick={() => setJourneyOpen(true)}
-              aria-label="Maximise journey"
-              title="Maximise journey"
+              aria-label={t('leads.maximiseJourney') || 'Maximise journey'}
+              title={t('leads.maximiseJourney') || 'Maximise journey'}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <Maximize2 size={14} aria-hidden="true" />
@@ -406,8 +424,12 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
         <Modal
           open
           onClose={() => setJourneyOpen(false)}
-          title="Journey before chat"
-          description={`${rows.length} ${rows.length === 1 ? 'page' : 'pages'} visited before this visitor opened the chat`}
+          title={t('leads.journeyBeforeChat') || 'Journey before chat'}
+          description={
+            t(rows.length === 1 ? 'leads.pagesBeforeChatOne' : 'leads.pagesBeforeChatMany', {
+              count: rows.length,
+            }) || `${rows.length} pages visited before this visitor opened the chat`
+          }
           size="lg"
         >
           <JourneyList rows={rows} maxHeightClass="max-h-[65vh]" />
@@ -419,12 +441,13 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
 
 /** Map the raw 0 to 20 engagement score to a plain-language tier + badge tone. */
 function engagementTier(score: number): { label: string; tone: 'success' | 'info' | 'neutral' } {
-  if (score >= 15) return { label: 'High engagement', tone: 'success' };
-  if (score >= 8) return { label: 'Medium engagement', tone: 'info' };
-  return { label: 'Low engagement', tone: 'neutral' };
+  if (score >= 15) return { label: translateNow('leads.highEngagement') || 'High engagement', tone: 'success' };
+  if (score >= 8) return { label: translateNow('leads.mediumEngagement') || 'Medium engagement', tone: 'info' };
+  return { label: translateNow('leads.lowEngagement') || 'Low engagement', tone: 'neutral' };
 }
 
 function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | null {
+  const { t } = useTranslation();
   const score = detail.behavioral_score ?? 0;
   const behavioral = asRecord(detail.behavioral);
   const visitCount = Number(behavioral.visit_count) || 0;
@@ -437,18 +460,20 @@ function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | n
 
   return (
     <section className="space-y-3">
-      <SectionTitle icon={Activity}>Behavioural signals</SectionTitle>
+      <SectionTitle icon={Activity}>{t('leads.behaviouralSignals') || 'Behavioural signals'}</SectionTitle>
       <div className="space-y-2.5 rounded-xl border border-[var(--ds-border)] p-4">
         {tier && (
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[var(--ds-text)]">Engagement</span>
+            <span className="text-[12px] font-medium text-[var(--ds-text)]">{t('leads.engagement') || 'Engagement'}</span>
             <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>
           </div>
         )}
         {visitCount > 1 && (
           <div className="flex items-center justify-between text-[12px]">
-            <span className="font-medium text-[var(--ds-text)]">Return visitor</span>
-            <span className="text-[var(--ds-text)]">{visitCount} visits</span>
+            <span className="font-medium text-[var(--ds-text)]">{t('leads.returnVisitor') || 'Return visitor'}</span>
+            <span className="text-[var(--ds-text)]">
+            {t('leads.visitCount', { count: visitCount }) || `${visitCount} visits`}
+          </span>
           </div>
         )}
       </div>

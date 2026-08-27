@@ -275,3 +275,34 @@ def test_suspension_url_is_none_when_the_gateway_is_unreachable(db, monkeypatch)
     sub = _past_due_sub(db, days_ago=99, email="nourl@test.dev")
 
     assert tasks._suspension_recovery_url(sub) is None
+
+
+def test_the_quoted_amount_is_the_gross_that_was_actually_debited(db, monkeypatch):
+    """Prices are published exclusive of GST, so the base is not what failed.
+
+    Telling a customer "the ₹9,108 charge didn't go through" when ₹10,747.44
+    left their account is the same class of error as quoting the monthly figure
+    to an annual subscriber, in the one email that has to look credible.
+    """
+    from app.worker import tasks
+
+    seen: dict = {}
+    monkeypatch.setattr(
+        "app.services.email_service.send_payment_failed_email",
+        lambda to, **kw: seen.update(kw) or True,
+    )
+    # ``charge_tax_rate_bps`` returns 0 for an unregistered seller (no GSTIN),
+    # which is what this test database has. Pin the live 18% so the assertion
+    # below tests the uplift rather than an unconfigured no-op.
+    monkeypatch.setattr("app.services.seller_profile_service.charge_tax_rate_bps", lambda _s: 1800)
+    sub = _past_due_sub(db, days_ago=0, email="gross-amount@test.dev")
+    sub.billing_cycle = "annual"
+    sub.plan.annual_price_cents = 910800
+    db.flush()
+
+    tasks._run_dunning_cycle(db)
+
+    # ₹9,108 base + 18% GST = ₹10,747.44 debited.
+    assert "10,747.44" in seen["amount"], seen["amount"]
+    # The base is still named, so the figure reconciles against the plan row.
+    assert "9,108" in seen["amount"], seen["amount"]

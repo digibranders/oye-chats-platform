@@ -1,4 +1,5 @@
 import { type ReactElement } from 'react';
+import { formatDate } from '../../i18n/formatters';
 import { NavLink, Outlet } from 'react-router-dom';
 import { Bot as BotIcon, Lock } from 'lucide-react';
 import { AgentProvider, useAgent } from '../../context/AgentContext';
@@ -6,6 +7,8 @@ import { BotAvatar, Skeleton, cn } from '../../design-system';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import type { UpgradeIntentKey } from '../../context/upgradeIntents';
+import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 interface AgentTab {
   /** URL segment under `/agents/:agentId/`. */
@@ -31,6 +34,8 @@ interface AgentTab {
  * timing, developer access) - all paid features - so it's Free-plan-gated as
  * a whole via `gateIntent: 'advanced_settings'`.
  */
+// @i18n-exempt: resolved at the render site from the tab path
+// (`agents.tab.<path>`); the English here is that lookup's fallback.
 const AGENT_TABS: readonly AgentTab[] = [
   { path: 'overview', label: 'Overview' },
   { path: 'knowledge', label: 'Knowledge' },
@@ -60,7 +65,7 @@ function LockedTab({ label, onClick }: LockedTabProps): ReactElement {
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label}. Upgrade to unlock`}
+      aria-label={translateNow('agents.upgradeToUnlockTab', { tab: label }) || `${label}. Upgrade to unlock`}
       className={cn(
         TAB_BASE_CLASS,
         'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
@@ -77,7 +82,7 @@ function formatCreatedDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed).toLocaleDateString('en-US', {
+  return formatDate(new Date(parsed), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -91,6 +96,7 @@ function formatCreatedDate(iso: string | null | undefined): string | null {
  * lives in AgentContext.
  */
 function AgentShell(): ReactElement {
+  const { t } = useTranslation();
   const { agent, agentId, loading, error } = useAgent();
   const createdDate = agent ? formatCreatedDate(agent.created_at) : null;
   // Free-plan tab gating. `loading` guards the initial entitlements fetch (which
@@ -123,7 +129,11 @@ function AgentShell(): ReactElement {
               </h1>
               {(createdDate || agent.website) && (
                 <div className="flex items-center gap-1.5 truncate text-[12px] text-[var(--ds-text-subtle)]">
-                  {createdDate && <span className="whitespace-nowrap">Created {createdDate}</span>}
+                  {createdDate && (
+                    <span className="whitespace-nowrap">
+                      {t('agents.createdOn', { date: createdDate }) || `Created ${createdDate}`}
+                    </span>
+                  )}
                   {createdDate && agent.website && <span aria-hidden="true">•</span>}
                   {agent.website && <span className="truncate">{agent.website}</span>}
                 </div>
@@ -131,14 +141,14 @@ function AgentShell(): ReactElement {
             </div>
           ) : (
             <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
-              {error ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
+              {error ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
             </h1>
           )}
         </div>
 
         {/* Tab row - real nav semantics so screen readers announce the section
             list; NavLink stamps aria-current="page" on the active tab. */}
-        <nav aria-label="Chatbot sections" className="mt-5 -mb-px overflow-x-auto">
+        <nav aria-label={t('agents.chatbotSections') || 'Chatbot sections'} className="mt-5 -mb-px overflow-x-auto">
           <ul className="flex min-w-max items-center gap-1">
             {AGENT_TABS.map((tab) => {
               const locked =
@@ -147,7 +157,7 @@ function AgentShell(): ReactElement {
                 <li key={tab.path}>
                   {locked ? (
                     <LockedTab
-                      label={tab.label}
+                      label={t(`agents.tab.${tab.path}`) || tab.label}
                       onClick={() => openUpgradeModal(tab.gateIntent!)}
                     />
                   ) : (
@@ -162,7 +172,7 @@ function AgentShell(): ReactElement {
                         )
                       }
                     >
-                      {tab.label}
+                      {t(`agents.tab.${tab.path}`) || tab.label}
                     </NavLink>
                   )}
                 </li>

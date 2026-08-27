@@ -198,8 +198,15 @@ def seat_price(
 EMANDATE_AFA_CEILING_MINOR = 1_500_000
 
 
-def emandate_warning(amount_minor: int | None, currency: str | None) -> str | None:
+def emandate_warning(amount_minor: int | None, currency: str | None, *, rate_bps: int) -> str | None:
     """Warn when a per-charge amount would forfeit AFA-exempt auto-debit.
+
+    ``amount_minor`` is the BASE price as stored on the plan row. The ceiling
+    applies to what is actually DEBITED, and prices are published exclusive of
+    GST, so the tax is added here rather than at the call sites: a caller that
+    passed the base would test a number 18% below the one RBI cares about and
+    wave through a mandate that breaches the ceiling. ``rate_bps`` is required,
+    not defaulted, so adding a third caller forces the question.
 
     Deliberately a WARNING, not a hard block: pricing above the ceiling is a
     legitimate business decision (an enterprise tier may accept per-renewal
@@ -220,15 +227,18 @@ def emandate_warning(amount_minor: int | None, currency: str | None) -> str | No
     so the FX-converted test lands with the USD rail once Razorpay confirms how
     the ceiling applies to foreign-issued cards.
     """
+    from app.core.tax import gross_charge_minor
+
     if (currency or "INR").upper() != "INR":
         return None
-    if int(amount_minor or 0) <= EMANDATE_AFA_CEILING_MINOR:
+    charged_minor = gross_charge_minor(int(amount_minor or 0), rate_bps=rate_bps, kind="intra")
+    if charged_minor <= EMANDATE_AFA_CEILING_MINOR:
         return None
     return (
-        f"₹{int(amount_minor) / 100:,.0f} per charge exceeds the RBI e-mandate AFA-exempt "
-        f"ceiling of ₹{EMANDATE_AFA_CEILING_MINOR / 100:,.0f}. Auto-debit will require the "
-        f"customer to authenticate every renewal. Consider monthly billing or invoice-based "
-        f"collection for this tier."
+        f"₹{charged_minor / 100:,.0f} per charge (₹{int(amount_minor or 0) / 100:,.0f} plus GST) "
+        f"exceeds the RBI e-mandate AFA-exempt ceiling of ₹{EMANDATE_AFA_CEILING_MINOR / 100:,.0f}. "
+        f"Auto-debit will require the customer to authenticate every renewal. Consider monthly "
+        f"billing or invoice-based collection for this tier."
     )
 
 

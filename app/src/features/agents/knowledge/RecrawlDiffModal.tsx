@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { formatNumber } from '../../../i18n/formatters';
 import {
   AlertCircle,
   ExternalLink,
@@ -10,6 +11,10 @@ import {
 } from 'lucide-react';
 import { Button, Modal, cn } from '../../../design-system';
 import type { RecrawlDiff } from './recrawl-api';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
+import { Trans } from '../../../i18n/Trans';
+import { creditCountLabel, pageCountLabel, showingFirstLabel } from './knowledge-utils';
 
 export interface RecrawlDiffModalProps {
   open: boolean;
@@ -50,36 +55,43 @@ export function RecrawlDiffModal({
   onGetCredits,
   onClose,
 }: RecrawlDiffModalProps): ReactElement {
+  const { t, locale } = useTranslation();
   const [viewing, setViewing] = useState<BucketKey | null>(null);
 
+  // Labels resolve from the bucket key at the render sites below; the English
+  // here is the fallback. `translateNow` rather than the hook's `t` so the
+  // React Compiler can still memoise this.
   const buckets = useMemo<BucketDef[]>(
     () => [
       {
         key: 'unchanged',
-        label: 'Unchanged',
-        sublabel: 'Pages unchanged',
+        label: t('agents.bucket.unchanged') || 'Unchanged',
+        sublabel: translateNow('agents.pagesUnchanged') || 'Pages unchanged',
         count: diff.unchanged,
         urls: diff.unchangedUrls,
         toneClass: 'text-[var(--ds-text-muted)]',
       },
       {
         key: 'new',
-        label: 'New',
-        sublabel: 'New pages found',
+        label: t('agents.new') || 'New',
+        sublabel: translateNow('agents.newPagesFound') || 'New pages found',
         count: diff.newPages,
         urls: diff.newUrls,
         toneClass: 'text-[var(--ds-success)]',
       },
       {
         key: 'removed',
-        label: 'Removed',
-        sublabel: 'Pages removed',
+        label: t('agents.removed') || 'Removed',
+        sublabel: translateNow('agents.pagesRemoved') || 'Pages removed',
         count: diff.removedPages,
         urls: diff.removedUrls,
         toneClass: 'text-[var(--ds-danger)]',
       },
     ],
-    [diff],
+    // `locale` invalidates the resolved labels; `translateNow` reads it at call
+    // time, so the linter cannot see the dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [diff, locale],
   );
 
   const isDelta = diff.mode === 'delta';
@@ -104,26 +116,26 @@ export function RecrawlDiffModal({
   const activeBucket = viewing ? buckets.find((b) => b.key === viewing) ?? null : null;
 
   const confirmLabel = fullBlocked
-    ? 'Get more credits'
+    ? t('agents.getMoreCredits') || 'Get more credits'
     : isDelta
-      ? 'Re-train changed pages'
-      : 'Re-train all pages';
+      ? t('agents.reTrainChangedPages') || 'Re-train changed pages'
+      : t('agents.reTrainAllPages') || 'Re-train all pages';
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       size="lg"
-      title={isDelta ? 'Re-train only updated pages?' : 'Re-train the entire website?'}
+      title={isDelta ? t('agents.reTrainOnlyUpdatedPages') || 'Re-train only updated pages?' : t('agents.reTrainTheEntireWebsite') || 'Re-train the entire website?'}
       description={
         isDelta
-          ? "Unchanged pages are free - you'll only be billed for pages whose content changed since the last training run."
-          : 'Every discovered page will be re-trained, and every page will be charged.'
+          ? t('agents.unchangedPagesAreFreeYoull') || 'Unchanged pages are free - you\'ll only be billed for pages whose content changed since the last training run.'
+          : t('agents.everyDiscoveredPageWillBe') || 'Every discovered page will be re-trained, and every page will be charged.'
       }
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={starting}>
-            Cancel
+            {t('agents.cancel') || 'Cancel'}
           </Button>
           <Button
             variant={fullBlocked ? 'danger' : 'primary'}
@@ -131,7 +143,7 @@ export function RecrawlDiffModal({
             disabled={starting || emptyDiscovery}
           >
             {starting ? (
-              'Starting…'
+              t('agents.starting') || 'Starting…'
             ) : (
               <>
                 {isDelta ? (
@@ -163,10 +175,11 @@ export function RecrawlDiffModal({
             <p className="flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                We couldn&apos;t preview the page changes. You can still proceed - training will{' '}
                 {isDelta
-                  ? 'skip unchanged pages during ingestion.'
-                  : 're-train and re-bill every page.'}
+                  ? t('agents.previewFailedDelta') ||
+                    'We couldn’t preview the page changes. You can still proceed - training will skip unchanged pages during ingestion.'
+                  : t('agents.previewFailedFull') ||
+                    'We couldn’t preview the page changes. You can still proceed - training will re-train and re-bill every page.'}
               </span>
             </p>
             <p className="break-words pl-6 font-mono text-[11px] opacity-80">{error}</p>
@@ -176,9 +189,8 @@ export function RecrawlDiffModal({
             <p className="flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                No pages discovered - the site&apos;s sitemap may be temporarily unavailable. Try
-                again shortly. We won&apos;t start a full re-train until we can confirm the pages to
-                train, so you&apos;re never charged for a set we can&apos;t verify.
+                {t('agents.noPagesDiscovered') ||
+                  'No pages discovered - the site’s sitemap may be temporarily unavailable. Try again shortly. We won’t start a full re-train until we can confirm the pages to train, so you’re never charged for a set we can’t verify.'}
               </span>
             </p>
           </div>
@@ -188,6 +200,7 @@ export function RecrawlDiffModal({
               {buckets.map((bucket) => {
                 const isActive = viewing === bucket.key;
                 const isEmpty = bucket.count === 0;
+                const bucketName = t(`agents.bucket.${bucket.key}`) || bucket.label;
                 return (
                   <div
                     key={bucket.key}
@@ -200,7 +213,10 @@ export function RecrawlDiffModal({
                       type="button"
                       onClick={() => setViewing(isActive ? null : bucket.key)}
                       disabled={isEmpty}
-                      aria-label={`View ${bucket.label.toLowerCase()} pages`}
+                      aria-label={
+                        t('agents.viewBucketPages', { bucket: bucketName.toLowerCase() }) ||
+                        `View ${bucketName.toLowerCase()} pages`
+                      }
                       aria-expanded={isActive}
                       className="absolute right-2 top-2 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -212,10 +228,10 @@ export function RecrawlDiffModal({
                         bucket.toneClass,
                       )}
                     >
-                      {bucket.label}
+                      {bucketName}
                     </span>
                     <span className="my-1 text-2xl font-semibold tabular-nums text-[var(--ds-text)]">
-                      {bucket.count.toLocaleString()}
+                      {formatNumber(bucket.count)}
                     </span>
                     <span className="text-[11px] text-[var(--ds-text-subtle)]">{bucket.sublabel}</span>
                   </div>
@@ -233,31 +249,44 @@ export function RecrawlDiffModal({
                 )}
               >
                 <p className="font-semibold text-[var(--ds-text)]">
-                  {fullBlocked ? (
-                    <>
-                      Not enough credits - this re-crawl needs{' '}
-                      <span className="tabular-nums">{required.toLocaleString()}</span> credit
-                      {required === 1 ? '' : 's'}.
-                    </>
-                  ) : (
-                    <>
-                      This will charge{' '}
-                      <span className="tabular-nums">{required.toLocaleString()}</span> credit
-                      {required === 1 ? '' : 's'}.
-                    </>
-                  )}
+                  {/* The figure is emphasised inside the sentence, so it is one
+                      key with the element interpolated. Plural is its own key:
+                      Hindi does not form it by appending "s". */}
+                  <Trans
+                    k={fullBlocked ? 'agents.recrawlBlocked' : 'agents.recrawlWillCharge'}
+                    fallback={
+                      fullBlocked
+                        ? 'Not enough credits - this re-crawl needs {credits}.'
+                        : 'This will charge {credits}.'
+                    }
+                    values={{
+                      credits: (
+                        <span className="tabular-nums">{creditCountLabel(required)}</span>
+                      ),
+                    }}
+                  />
                 </p>
                 <p className="mt-1 tabular-nums">
-                  {diff.costPerPage.toLocaleString()} credit{diff.costPerPage === 1 ? '' : 's'} per page ×{' '}
-                  {crawlSetSize.toLocaleString()} page{crawlSetSize === 1 ? '' : 's'} - you have{' '}
-                  <span className="font-semibold text-[var(--ds-text)]">
-                    {diff.balance.toLocaleString()}
-                  </span>{' '}
-                  credit{diff.balance === 1 ? '' : 's'} available.
+                  {/* One key. This had three English plurals written inline and
+                      its clause order in the markup, directly below the Trans
+                      that exists because that does not survive translation. */}
+                  <Trans
+                    k="agents.recrawlCostBreakdown"
+                    fallback="{cost} per page × {pages} - you have {balance} available."
+                    values={{
+                      cost: creditCountLabel(diff.costPerPage),
+                      pages: pageCountLabel(crawlSetSize),
+                      balance: (
+                        <span className="font-semibold text-[var(--ds-text)]">
+                          {creditCountLabel(diff.balance)}
+                        </span>
+                      ),
+                    }}
+                  />
                 </p>
                 {fullBlocked && (
                   <p className="mt-1.5 text-[12px]">
-                    Upgrade your plan or buy a top-up to unlock this re-crawl.
+                    {t('agents.upgradeToUnlockRecrawl') || 'Upgrade your plan or buy a top-up to unlock this re-crawl.'}
                   </p>
                 )}
               </div>
@@ -269,13 +298,13 @@ export function RecrawlDiffModal({
                   <span className="text-[12px] font-semibold text-[var(--ds-text)]">
                     {activeBucket.sublabel}
                     <span className="ml-1.5 font-normal text-[var(--ds-text-subtle)]">
-                      ({activeBucket.count.toLocaleString()})
+                      ({formatNumber(activeBucket.count)})
                     </span>
                   </span>
                   <button
                     type="button"
                     onClick={() => setViewing(null)}
-                    aria-label="Close page list"
+                    aria-label={t('agents.closePageList') || 'Close page list'}
                     className="rounded p-1 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
                   >
                     <X size={13} aria-hidden="true" />
@@ -284,7 +313,7 @@ export function RecrawlDiffModal({
                 <ul className="max-h-56 divide-y divide-[var(--ds-border)] overflow-y-auto">
                   {activeBucket.urls.length === 0 ? (
                     <li className="px-4 py-3 text-center text-[12px] text-[var(--ds-text-subtle)]">
-                      No pages in this bucket.
+                      {t('agents.noPagesInThisBucket') || 'No pages in this bucket.'}
                     </li>
                   ) : (
                     activeBucket.urls.map((u) => (
@@ -304,8 +333,7 @@ export function RecrawlDiffModal({
                 </ul>
                 {activeBucket.count > activeBucket.urls.length && (
                   <div className="border-t border-[var(--ds-border)] px-4 py-1.5 text-[10px] text-[var(--ds-text-subtle)]">
-                    Showing first {activeBucket.urls.length.toLocaleString()} of{' '}
-                    {activeBucket.count.toLocaleString()} pages.
+                    {showingFirstLabel(activeBucket.urls.length, activeBucket.count)}
                   </div>
                 )}
               </div>

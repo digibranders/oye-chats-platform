@@ -11,6 +11,8 @@ import { Loader2, MessageCircle, Sparkles, Volume2, Wand2 } from 'lucide-react';
 import { Button, Input, SectionHeader } from '../../../design-system';
 import { detectBrandTone, getBrandTonePresets, previewChatStream } from '../../../services/api';
 import { type ExperienceDraft, FIELD_LIMITS } from './types';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface PersonalitySectionProps {
   draft: ExperienceDraft;
@@ -37,7 +39,13 @@ interface TonePreset {
 /** The marker the tone field carries once its text diverges from every preset. */
 const CUSTOM_PRESET = 'custom';
 
-/** A neutral question used to stream a representative sample reply. */
+/**
+ * A neutral question used to stream a representative sample reply.
+ *
+ * @i18n-exempt: this is SENT to the model, not rendered as chrome. The preview
+ * exists to show what the tone settings do; asking in the dashboard's language
+ * would change the answer's language too and confound the thing being previewed.
+ */
 const SAMPLE_QUESTION = 'What can you help me with?';
 
 /** Narrow one loose preset record into a usable {key,label,text}, or null. */
@@ -117,6 +125,7 @@ export function PersonalitySection({
   canDetect,
   onServerApply,
 }: PersonalitySectionProps): ReactElement {
+  const { t } = useTranslation();
   const companyId = useId();
   const companyHintId = useId();
 
@@ -182,10 +191,10 @@ export function PersonalitySection({
       const tone = typeof result.brand_tone === 'string' ? result.brand_tone : '';
       const preset = typeof result.brand_tone_preset === 'string' ? result.brand_tone_preset : null;
       onServerApply({ brandTone: tone, brandTonePreset: preset });
-      setDetectNote('Tone detected from your website and saved.');
+      setDetectNote(translateNow('agents.toneDetectedFromYourWebsite') || 'Tone detected from your website and saved.');
     } catch (err) {
       if (botIdRef.current !== requestBotId) return;
-      setDetectError(err instanceof Error ? err.message : 'Could not detect a tone. Please try again.');
+      setDetectError(err instanceof Error ? err.message : translateNow('agents.couldNotDetectATone') || 'Could not detect a tone. Please try again.');
     } finally {
       if (botIdRef.current === requestBotId) setDetecting(false);
     }
@@ -206,13 +215,13 @@ export function PersonalitySection({
         onError: (streamErr) => {
           if (botIdRef.current !== requestBotId) return;
           setPreviewError(
-            streamErr instanceof Error ? streamErr.message : 'Could not generate a sample reply.',
+            streamErr instanceof Error ? streamErr.message : translateNow('agents.couldNotGenerateASample') || 'Could not generate a sample reply.',
           );
         },
       });
     } catch (err) {
       if (botIdRef.current !== requestBotId) return;
-      setPreviewError(err instanceof Error ? err.message : 'Could not generate a sample reply.');
+      setPreviewError(err instanceof Error ? err.message : translateNow('agents.couldNotGenerateASample') || 'Could not generate a sample reply.');
     } finally {
       if (botIdRef.current === requestBotId) setPreviewing(false);
     }
@@ -224,24 +233,24 @@ export function PersonalitySection({
     <div className="space-y-8">
       <section className="space-y-4">
         <SectionHeader
-          title="System prompt"
-          description="Custom instructions that steer every reply. Leave blank to use the platform default."
+          title={t('agents.systemPrompt') || 'System prompt'}
+          description={t('agents.customInstructionsThatSteerEvery') || 'Custom instructions that steer every reply. Leave blank to use the platform default.'}
         />
         <TextAreaField
-          label="Custom instructions"
-          hint="Layered on top of your knowledge base to guide the chatbot's behaviour."
+          label={t('agents.customInstructions') || 'Custom instructions'}
+          hint={t('agents.layeredOnTopOfYour') || 'Layered on top of your knowledge base to guide the chatbot\'s behaviour.'}
           value={draft.systemPrompt}
           maxLength={FIELD_LIMITS.systemPrompt}
           rows={6}
-          placeholder="e.g. You are a friendly support assistant for Acme Inc. Be concise and offer to connect visitors to a human when unsure."
+          placeholder={t('agents.eGYouAreA') || 'e.g. You are a friendly support assistant for Acme Inc. Be concise and offer to connect visitors to a human when unsure.'}
           onChange={(v) => onChange({ systemPrompt: v })}
         />
       </section>
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
-          title="Brand voice"
-          description="Describe the tone your chatbot should match. Visitors feel this in every message."
+          title={t('agents.brandVoice') || 'Brand voice'}
+          description={t('agents.describeTheToneYourChatbot') || 'Describe the tone your chatbot should match. Visitors feel this in every message.'}
           actions={
             <Button
               variant="outline"
@@ -250,8 +259,8 @@ export function PersonalitySection({
               disabled={detectDisabled}
               title={
                 canDetect
-                  ? 'Infer a brand tone from your trained website'
-                  : 'Train on your website first to detect a tone'
+                  ? t('agents.inferABrandToneFrom') || 'Infer a brand tone from your trained website'
+                  : t('agents.trainOnYourWebsiteFirst') || 'Train on your website first to detect a tone'
               }
             >
               {detecting ? (
@@ -259,14 +268,14 @@ export function PersonalitySection({
               ) : (
                 <Sparkles size={14} />
               )}
-              {detecting ? 'Detecting…' : 'Detect from website'}
+              {detecting ? t('agents.detecting') || 'Detecting…' : t('agents.detectFromWebsite') || 'Detect from website'}
             </Button>
           }
         />
 
         {presets.length > 0 && (
           <div className="space-y-2">
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">Tone presets</p>
+            <p className="text-[13px] font-medium text-[var(--ds-text)]">{t('agents.tonePresets') || 'Tone presets'}</p>
             <div className="flex flex-wrap gap-2">
               {presets.map((preset) => {
                 const active = draft.brandTonePreset === preset.key;
@@ -290,7 +299,7 @@ export function PersonalitySection({
               {draft.brandTonePreset === CUSTOM_PRESET && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--ds-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
                   <Wand2 size={12} aria-hidden="true" />
-                  Custom
+                  {t('agents.custom') || 'Custom'}
                 </span>
               )}
             </div>
@@ -298,12 +307,12 @@ export function PersonalitySection({
         )}
 
         <TextAreaField
-          label="Voice & tone"
-          hint="e.g. Warm and approachable, with a touch of humour. Avoid jargon."
+          label={t('agents.voiceTone') || 'Voice & tone'}
+          hint={t('agents.eGWarmAndApproachable') || 'e.g. Warm and approachable, with a touch of humour. Avoid jargon.'}
           value={draft.brandTone}
           maxLength={FIELD_LIMITS.brandTone}
           rows={3}
-          placeholder="Warm and approachable, with a touch of humour. Avoid jargon."
+          placeholder={t('agents.warmAndApproachableWithA') || 'Warm and approachable, with a touch of humour. Avoid jargon.'}
           onChange={onToneTextChange}
         />
 
@@ -326,7 +335,7 @@ export function PersonalitySection({
             disabled={previewing || botId === null}
           >
             {previewing ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
-            {previewing ? 'Generating…' : 'Preview a sample reply'}
+            {previewing ? t('agents.generating') || 'Generating…' : t('agents.previewASampleReply') || 'Preview a sample reply'}
           </Button>
           {sampleReply && (
             <div className="flex items-start gap-2">
@@ -347,40 +356,40 @@ export function PersonalitySection({
             </p>
           )}
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-            Streams a real answer using your chatbot&apos;s saved settings - save your voice changes
-            first to hear them here.
+            {t('agents.streamsARealAnswer') ||
+              'Streams a real answer using your chatbot’s saved settings - save your voice changes first to hear them here.'}
           </p>
         </div>
       </section>
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
-          title="Company details"
-          description="Context the chatbot uses to describe your business accurately."
+          title={t('agents.companyDetails') || 'Company details'}
+          description={t('agents.contextTheChatbotUsesTo') || 'Context the chatbot uses to describe your business accurately.'}
         />
         <div className="space-y-1.5">
           <label htmlFor={companyId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-            Company name
+            {t('agents.companyName') || 'Company name'}
           </label>
           <Input
             id={companyId}
             value={draft.companyName}
             maxLength={FIELD_LIMITS.companyName}
-            placeholder="e.g. Acme Inc."
+            placeholder={t('agents.eGAcmeInc') || 'e.g. Acme Inc.'}
             aria-describedby={companyHintId}
             onChange={(e) => onChange({ companyName: e.target.value })}
           />
           <p id={companyHintId} className="text-[11px] text-[var(--ds-text-subtle)]">
-            The name of your business or brand.
+            {t('agents.theNameOfYourBusiness') || 'The name of your business or brand.'}
           </p>
         </div>
         <TextAreaField
-          label="Company description"
-          hint="A short summary of what your company does."
+          label={t('agents.companyDescription') || 'Company description'}
+          hint={t('agents.aShortSummaryOfWhat') || 'A short summary of what your company does.'}
           value={draft.companyDescription}
           maxLength={FIELD_LIMITS.companyDescription}
           rows={4}
-          placeholder="e.g. Acme Inc. builds project-management software for remote teams."
+          placeholder={t('agents.eGAcmeIncBuilds') || 'e.g. Acme Inc. builds project-management software for remote teams.'}
           onChange={(v) => onChange({ companyDescription: v })}
         />
       </section>

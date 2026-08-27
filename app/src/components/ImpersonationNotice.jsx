@@ -1,4 +1,5 @@
 import { Loader2, ShieldAlert } from 'lucide-react';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Full-screen terminal notice for an impersonation session.
@@ -16,6 +17,7 @@ import { Loader2, ShieldAlert } from 'lucide-react';
  * renders before and after the app tree exists.
  */
 export default function ImpersonationNotice({ title, message, busy = false }) {
+  const { t } = useTranslation();
     const Icon = busy ? Loader2 : ShieldAlert;
 
     return (
@@ -39,7 +41,7 @@ export default function ImpersonationNotice({ title, message, busy = false }) {
                 <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">{message}</p>
                 {!busy && (
                     <p className="mt-6 text-xs text-[var(--text-muted)]">
-                        Close this tab and issue a new impersonation link from the super-admin console.
+                        {t('app.closeThisTabAndIssue') || 'Close this tab and issue a new impersonation link from the super-admin console.'}
                     </p>
                 )}
             </div>

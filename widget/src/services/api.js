@@ -3,6 +3,7 @@
 // See sentinelStripper.test.js for regression coverage.
 import { createSentinelStripper } from './sentinelStripper.js';
 import { readSessionId } from './storage-keys.js';
+import { createEmailVerdictCache } from './emailVerdictCache.js';
 
 const getApiUrl = () => {
     if (typeof window !== 'undefined' && window.OYECHATS_API_URL) {
@@ -243,27 +244,80 @@ export const submitFeedback = async (messageId, feedbackValue) => {
     }
 };
 
+// Verdicts are memoized per address for the life of the page: the same
+// address is asked about twice (once on blur, once at submit) and every
+// request that reaches the server costs it a cache read and three gate
+// queries. See emailVerdictCache.js for why the key is the address and
+// nothing else.
+const emailVerdicts = createEmailVerdictCache();
+
+// One retry, then give up. A 429 or a 5xx says something about our server,
+// never about the address, so the first thing to try is asking again rather
+// than assuming an answer. Short enough that a visitor tabbing out of the
+// field never waits on it, since the blur check runs in the background and
+// the submit check reuses whatever it resolved to.
+const EMAIL_CHECK_RETRY_MS = 400;
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Real-time check called on email-field blur, before the visitor can
- * submit the handoff or offline-message form. Fails open ({valid: true})
- * on any network/HTTP error, an outage on our side must never block a
- * real visitor from talking to a human. See
- * api/app/api/chat_routes.py validate_email_endpoint for the server-side
- * (lenient) blocking rule.
+ * Real-time check called on email-field blur and again at submit, before the
+ * visitor can send the handoff, pre-chat or offline-message form.
+ *
+ * Fails open ({valid: true}) once the retry is spent: an outage on our side
+ * must never block a real visitor from talking to a human. A fail-open answer
+ * is NOT memoized, so the visitor's next attempt asks again instead of
+ * inheriting the outage for the rest of the page.
+ *
+ * The server does the same thing on its own fail-open paths, and marks them
+ * ``unverified: true`` in a 200 rather than returning an error status (see
+ * api/app/api/chat_routes.py validate_email_endpoint). This client never has
+ * to read a verdict out of a status code.
  */
-export const validateEmail = async (email) => {
-    try {
-        const response = await fetch(`${API_URL}/chat/validate-email`, {
-            method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({ email }),
-        });
-        if (!response.ok) return { valid: true };
-        return await response.json();
-    } catch (error) {
-        console.warn('[OyeChats] Email validation check failed (failing open):', error);
-        return { valid: true };
-    }
+export const validateEmail = (email) => {
+    const key = String(email || '').trim().toLowerCase();
+    if (!key) return Promise.resolve({ valid: true, unverified: true });
+
+    return emailVerdicts.resolve(key, async () => {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+                const response = await fetch(`${API_URL}/chat/validate-email`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ email: key }),
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    return {
+                        verdict: {
+                            valid: result?.valid !== false,
+                            reason: result?.reason,
+                            unverified: result?.unverified === true,
+                        },
+                        // An explicit "we did not verify this" is our state,
+                        // not the address's. Holding it would freeze the
+                        // visitor's address as unchecked for the whole visit.
+                        cacheable: result?.unverified !== true,
+                    };
+                }
+                if (attempt === 0 && RETRYABLE_STATUSES.has(response.status)) {
+                    await sleep(EMAIL_CHECK_RETRY_MS);
+                    continue;
+                }
+                console.warn(`[OyeChats] Email validation unavailable (HTTP ${response.status}), failing open`);
+                return { verdict: { valid: true, unverified: true }, cacheable: false };
+            } catch (error) {
+                if (attempt === 0) {
+                    await sleep(EMAIL_CHECK_RETRY_MS);
+                    continue;
+                }
+                console.warn('[OyeChats] Email validation check failed (failing open):', error);
+                return { verdict: { valid: true, unverified: true }, cacheable: false };
+            }
+        }
+        return { verdict: { valid: true, unverified: true }, cacheable: false };
+    });
 };
 
 export const submitLeadCapture = async (sessionId, formData) => {

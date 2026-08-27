@@ -9,7 +9,17 @@ import tseslint from 'typescript-eslint'
 //   • New `.ts/.tsx`     - typescript-eslint recommended + react-hooks, with
 //     react-refresh scoped to `.tsx` component files only.
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // dist-e2e is the hermetic bundle the Playwright suite builds for itself.
+  { ignores: ['dist', 'dist-e2e'] },
+
+  // The i18n tooling decides what "done" means for the whole migration, so it
+  // gets the same gate as the app. It had a duplicate object key that no check
+  // would have caught.
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { ecmaVersion: 2023, sourceType: 'module' },
+    rules: { 'no-dupe-keys': 'error', 'no-unused-vars': 'warn' },
+  },
 
   // ── Legacy JavaScript / JSX ──────────────────────────────────────────────
   {

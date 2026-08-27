@@ -4,6 +4,7 @@ import { LogOut, Monitor } from 'lucide-react';
 import { Button, Card, SectionHeader, StatusBadge } from '../../design-system';
 import { clearAuthStorage } from '../../utils/authStorage';
 import { endImpersonationSession, isImpersonating } from '../../utils/impersonation';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface AccountSessionsSectionProps {
   /** The signed-in account's email, shown against the current device. */
@@ -21,6 +22,7 @@ export interface AccountSessionsSectionProps {
  * rendered as controls that look actionable but do nothing.
  */
 export function AccountSessionsSection({ email }: AccountSessionsSectionProps): ReactElement {
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const handleSignOut = (): void => {
@@ -29,7 +31,10 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
     // holds the super-admin's own credentials for every other tab of this
     // browser - signing out of a customer's Account must never touch them.
     if (isImpersonating()) {
-      endImpersonationSession('Impersonation session ended. You can close this tab.');
+      endImpersonationSession(
+        t('settings.sessions.impersonationEnded') ||
+          'Impersonation session ended. You can close this tab.',
+      );
       return;
     }
     // Clear both localStorage + sessionStorage so a session-only login leaves no
@@ -45,8 +50,11 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
       <Card>
         <div className="p-5 sm:p-6">
           <SectionHeader
-            title="Active sessions"
-            description="Where you’re currently signed in to the dashboard."
+            title={t('settings.sessions.title') || 'Active sessions'}
+            description={
+              t('settings.sessions.description') ||
+              'Where you’re currently signed in to the dashboard.'
+            }
           />
 
           <ul className="mt-4 overflow-hidden rounded-xl border border-[var(--ds-border)]">
@@ -56,7 +64,7 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                  This device
+                  {t('settings.sessions.thisDevice') || 'This device'}
                   {email ? (
                     <span className="font-normal text-[var(--ds-text-subtle)]">
                       {' · '}
@@ -66,7 +74,7 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
                 </p>
               </div>
               <StatusBadge tone="success" dot>
-                Current
+                {t('settings.sessions.current') || 'Current'}
               </StatusBadge>
             </li>
           </ul>
@@ -74,7 +82,7 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
           <div className="mt-4">
             <Button variant="outline" onClick={handleSignOut}>
               <LogOut size={16} aria-hidden="true" />
-              Sign out
+              {t('settings.sessions.signOut') || 'Sign out'}
             </Button>
           </div>
         </div>

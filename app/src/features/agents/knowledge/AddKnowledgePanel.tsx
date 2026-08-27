@@ -37,9 +37,19 @@ import {
   filterUploadFiles,
   hostOf,
   isUrlSource,
+  crawlFinishedLabel,
+  creditCountLabel,
+  documentCountLabel,
+  fileCountLabel,
   normalizeUrl,
+  pageCountLabel,
+  wordCountLabel,
 } from './knowledge-utils';
 import { CrawlPageTree, canonicalCrawlUrls } from './CrawlPageTree';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
+import { Trans } from '../../../i18n/Trans';
+import { formatNumber } from '../../../i18n/formatters';
 
 type AddMode = 'website' | 'files';
 
@@ -97,6 +107,7 @@ export function AddKnowledgePanel({
   documentsLocked = false,
   pagesLocked = false,
 }: AddKnowledgePanelProps): ReactElement {
+  const { t } = useTranslation();
   const { crawl, startCrawl, cancelCrawl } = useCrawl();
   const { openUpgradeModal } = useUpgradeModal();
   const [mode, setMode] = useState<AddMode>('website');
@@ -158,6 +169,7 @@ export function AddKnowledgePanel({
   // ── Upload sub-flow ───────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const formats = SUPPORTED_EXTENSIONS.join(', ').toUpperCase();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadNote, setUploadNote] = useState<string | null>(null);
@@ -186,6 +198,10 @@ export function AddKnowledgePanel({
   const overAffordable =
     typeof estimate?.max_affordable_pages === 'number' &&
     selectedCount > estimate.max_affordable_pages;
+  const affordableCount = formatNumber(estimate?.max_affordable_pages ?? 0);
+  const overAffordableLabel =
+    t('agents.overAffordablePages', { count: affordableCount }) ||
+    `You’ve selected more pages than your current credits cover (about ${affordableCount} affordable). We’ll train as many as your balance allows, in order.`;
 
   // The account website, for the fallback leg of the prefill. Best-effort: a
   // failure leaves `clientWebsite` null and the field simply stays empty.
@@ -264,7 +280,7 @@ export function AddKnowledgePanel({
       // note and fall back to a zero-count estimate that means "follow links".
       setEstimate({ total_found: 0, capped: false });
       setWebsiteError(
-        err instanceof Error ? err.message : "We couldn't count the pages, but you can still add this site.",
+        err instanceof Error ? err.message : t('agents.weCouldntCountThePages') || 'We couldn\'t count the pages, but you can still add this site.',
       );
     } finally {
       setDiscovering(false);
@@ -276,7 +292,7 @@ export function AddKnowledgePanel({
     if (!trimmed) return;
     // When the user has a discovered page list, at least one page must be ticked.
     if (hasPageList && selectedUrls.length === 0) {
-      setWebsiteError('Select at least one page to train on.');
+      setWebsiteError(t('agents.selectAtLeastOnePage') || 'Select at least one page to train on.');
       return;
     }
     setWebsiteError(null);
@@ -300,7 +316,7 @@ export function AddKnowledgePanel({
       await startCrawl(opts);
     } catch (err) {
       setWebsiteError(
-        err instanceof Error ? err.message : "We couldn't start training. Please try again.",
+        err instanceof Error ? err.message : t('agents.weCouldntStartTrainingPlease') || 'We couldn\'t start training. Please try again.',
       );
     }
   }
@@ -312,7 +328,7 @@ export function AddKnowledgePanel({
       await cancelCrawl();
     } catch (err) {
       setCancelError(
-        err instanceof Error ? err.message : "We couldn't stop training. Please try again.",
+        err instanceof Error ? err.message : t('agents.weCouldntStopTrainingPlease') || 'We couldn\'t stop training. Please try again.',
       );
     }
   }
@@ -339,7 +355,7 @@ export function AddKnowledgePanel({
       // Preview unavailable. Legacy behaviour: upload directly.
       await runUpload(accepted);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+      setUploadError(err instanceof Error ? err.message : t('agents.uploadFailedPleaseTryAgain') || 'Upload failed. Please try again.');
     } finally {
       setPreviewLoading(false);
     }
@@ -353,13 +369,23 @@ export function AddKnowledgePanel({
         | undefined;
       const chargedRaw = result?.credits_charged;
       const charged = typeof chargedRaw === 'number' ? chargedRaw : 0;
-      const chargedText = charged > 0 ? ` (${charged} credits used)` : '';
+      const chargedText =
+        charged > 0
+          ? ` ${
+              translateNow('agents.creditsUsedSuffix', { credits: creditCountLabel(charged) }) ||
+              `(${creditCountLabel(charged)} used)`
+            }`
+          : '';
+      const docs = documentCountLabel(files.length);
       setUploadNote(
-        `Added ${files.length} document${files.length === 1 ? '' : 's'}. Your AI is learning from it now.${chargedText}`,
+        `${
+          translateNow('agents.addedDocuments', { documents: docs }) ||
+          `Added ${docs}. Your AI is learning from it now.`
+        }${chargedText}`,
       );
       await onChanged();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+      setUploadError(err instanceof Error ? err.message : t('agents.uploadFailedPleaseTryAgain') || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -382,23 +408,23 @@ export function AddKnowledgePanel({
     <Card className="overflow-hidden">
       <div className="border-b border-[var(--ds-border)] p-5">
         <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">
-          {isEmpty ? 'Teach your AI' : 'Add more knowledge'}
+          {isEmpty ? t('agents.teachYourAi') || 'Teach your AI' : t('agents.addMoreKnowledge') || 'Add more knowledge'}
         </h2>
         <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-          Crawl a website or upload documents. Everything you add becomes something your AI can
-          answer from.
+          {t('agents.addKnowledgeIntro') ||
+            'Crawl a website or upload documents. Everything you add becomes something your AI can answer from.'}
         </p>
 
         {/* Source-type switch */}
         <div
           role="group"
-          aria-label="Choose how to add knowledge"
+          aria-label={t('agents.chooseHowToAddKnowledge') || 'Choose how to add knowledge'}
           className="mt-4 inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
         >
           {(
             [
-              { key: 'website', label: 'Website', icon: Globe },
-              { key: 'files', label: 'Documents', icon: FileText },
+              { key: 'website', label: t('agents.website') || 'Website', icon: Globe },
+              { key: 'files', label: t('agents.documents') || 'Documents', icon: FileText },
             ] as const
           ).map((tab) => {
             const selected = mode === tab.key;
@@ -428,13 +454,13 @@ export function AddKnowledgePanel({
           pagesLocked ? (
             <LockedAddCard
               icon={Globe}
-              title="Page limit reached"
-              description="You've used all the website pages included on your plan. Upgrade to train more pages."
+              title={t('agents.pageLimitReached') || 'Page limit reached'}
+              description={t('agents.youveUsedAllTheWebsite') || 'You\'ve used all the website pages included on your plan. Upgrade to train more pages.'}
               onUpgrade={() =>
                 openUpgradeModal({
-                  title: 'Page limit reached',
+                  title: t('agents.pageLimitReached') || 'Page limit reached',
                   description:
-                    "You've used all the website pages included on your plan. Upgrade to train more pages.",
+                    t('agents.youveUsedAllTheWebsite') || 'You\'ve used all the website pages included on your plan. Upgrade to train more pages.',
                 })
               }
             />
@@ -445,7 +471,7 @@ export function AddKnowledgePanel({
                 htmlFor="knowledge-site-url"
                 className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
               >
-                Website address
+                {t('agents.websiteAddress') || 'Website address'}
               </label>
               <div className="relative">
                 <Globe
@@ -465,7 +491,7 @@ export function AddKnowledgePanel({
                     setSelectedUrls([]);
                     setWebsiteError(null);
                   }}
-                  placeholder="example.com"
+                  placeholder={t('agents.exampleCom') || 'example.com'}
                   className="pl-9"
                   disabled={crawlRunning}
                 />
@@ -473,7 +499,7 @@ export function AddKnowledgePanel({
               {alreadyAddedHost && (
                 <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
                   <span className="font-medium text-[var(--ds-text-muted)]">{alreadyAddedHost}</span>{' '}
-                  is already in your knowledge base. Crawling again refreshes its pages.
+                  {t('agents.isAlreadyInYourKnowledge') || 'is already in your knowledge base. Crawling again refreshes its pages.'}
                 </p>
               )}
             </div>
@@ -508,10 +534,10 @@ export function AddKnowledgePanel({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-medium text-[var(--ds-text)]">
-                  JavaScript mode
+                  {t('agents.javascriptMode') || 'JavaScript mode'}
                 </span>
                 <span className="mt-0.5 block text-[12px] text-[var(--ds-text-muted)]">
-                  Turn on for Next.js, React and other single-page-app sites.
+                  {t('agents.turnOnForNextJs') || 'Turn on for Next.js, React and other single-page-app sites.'}
                 </span>
               </span>
               <span
@@ -534,45 +560,54 @@ export function AddKnowledgePanel({
               <div className="space-y-3">
                 <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3 text-[13px] text-[var(--ds-text-muted)]">
                   {estimate.total_found > 0 ? (
-                    hasPageList ? (
-                      <>
-                        Found{' '}
-                        <span className="font-semibold text-[var(--ds-text)]">
-                          {estimate.total_found.toLocaleString()}
-                          {estimate.capped ? '+' : ''} page{estimate.total_found === 1 ? '' : 's'}
-                        </span>
-                        . Choose which to train on below
-                        {typeof estimate.cost_per_page === 'number' && selectedCount > 0 && (
-                          <>
-                            {' '}· <span className="font-medium text-[var(--ds-text)]">{selectedCount}</span>{' '}
-                            selected ≈{' '}
-                            <span className="font-medium text-[var(--ds-text)]">
-                              {(selectedCount * estimate.cost_per_page).toLocaleString()} credits
+                    // The page count and the credit figures are emphasised
+                    // INSIDE a sentence, so each clause is one key with the
+                    // element interpolated - not a chain of fragments whose
+                    // order only works in English. Plural is its own key
+                    // because Hindi does not form it by appending "s".
+                    <>
+                      <Trans
+                        k="agents.foundPages"
+                        fallback="Found {count}."
+                        values={{
+                          count: (
+                            <span className="font-semibold text-[var(--ds-text)]">
+                              {pageCountLabel(estimate.total_found, estimate.capped)}
                             </span>
+                          ),
+                        }}
+                      />
+                      {hasPageList && ` ${t('agents.chooseWhichToTrain') || 'Choose which to train on below.'}`}
+                      {typeof estimate.cost_per_page === 'number' &&
+                        (hasPageList ? selectedCount > 0 : true) && (
+                          <>
+                            {' · '}
+                            <Trans
+                              k={hasPageList ? 'agents.selectedCredits' : 'agents.aboutCredits'}
+                              fallback={
+                                hasPageList ? '{selected} selected ≈ {credits}.' : 'about {credits}.'
+                              }
+                              values={{
+                                selected: (
+                                  <span className="font-medium text-[var(--ds-text)]">
+                                    {formatNumber(selectedCount)}
+                                  </span>
+                                ),
+                                credits: (
+                                  <span className="font-medium text-[var(--ds-text)]">
+                                    {creditCountLabel(
+                                      (hasPageList ? selectedCount : estimate.total_found) *
+                                        estimate.cost_per_page,
+                                    )}
+                                  </span>
+                                ),
+                              }}
+                            />
                           </>
                         )}
-                        .
-                      </>
-                    ) : (
-                      <>
-                        Found{' '}
-                        <span className="font-semibold text-[var(--ds-text)]">
-                          {estimate.total_found.toLocaleString()}
-                          {estimate.capped ? '+' : ''} page{estimate.total_found === 1 ? '' : 's'}
-                        </span>
-                        {typeof estimate.cost_per_page === 'number' && (
-                          <>
-                            {' '}· about{' '}
-                            <span className="font-medium text-[var(--ds-text)]">
-                              {(estimate.total_found * estimate.cost_per_page).toLocaleString()} credits
-                            </span>
-                          </>
-                        )}
-                        .
-                      </>
-                    )
+                    </>
                   ) : (
-                    <>We&apos;ll follow links from the homepage to learn what we can.</>
+                    <>{t('agents.wellFollowLinksFromThe') || 'We\'ll follow links from the homepage to learn what we can.'}</>
                   )}
                 </div>
 
@@ -587,9 +622,7 @@ export function AddKnowledgePanel({
 
                 {hasPageList && overAffordable && (
                   <StatusNote tone="warning" icon={AlertCircle}>
-                    You&apos;ve selected more pages than your current credits cover (about{' '}
-                    {estimate?.max_affordable_pages?.toLocaleString()} affordable). We&apos;ll train
-                    as many as your balance allows, in order.
+                    {overAffordableLabel}
                   </StatusNote>
                 )}
               </div>
@@ -607,14 +640,14 @@ export function AddKnowledgePanel({
                 {cancelConfirm ? (
                   <div
                     role="group"
-                    aria-label="Confirm stopping training"
+                    aria-label={t('agents.confirmStoppingTraining') || 'Confirm stopping training'}
                     className="space-y-3 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3"
                   >
                     <div className="text-[13px] text-[var(--ds-text)]">
-                      <p className="font-medium">Stop training?</p>
+                      <p className="font-medium">{t('agents.stopTrainingConfirm') || 'Stop training?'}</p>
                       <p className="mt-0.5 text-[var(--ds-text-muted)]">
-                        Pages already discovered are discarded, and you won&apos;t be charged for a
-                        training run that didn&apos;t finish.
+                        {t('agents.stopTrainingConsequence') ||
+                          'Pages already discovered are discarded, and you won’t be charged for a training run that didn’t finish.'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -624,10 +657,10 @@ export function AddKnowledgePanel({
                         onClick={() => void handleCancel()}
                         disabled={crawl.status === 'cancelling' || crawl.cancelInFlight}
                       >
-                        <StopCircle size={14} aria-hidden="true" /> Stop training
+                        <StopCircle size={14} aria-hidden="true" /> {t('agents.stopTraining') || 'Stop training'}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setCancelConfirm(false)}>
-                        Keep training
+                        {t('agents.keepTraining') || 'Keep training'}
                       </Button>
                     </div>
                   </div>
@@ -640,11 +673,11 @@ export function AddKnowledgePanel({
                   >
                     {crawl.status === 'cancelling' || crawl.cancelInFlight ? (
                       <>
-                        <Loader2 size={14} className="animate-spin" aria-hidden="true" /> Stopping…
+                        <Loader2 size={14} className="animate-spin" aria-hidden="true" /> {t('agents.stopping') || 'Stopping…'}
                       </>
                     ) : (
                       <>
-                        <StopCircle size={14} aria-hidden="true" /> Cancel training
+                        <StopCircle size={14} aria-hidden="true" /> {t('agents.cancelTraining') || 'Cancel training'}
                       </>
                     )}
                   </Button>
@@ -657,15 +690,14 @@ export function AddKnowledgePanel({
               </div>
             ) : crawlIsOurs && crawl.status === 'done' ? (
               <StatusNote tone="success" icon={CheckCircle2}>
-                Finished - your AI learned {crawl.pagesCrawled} page
-                {crawl.pagesCrawled === 1 ? '' : 's'}.
+                {crawlFinishedLabel(crawl.pagesCrawled)}
               </StatusNote>
             ) : crawlIsOurs && (crawl.status === 'failed' || crawl.status === 'no_content') ? (
               <StatusNote tone="danger" icon={AlertCircle}>
                 {crawl.error ||
                   (crawl.status === 'no_content'
-                    ? "We couldn't read any content from that site. Try a different URL or upload documents instead."
-                    : "We couldn't finish reading that site.")}
+                    ? t('agents.weCouldntReadAnyContent') || 'We couldn\'t read any content from that site. Try a different URL or upload documents instead.'
+                    : t('agents.weCouldntFinishReadingThat') || 'We couldn\'t finish reading that site.')}
               </StatusNote>
             ) : null}
 
@@ -683,14 +715,15 @@ export function AddKnowledgePanel({
                 >
                   {crawlRunning ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Crawling…
+                      <Loader2 size={16} className="animate-spin" /> {t('agents.crawling') || 'Crawling…'}
                     </>
                   ) : (
                     <>
                       <Globe size={16} />{' '}
                       {hasPageList
-                        ? `Train on ${selectedCount} page${selectedCount === 1 ? '' : 's'}`
-                        : 'Add this website'}
+                        ? t('agents.trainOnPages', { pages: pageCountLabel(selectedCount) }) ||
+                        `Train on ${pageCountLabel(selectedCount)}`
+                        : t('agents.addThisWebsite') || 'Add this website'}
                     </>
                   )}
                 </Button>
@@ -701,11 +734,11 @@ export function AddKnowledgePanel({
                 >
                   {discovering ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Checking pages…
+                      <Loader2 size={16} className="animate-spin" /> {t('agents.checkingPages') || 'Checking pages…'}
                     </>
                   ) : (
                     <>
-                      <Search size={16} /> Check pages
+                      <Search size={16} /> {t('agents.checkPages') || 'Check pages'}
                     </>
                   )}
                 </Button>
@@ -716,13 +749,13 @@ export function AddKnowledgePanel({
         ) : documentsLocked ? (
           <LockedAddCard
             icon={FileText}
-            title="Document limit reached"
-            description="You've used all the documents included on your plan. Upgrade to add more."
+            title={t('agents.documentLimitReached') || 'Document limit reached'}
+            description={t('agents.youveUsedAllTheDocuments') || 'You\'ve used all the documents included on your plan. Upgrade to add more.'}
             onUpgrade={() =>
               openUpgradeModal({
-                title: 'Document limit reached',
+                title: t('agents.documentLimitReached') || 'Document limit reached',
                 description:
-                  "You've used all the documents included on your plan. Upgrade to add more.",
+                  t('agents.youveUsedAllTheDocuments') || 'You\'ve used all the documents included on your plan. Upgrade to add more.',
               })
             }
           />
@@ -750,10 +783,11 @@ export function AddKnowledgePanel({
                 <UploadCloud size={24} aria-hidden="true" />
               </span>
               <p className="text-[13px] font-medium text-[var(--ds-text)]">
-                Drag and drop documents here
+                {t('agents.dragAndDropDocumentsHere') || 'Drag and drop documents here'}
               </p>
               <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">
-                {SUPPORTED_EXTENSIONS.join(', ').toUpperCase()} · up to 10 MB each
+                {t('agents.uploadFormatsHint', { formats }) ||
+                  `${formats} · up to 10 MB each`}
               </p>
               <input
                 ref={fileInputRef}
@@ -776,15 +810,15 @@ export function AddKnowledgePanel({
               >
                 {uploading ? (
                   <>
-                    <Loader2 size={15} className="animate-spin" /> Adding…
+                    <Loader2 size={15} className="animate-spin" /> {t('agents.adding') || 'Adding…'}
                   </>
                 ) : previewLoading ? (
                   <>
-                    <Loader2 size={15} className="animate-spin" /> Estimating cost…
+                    <Loader2 size={15} className="animate-spin" /> {t('agents.estimatingCost') || 'Estimating cost…'}
                   </>
                 ) : (
                   <>
-                    <Upload size={15} /> Browse files
+                    <Upload size={15} /> {t('agents.browseFiles') || 'Browse files'}
                   </>
                 )}
               </Button>
@@ -830,6 +864,7 @@ function LockedAddCard({
   description: string;
   onUpgrade: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-6 py-10 text-center">
       <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
@@ -841,7 +876,7 @@ function LockedAddCard({
       </div>
       <Button onClick={onUpgrade}>
         <Lock size={13} aria-hidden="true" />
-        Upgrade plan
+        {t('agents.upgradePlan') || 'Upgrade plan'}
       </Button>
     </div>
   );
@@ -858,6 +893,7 @@ function CrawlProgress({
   total: number | null;
   status: CrawlStatus;
 }): ReactElement {
+  const { t } = useTranslation();
   const percent =
     status === 'done'
       ? 100
@@ -870,21 +906,25 @@ function CrawlProgress({
     <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
       <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-[var(--ds-text)]">
         <Loader2 size={15} className="animate-spin text-[var(--ds-accent)]" aria-hidden="true" />
-        Reading your site
+        {t('agents.readingYourSite') || 'Reading your site'}
         {total ? (
           <span className="ml-auto tabular-nums text-[var(--ds-text-muted)]">
-            {done} of {total} pages
+            {t('agents.crawlProgressCount', {
+              done: formatNumber(done),
+              total: formatNumber(total),
+            }) || `${formatNumber(done)} of ${formatNumber(total)} pages`}
           </span>
         ) : done > 0 ? (
           <span className="ml-auto tabular-nums text-[var(--ds-text-muted)]">
-            {done} page{done === 1 ? '' : 's'}
+            {pageCountLabel(done)}
           </span>
         ) : null}
       </div>
-      <Progress value={percent} label="Training progress" />
+      <Progress value={percent} label={t('agents.trainingProgress') || 'Training progress'} />
       {pages.length > 0 && (
         <p className="mt-3 truncate text-[12px] text-[var(--ds-text-subtle)]">
-          Latest: {pages[pages.length - 1]}
+          {t('agents.latestPage', { page: pages[pages.length - 1] }) ||
+            `Latest: ${pages[pages.length - 1]}`}
         </p>
       )}
     </div>
@@ -911,22 +951,25 @@ function UploadCostPanel({
   onConfirm: () => void;
   onCancel: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const short = preview.per_file.slice(0, 5);
   const remainder = preview.per_file.length - short.length;
+  const available = formatNumber(preview.current_balance);
+  const needed = formatNumber(preview.total_credits);
 
   const humanReason = (r?: string): string | null => {
     if (!r) return null;
     switch (r) {
       case 'unsupported_type':
-        return 'Unsupported file type. Will be skipped';
+        return t('agents.unsupportedFileTypeWillBe') || 'Unsupported file type. Will be skipped';
       case 'oversize_file':
-        return 'Over 10 MB. Will be skipped';
+        return t('agents.over10MbWillBe') || 'Over 10 MB. Will be skipped';
       case 'batch_oversize':
-        return 'Batch over 60 MB. Will be skipped';
+        return t('agents.batchOver60MbWill') || 'Batch over 60 MB. Will be skipped';
       case 'extraction_failed':
-        return 'Could not read text (likely a scanned PDF). Will be skipped, no charge';
+        return t('agents.couldNotReadTextLikely') || 'Could not read text (likely a scanned PDF). Will be skipped, no charge';
       case 'extraction_error':
-        return 'Extraction error. Will be skipped, no charge';
+        return t('agents.extractionErrorWillBeSkipped') || 'Extraction error. Will be skipped, no charge';
       default:
         return r;
     }
@@ -936,10 +979,10 @@ function UploadCostPanel({
     <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <p className="text-[13px] font-semibold text-[var(--ds-text)]">
-          Review before upload
+          {t('agents.reviewBeforeUpload') || 'Review before upload'}
         </p>
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {preview.per_file.length} file{preview.per_file.length === 1 ? '' : 's'}
+          {fileCountLabel(preview.per_file.length)}
         </p>
       </div>
 
@@ -954,7 +997,7 @@ function UploadCostPanel({
                   <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">{reason}</p>
                 ) : (
                   <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
-                    {f.words.toLocaleString()} word{f.words === 1 ? '' : 's'}
+                    {wordCountLabel(f.words)}
                   </p>
                 )}
               </div>
@@ -966,40 +1009,42 @@ function UploadCostPanel({
                     : 'text-[var(--ds-text-subtle)]',
                 )}
               >
-                {f.credits > 0 ? `${f.credits} credits` : 'Free'}
+                {f.credits > 0 ? `${f.credits} credits` : t('agents.free') || 'Free'}
               </span>
             </li>
           );
         })}
         {remainder > 0 && (
           <li className="py-2 text-[12px] text-[var(--ds-text-subtle)]">
-            + {remainder} more file{remainder === 1 ? '' : 's'}
+            {t('agents.moreFiles', { files: fileCountLabel(remainder) }) ||
+              `+ ${fileCountLabel(remainder)} more`}
           </li>
         )}
       </ul>
 
       <div className="mb-3 flex items-baseline justify-between border-t border-[var(--ds-border)] pt-3">
         <div>
-          <p className="text-[13px] font-semibold text-[var(--ds-text)]">Total</p>
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">{t('agents.total') || 'Total'}</p>
           <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
-            Balance: {preview.current_balance.toLocaleString()} credits
+            {t('agents.balanceCredits', { credits: creditCountLabel(preview.current_balance) }) ||
+              `Balance: ${creditCountLabel(preview.current_balance)}`}
           </p>
         </div>
         <p className="text-[16px] font-semibold tabular-nums text-[var(--ds-text)]">
-          {preview.total_credits.toLocaleString()} credits
+          {creditCountLabel(preview.total_credits)}
         </p>
       </div>
 
       {!preview.sufficient && (
         <div className="mb-3 rounded-lg border border-[var(--ds-danger-soft)] bg-[var(--ds-danger-soft)] px-3 py-2 text-[12px] text-[var(--ds-danger)]">
-          Not enough credits ({preview.current_balance} available, {preview.total_credits} needed).
-          Top up or upgrade your plan to continue.
+          {t('agents.notEnoughCreditsDetail', { available, needed }) ||
+            `Not enough credits (${available} available, ${needed} needed). Top up or upgrade your plan to continue.`}
         </div>
       )}
 
       <div className="flex items-center justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} disabled={submitting}>
-          Cancel
+          {t('agents.cancel') || 'Cancel'}
         </Button>
         <Button
           variant="primary"
@@ -1009,13 +1054,16 @@ function UploadCostPanel({
         >
           {submitting ? (
             <>
-              <Loader2 size={15} className="animate-spin" /> Uploading…
+              <Loader2 size={15} className="animate-spin" /> {t('agents.uploading') || 'Uploading…'}
             </>
           ) : preview.total_credits === 0 ? (
-            'Nothing to upload'
+            t('agents.nothingToUpload') || 'Nothing to upload'
           ) : (
             <>
-              <Upload size={15} /> Upload for {preview.total_credits.toLocaleString()} credits
+              <Upload size={15} />{' '}
+              {t('agents.uploadForCredits', {
+                credits: creditCountLabel(preview.total_credits),
+              }) || `Upload for ${creditCountLabel(preview.total_credits)}`}
             </>
           )}
         </Button>

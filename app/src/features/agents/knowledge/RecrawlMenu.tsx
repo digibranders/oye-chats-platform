@@ -1,6 +1,7 @@
 import { type ReactElement } from 'react';
 import { Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
 import { Popover, cn } from '../../../design-system';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface RecrawlMenuProps {
   /** Whether the plan can use delta ("updated pages only") recrawl. */
@@ -37,6 +38,7 @@ export function RecrawlMenu({
   loading = false,
   disabled = false,
 }: RecrawlMenuProps): ReactElement {
+  const { t } = useTranslation();
   return (
     <Popover
       align="end"
@@ -51,7 +53,7 @@ export function RecrawlMenu({
             onClick();
           }}
           disabled={disabled || loading}
-          aria-label="Re-train options"
+          aria-label={t('agents.reTrainOptions') || 'Re-train options'}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50"
           {...aria}
         >
@@ -78,9 +80,9 @@ export function RecrawlMenu({
               <RotateCw size={15} aria-hidden="true" />
             </span>
             <span className="min-w-0">
-              <span className="block text-[13px] font-medium text-[var(--ds-text)]">Full re-train</span>
+              <span className="block text-[13px] font-medium text-[var(--ds-text)]">{t('agents.fullReTrain') || 'Full re-train'}</span>
               <span className="mt-0.5 block text-[11px] text-[var(--ds-text-muted)]">
-                Re-train every page. Charged for all pages.
+                {t('agents.reTrainEveryPageCharged') || 'Re-train every page. Charged for all pages.'}
               </span>
             </span>
           </button>
@@ -124,18 +126,18 @@ export function RecrawlMenu({
                     canUseDelta ? 'text-[var(--ds-text)]' : 'text-[var(--ds-text-muted)]',
                   )}
                 >
-                  Updated pages only
+                  {t('agents.updatedPagesOnly') || 'Updated pages only'}
                 </span>
                 {!canUseDelta && (
                   <span className="rounded bg-[var(--ds-warning-soft)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--ds-warning)]">
-                    Standard
+                    {t('agents.standard') || 'Standard'}
                   </span>
                 )}
               </span>
               <span className="mt-0.5 block text-[11px] text-[var(--ds-text-muted)]">
                 {canUseDelta
-                  ? 'Only re-train pages whose content changed since the last training run.'
-                  : 'Upgrade to Standard to re-train only pages that changed.'}
+                  ? t('agents.onlyReTrainPagesWhose') || 'Only re-train pages whose content changed since the last training run.'
+                  : t('agents.upgradeToStandardToRe') || 'Upgrade to Standard to re-train only pages that changed.'}
               </span>
             </span>
           </button>

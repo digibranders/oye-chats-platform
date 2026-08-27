@@ -55,11 +55,23 @@ def test_enterprise_plan_exists_with_agency_entitlements():
     assert ent["limits"]["documents"] == -1
     assert ent["limits"]["page_scraping"] == -1
 
-    # Everything Professional has, plus white-label included (not an add-on).
+    # Everything Professional has.
     prof = _plan("professional")
     for flag, value in prof["features"].items():
         assert ent["features"][flag] == value, f"enterprise lost feature {flag}"
-    assert ent["features"]["branding_removable"] is True
+
+
+def test_no_plan_bundles_branding_removal():
+    """Branding removal is sold ONLY as a paid add-on, never bundled in a tier.
+
+    ``plan_entitlements_service`` overrides ``features.branding_removable`` from
+    the subscription's add-on mandate and ignores this JSONB value entirely, so
+    a ``True`` here would not actually grant anything. It would, however, be
+    read straight into the pricing matrix and the plan cards, advertising a
+    feature the plan does not include. Keep the seed honest.
+    """
+    for slug in _LADDER:
+        assert _plan(slug)["features"]["branding_removable"] is False, f"{slug} must not bundle branding removal"
 
 
 def test_enterprise_sorts_after_professional():

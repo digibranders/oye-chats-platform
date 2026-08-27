@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import { sanitizeColor } from '../services/sanitize';
@@ -29,28 +29,38 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
     const [formData, setFormData] = useState({});
     const [errors, setErrors] = useState({});
     const [submitting, setSubmitting] = useState(false);
-    // 'idle' | 'checking' | 'valid' | 'invalid'
+    // 'idle' | 'checking' | 'valid' | 'invalid'. PRESENTATION ONLY: it drives
+    // the spinner and the disabled state. The submit gate is keyed on the
+    // address in the field, never on this flag, which describes whichever
+    // address was checked last.
     const [emailCheckState, setEmailCheckState] = useState('idle');
-    const emailCheckPromiseRef = useRef(null);
-    const lastCheckedEmailRef = useRef('');
+    // Latest value in the field, so an in-flight check can tell whether its
+    // verdict still applies to what the visitor has typed.
+    const emailValueRef = useRef('');
+    const emailValue = formData.email || '';
+    useEffect(() => {
+        emailValueRef.current = emailValue;
+    }, [emailValue]);
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur from the email field. Validates in the background
-    // while the visitor moves on to the next field.
+    // Fires on blur from the email field, purely so the visitor sees the
+    // verdict early. The check is memoized by address in ``services/api``,
+    // so the matching check at submit costs no extra request.
     const handleEmailBlur = () => {
         const email = formData.email?.trim();
-        if (!email || email === lastCheckedEmailRef.current) return;
+        if (!email) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
             setErrors(prev => ({ ...prev, email: (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             return;
         }
 
-        lastCheckedEmailRef.current = email;
         setEmailCheckState('checking');
-        const promise = checkEmailWithServer(email).then((result) => {
-            if (lastCheckedEmailRef.current !== email) return result;
+        checkEmailWithServer(email).then((result) => {
+            // A newer edit may have superseded this check. Only show the
+            // verdict while it still describes what's in the field.
+            if (emailValueRef.current.trim() !== email) return;
             if (result.valid) {
                 setEmailCheckState('valid');
                 setErrors(prev => ({ ...prev, email: undefined }));
@@ -58,9 +68,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 setEmailCheckState('invalid');
                 setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             }
-            return result;
         });
-        emailCheckPromiseRef.current = promise;
     };
 
     const validate = () => {
@@ -89,22 +97,19 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         if (!validate()) return;
 
         if (hasEmailField && formData.email?.trim()) {
-            // The visitor may click submit before the blur check resolves.
-            if (emailCheckState === 'checking' && emailCheckPromiseRef.current) {
-                const result = await emailCheckPromiseRef.current;
-                if (!result.valid) return; // error already set inside the check
-            } else if (emailCheckState === 'invalid') {
+            // Gate on the address that is IN THE FIELD right now, resolved by
+            // value rather than by reading the mode flag: the flag describes
+            // whichever address was checked last, so a second address typed
+            // after a first one passed would otherwise inherit its "valid".
+            const email = formData.email.trim();
+            setEmailCheckState('checking');
+            const result = await checkEmailWithServer(email);
+            if (!result.valid) {
+                setEmailCheckState('invalid');
+                setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
                 return;
-            } else if (emailCheckState === 'idle') {
-                setEmailCheckState('checking');
-                const result = await checkEmailWithServer(formData.email.trim());
-                if (!result.valid) {
-                    setEmailCheckState('invalid');
-                    setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
-                    return;
-                }
-                setEmailCheckState('valid');
             }
+            setEmailCheckState('valid');
         }
 
         setSubmitting(true);

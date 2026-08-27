@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, Globe } from 'lucide-react';
 import {
   Button,
@@ -23,9 +23,15 @@ import { PersonalitySection } from './PersonalitySection';
 import { BotConfigSection } from './BotConfigSection';
 import { ExperiencePreview } from './ExperiencePreview';
 import { WebsitePreviewPanel } from './WebsitePreviewPanel';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 type SectionKey = 'branding' | 'messages' | 'personality' | 'language' | 'liveChatLeads' | 'servicesCopy';
 
+// Built at import, before a locale exists. The labels here are the fallback;
+// the render site resolves each from its key.
+// @i18n-exempt: resolved in `sectionTabs` below from the tab key
+// (`agents.tab.<key>`); the labels here are that lookup's English fallback.
 const SECTION_TABS: TabItem[] = [
   { key: 'branding', label: 'Branding' },
   { key: 'messages', label: 'Messages' },
@@ -34,6 +40,23 @@ const SECTION_TABS: TabItem[] = [
   { key: 'liveChatLeads', label: 'Live chat & leads' },
   { key: 'servicesCopy', label: 'Services & copy' },
 ];
+
+/**
+ * `PATCH /bots/{id}` answers 403 `branding_addon_required` when a bot without
+ * the branding-removal add-on tries to hide or re-label the "Powered by
+ * OyeChats" badge. It is the one save failure on this page that has a specific
+ * cure, so it must not land in the generic error line.
+ */
+function isBrandingAddonRequired(err: unknown): boolean {
+  const detail =
+    (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
+      ?.detail ?? (err as { detail?: unknown })?.detail;
+  return (
+    detail !== null &&
+    typeof detail === 'object' &&
+    (detail as { error?: string }).error === 'branding_addon_required'
+  );
+}
 
 /** Narrows the Tabs' string key to a SectionKey without an unchecked assertion. */
 function isSectionKey(key: string): key is SectionKey {
@@ -51,6 +74,24 @@ const PRESET_SWATCHES = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', 
  * error, saving and saved states throughout.
  */
 export function ExperiencePage(): ReactElement {
+  const { t, locale } = useTranslation();
+
+  // Resolved here, not in the module table: the table is built at import,
+  // before a locale exists, and these labels must follow a language switch.
+  // Keyed on `locale` with the module-level `translateNow` rather than closing
+  // over the hook's `t`, which the React Compiler cannot memoise across.
+  const sectionTabs = useMemo(
+    () =>
+      SECTION_TABS.map((tab) => ({
+        ...tab,
+        label: translateNow(`agents.tab.${tab.key}`) || tab.label,
+      })),
+    // `translateNow` reads the locale at call time, so the linter cannot see the
+    // dependency; without it the tab labels stay in the previous language.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale],
+  );
+
   const { agent, loading: agentLoading, error: agentError, refresh } = useAgent();
   const botId = agent?.id ?? null;
 
@@ -111,7 +152,7 @@ export function ExperiencePage(): ReactElement {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : 'Could not load this chatbot’s settings.');
+        setLoadError(err instanceof Error ? err.message : translateNow('agents.couldNotLoadSettings') || 'Could not load this chatbot’s settings.');
       });
     return () => {
       cancelled = true;
@@ -144,7 +185,7 @@ export function ExperiencePage(): ReactElement {
         updateDraft({ botLogo: url, avatarType: 'upload' });
       } catch (err) {
         if (botIdRef.current !== uploadBotId) return;
-        setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+        setUploadError(err instanceof Error ? err.message : translateNow('agents.uploadFailedPleaseTryAgain') || 'Upload failed. Please try again.');
       } finally {
         if (botIdRef.current === uploadBotId) setUploading(false);
       }
@@ -176,7 +217,21 @@ export function ExperiencePage(): ReactElement {
       if (identityChanged) void refresh();
     } catch (err) {
       if (botIdRef.current !== saveBotId) return;
-      setSaveError(err instanceof Error ? err.message : 'Could not save. Please try again.');
+      if (isBrandingAddonRequired(err)) {
+        // Point at the cure, and put the branding toggle back where the server
+        // has it. Left switched off, every later save on this page would fail
+        // on the same field and block edits that have nothing to do with it.
+        setActiveSection('branding');
+        setDraft((prev) =>
+          prev && baseline ? { ...prev, showBranding: baseline.showBranding } : prev,
+        );
+        setSaveError(
+          translateNow('agents.brandingAddOnRequiredToSave') ||
+            'Hiding the “Powered by OyeChats” badge needs the branding removal add-on. Add it from the Remove branding card, then try again.',
+        );
+        return;
+      }
+      setSaveError(err instanceof Error ? err.message : translateNow('agents.couldNotSavePleaseTry') || 'Could not save. Please try again.');
     } finally {
       if (botIdRef.current === saveBotId) setSaving(false);
     }
@@ -201,21 +256,21 @@ export function ExperiencePage(): ReactElement {
       ) : botId === null ? (
         <EmptyState
           icon={Eye}
-          title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
+          title={agentError ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             agentError
-              ? 'We hit a problem loading your chatbots. Refresh to try again.'
-              : 'This chatbot doesn’t exist or you don’t have access to it.'
+              ? t('agents.weHitAProblemLoading') || 'We hit a problem loading your chatbots. Refresh to try again.'
+              : t('agents.thisChatbotDoesntExistOr') || 'This chatbot doesn’t exist or you don’t have access to it.'
           }
         />
       ) : loadError && !draft ? (
         <EmptyState
           icon={Eye}
-          title="Couldn’t load settings"
+          title={t('agents.couldntLoadSettings') || 'Couldn’t load settings'}
           description={loadError}
           action={
             <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)}>
-              Try again
+              {t('agents.tryAgain') || 'Try again'}
             </Button>
           }
         />
@@ -225,12 +280,12 @@ export function ExperiencePage(): ReactElement {
           {/* Editor column */}
           <div className="flex min-w-0 flex-col gap-6">
             <Tabs
-              tabs={SECTION_TABS}
+              tabs={sectionTabs}
               value={activeSection}
               onChange={(key) => {
                 if (isSectionKey(key)) setActiveSection(key);
               }}
-              ariaLabel="Experience sections"
+              ariaLabel={t('agents.experienceSections') || 'Experience sections'}
             />
 
             <div
@@ -242,6 +297,7 @@ export function ExperiencePage(): ReactElement {
                 <BrandingSection
                   draft={draft}
                   onChange={updateDraft}
+                  botId={botId}
                   swatches={swatches}
                   uploading={uploading}
                   uploadError={uploadError}
@@ -285,11 +341,11 @@ export function ExperiencePage(): ReactElement {
                   {saveError ? (
                     <span className="text-[var(--ds-danger)]">{saveError}</span>
                   ) : saving ? (
-                    'Saving…'
+                    t('agents.saving') || 'Saving…'
                   ) : justSaved && !dirty ? (
-                    'All changes saved'
+                    t('agents.allChangesSaved') || 'All changes saved'
                   ) : (
-                    'You have unsaved changes'
+                    t('agents.youHaveUnsavedChanges') || 'You have unsaved changes'
                   )}
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
@@ -299,15 +355,15 @@ export function ExperiencePage(): ReactElement {
                     onClick={handleDiscard}
                     disabled={!dirty || saving}
                   >
-                    Discard
+                    {t('agents.discard') || 'Discard'}
                   </Button>
                   <Button
                     size="sm"
                     onClick={handleSave}
                     disabled={saveDisabled}
-                    aria-label="Save changes"
+                    aria-label={t('agents.saveChanges') || 'Save changes'}
                   >
-                    {saving ? 'Saving…' : 'Save changes'}
+                    {saving ? t('agents.saving') || 'Saving…' : t('agents.saveChanges') || 'Save changes'}
                   </Button>
                 </div>
               </div>
@@ -319,14 +375,14 @@ export function ExperiencePage(): ReactElement {
             <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5">
               <div className="mb-4 flex items-center justify-between gap-2">
                 <h2 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
-                  Preview
+                  {t('agents.preview') || 'Preview'}
                 </h2>
                 {agent?.bot_key && (
                   <button
                     type="button"
                     onClick={() => setWebsitePreviewOpen((v) => !v)}
-                    title="Preview on my website"
-                    aria-label="Preview on my website"
+                    title={t('agents.previewOnMyWebsite') || 'Preview on my website'}
+                    aria-label={t('agents.previewOnMyWebsite') || 'Preview on my website'}
                     aria-pressed={websitePreviewOpen}
                     className={cn(
                       'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors',
@@ -342,7 +398,7 @@ export function ExperiencePage(): ReactElement {
               </div>
               <ExperiencePreview
                 draft={draft}
-                agentName={draft.displayName.trim() || agent?.name || 'Your chatbot'}
+                agentName={draft.displayName.trim() || agent?.name || t('agents.yourChatbot') || 'Your chatbot'}
               />
             </div>
           </aside>

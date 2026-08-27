@@ -1,3 +1,4 @@
+import { t as translateNow } from '../i18n/i18n';
 /**
  * Impersonation session store - deliberately TAB-SCOPED (``sessionStorage``).
  *
@@ -44,17 +45,17 @@ export const IMPERSONATION_ENDED_EVENT = 'oyechats:impersonation-ended';
 export const IMPERSONATION_BODY_CLASS = 'oc-impersonating';
 
 /** Copy shown when the backend's write guard refuses a non-allowlisted action. */
-export const IMPERSONATION_FORBIDDEN_MESSAGE = 'This action is disabled during impersonation.';
+export const IMPERSONATION_FORBIDDEN_MESSAGE = translateNow('app.disabledDuringImpersonation') || 'This action is disabled during impersonation.';
 
 /** Default copy for a session the backend ended (expired or revoked). */
-export const IMPERSONATION_ENDED_MESSAGE = 'Impersonation session ended.';
+export const IMPERSONATION_ENDED_MESSAGE = translateNow('app.impersonationEnded') || 'Impersonation session ended.';
 
 /**
  * Shown when the super-admin deliberately exits (rather than the session being
  * revoked or expiring out from under them). Exported so the four sign-out
  * surfaces cannot drift apart on the wording.
  */
-export const IMPERSONATION_EXIT_MESSAGE = 'Impersonation session ended. You can close this tab.';
+export const IMPERSONATION_EXIT_MESSAGE = translateNow('app.impersonationEndedCloseTab') || 'Impersonation session ended. You can close this tab.';
 
 /**
  * Latch: once a session has ended in this page's lifetime it stays ended.

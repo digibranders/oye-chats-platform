@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from '../../i18n/useTranslation';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '../lib/cn';
 
@@ -18,10 +19,11 @@ export interface BreadcrumbsProps {
  * which derives the trail from the matched route handles.
  */
 export function Breadcrumbs({ items, className }: BreadcrumbsProps) {
+  const { t } = useTranslation();
   if (items.length === 0) return null;
 
   return (
-    <nav aria-label="Breadcrumb">
+    <nav aria-label={t('shell.breadcrumb.label') || 'Breadcrumb'}>
       <ol className={cn('flex items-center gap-1.5 text-[13px]', className)}>
         {items.map((item, index) => {
           const isLast = index === items.length - 1;

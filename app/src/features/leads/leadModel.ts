@@ -12,7 +12,9 @@
  * question - "Who are my qualified leads?" - without a glossary.
  */
 import { type StatusBadgeProps } from '../../design-system';
+import { formatDate } from '../../i18n/formatters';
 import { type Lead, type LeadContact } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Tiers ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,9 @@ export interface TierMeta {
   readonly tone: NonNullable<StatusBadgeProps['tone']>;
 }
 
+// @i18n-exempt: English fallbacks for a pure model module. LeadsPage and
+// LeadDetailDrawer resolve these at render with t(`leads.tier.${key}`); this
+// file must not resolve a locale itself (its unit tests keep React out).
 export const TIER_META: Record<TierKey, TierMeta> = {
   unqualified: {
     label: 'Just exploring',
@@ -171,6 +176,8 @@ interface FunnelStageDef {
 }
 
 /** The canonical visitor → meeting funnel, in order. */
+// @i18n-exempt: as above -- English fallbacks resolved at the render site with
+// t(`leads.funnelStage.${key}`).
 const FUNNEL_STAGE_DEFS: readonly FunnelStageDef[] = [
   { key: 'total_visitors', label: 'Visitors', sublabel: 'Landed on your site' },
   { key: 'engaged', label: 'Engaged', sublabel: 'Started a chat' },
@@ -268,6 +275,9 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
  * a table cell, and non-table consumers have to be able to recognise it and
  * substitute their own representation of absence. The CSV export blanks it.
  */
+// @i18n-exempt: a SENTINEL value, compared against by non-table consumers
+// (`leadsCsv` blanks it) rather than only rendered. Localizing it would break
+// that comparison. The render sites show a translated absence marker.
 export const UNKNOWN_LOCATION = 'Unknown';
 
 /**
@@ -318,17 +328,16 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return EMPTY_PLACEHOLDER;
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return EMPTY_PLACEHOLDER;
-  return new Date(parsed).toLocaleDateString('en-US', {
+  return formatDate(new Date(parsed), {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit',
-  });
+    minute: '2-digit', year: undefined });
 }
 
 /** A short display name for a lead - real name, else "Anonymous visitor". */
 export function leadDisplayName(lead: Lead): string {
-  return hasContactName(lead) ? (lead.contact?.name as string) : 'Anonymous visitor';
+  return hasContactName(lead) ? (lead.contact?.name as string) : translateNow('leads.anonymousVisitor') || 'Anonymous visitor';
 }
 
 /** Up-to-two-letter initials for an avatar chip. */
