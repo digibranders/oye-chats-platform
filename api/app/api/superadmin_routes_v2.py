@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, distinct, func, or_, select
 
 from app.api.auth import get_superadmin
 from app.config import APP_URL, IMPERSONATION_ENABLED
@@ -177,6 +177,57 @@ def client_detail(client_id: int, _admin: Client = Depends(get_superadmin)):
         sess_count = (
             session.execute(select(func.count(ChatSession.id)).where(ChatSession.client_id == client_id)).scalar() or 0
         )
+        # Distinct visitors (unique people, not conversations) by the same
+        # "<ip>--<device>" fingerprint the per-bot visitor analytics use. The IP
+        # is the part of ``location`` after " | " when present, else the whole
+        # value; empty/NULL → "Unknown".
+        _raw_loc = func.coalesce(func.nullif(ChatSession.location, ""), "Unknown")
+        _fingerprint = case(
+            (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
+            else_=_raw_loc,
+        ).concat("--").concat(func.coalesce(ChatSession.device, ""))
+        distinct_visitors = (
+            session.execute(
+                select(func.count(distinct(_fingerprint))).where(ChatSession.client_id == client_id)
+            ).scalar()
+            or 0
+        )
+        # Live-chat handoffs: sessions this account's bots escalated to a human —
+        # either an operator was assigned, or a handoff was triggered (a reason
+        # was recorded). The reason-based signal survives after the session
+        # closes and the operator link is cleared, so counting on it alone (as
+        # /command-center does) undercounts historical handoffs. BANT-qualified
+        # leads: sessions whose tier reached mql/sal/sql.
+        operator_transfers = (
+            session.execute(
+                select(func.count(ChatSession.id)).where(
+                    ChatSession.client_id == client_id,
+                    or_(
+                        ChatSession.assigned_operator_id.isnot(None),
+                        ChatSession.handoff_reason.isnot(None),
+                    ),
+                )
+            ).scalar()
+            or 0
+        )
+        bant_qualified_leads = (
+            session.execute(
+                select(func.count(ChatSession.id)).where(
+                    ChatSession.client_id == client_id,
+                    ChatSession.bant_tier.in_(("mql", "sal", "sql")),
+                )
+            ).scalar()
+            or 0
+        )
+        quotations_completed = (
+            session.execute(
+                select(func.count(ChatSession.id)).where(
+                    ChatSession.client_id == client_id,
+                    ChatSession.quotation_state["status"].astext == "complete",
+                )
+            ).scalar()
+            or 0
+        )
         balance = (
             session.execute(
                 select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(CreditLedger.client_id == client_id)
@@ -213,8 +264,12 @@ def client_detail(client_id: int, _admin: Client = Depends(get_superadmin)):
             "subscription": _subscription_summary(session, sub) if sub else None,
             "mrr_cents": mrr_cents,
             "total_sessions": sess_count,
+            "distinct_visitors": int(distinct_visitors),
             "total_messages": msg_count,
             "credits_balance": int(balance),
+            "operator_transfers": int(operator_transfers),
+            "bant_qualified_leads": int(bant_qualified_leads),
+            "quotations_completed": int(quotations_completed),
         }
 
 
