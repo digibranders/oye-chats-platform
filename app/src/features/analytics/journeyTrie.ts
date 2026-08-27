@@ -152,12 +152,26 @@ export function insertPath(
   }
 }
 
-/** Build a trie root from N visitor sequences. Each sequence becomes
- *  one seqIndex (its array position), used later to correlate
- *  pre-chat and post-chat nodes belonging to the same visitor. */
-export function buildTrie(sequences: readonly JourneySequenceInput[]): TrieBuildNode {
+/**
+ * Build a trie root from N visitor sequences. Each sequence becomes one
+ * seqIndex (its array position), used later to correlate pre-chat and
+ * post-chat nodes belonging to the same visitor.
+ *
+ * `rootId` distinguishes the pre-chat trie from the post-chat one — every
+ * descendant id is built as `${parent.id}>${path}` (see `insertPath`), so
+ * two tries built with the SAME root id produce colliding ids the instant
+ * the same page (e.g. `/`) appears as a root-level child on both sides,
+ * which it very often does. `JourneyDiagram` renders both tries' nodes in
+ * one combined list keyed by id, so a collision there is not cosmetic:
+ * React drops or misattributes one of the two colliding `<foreignObject>`s,
+ * which reads as a card silently missing its connector line.
+ */
+export function buildTrie(
+  sequences: readonly JourneySequenceInput[],
+  rootId: string = 'root',
+): TrieBuildNode {
   const root: TrieBuildNode = {
-    id: 'root',
+    id: rootId,
     path: '',
     sessions: 0,
     depth: -1,

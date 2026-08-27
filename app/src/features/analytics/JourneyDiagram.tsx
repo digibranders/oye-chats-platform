@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Bot, Maximize2 } from 'lucide-react';
+import { Bot, Compass, Maximize2 } from 'lucide-react';
 import {
   Button,
   Card,
   CardBody,
   CardHeader,
   Dialog,
+  EmptyState,
+  Select,
   ZoomPanCanvas,
   cn,
+  formatNumber,
 } from '../../ui';
 import type { JourneyPreChatSequencesResponse } from '../../services/api';
 import { isFilterableOutcome, type FilterableOutcome } from './journeyModel';
@@ -33,6 +36,18 @@ import {
   type TrieVizNode,
 } from './journeyTrie';
 
+/** Hard ceiling on visible leaves per side. Also the fetch shape's own cap
+ * (`sequences` is already limited server-side) and the "All" option's value. */
+const TRIE_MAX_LEAVES = 25;
+/** Default number of page flows shown before the reader asks for more. Keeping
+ * it small stops the pre-chat side from overlapping on dense accounts. */
+const DEFAULT_MAX_FLOWS = 5;
+const FLOW_COUNT_OPTIONS = [
+  { value: '5', label: 'Top 5' },
+  { value: '10', label: 'Top 10' },
+  { value: String(TRIE_MAX_LEAVES), label: 'All' },
+];
+
 const TONE: Record<ToneKey, { icon: string; tile: string; line: string }> = {
   green: { icon: '#10b981', tile: 'rgba(16, 185, 129, 0.14)', line: 'rgba(16, 185, 129, 0.55)' },
   blue: { icon: '#3b82f6', tile: 'rgba(59, 130, 246, 0.14)', line: 'rgba(59, 130, 246, 0.55)' },
@@ -43,40 +58,96 @@ const TONE: Record<ToneKey, { icon: string; tile: string; line: string }> = {
   gray: { icon: '#94a3b8', tile: 'rgba(148, 163, 184, 0.14)', line: 'rgba(148, 163, 184, 0.55)' },
 };
 
-function FlowCard({
+/**
+ * The card's corner, in viewBox units.
+ *
+ * 8, not the 14 of `rounded-xl`. A card is 64 units tall, so 14 was 22% of
+ * its own height — a pill, not a chip — and it read as one the moment the
+ * diagram was scaled up. 8 is the radius the design system gives a medium
+ * CONTROL, which is what one of these is: a small, dense, clickable box.
+ */
+const CARD_RADIUS = 8;
+
+/**
+ * The card's chrome, drawn as real SVG rather than CSS inside the
+ * `foreignObject`.
+ *
+ * This is the fix for a border that looked heavy and corners that looked
+ * bloated. HTML inside a `foreignObject` is laid out in the SVG's own USER
+ * units, so `border: 1px` and `border-radius: 14px` are 1 and 14 *viewBox*
+ * units — and both are then multiplied by whatever scale the viewBox is
+ * rendered at. At the card view's ~1.1 that already put the border on a
+ * fractional 1.11 device pixels (so it antialiased into a soft, uneven
+ * line) and the radius at 15.5px; under the zoom control it got far worse,
+ * a 3px slab of border with 42px stadium corners at 3×.
+ *
+ * Chrome must not scale with the drawing. A `<rect>` with
+ * `vector-effect="non-scaling-stroke"` is stroked in DEVICE pixels — exactly
+ * one, crisp, at every zoom level — and its `rx` is applied before the
+ * stroke, so the corner stays a fixed proportion of the card instead of
+ * growing with it. The text stays in a `foreignObject` because that is what
+ * still gives it real truncation.
+ */
+function CardChrome({
   node,
-  active = false,
+  active,
+}: {
+  node: { x: number; y: number; width: number; tone: ToneKey };
+  active: boolean;
+}) {
+  const tone = TONE[node.tone] ?? TONE.gray;
+  return (
+    <>
+      <rect
+        x={node.x}
+        y={node.y}
+        width={node.width}
+        height={CARD_H}
+        rx={CARD_RADIUS}
+        fill="var(--color-surface-sunken)"
+        stroke={active ? 'var(--color-accent-500)' : 'var(--color-border)'}
+        strokeWidth={active ? 2 : 1}
+        vectorEffect="non-scaling-stroke"
+      />
+      {/* The branch's colour, as a real circle for the same reason as the
+          border: a CSS dot would swell with the zoom. Suppressed while the
+          card is selected — the accent ring already carries that state, and
+          two marks in one corner read as a defect. */}
+      {active ? null : (
+        <circle
+          cx={node.x + node.width - CARD_RADIUS}
+          cy={node.y + CARD_RADIUS}
+          r={2.5}
+          fill={tone.icon}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The card's text. Transparent — `CardChrome` draws everything else.
+ *
+ * Sized in viewBox units like the layout around it, so a label keeps its
+ * proportion to the card it sits in at every zoom.
+ */
+function FlowCardText({
+  node,
   subtitle,
   tooltip,
 }: {
-  node: { label: string; sessions: number; width: number; tone: ToneKey; isFork?: boolean };
-  active?: boolean;
+  node: { label: string; sessions: number; width: number; isFork?: boolean };
   subtitle?: string;
   tooltip?: string;
 }) {
-  const tone = TONE[node.tone] ?? TONE.gray;
   const compact = node.width < 80;
-  const borderClass = active
-    ? 'border-accent ring-2 ring-accent'
-    : 'border-border';
-  const showDot = !active;
 
   if (compact) {
     return (
       <div
         title={tooltip}
-        className={cn(
-          'relative flex h-full w-full flex-col items-center justify-center gap-1 rounded-xl border bg-surface-sunken px-1.5 py-1',
-          borderClass,
-        )}
+        className="flex h-full w-full flex-col items-center justify-center px-1.5 py-1"
       >
-        {showDot && (
-          <span
-            aria-hidden
-            className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full"
-            style={{ backgroundColor: tone.icon }}
-          />
-        )}
         <div className="min-w-0 max-w-full text-center">
           <p className="truncate text-2xs font-medium leading-tight text-text-secondary">
             {node.label}
@@ -90,22 +161,11 @@ function FlowCard({
   }
 
   return (
-    <div
-      title={tooltip}
-      className={cn(
-        'relative flex h-full w-full items-center gap-3 rounded-xl border bg-surface-sunken px-3',
-        borderClass,
-      )}
-    >
-      {showDot && (
-        <span
-          aria-hidden
-          className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full"
-          style={{ backgroundColor: tone.icon }}
-        />
-      )}
+    <div title={tooltip} className="flex h-full w-full items-center px-3">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-text-secondary">{node.label}</p>
+        {/* `pr-3` keeps a long path clear of the tone dot in the corner,
+            which is no longer a sibling element reserving its own space. */}
+        <p className="truncate pr-3 text-xs font-medium text-text-secondary">{node.label}</p>
         <p className="tabular-nums text-sm font-semibold leading-tight text-text-primary">
           {node.sessions.toLocaleString()}
           {subtitle && (
@@ -147,13 +207,43 @@ export function JourneyDiagram({
 }: JourneyDiagramProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // How many page flows to render. Defaults to the top few so the pre-chat
+  // side stays legible; the reader can widen it to All from the header.
+  const [maxFlows, setMaxFlows] = useState<number>(DEFAULT_MAX_FLOWS);
+  // Narrows the diagram to journeys that BEGAN on one page. `null` = every
+  // starting page. Cleared automatically below if the picked page falls out
+  // of the current data (a month switch, say) rather than silently filtering
+  // to nothing with no visible reason why.
+  const [startFilter, setStartFilter] = useState<string | null>(null);
+
+  // Distinct starting pages across ALL sequences (not just the rendered top
+  // few), so the picker offers every entry point a visitor took, even minor
+  // ones. Summed by session count so it reads as "N visitors began here".
+  const startingPages = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const seq of sequences?.sequences ?? []) {
+      if (seq.sessions <= 0 || seq.sequence.length === 0) continue;
+      const start = seq.sequence[0];
+      totals.set(start, (totals.get(start) ?? 0) + seq.sessions);
+    }
+    return Array.from(totals.entries())
+      .map(([path, sessionCount]) => ({ path, sessions: sessionCount }))
+      .sort((a, b) => b.sessions - a.sessions || a.path.localeCompare(b.path));
+  }, [sequences]);
+
+  const effectiveStartFilter = useMemo(() => {
+    if (startFilter && !startingPages.some((p) => p.path === startFilter)) return null;
+    return startFilter;
+  }, [startFilter, startingPages]);
 
   const { preViz, postViz, effVBH, centerY, preAllSessions, postAllSessions, postOrphans } =
     useMemo(() => {
-      const rawSequences = sequences?.sequences ?? [];
+      const rawSequences = (sequences?.sequences ?? []).filter(
+        (s) => effectiveStartFilter == null || s.sequence[0] === effectiveStartFilter,
+      );
       const preInputs = rawSequences.map((s) => ({ paths: s.sequence, sessions: s.sessions }));
-      const preRoot = buildTrie(preInputs);
-      pruneToMaxLeaves(preRoot, 25);
+      const preRoot = buildTrie(preInputs, 'pre-root');
+      pruneToMaxLeaves(preRoot, maxFlows);
       const preLayout = layoutTrie(preRoot, 'pre', CHAIN_START_X, CHAIN_END_X, V_MARGIN);
 
       const postInputs = rawSequences
@@ -162,20 +252,31 @@ export function JourneyDiagram({
           paths: s.post_sequence ?? [],
           sessions: s.post_sessions ?? s.sessions,
         }));
-      const postRoot = buildTrie(postInputs);
-      pruneToMaxLeaves(postRoot, 25);
+      const postRoot = buildTrie(postInputs, 'post-root');
+      pruneToMaxLeaves(postRoot, maxFlows);
       const postLayout = layoutTrie(postRoot, 'post', POST_CHAIN_START_X, POST_CHAIN_END_X, V_MARGIN);
 
       const maxH = Math.max(preLayout.height, postLayout.height);
       const effH = Math.max(VB_H_BASE, maxH + V_MARGIN * 2);
       const cY = effH / 2;
 
-      const preSessions = preLayout.edges.map((e) => e.sessions);
-      const postSessions = postLayout.edges.map((e) => e.sessions);
-
       // Post-nodes that have no incoming edge inside postViz
       const postTargetIds = new Set(postLayout.edges.map((e) => e.toNodeId));
       const orphans = postLayout.nodes.filter((n) => !postTargetIds.has(n.id));
+
+      // The population `strokeFor` scales against must include the LEAF/ORPHAN
+      // connectors, not just internal trie edges. A trie built entirely from
+      // single-page journeys (every pre-sequence is one page, e.g. "/" alone)
+      // has zero internal edges — every leaf sits at depth 0, directly off the
+      // unrendered root — so scaling from `edges` alone left `strokeFor` with
+      // an empty population, which returns 0 for every leaf connector
+      // regardless of its own session count. Every leaf/orphan card then
+      // rendered with no visible line into the chatbot circle at all: this is
+      // the "edges are missing" bug, and it is not an edge case — it is the
+      // COMMON case whenever a bot's visitors mostly open chat straight from
+      // one page rather than a multi-page journey.
+      const preSessions = [...preLayout.edges.map((e) => e.sessions), ...preLayout.leafAnchors.map((l) => l.sessions)];
+      const postSessions = [...postLayout.edges.map((e) => e.sessions), ...orphans.map((n) => n.sessions)];
 
       return {
         preViz: preLayout,
@@ -186,7 +287,7 @@ export function JourneyDiagram({
         postAllSessions: postSessions,
         postOrphans: orphans,
       };
-    }, [sequences]);
+    }, [sequences, effectiveStartFilter, maxFlows]);
 
   const handleNodeSelect = (node: TrieVizNode) => {
     setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
@@ -299,31 +400,84 @@ export function JourneyDiagram({
         </div>
       </foreignObject>
 
-      {/* All pre and post nodes as accessible buttons inside foreignObject */}
+      {/* Every pre- and post-node: SVG chrome, then the text and the click
+          target over it. Two elements rather than one because only the SVG
+          half can hold a border that does not scale — see `CardChrome`. */}
       {[...preViz.nodes, ...postViz.nodes].map((node) => (
-        <foreignObject
-          key={node.id}
-          x={node.x}
-          y={node.y}
-          width={node.width}
-          height={CARD_H}
-        >
-          <button
-            type="button"
-            className="h-full w-full cursor-pointer rounded-xl border-0 bg-transparent p-0 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            aria-label={`${node.path}, ${node.sessions} ${node.sessions === 1 ? 'session' : 'sessions'}`}
-            aria-pressed={selectedNodeId === node.id}
-            onClick={() => handleNodeSelect(node)}
-          >
-            <FlowCard
-              node={node}
-              active={selectedNodeId === node.id}
-              tooltip={node.path}
-              subtitle={node.isFork ? 'merged' : undefined}
-            />
-          </button>
-        </foreignObject>
+        <g key={node.id}>
+          <CardChrome node={node} active={selectedNodeId === node.id} />
+          <foreignObject x={node.x} y={node.y} width={node.width} height={CARD_H}>
+            <button
+              type="button"
+              className="h-full w-full cursor-pointer border-0 bg-transparent p-0 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+              aria-label={`${node.path}, ${node.sessions} ${node.sessions === 1 ? 'session' : 'sessions'}`}
+              aria-pressed={selectedNodeId === node.id}
+              onClick={() => handleNodeSelect(node)}
+            >
+              <FlowCardText
+                node={node}
+                tooltip={node.path}
+                subtitle={node.isFork ? 'merged' : undefined}
+              />
+            </button>
+          </foreignObject>
+        </g>
       ))}
+    </>
+  );
+
+  // A start-page filter is active but matched zero sequences. Say so instead
+  // of rendering a diagram with an empty source column, which reads as "the
+  // bot stopped tracking journeys" rather than "this filter has no data".
+  const filteredToNothing = effectiveStartFilter != null && preViz.nodes.length === 0;
+
+  const headerActions = (
+    <>
+      <div className="flex items-center gap-1.5">
+        <span aria-hidden className="text-xs text-text-tertiary">
+          Flows
+        </span>
+        <div className="w-24">
+          <Select
+            size="sm"
+            label="Page flows shown"
+            value={String(maxFlows)}
+            options={FLOW_COUNT_OPTIONS}
+            onValueChange={(value) => setMaxFlows(Number(value))}
+          />
+        </div>
+      </div>
+      {startingPages.length > 1 ? (
+        <div className="flex items-center gap-1.5">
+          <span aria-hidden className="text-xs text-text-tertiary">
+            Starts on
+          </span>
+          <div className="w-36">
+            <Select
+              size="sm"
+              label="Filter by starting page"
+              value={effectiveStartFilter ?? ''}
+              emptyOption="Any page"
+              options={startingPages.map((p) => ({
+                value: p.path,
+                label: `${p.path} (${formatNumber(p.sessions)})`,
+              }))}
+              onValueChange={(value) => {
+                setStartFilter(value || null);
+                setSelectedNodeId(null);
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Expand journey diagram"
+        onClick={() => setExpanded(true)}
+      >
+        <Maximize2 aria-hidden className="h-icon-sm w-icon-sm" />
+      </Button>
     </>
   );
 
@@ -331,28 +485,46 @@ export function JourneyDiagram({
     <Card className={cn('relative', className)}>
       <CardHeader
         title="Visitor journey diagram"
-        description="Interactive path flows before and after opening chat. Thicker curves represent more visitors."
-        actions={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Expand journey diagram"
-            onClick={() => setExpanded(true)}
-          >
-            <Maximize2 aria-hidden className="h-icon-sm w-icon-sm" />
-          </Button>
-        }
+        description="Interactive path flows before and after opening chat. Thicker curves represent more visitors. Drag to pan, scroll to zoom."
+        actions={headerActions}
       />
-      <CardBody flush className="overflow-x-auto p-4">
-        <svg
-          role="img"
-          aria-label="Visitor journey flow diagram"
-          viewBox={`0 0 ${VB_W} ${effVBH}`}
-          className="block h-auto w-full min-w-[700px] select-none"
-        >
-          {renderSvgContent()}
-        </svg>
-      </CardBody>
+      {filteredToNothing ? (
+        <CardBody>
+          <EmptyState
+            icon={Compass}
+            title="No journeys match this filter"
+            description={`No visitors starting on "${effectiveStartFilter}" were tracked in this window.`}
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setStartFilter(null)}>
+                Clear filter
+              </Button>
+            }
+          />
+        </CardBody>
+      ) : (
+        <CardBody flush className="p-4">
+          {/* Pan + wheel/keyboard-zoom right here in the card, not only
+              behind the expand button — a reader with a dense diagram
+              should not have to leave the page just to spread it out.
+
+              Sized by the viewBox's own aspect rather than a fixed height:
+              `preserveAspectRatio="xMidYMid meet"` fits the WHOLE viewBox
+              inside the box, so a fixed 420px against a narrow container
+              letterboxed hard — at a 451px-wide card the diagram drew 158px
+              tall inside a 420px well, two thirds of it empty. Matching the
+              aspect means the drawing is always as large as the width
+              allows and there is no dead band under it. */}
+          <ZoomPanCanvas
+            label="Visitor journey flow diagram"
+            viewBoxWidth={VB_W}
+            viewBoxHeight={effVBH}
+            className="min-h-60"
+            style={{ aspectRatio: `${VB_W} / ${effVBH}` }}
+          >
+            {renderSvgContent()}
+          </ZoomPanCanvas>
+        </CardBody>
+      )}
 
       <Dialog
         open={expanded}

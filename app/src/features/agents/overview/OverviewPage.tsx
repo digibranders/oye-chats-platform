@@ -144,23 +144,23 @@ function OverviewContent({ agent }: { agent: Bot }) {
       <PageHeader
         title="Overview"
         actions={
-          // `Button loading` carries the spinner AND `aria-busy`. The hand-rolled
-          // `animate-spin` it replaces froze at 0° under `prefers-reduced-motion`
-          // and announced nothing at all.
-          <Button loading={refreshing} onClick={refreshEverything}>
-            Refresh
-          </Button>
-        }
-        toolbar={
-          <SegmentedControl
-            label="Reporting period"
-            value={String(days)}
-            onChange={(value) => setDays(parseRange(value))}
-            items={RANGE_OPTIONS.map((option) => ({
-              value: String(option),
-              label: `${option} days`,
-            }))}
-          />
+          <>
+            <SegmentedControl
+              label="Reporting period"
+              value={String(days)}
+              onChange={(value) => setDays(parseRange(value))}
+              items={RANGE_OPTIONS.map((option) => ({
+                value: String(option),
+                label: `${option} days`,
+              }))}
+            />
+            {/* `Button loading` carries the spinner AND `aria-busy`. The
+                hand-rolled `animate-spin` it replaces froze at 0° under
+                `prefers-reduced-motion` and announced nothing at all. */}
+            <Button loading={refreshing} onClick={refreshEverything}>
+              Refresh
+            </Button>
+          </>
         }
       />
 

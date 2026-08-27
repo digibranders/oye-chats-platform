@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
@@ -41,6 +41,13 @@ export interface ZoomPanCanvasProps {
   viewBoxHeight: number;
   children: ReactNode;
   className?: string;
+  /**
+   * Sizing the caller cannot express in a class — in practice an
+   * `aspectRatio` derived from the viewBox, which is what stops
+   * `preserveAspectRatio="…meet"` letterboxing the drawing inside a box of
+   * some other shape.
+   */
+  style?: CSSProperties;
 }
 
 export function ZoomPanCanvas({
@@ -49,6 +56,7 @@ export function ZoomPanCanvas({
   viewBoxHeight,
   children,
   className,
+  style,
 }: ZoomPanCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY);
@@ -56,6 +64,23 @@ export function ZoomPanCanvas({
   const dragRef = useRef<{ clientX: number; clientY: number; startTx: number; startTy: number } | null>(
     null,
   );
+  /**
+   * Show the focus ring, but only when focus arrived from the keyboard.
+   *
+   * `:focus-visible` is supposed to be exactly this and is not, here: on a
+   * focusable SVG (`role="application"`, `tabindex="0"`) the browser's own
+   * heuristic treats a plain click as focus-visible, so every drag-to-pan —
+   * the canvas's primary interaction — lit a blue ring around the whole
+   * diagram.
+   *
+   * Dropping the ring outright is not the fix: this widget owns arrow keys,
+   * `+`/`-` and `0`, so a keyboard user has to be able to see where they
+   * are (WCAG 2.2 SC 2.4.7). Tracking *how* focus arrived keeps the ring for
+   * them and never shows it to the mouse. The pointer flag is cleared by the
+   * `focus` handler it exists for, so a later Tab into the canvas still rings.
+   */
+  const [keyboardFocused, setKeyboardFocused] = useState(false);
+  const pointerFocusRef = useRef(false);
 
   const zoomAt = (nextScale: number, anchor?: { x: number; y: number }): void => {
     setTransform((prev) => {
@@ -74,7 +99,6 @@ export function ZoomPanCanvas({
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    svg.setAttribute('tabIndex', '0');
     const handler = (e: WheelEvent) => {
       e.preventDefault();
       const rect = svg.getBoundingClientRect();
@@ -87,6 +111,9 @@ export function ZoomPanCanvas({
   }, [transform.scale]);
 
   const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    // Set before the browser moves focus, which is what the `focus` handler
+    // below reads to decide whether this was a pointer or a keyboard arrival.
+    pointerFocusRef.current = true;
     if (e.button !== 0) return;
     setDragging(true);
     dragRef.current = { clientX: e.clientX, clientY: e.clientY, startTx: transform.tx, startTy: transform.ty };
@@ -147,7 +174,10 @@ export function ZoomPanCanvas({
   };
 
   return (
-    <div className={cn('relative w-full overflow-hidden rounded-lg bg-surface-sunken', className)}>
+    <div
+      className={cn('relative w-full overflow-hidden rounded-lg bg-surface-sunken', className)}
+      style={style}
+    >
       <svg
         ref={svgRef}
         role="application"
@@ -156,13 +186,25 @@ export function ZoomPanCanvas({
         tabIndex={0}
         viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
         preserveAspectRatio="xMidYMid meet"
-        className="block h-auto w-full select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className={cn(
+          // `h-full`, not `h-auto`: the caller sizes the box (in the journey
+          // card, to the viewBox's own aspect), and the drawing fills it.
+          // With `h-auto` the SVG took its height from the viewBox ratio and
+          // simply left whatever the container had spare as dead space.
+          'block h-full w-full select-none outline-none',
+          keyboardFocused && 'outline-2 outline-offset-2 outline-accent-500',
+        )}
         style={{ cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={endDrag}
         onMouseLeave={endDrag}
         onKeyDown={handleKeyDown}
+        onFocus={() => {
+          setKeyboardFocused(!pointerFocusRef.current);
+          pointerFocusRef.current = false;
+        }}
+        onBlur={() => setKeyboardFocused(false)}
       >
         <g transform={`translate(${transform.tx} ${transform.ty}) scale(${transform.scale})`}>{children}</g>
       </svg>

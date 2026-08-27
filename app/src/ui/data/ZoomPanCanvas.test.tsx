@@ -11,7 +11,38 @@ describe('ZoomPanCanvas', () => {
       </ZoomPanCanvas>,
     );
     const region = screen.getByRole('application', { name: 'Journey diagram' });
-    expect(region).toHaveAttribute('tabIndex', '0');
+    // `tabindex`, lowercase. SVG attribute names are case-sensitive, and this
+    // assertion used to read a camelCase `tabIndex` that an effect set by hand
+    // beside React's own — so it passed on the junk copy and would have gone on
+    // passing if the real one ever went away. Focusing it is the actual proof.
+    expect(region).toHaveAttribute('tabindex', '0');
+    region.focus();
+    expect(region).toHaveFocus();
+  });
+
+  it('rings on a keyboard arrival and stays quiet on a click', async () => {
+    // Drag-to-pan is this canvas's primary interaction, so a ring on every
+    // click meant a blue outline around the whole diagram all the time.
+    // `:focus-visible` does not save us here — on a focusable SVG the
+    // browser counts a plain click as focus-visible — but the ring still has
+    // to exist for the keyboard, which owns arrow keys / +/- / 0 on this
+    // widget (WCAG 2.2 SC 2.4.7).
+    const user = userEvent.setup();
+    render(
+      <ZoomPanCanvas label="Journey diagram" viewBoxWidth={1200} viewBoxHeight={420}>
+        <circle cx={50} cy={50} r={10} />
+      </ZoomPanCanvas>,
+    );
+    const region = screen.getByRole('application', { name: 'Journey diagram' });
+
+    await user.click(region);
+    expect(region).toHaveFocus();
+    expect(region.getAttribute('class')).not.toMatch(/\boutline-2\b/);
+
+    region.blur();
+    await user.tab();
+    expect(region).toHaveFocus();
+    expect(region.getAttribute('class')).toMatch(/\boutline-2\b/);
   });
 
   it('zooms in on ArrowUp/+ and out on ArrowDown/-, clamped to bounds', async () => {
