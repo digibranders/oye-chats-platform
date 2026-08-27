@@ -59,6 +59,15 @@ const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === s
 // quote decision.
 const HANDOFF_INVITATION_TAIL_RE = /\n?\s*(would you like (me )?to (connect|introduce|arrange)|shall i connect|should i connect|do you want me to connect|can i connect you|would you like to (chat|speak) with (our|the) team|would you like to talk to (our|the) team|would you like me to loop in (our|the) team|let me know if you'?d like me to (connect|introduce))[^.?!]*[.?!]?\s*$/i;
 
+// Fallback: any trailing question the bot appends right before the quote card
+// (e.g. "Want the implementation steps or the demo material?"). When the quote
+// is about to render, that follow-up competes with the card, so we peel the
+// last question sentence off the message. Matches only the final "…?" run —
+// [^.!?\n]* stops at the previous sentence's terminator, so earlier sentences
+// are kept. Like the handoff tail, the stripped text is stashed and replayed
+// after the visitor decides on (or skips) the quote.
+const TRAILING_QUESTION_TAIL_RE = /\s*[^.!?\n]*\?\s*$/;
+
 // Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
 // the inline [LEAVE_MESSAGE_CARD] card) that drops the visitor straight from
@@ -1544,20 +1553,26 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             // don't accidentally target a system row). Idempotent on repeated
             // injections since after the first strip the regex no longer matches.
             let stripped = null;
+            let dropIndex = -1;
             const updated = prev.map((msg) => msg);
             for (let i = updated.length - 1; i >= 0; i -= 1) {
                 const m = updated[i];
                 if (m.sender !== 'bot' || m.type || !m.text) continue;
-                const match = m.text.match(HANDOFF_INVITATION_TAIL_RE);
+                const match = m.text.match(HANDOFF_INVITATION_TAIL_RE) || m.text.match(TRAILING_QUESTION_TAIL_RE);
                 if (match) {
                     stripped = match[0].trim();
-                    updated[i] = { ...m, text: m.text.slice(0, match.index).trimEnd() };
+                    const remaining = m.text.slice(0, match.index).trimEnd();
+                    // If the whole message was just that question, drop the now-empty
+                    // bubble rather than leave it blank above the card.
+                    if (remaining) updated[i] = { ...m, text: remaining };
+                    else dropIndex = i;
                 }
                 break;
             }
             strippedHandoffTextRef.current = stripped;
+            const base = dropIndex >= 0 ? updated.filter((_, idx) => idx !== dropIndex) : updated;
             return [
-                ...updated.filter((m) => m.type !== 'quotation_flow'),
+                ...base.filter((m) => m.type !== 'quotation_flow'),
                 {
                     id: 'quotation-flow',
                     type: 'quotation_flow',
@@ -3600,6 +3615,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     setInputText={setInputText}
                     onSubmit={handleSend}
                     isTyping={isTyping}
+                    locked={messages.some((m) => m.type === 'quotation_flow' && m.status === 'active')}
                     currentTheme={currentTheme}
                     inputRef={inputRef}
                     settings={settings}

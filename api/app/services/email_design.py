@@ -23,6 +23,11 @@ from datetime import UTC, datetime
 
 from app.config import APP_URL, BRAND_NAME, MARKETING_URL
 
+# Hosted brand mark. A remote src (rather than an inlined data-URI) is what
+# Gmail actually renders — Gmail strips base64 image data. If images are blocked
+# the "OyeChats" wordmark text beside it still carries the brand.
+OYECHATS_LOGO_URL = f"{APP_URL}/logo-light.png"
+
 # ── Design tokens ────────────────────────────────────────────────────────────
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
 MONO = "'SF Mono',ui-monospace,Menlo,Consolas,'Liberation Mono',monospace"
@@ -132,9 +137,7 @@ def _brand_split() -> tuple[str, str]:
 
 
 def _wordmark(*, size: int = 15) -> str:
-    tile = size + 6
     first, second = _brand_split()
-    initial = html.escape(BRAND_NAME[:1].upper()) if BRAND_NAME else "O"
     first_span = (
         f'<span class="oc-h" style="font-family:{FONT};font-size:{size}px;font-weight:700;'
         f'letter-spacing:-0.2px;color:{INK900};">{first}</span>'
@@ -143,15 +146,13 @@ def _wordmark(*, size: int = 15) -> str:
     )
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td width="{tile}" height="{tile}" align="center" valign="middle" '
-        f'style="width:{tile}px;height:{tile}px;background-color:{ACCENT};border-radius:6px;'
-        f'text-align:center;vertical-align:middle;">'
-        f'<span style="font-family:{FONT};font-size:{size - 2}px;font-weight:800;color:#ffffff;'
-        f'line-height:{tile}px;">{initial}</span></td>'
-        f'<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>'
+        f'<td valign="middle" style="vertical-align:middle;">'
+        f'<img src="{OYECHATS_LOGO_URL}" alt="{html.escape(BRAND_NAME)}" width="28" height="28" '
+        f'style="display:block;border:0;height:28px;width:28px;"></td>'
+        f'<td width="9" style="width:9px;font-size:0;line-height:0;">&nbsp;</td>'
         f'<td valign="middle" style="vertical-align:middle;">{first_span}'
         f'<span style="font-family:{FONT};font-size:{size}px;font-weight:700;'
-        f'letter-spacing:-0.2px;color:{ACCENT};">{second}</span></td>'
+        f'letter-spacing:-0.2px;color:{INK900};">{second}</span></td>'
         f"</tr></table>"
     )
 

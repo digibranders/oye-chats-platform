@@ -1,26 +1,19 @@
 """Quotation catalog: admin CRUD + widget runtime state machine.
 
-The quotation flow is a stateful machine persisted on
-``chat_sessions.quotation_state`` (JSONB) and driven by seven endpoints:
+Pricing lives at the **requirement** level. A service is a named grouping of
+priced requirements (label · price · quantity); the visitor picks one service,
+checks which requirements they want, and the quote sums the chosen requirements'
+``price × quantity``.
 
-    idle → selecting → answering → quoting → complete
+The flow is a stateful machine persisted on ``chat_sessions.quotation_state``
+(JSONB) and driven by the widget endpoints:
+
+    idle → selecting → choosing → quoting → complete
                                           ↘ skipped
 
 These tests exercise the whole machine end-to-end against a real Postgres
 (the shared ``db`` fixture), plus the pure-model trigger math and the admin
-CRUD gate. Mirrors tests/test_activation_events.py. Skips without DB_URL.
-
-Coverage map (the edge cases called out in review):
-  * happy path: select → answer → quantity → quote → accept
-  * BANT trigger gating (below threshold inactive; at threshold active)
-  * required_categories subset gating + effective_threshold clamp
-  * empty selection == skip; explicit skip preserves partial answers
-  * plan downgrade mid-flow silently deactivates the widget flow
-  * admin deletes a picked service mid-flow (graceful skip)
-  * per-type answer validation (required / choice / number)
-  * terminal-state guards (409) and unknown service/question (400)
-  * admin GET default, PUT persist, PUT plan gate (403), cross-tenant 404
-  * build_quotation_summary shape for the operator/lead surfaces
+CRUD gate. Skips without DB_URL.
 """
 
 from __future__ import annotations
@@ -32,7 +25,6 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from app.api import auth, quotation_routes
 from app.api.quotation_routes import (
@@ -130,7 +122,8 @@ def _make_session(
 
 
 def _catalog(**overrides) -> dict:
-    """A one-service catalog: a text question + a default quantity of 2 at ₹100."""
+    """One service ("Landing page") with two priced requirements:
+    Hero ₹8,000 ×1 and Extra content ₹2,000 ×3 (→ service total ₹14,000)."""
     base = {
         "enabled": True,
         "currency": "INR",
@@ -141,23 +134,43 @@ def _catalog(**overrides) -> dict:
                 "id": "s1",
                 "name": "Landing page",
                 "description": "A single marketing page",
-                "unit_label": "page",
-                "price_per_unit": 100.0,
-                "default_quantity": 2,
-                "questions": [
-                    {
-                        "id": "q1",
-                        "text": "What style?",
-                        "type": "text",
-                        "options": [],
-                        "required": True,
-                    }
+                "requirements": [
+                    {"id": "r1", "label": "Hero section", "price": 8000, "quantity": 1},
+                    {"id": "r2", "label": "Extra content page", "price": 2000, "quantity": 3},
                 ],
             }
         ],
     }
     base.update(overrides)
     return base
+
+
+def _two_service_catalog() -> dict:
+    return {
+        "enabled": True,
+        "currency": "INR",
+        "required_categories": [],
+        "threshold": 2,
+        "services": [
+            {
+                "id": "s1",
+                "name": "Landing page",
+                "description": "Marketing page",
+                "requirements": [
+                    {"id": "r1", "label": "Hero section", "price": 8000, "quantity": 1},
+                    {"id": "r2", "label": "Extra content page", "price": 2000, "quantity": 3},
+                ],
+            },
+            {
+                "id": "s2",
+                "name": "SEO",
+                "description": "",
+                "requirements": [
+                    {"id": "r3", "label": "Technical audit", "price": 5000, "quantity": 1},
+                ],
+            },
+        ],
+    }
 
 
 def _app():
@@ -181,14 +194,12 @@ def _allow_plan(monkeypatch):
     """Default every test to a Professional+ plan so the flow is enabled.
 
     Plan gating itself is asserted explicitly in the tests that flip these
-    stubs to False — see ``test_put_catalog_plan_gate_403`` and
-    ``test_plan_downgrade_deactivates_flow``.
-    """
+    stubs to False."""
     monkeypatch.setattr(quotation_routes, "_client_plan_allows", lambda *_a, **_k: True)
     monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: True)
 
 
-# ── Pure-model trigger math (no HTTP) ─────────────────────────────────────────
+# ── Pure-model trigger math + validation (no HTTP) ────────────────────────────
 
 
 class TestEffectiveThreshold:
@@ -197,7 +208,6 @@ class TestEffectiveThreshold:
         assert QuotationCatalog(required_categories=[], threshold=4).effective_threshold() == 4
 
     def test_threshold_cannot_exceed_chosen_categories(self):
-        # "3 of 2 chosen" is unreachable by construction — clamp to 2.
         cat = QuotationCatalog(required_categories=["budget", "timeline"], threshold=4)
         assert cat.effective_threshold() == 2
 
@@ -209,596 +219,670 @@ class TestEffectiveThreshold:
         with pytest.raises(ValueError):
             QuotationCatalog(required_categories=["revenue"])
 
-    def test_choice_question_needs_an_option(self):
+
+class TestCatalogValidation:
+    def test_duplicate_requirement_id_rejected(self):
         with pytest.raises(ValueError):
             QuotationCatalog(
                 services=[
                     {
                         "id": "s1",
                         "name": "x",
-                        "price_per_unit": 1,
-                        "questions": [{"id": "q1", "text": "pick", "type": "choice", "options": []}],
+                        "requirements": [
+                            {"id": "r1", "label": "a", "price": 1},
+                            {"id": "r1", "label": "b", "price": 2},
+                        ],
                     }
                 ]
             )
+
+    def test_requirement_defaults_quantity_to_one(self):
+        cat = QuotationCatalog.model_validate(
+            {"services": [{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "a", "price": 5}]}]}
+        )
+        assert cat.services[0].requirements[0].quantity == 1
+
+    def test_negative_price_rejected(self):
+        with pytest.raises(ValueError):
+            QuotationCatalog(
+                services=[{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "a", "price": -1}]}]
+            )
+
+    def test_choice_requirement_needs_options(self):
+        with pytest.raises(ValueError):
+            QuotationCatalog(
+                services=[{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "Stack", "type": "choice"}]}]
+            )
+
+    def test_choice_options_priced_and_validated(self):
+        cat = QuotationCatalog(
+            services=[
+                {
+                    "id": "s1",
+                    "name": "Dev",
+                    "requirements": [
+                        {
+                            "id": "r1",
+                            "label": "Stack",
+                            "type": "choice",
+                            "options": [{"id": "o1", "label": "Next.js", "price": 50000}],
+                        }
+                    ],
+                }
+            ]
+        )
+        opt = cat.services[0].requirements[0].options[0]
+        assert opt.price == 50000 and opt.quantity == 1
+
+    def test_legacy_question_fields_are_ignored(self):
+        # A pre-migration service (unit_label/price_per_unit/questions) degrades
+        # to a service with no requirements rather than exploding.
+        cat = QuotationCatalog.model_validate(
+            {
+                "enabled": True,
+                "services": [
+                    {
+                        "id": "s1",
+                        "name": "Legacy",
+                        "unit_label": "page",
+                        "price_per_unit": 100,
+                        "questions": [{"id": "q1", "text": "?", "type": "text"}],
+                    }
+                ],
+            }
+        )
+        assert cat.services[0].requirements == []
 
 
 # ── Per-session write lock ────────────────────────────────────────────────────
 
 
 class TestSessionLock:
-    """Guards the row lock that serializes the read-modify-write on
-    ``quotation_state``. Every mutating handler must load the session
-    ``FOR UPDATE`` so overlapping requests can't clobber each other's blob."""
-
     def test_load_session_for_update_emits_row_lock(self):
-        from unittest.mock import MagicMock
+        captured = {}
 
-        from sqlalchemy.dialects import postgresql
+        class _Result:
+            def scalars(self):
+                class _S:
+                    def first(self_inner):
+                        return None
 
-        from app.api.quotation_routes import _load_session
+                return _S()
 
-        captured = []
+        class _DB:
+            def execute(self, stmt):
+                captured["sql"] = str(stmt)
+                return _Result()
 
-        def _capture(stmt):
-            captured.append(str(stmt.compile(dialect=postgresql.dialect())).upper())
-            result = MagicMock()
-            result.scalars.return_value.first.return_value = None
-            return result
-
-        db = MagicMock()
-        db.execute.side_effect = _capture
-        bot = MagicMock(spec=["id"])
-        bot.id = 1
-
-        _load_session(db, bot, "s1", for_update=True)
-        _load_session(db, bot, "s1")  # default: plain read, no lock
-
-        assert "FOR UPDATE" in captured[0]
-        assert "FOR UPDATE" not in captured[1]
+        bot = Bot(id=1, client_id=1, bot_key="bot-x")
+        quotation_routes._load_session(_DB(), bot, "sess", for_update=True)
+        assert "FOR UPDATE" in captured["sql"]
 
 
-# ── Widget runtime: trigger gating ────────────────────────────────────────────
+# ── Widget runtime state machine ──────────────────────────────────────────────
 
 
-class TestEmptyTriggerDelivery:
-    """When NOTHING is selected in the trigger (``required_categories == []``),
-    ANY of the four BANT dimensions count, and the quote is delivered the moment
-    ``threshold`` of them are marked — no matter which four. Documents exactly
-    "how and when the quotation is delivered" for the default (empty) trigger.
-    """
+class TestQuotationFlow:
+    def test_full_flow_select_choose_quote_accept(self, db, monkeypatch):
+        # Silence the email side effects; the flow itself is under test here.
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
 
-    def _fire_at(self, db, *, key, threshold, marked_dims):
-        client = _make_client(db, email=f"{key}@example.com", api_key=key)
-        cat = _catalog(required_categories=[], threshold=threshold)
-        bot = _make_bot(db, client.id, bot_key=f"bot-{key}", catalog=cat)
-        scores = {d: 1 for d in marked_dims}
-        _make_session(db, session_id=f"{key}s", bot_id=bot.id, client_id=client.id, **scores)
+        client = _make_client(db, email="f1@example.com", api_key="f1")
+        bot = _make_bot(db, client.id, bot_key="bot-f1", catalog=_catalog())
+        _make_session(db, session_id="f1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            return api.get("/chat/quotation", params={"session_id": f"{key}s"}).json()
+            # idle → selecting
+            r = api.get("/chat/quotation", params={"session_id": "f1s"})
+            assert r.status_code == 200
+            body = r.json()
+            assert body["active"] is True and body["status"] == "selecting"
+            assert [s["id"] for s in body["services"]] == ["s1"]
 
-    def test_threshold_2_needs_any_two_of_four(self, db):
-        # One marked → not yet; two (any pair) → delivered.
-        assert self._fire_at(db, key="e2a", threshold=2, marked_dims=["timeline"])["active"] is False
-        assert self._fire_at(db, key="e2b", threshold=2, marked_dims=["timeline", "authority"])["active"] is True
-        # A different pair works identically — nothing is dimension-specific.
-        assert self._fire_at(db, key="e2c", threshold=2, marked_dims=["need", "budget"])["active"] is True
+            # selecting → choosing (single service)
+            r = api.post("/chat/quotation/select-services", json={"session_id": "f1s", "service_ids": ["s1"]})
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "choosing"
+            assert body["current"]["service_id"] == "s1"
+            assert [req["id"] for req in body["current"]["requirements"]] == ["r1", "r2"]
+            # Requirements never leak prices to the widget.
+            assert all("price" not in req for req in body["current"]["requirements"])
 
-    def test_threshold_1_fires_on_the_first_signal(self, db):
-        # Aggressive: any single BANT signal delivers the quote immediately.
-        assert self._fire_at(db, key="e1", threshold=1, marked_dims=["authority"])["active"] is True
+            # choosing → quoting (pick both requirements)
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={
+                    "session_id": "f1s",
+                    "service_id": "s1",
+                    "selections": [{"requirement_id": "r1"}, {"requirement_id": "r2"}],
+                },
+            )
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "quoting"
+            quote = {line["requirement_id"]: line for line in body["quote"]}
+            assert quote["r1"]["subtotal"] == 8000.0
+            assert quote["r2"]["subtotal"] == 6000.0  # 2000 × 3
+            assert body["total"] == 14000.0
 
-    def test_threshold_4_requires_all_four(self, db):
-        assert self._fire_at(db, key="e4a", threshold=4, marked_dims=["need", "budget", "authority"])["active"] is False
-        assert (
-            self._fire_at(db, key="e4b", threshold=4, marked_dims=["need", "budget", "authority", "timeline"])["active"]
-            is True
+            # accept → complete
+            r = api.post("/chat/quotation/accept", json={"session_id": "f1s"})
+            assert r.status_code == 200
+            assert r.json()["status"] == "complete"
+
+    def test_choose_subset_of_requirements(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        client = _make_client(db, email="f2@example.com", api_key="f2")
+        bot = _make_bot(db, client.id, bot_key="bot-f2", catalog=_catalog())
+        _make_session(db, session_id="f2s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "f2s"})
+            api.post("/chat/quotation/select-services", json={"session_id": "f2s", "service_ids": ["s1"]})
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={"session_id": "f2s", "service_id": "s1", "selections": [{"requirement_id": "r1"}]},
+            )
+            body = r.json()
+            assert body["total"] == 8000.0
+            assert [line["requirement_id"] for line in body["quote"]] == ["r1"]
+
+    def test_choice_requirement_flow(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        catalog = {
+            "enabled": True,
+            "currency": "INR",
+            "required_categories": [],
+            "threshold": 2,
+            "services": [
+                {
+                    "id": "dev",
+                    "name": "Development",
+                    "description": "",
+                    "requirements": [
+                        {
+                            "id": "stack",
+                            "label": "Tech stack",
+                            "type": "choice",
+                            "options": [
+                                {"id": "next", "label": "Next.js", "price": 50000, "quantity": 1},
+                                {"id": "react", "label": "React", "price": 40000, "quantity": 1},
+                            ],
+                        },
+                        {"id": "ci", "label": "CI/CD setup", "type": "item", "price": 10000, "quantity": 1},
+                        {
+                            "id": "support",
+                            "label": "Support",
+                            "type": "choice",
+                            "options": [{"id": "std", "label": "Standard", "price": 3000, "quantity": 6}],
+                        },
+                    ],
+                }
+            ],
+        }
+        client = _make_client(db, email="ch1@example.com", api_key="ch1")
+        bot = _make_bot(db, client.id, bot_key="bot-ch1", catalog=catalog)
+        _make_session(db, session_id="ch1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "ch1s"})
+            r = api.post("/chat/quotation/select-services", json={"session_id": "ch1s", "service_ids": ["dev"]})
+            cur = r.json()["current"]
+            stack = next(x for x in cur["requirements"] if x["id"] == "stack")
+            assert stack["type"] == "choice"
+            assert [o["id"] for o in stack["options"]] == ["next", "react"]
+            assert all("price" not in o for o in stack["options"])  # options never leak prices
+
+            # Pick Next.js + tick CI/CD; skip Support entirely.
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={
+                    "session_id": "ch1s",
+                    "service_id": "dev",
+                    "selections": [
+                        {"requirement_id": "stack", "option_id": "next"},
+                        {"requirement_id": "ci"},
+                    ],
+                },
+            )
+            body = r.json()
+            assert body["status"] == "quoting"
+            lines = {line["requirement_id"]: line for line in body["quote"]}
+            assert lines["stack"]["label"] == "Tech stack: Next.js"
+            assert lines["stack"]["subtotal"] == 50000.0
+            assert lines["ci"]["subtotal"] == 10000.0
+            assert "support" not in lines  # optional choice, skipped
+            assert body["total"] == 60000.0
+
+    def test_choice_quantity_multiplies(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        catalog = {
+            "enabled": True,
+            "currency": "INR",
+            "required_categories": [],
+            "threshold": 2,
+            "services": [
+                {
+                    "id": "svc",
+                    "name": "Retainer",
+                    "requirements": [
+                        {
+                            "id": "support",
+                            "label": "Support",
+                            "type": "choice",
+                            "options": [{"id": "std", "label": "Standard", "price": 3000, "quantity": 6}],
+                        }
+                    ],
+                }
+            ],
+        }
+        client = _make_client(db, email="ch2@example.com", api_key="ch2")
+        bot = _make_bot(db, client.id, bot_key="bot-ch2", catalog=catalog)
+        _make_session(db, session_id="ch2s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "ch2s"})
+            api.post("/chat/quotation/select-services", json={"session_id": "ch2s", "service_ids": ["svc"]})
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={
+                    "session_id": "ch2s",
+                    "service_id": "svc",
+                    "selections": [{"requirement_id": "support", "option_id": "std"}],
+                },
+            )
+            body = r.json()
+            assert body["total"] == 18000.0  # 3000 × 6
+
+    def test_requirement_question_surfaces_in_choosing_view(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        catalog = {
+            "enabled": True,
+            "currency": "INR",
+            "required_categories": [],
+            "threshold": 2,
+            "services": [
+                {
+                    "id": "s1",
+                    "name": "Development",
+                    "requirements": [
+                        {
+                            "id": "r1",
+                            "label": "Tech stack",
+                            "question": "Which tech stack do you prefer?",
+                            "type": "choice",
+                            "options": [{"id": "o1", "label": "Next.js", "price": 3000}],
+                        },
+                        {
+                            "id": "r2",
+                            "label": "Laptop",
+                            "question": "Do you need a laptop?",
+                            "type": "item",
+                            "price": 5000,
+                        },
+                    ],
+                }
+            ],
+        }
+        client = _make_client(db, email="q1@example.com", api_key="q1")
+        bot = _make_bot(db, client.id, bot_key="bot-q1", catalog=catalog)
+        _make_session(db, session_id="q1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "q1s"})
+            r = api.post("/chat/quotation/select-services", json={"session_id": "q1s", "service_ids": ["s1"]})
+            reqs = {x["id"]: x for x in r.json()["current"]["requirements"]}
+            assert reqs["r1"]["question"] == "Which tech stack do you prefer?"
+            assert reqs["r2"]["question"] == "Do you need a laptop?"
+
+    def test_quantity_modes_none_fixed_ask(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        catalog = {
+            "enabled": True,
+            "currency": "INR",
+            "required_categories": [],
+            "threshold": 2,
+            "services": [
+                {
+                    "id": "s1",
+                    "name": "Dev",
+                    "requirements": [
+                        # none → always ×1, no unit
+                        {"id": "rn", "label": "Kickoff", "type": "item", "price": 2000, "quantity_mode": "none"},
+                        # fixed → admin quantity 6, unit months
+                        {
+                            "id": "rf",
+                            "label": "Support",
+                            "type": "item",
+                            "price": 1000,
+                            "quantity_mode": "fixed",
+                            "quantity": 6,
+                            "unit_label": "month",
+                        },
+                        # ask → visitor picks; unit laptops
+                        {
+                            "id": "ra",
+                            "label": "Laptop",
+                            "type": "item",
+                            "price": 5000,
+                            "quantity_mode": "ask",
+                            "unit_label": "laptop",
+                        },
+                    ],
+                }
+            ],
+        }
+        client = _make_client(db, email="qm@example.com", api_key="qm")
+        bot = _make_bot(db, client.id, bot_key="bot-qm", catalog=catalog)
+        _make_session(db, session_id="qms", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.get("/chat/quotation", params={"session_id": "qms"})
+            api.post("/chat/quotation/select-services", json={"session_id": "qms", "service_ids": ["s1"]})
+            reqs = {
+                x["id"]: x
+                for x in api.get("/chat/quotation", params={"session_id": "qms"}).json()["current"]["requirements"]
+            }
+            assert reqs["ra"]["quantity_mode"] == "ask" and reqs["ra"]["unit_label"] == "laptop"
+
+            # Tick none + fixed, and ask for 3 laptops.
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={
+                    "session_id": "qms",
+                    "service_id": "s1",
+                    "selections": [
+                        {"requirement_id": "rn"},
+                        {"requirement_id": "rf"},
+                        {"requirement_id": "ra", "quantity": 3},
+                    ],
+                },
+            )
+            body = r.json()
+            lines = {line["requirement_id"]: line for line in body["quote"]}
+            assert (
+                lines["rn"]["quantity"] == 1 and lines["rn"]["unit_label"] == "" and lines["rn"]["subtotal"] == 2000.0
+            )
+            assert (
+                lines["rf"]["quantity"] == 6
+                and lines["rf"]["unit_label"] == "month"
+                and lines["rf"]["subtotal"] == 6000.0
+            )
+            assert (
+                lines["ra"]["quantity"] == 3
+                and lines["ra"]["unit_label"] == "laptop"
+                and lines["ra"]["subtotal"] == 15000.0
+            )
+            assert body["total"] == 23000.0  # 2000 + 6000 + 15000
+
+    def test_ask_requirement_zero_quantity_is_excluded(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        catalog = {
+            "enabled": True,
+            "currency": "INR",
+            "required_categories": [],
+            "threshold": 2,
+            "services": [
+                {
+                    "id": "s1",
+                    "name": "Dev",
+                    "requirements": [
+                        {"id": "ra", "label": "Laptop", "type": "item", "price": 5000, "quantity_mode": "ask"},
+                        {"id": "ri", "label": "Setup", "type": "item", "price": 1000, "quantity_mode": "none"},
+                    ],
+                }
+            ],
+        }
+        client = _make_client(db, email="qz@example.com", api_key="qz")
+        bot = _make_bot(db, client.id, bot_key="bot-qz", catalog=catalog)
+        _make_session(db, session_id="qzs", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "qzs"})
+            api.post("/chat/quotation/select-services", json={"session_id": "qzs", "service_ids": ["s1"]})
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={
+                    "session_id": "qzs",
+                    "service_id": "s1",
+                    "selections": [{"requirement_id": "ra", "quantity": 0}, {"requirement_id": "ri"}],
+                },
+            )
+            body = r.json()
+            assert [line["requirement_id"] for line in body["quote"]] == ["ri"]  # laptop (qty 0) excluded
+            assert body["total"] == 1000.0
+
+    def test_empty_service_selection_is_skip(self, db):
+        client = _make_client(db, email="f3@example.com", api_key="f3")
+        bot = _make_bot(db, client.id, bot_key="bot-f3", catalog=_catalog())
+        _make_session(db, session_id="f3s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "f3s"})
+            r = api.post("/chat/quotation/select-services", json={"session_id": "f3s", "service_ids": []})
+            assert r.status_code == 200
+            assert r.json()["status"] == "skipped"
+
+    def test_empty_requirements_is_skip(self, db):
+        client = _make_client(db, email="f4@example.com", api_key="f4")
+        bot = _make_bot(db, client.id, bot_key="bot-f4", catalog=_catalog())
+        _make_session(db, session_id="f4s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "f4s"})
+            api.post("/chat/quotation/select-services", json={"session_id": "f4s", "service_ids": ["s1"]})
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={"session_id": "f4s", "service_id": "s1", "selections": []},
+            )
+            assert r.status_code == 200
+            assert r.json()["status"] == "skipped"
+
+    def test_second_service_pick_wins_when_multiple_sent(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        client = _make_client(db, email="f5@example.com", api_key="f5")
+        bot = _make_bot(db, client.id, bot_key="bot-f5", catalog=_two_service_catalog())
+        _make_session(db, session_id="f5s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "f5s"})
+            # Widget is single-select; if several ids arrive we keep the first valid.
+            r = api.post("/chat/quotation/select-services", json={"session_id": "f5s", "service_ids": ["s2", "s1"]})
+            body = r.json()
+            assert body["current"]["service_id"] == "s2"
+
+    def test_unknown_service_400(self, db):
+        client = _make_client(db, email="f6@example.com", api_key="f6")
+        bot = _make_bot(db, client.id, bot_key="bot-f6", catalog=_catalog())
+        _make_session(db, session_id="f6s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.get("/chat/quotation", params={"session_id": "f6s"})
+            api.post("/chat/quotation/select-services", json={"session_id": "f6s", "service_ids": ["s1"]})
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={"session_id": "f6s", "service_id": "nope", "selections": [{"requirement_id": "r1"}]},
+            )
+            assert r.status_code == 400
+
+    def test_requirements_before_choosing_409(self, db):
+        client = _make_client(db, email="f7@example.com", api_key="f7")
+        bot = _make_bot(db, client.id, bot_key="bot-f7", catalog=_catalog())
+        # Session sits in 'selecting', not 'choosing'.
+        _make_session(
+            db,
+            session_id="f7s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state={"status": "selecting", "selected_service_ids": [], "selected_requirements": {}},
         )
-
-    def test_delivered_state_is_selecting_with_the_service_list(self, db):
-        body = self._fire_at(db, key="e2d", threshold=2, marked_dims=["need", "timeline"])
-        assert body["status"] == "selecting"
-        assert [s["id"] for s in body["services"]] == ["s1"]
-
-
-class TestTriggerGating:
-    def test_below_threshold_is_inactive(self, db):
-        client = _make_client(db, email="t1@example.com", api_key="t1")
-        bot = _make_bot(db, client.id, bot_key="bot-t1", catalog=_catalog())
-        _make_session(db, session_id="sess-t1", bot_id=bot.id, client_id=client.id, need=1)
-
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.get("/chat/quotation", params={"session_id": "sess-t1"})
-        assert res.status_code == 200
-        assert res.json()["active"] is False
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={"session_id": "f7s", "service_id": "s1", "selections": [{"requirement_id": "r1"}]},
+            )
+            assert r.status_code == 409
 
-    def test_at_threshold_activates_and_flips_to_selecting(self, db):
-        client = _make_client(db, email="t2@example.com", api_key="t2")
-        bot = _make_bot(db, client.id, bot_key="bot-t2", catalog=_catalog())
-        _make_session(db, session_id="sess-t2", bot_id=bot.id, client_id=client.id, need=1, budget=1)
 
+class TestBantGating:
+    def test_below_threshold_inactive(self, db):
+        client = _make_client(db, email="b1@example.com", api_key="b1")
+        bot = _make_bot(db, client.id, bot_key="bot-b1", catalog=_catalog())  # threshold 2
+        _make_session(db, session_id="b1s", bot_id=bot.id, client_id=client.id, need=1)  # only 1 marked
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.get("/chat/quotation", params={"session_id": "sess-t2"})
-        body = res.json()
-        assert body["active"] is True
-        assert body["status"] == "selecting"
-        assert [s["id"] for s in body["services"]] == ["s1"]
-        # side effect: session state persisted as selecting
-        row = db.execute(select(ChatSession).where(ChatSession.id == "sess-t2")).scalars().first()
-        assert row.quotation_state["status"] == "selecting"
+            r = api.get("/chat/quotation", params={"session_id": "b1s"})
+            assert r.json()["active"] is False
 
-    def test_required_categories_subset_only_counts_chosen(self, db):
-        # Require Budget+Timeline (threshold auto-clamps to 2). Need+Authority
-        # marked must NOT satisfy it; Budget+Timeline must.
-        client = _make_client(db, email="t3@example.com", api_key="t3")
-        cat = _catalog(required_categories=["budget", "timeline"], threshold=2)
-        bot = _make_bot(db, client.id, bot_key="bot-t3", catalog=cat)
-        _make_session(db, session_id="off", bot_id=bot.id, client_id=client.id, need=1, authority=1)
-        _make_session(db, session_id="on", bot_id=bot.id, client_id=client.id, budget=1, timeline=1)
-
+    def test_required_category_subset(self, db):
+        client = _make_client(db, email="b2@example.com", api_key="b2")
+        bot = _make_bot(db, client.id, bot_key="bot-b2", catalog=_catalog(required_categories=["budget"], threshold=1))
+        # need marked but budget not → still inactive because only budget counts.
+        _make_session(db, session_id="b2s", bot_id=bot.id, client_id=client.id, need=1)
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            off = api.get("/chat/quotation", params={"session_id": "off"}).json()
-            on = api.get("/chat/quotation", params={"session_id": "on"}).json()
-        assert off["active"] is False
-        assert on["active"] is True
-
-    def test_disabled_catalog_is_inactive(self, db):
-        client = _make_client(db, email="t4@example.com", api_key="t4")
-        bot = _make_bot(db, client.id, bot_key="bot-t4", catalog=_catalog(enabled=False))
-        _make_session(db, session_id="sess-t4", bot_id=bot.id, client_id=client.id, need=1, budget=1)
-
-        api = _bot_api(_app(), bot)
+            assert api.get("/chat/quotation", params={"session_id": "b2s"}).json()["active"] is False
+        # budget marked → active.
+        _make_session(db, session_id="b2s2", bot_id=bot.id, client_id=client.id, budget=1)
         with _patch_session(db):
-            res = api.get("/chat/quotation", params={"session_id": "sess-t4"})
-        assert res.json()["active"] is False
+            assert api.get("/chat/quotation", params={"session_id": "b2s2"}).json()["active"] is True
 
-    def test_plan_downgrade_deactivates_flow(self, db, monkeypatch):
-        client = _make_client(db, email="t5@example.com", api_key="t5")
-        bot = _make_bot(db, client.id, bot_key="bot-t5", catalog=_catalog())
-        _make_session(db, session_id="sess-t5", bot_id=bot.id, client_id=client.id, need=1, budget=1)
 
+class TestPlanGating:
+    def test_bot_plan_downgrade_deactivates_flow(self, db, monkeypatch):
+        client = _make_client(db, email="p1@example.com", api_key="p1")
+        bot = _make_bot(db, client.id, bot_key="bot-p1", catalog=_catalog())
+        _make_session(db, session_id="p1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
         monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: False)
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.get("/chat/quotation", params={"session_id": "sess-t5"})
-        assert res.json()["active"] is False
+            assert api.get("/chat/quotation", params={"session_id": "p1s"}).json()["active"] is False
 
-
-# ── Widget runtime: full state machine ────────────────────────────────────────
-
-
-class TestStateMachine:
-    def _activate(self, db, api, session_id):
-        """Drive idle → selecting so the session has an active state row."""
-        with _patch_session(db):
-            return api.get("/chat/quotation", params={"session_id": session_id}).json()
-
-    def test_full_happy_path(self, db):
-        client = _make_client(db, email="h1@example.com", api_key="h1")
-        bot = _make_bot(db, client.id, bot_key="bot-h1", catalog=_catalog())
-        _make_session(db, session_id="h1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
-        api = _bot_api(_app(), bot)
-
-        assert self._activate(db, api, "h1s")["status"] == "selecting"
-
-        with _patch_session(db):
-            answering = api.post(
-                "/chat/quotation/select-services",
-                json={"session_id": "h1s", "service_ids": ["s1"]},
-            ).json()
-        assert answering["status"] == "answering"
-        assert answering["current"]["question"]["id"] == "q1"
-
-        with _patch_session(db):
-            after_answer = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "h1s", "service_id": "s1", "question_id": "q1", "answer": "Modern"},
-            ).json()
-        # question answered → next step is the (silent) quantity step
-        assert after_answer["status"] == "answering"
-        assert after_answer["current"]["question"] is None
-
-        with _patch_session(db):
-            quoting = api.post(
-                "/chat/quotation/quantity",
-                json={"session_id": "h1s", "service_id": "s1", "quantity": 2},
-            ).json()
-        assert quoting["status"] == "quoting"
-        assert quoting["total"] == 200.0
-        assert quoting["quote"][0] == {
-            "service_id": "s1",
-            "name": "Landing page",
-            "unit_label": "page",
-            "price_per_unit": 100.0,
-            "quantity": 2,
-            "subtotal": 200.0,
-        }
-
-        with _patch_session(db):
-            done = api.post("/chat/quotation/accept", json={"session_id": "h1s"}).json()
-        assert done["active"] is False
-        assert done["status"] == "complete"
-        assert done["total"] == 200.0
-
-    def test_empty_selection_is_a_skip(self, db):
-        client = _make_client(db, email="h2@example.com", api_key="h2")
-        bot = _make_bot(db, client.id, bot_key="bot-h2", catalog=_catalog())
-        _make_session(db, session_id="h2s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
-        api = _bot_api(_app(), bot)
-        self._activate(db, api, "h2s")
-
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/select-services",
-                json={"session_id": "h2s", "service_ids": []},
-            ).json()
-        assert res["active"] is False
-        assert res["status"] == "skipped"
-
-    def test_explicit_skip_preserves_partial_answers(self, db):
-        client = _make_client(db, email="h3@example.com", api_key="h3")
-        bot = _make_bot(db, client.id, bot_key="bot-h3", catalog=_catalog())
-        _make_session(db, session_id="h3s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
-        api = _bot_api(_app(), bot)
-        self._activate(db, api, "h3s")
-
-        with _patch_session(db):
-            api.post(
-                "/chat/quotation/select-services",
-                json={"session_id": "h3s", "service_ids": ["s1"]},
-            )
-            api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "h3s", "service_id": "s1", "question_id": "q1", "answer": "Modern"},
-            )
-            skipped = api.post("/chat/quotation/skip", json={"session_id": "h3s"}).json()
-        assert skipped["status"] == "skipped"
-        row = db.execute(select(ChatSession).where(ChatSession.id == "h3s")).scalars().first()
-        assert row.quotation_state["answers"]["s1"]["q1"] == "Modern"
-
-    def test_deleted_service_mid_flow_is_skipped_gracefully(self, db):
-        """Admin removes a picked service while the visitor is mid-flow: the
-        machine walks past the now-missing service instead of 500-ing."""
-        two_services = _catalog()
-        two_services["services"].append(
-            {
-                "id": "s2",
-                "name": "SEO audit",
-                "description": "",
-                "unit_label": "audit",
-                "price_per_unit": 50.0,
-                "default_quantity": 1,
-                "questions": [],
-            }
-        )
-        client = _make_client(db, email="h4@example.com", api_key="h4")
-        bot = _make_bot(db, client.id, bot_key="bot-h4", catalog=two_services)
-        _make_session(db, session_id="h4s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
-        api = _bot_api(_app(), bot)
-        self._activate(db, api, "h4s")
-
-        with _patch_session(db):
-            api.post(
-                "/chat/quotation/select-services",
-                json={"session_id": "h4s", "service_ids": ["s1", "s2"]},
-            )
-            api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "h4s", "service_id": "s1", "question_id": "q1", "answer": "Modern"},
-            )
-            api.post(
-                "/chat/quotation/quantity",
-                json={"session_id": "h4s", "service_id": "s1", "quantity": 1},
-            )
-
-        # Admin deletes s2 from the catalog now.
-        bot.quotation_catalog = _catalog()  # only s1 remains
-        db.commit()
-
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/quantity",
-                json={"session_id": "h4s", "service_id": "s1", "quantity": 1},
-            ).json()
-        # s2 is gone → the only quotable line is s1; no crash.
-        assert res["status"] == "quoting"
-        assert [line["service_id"] for line in res["quote"]] == ["s1"]
-
-
-# ── Widget runtime: validation + guards ───────────────────────────────────────
-
-
-class TestValidationAndGuards:
-    def _reach_answering(self, db, api, session_id, catalog_questions):
-        cat = _catalog()
-        cat["services"][0]["questions"] = catalog_questions
-        return cat
-
-    def test_required_answer_rejected_when_empty(self, db):
-        client = _make_client(db, email="v1@example.com", api_key="v1")
-        bot = _make_bot(db, client.id, bot_key="bot-v1", catalog=_catalog())
-        _make_session(
-            db,
-            session_id="v1s",
-            bot_id=bot.id,
-            client_id=client.id,
-            need=1,
-            budget=1,
-            quotation_state={
-                "status": "answering",
-                "selected_service_ids": ["s1"],
-                "current_service_index": 0,
-                "answers": {},
-                "quantities": {},
-            },
-        )
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v1s", "service_id": "s1", "question_id": "q1", "answer": "   "},
-            )
-        assert res.status_code == 422
-        assert res.json()["detail"] == "answer_required"
-
-    def test_choice_answer_must_be_in_options(self, db):
-        cat = _catalog()
-        cat["services"][0]["questions"] = [
-            {"id": "q1", "text": "Pick", "type": "choice", "options": ["A", "B"], "required": True}
-        ]
-        client = _make_client(db, email="v2@example.com", api_key="v2")
-        bot = _make_bot(db, client.id, bot_key="bot-v2", catalog=cat)
-        _make_session(
-            db,
-            session_id="v2s",
-            bot_id=bot.id,
-            client_id=client.id,
-            need=1,
-            budget=1,
-            quotation_state={
-                "status": "answering",
-                "selected_service_ids": ["s1"],
-                "current_service_index": 0,
-                "answers": {},
-                "quantities": {},
-            },
-        )
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            bad = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v2s", "service_id": "s1", "question_id": "q1", "answer": "C"},
-            )
-            good = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v2s", "service_id": "s1", "question_id": "q1", "answer": "A, B"},
-            )
-        assert bad.status_code == 422
-        assert bad.json()["detail"] == "answer_not_in_options"
-        assert good.status_code == 200
-
-    def test_number_answer_must_parse(self, db):
-        cat = _catalog()
-        cat["services"][0]["questions"] = [
-            {"id": "q1", "text": "How many?", "type": "number", "options": [], "required": True}
-        ]
-        client = _make_client(db, email="v3@example.com", api_key="v3")
-        bot = _make_bot(db, client.id, bot_key="bot-v3", catalog=cat)
-        _make_session(
-            db,
-            session_id="v3s",
-            bot_id=bot.id,
-            client_id=client.id,
-            need=1,
-            budget=1,
-            quotation_state={
-                "status": "answering",
-                "selected_service_ids": ["s1"],
-                "current_service_index": 0,
-                "answers": {},
-                "quantities": {},
-            },
-        )
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v3s", "service_id": "s1", "question_id": "q1", "answer": "not-a-number"},
-            )
-        assert res.status_code == 422
-        assert res.json()["detail"] == "answer_not_a_number"
-
-    def test_unknown_service_and_question_are_400(self, db):
-        client = _make_client(db, email="v4@example.com", api_key="v4")
-        bot = _make_bot(db, client.id, bot_key="bot-v4", catalog=_catalog())
-        _make_session(
-            db,
-            session_id="v4s",
-            bot_id=bot.id,
-            client_id=client.id,
-            need=1,
-            budget=1,
-            quotation_state={
-                "status": "answering",
-                "selected_service_ids": ["s1"],
-                "current_service_index": 0,
-                "answers": {},
-                "quantities": {},
-            },
-        )
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            unknown_service = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v4s", "service_id": "nope", "question_id": "q1", "answer": "x"},
-            )
-            unknown_question = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v4s", "service_id": "s1", "question_id": "nope", "answer": "x"},
-            )
-        assert unknown_service.status_code == 400
-        assert unknown_service.json()["detail"] == "unknown_service"
-        assert unknown_question.status_code == 400
-        assert unknown_question.json()["detail"] == "unknown_question"
-
-    def test_terminal_state_rejects_further_answers(self, db):
-        client = _make_client(db, email="v5@example.com", api_key="v5")
-        bot = _make_bot(db, client.id, bot_key="bot-v5", catalog=_catalog())
-        _make_session(
-            db,
-            session_id="v5s",
-            bot_id=bot.id,
-            client_id=client.id,
-            need=1,
-            budget=1,
-            quotation_state={"status": "complete", "selected_service_ids": ["s1"], "answers": {}, "quantities": {}},
-        )
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/answer",
-                json={"session_id": "v5s", "service_id": "s1", "question_id": "q1", "answer": "x"},
-            )
-        assert res.status_code == 409
-        assert res.json()["detail"] == "quotation_already_closed"
-
-    def test_unknown_session_is_404(self, db):
-        client = _make_client(db, email="v6@example.com", api_key="v6")
-        bot = _make_bot(db, client.id, bot_key="bot-v6", catalog=_catalog())
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post(
-                "/chat/quotation/select-services",
-                json={"session_id": "ghost", "service_ids": ["s1"]},
-            )
-        assert res.status_code == 404
-        assert res.json()["detail"] == "session_not_found"
-
-
-# ── Admin CRUD ────────────────────────────────────────────────────────────────
-
-
-class TestAdminCrud:
-    def test_get_returns_normalized_default_when_unset(self, db):
-        client = _make_client(db, email="a1@example.com", api_key="a1")
-        bot = _make_bot(db, client.id, bot_key="bot-a1", catalog=None)
-        api = _client_api(_app(), client)
-        with _patch_session(db):
-            res = api.get(f"/bots/{bot.id}/quotation-catalog")
-        assert res.status_code == 200
-        body = res.json()
-        assert body["enabled"] is False
-        assert body["services"] == []
-
-    def test_put_persists_catalog(self, db):
-        client = _make_client(db, email="a2@example.com", api_key="a2")
-        bot = _make_bot(db, client.id, bot_key="bot-a2", catalog=None)
-        api = _client_api(_app(), client)
-        with _patch_session(db):
-            res = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog())
-        assert res.status_code == 200
-        row = db.execute(select(Bot).where(Bot.id == bot.id)).scalars().first()
-        assert row.quotation_catalog["enabled"] is True
-        assert row.quotation_catalog["services"][0]["id"] == "s1"
-
-    def test_put_plan_gate_403(self, db, monkeypatch):
-        client = _make_client(db, email="a3@example.com", api_key="a3")
-        bot = _make_bot(db, client.id, bot_key="bot-a3", catalog=None)
+    def test_put_catalog_plan_gate_403(self, db, monkeypatch):
+        client = _make_client(db, email="p2@example.com", api_key="p2")
+        bot = _make_bot(db, client.id, bot_key="bot-p2")
         monkeypatch.setattr(quotation_routes, "_client_plan_allows", lambda *_a, **_k: False)
         api = _client_api(_app(), client)
         with _patch_session(db):
-            res = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog())
-        assert res.status_code == 403
-        assert res.json()["detail"] == "plan_upgrade_required"
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog())
+            assert r.status_code == 403
+            assert r.json()["detail"] == "plan_upgrade_required"
 
-    def test_cross_tenant_bot_is_404(self, db):
-        owner = _make_client(db, email="a4@example.com", api_key="a4")
-        other = _make_client(db, email="a4b@example.com", api_key="a4b")
-        bot = _make_bot(db, owner.id, bot_key="bot-a4", catalog=_catalog())
+
+class TestAdminCatalogCrud:
+    def test_get_default_empty(self, db):
+        client = _make_client(db, email="a1@example.com", api_key="a1")
+        bot = _make_bot(db, client.id, bot_key="bot-a1")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.get(f"/bots/{bot.id}/quotation-catalog")
+            assert r.status_code == 200
+            assert r.json()["enabled"] is False and r.json()["services"] == []
+
+    def test_put_then_get_roundtrips(self, db):
+        client = _make_client(db, email="a2@example.com", api_key="a2")
+        bot = _make_bot(db, client.id, bot_key="bot-a2")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog())
+            assert r.status_code == 200
+            r = api.get(f"/bots/{bot.id}/quotation-catalog")
+            body = r.json()
+            assert body["services"][0]["requirements"][0]["price"] == 8000.0
+            assert body["services"][0]["requirements"][1]["quantity"] == 3
+
+    def test_cross_tenant_404(self, db):
+        owner = _make_client(db, email="a3@example.com", api_key="a3")
+        other = _make_client(db, email="a3b@example.com", api_key="a3b")
+        bot = _make_bot(db, owner.id, bot_key="bot-a3")
         api = _client_api(_app(), other)
         with _patch_session(db):
-            res = api.get(f"/bots/{bot.id}/quotation-catalog")
-        assert res.status_code == 404
+            assert api.get(f"/bots/{bot.id}/quotation-catalog").status_code == 404
 
 
-# ── Operator/lead summary ─────────────────────────────────────────────────────
-
-
-class TestQuotationSummary:
-    def test_summary_none_when_no_state(self, db):
-        client = _make_client(db, email="s1@example.com", api_key="sum1")
-        bot = _make_bot(db, client.id, bot_key="bot-sum1", catalog=_catalog())
-        session = _make_session(db, session_id="sum1s", bot_id=bot.id, client_id=client.id)
-        assert build_quotation_summary(bot, session) is None
-
-    def test_summary_reports_line_items_and_answers(self, db):
-        client = _make_client(db, email="s2@example.com", api_key="sum2")
-        bot = _make_bot(db, client.id, bot_key="bot-sum2", catalog=_catalog())
+class TestBuildSummary:
+    def test_summary_shape(self, db):
+        client = _make_client(db, email="s1@example.com", api_key="s1")
+        bot = _make_bot(db, client.id, bot_key="bot-s1", catalog=_catalog())
         session = _make_session(
             db,
-            session_id="sum2s",
+            session_id="s1s",
             bot_id=bot.id,
             client_id=client.id,
             quotation_state={
                 "status": "complete",
                 "selected_service_ids": ["s1"],
-                "answers": {"s1": {"q1": "Modern"}},
-                "quantities": {"s1": 3},
+                "selected_requirements": {"s1": {"r1": None, "r2": None}},
             },
         )
         summary = build_quotation_summary(bot, session)
         assert summary["currency"] == "INR"
-        assert summary["total"] == 300.0
-        line = summary["line_items"][0]
-        assert line["service_id"] == "s1"
-        assert line["quantity"] == 3
-        assert line["subtotal"] == 300.0
-        assert line["answers"][0] == {
-            "question_id": "q1",
-            "question_text": "What style?",
-            "answer": "Modern",
+        assert summary["total"] == 14000.0
+        assert len(summary["line_items"]) == 2
+        item = summary["line_items"][0]
+        assert item == {
+            "service_id": "s1",
+            "service_name": "Landing page",
+            "requirement_id": "r1",
+            "label": "Hero section",
+            "quantity": 1,
+            "unit_label": "unit",
+            "price": 8000.0,
+            "subtotal": 8000.0,
         }
 
+    def test_summary_none_without_state(self, db):
+        client = _make_client(db, email="s2@example.com", api_key="s2")
+        bot = _make_bot(db, client.id, bot_key="bot-s2", catalog=_catalog())
+        session = _make_session(db, session_id="s2s", bot_id=bot.id, client_id=client.id)
+        assert build_quotation_summary(bot, session) is None
 
-# ── Completion emails (visitor confirmation + client notification) ─────────────
+
+# ── Completion emails ─────────────────────────────────────────────────────────
+
+_QUOTING_STATE = {
+    "status": "quoting",
+    "selected_service_ids": ["s1"],
+    "selected_requirements": {"s1": {"r1": None, "r2": None}},
+}
 
 
 class TestQuotationEmails:
-    """Accepting a quote fires two best-effort emails: an itemized notification
-    to the client's recipients (immediate) and a no-pricing confirmation to the
-    visitor (deferred ~5 min; see ``_schedule_quotation_emails``). These tests
-    force the worker off so both run inline and their contents can be asserted
-    end-to-end. The split timing has its own class below."""
-
-    _QUOTING_STATE = {
-        "status": "quoting",
-        "selected_service_ids": ["s1"],
-        "answers": {"s1": {"q1": "Modern"}},
-        "quantities": {"s1": 2},
-    }
+    """Accepting fires three best-effort emails: owner notification (immediate),
+    visitor acknowledgement (immediate, no pricing) and the priced document
+    (deferred; inline when the worker is off). PDF render is stubbed."""
 
     @pytest.fixture()
     def _capture_emails(self, monkeypatch):
-        calls = {"visitor": [], "client": []}
-
-        def _visitor(*args, **kwargs):
-            calls["visitor"].append((args, kwargs))
-
-        def _client(*args, **kwargs):
-            calls["client"].append((args, kwargs))
-
-        # Force the worker off so the accept path sends inline instead of
-        # deferring to ARQ — lets us assert the actual email args in-request.
+        calls = {"visitor": [], "document": [], "client": []}
         monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", False)
-        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", _visitor)
-        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", _client)
+        monkeypatch.setattr(
+            quotation_routes.email_service,
+            "send_quotation_visitor_email",
+            lambda *a, **k: calls["visitor"].append((a, k)),
+        )
+        monkeypatch.setattr(
+            quotation_routes.email_service,
+            "send_quotation_document_email",
+            lambda *a, **k: calls["document"].append((a, k)),
+        )
+        monkeypatch.setattr(
+            quotation_routes.email_service,
+            "send_quotation_client_email",
+            lambda *a, **k: calls["client"].append((a, k)),
+        )
         return calls
 
-    def test_accept_sends_both_emails(self, db, _capture_emails):
+    def test_accept_sends_all_three(self, db, _capture_emails):
         client = _make_client(db, email="e1@example.com", api_key="e1")
         bot = _make_bot(
             db,
@@ -808,173 +892,102 @@ class TestQuotationEmails:
             notification_email="owner@acme.com",
             company_name="Acme Co",
         )
-        _make_session(
-            db,
-            session_id="e1s",
-            bot_id=bot.id,
-            client_id=client.id,
-            quotation_state=dict(self._QUOTING_STATE),
-        )
+        _make_session(db, session_id="e1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
         _make_lead(db, session_id="e1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
         api = _bot_api(_app(), bot)
         with _patch_session(db):
             res = api.post("/chat/quotation/accept", json={"session_id": "e1s"})
-        assert res.status_code == 200
-        assert res.json()["status"] == "complete"
+        assert res.status_code == 200 and res.json()["status"] == "complete"
 
-        # Visitor email: sent to the lead, carries service names but NO pricing.
+        # Visitor acknowledgement: service names, no pricing.
         assert len(_capture_emails["visitor"]) == 1
         v_args, _ = _capture_emails["visitor"][0]
         assert v_args[0] == "jason@buyer.com"
-        assert v_args[1] == "Acme Co"
-        assert v_args[2] == "Jason"
-        assert v_args[3] == ["Landing page"]
+        assert v_args[3] == ["Landing page"]  # unique service names
 
-        # Client email: sent to the configured recipient with itemized totals.
+        # Document email: currency + line items + total.
+        assert len(_capture_emails["document"]) == 1
+        d_args, _ = _capture_emails["document"][0]
+        assert d_args[0] == "jason@buyer.com"
+        assert d_args[3] == "INR"
+        assert d_args[5] == 14000.0
+
+        # Owner email: full itemised quote.
         assert len(_capture_emails["client"]) == 1
         c_args, c_kwargs = _capture_emails["client"][0]
         assert c_args[0] == "owner@acme.com"
-        assert c_args[3] == "INR"  # currency
-        assert c_args[4][0]["subtotal"] == 200.0  # line_items
-        assert c_args[5] == 200.0  # total
+        assert c_args[5] == 14000.0
         assert c_kwargs["reply_to"] == "jason@buyer.com"
 
-    def test_no_lead_email_skips_visitor_but_still_notifies_client(self, db, _capture_emails):
+    def test_no_lead_email_skips_visitor_facing(self, db, _capture_emails):
         client = _make_client(db, email="e2@example.com", api_key="e2")
         bot = _make_bot(db, client.id, bot_key="bot-e2", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(
-            db, session_id="e2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
-        )
+        _make_session(db, session_id="e2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
         _make_lead(db, session_id="e2s", bot_id=bot.id, email=None, name="Anon")
-
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.post("/chat/quotation/accept", json={"session_id": "e2s"})
-        assert res.status_code == 200
+            api.post("/chat/quotation/accept", json={"session_id": "e2s"})
         assert _capture_emails["visitor"] == []
+        assert _capture_emails["document"] == []
         assert len(_capture_emails["client"]) == 1
 
-    def test_no_recipients_skips_client_email(self, db, _capture_emails):
-        client = _make_client(db, email="e3@example.com", api_key="e3")
-        bot = _make_bot(db, client.id, bot_key="bot-e3", catalog=_catalog())  # no notification_email
-        _make_session(
-            db, session_id="e3s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
-        )
-        _make_lead(db, session_id="e3s", bot_id=bot.id, email="jason@buyer.com")
-
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post("/chat/quotation/accept", json={"session_id": "e3s"})
-        assert res.status_code == 200
-        assert len(_capture_emails["visitor"]) == 1
-        assert _capture_emails["client"] == []
-
     def test_email_failure_never_breaks_accept(self, db, monkeypatch):
-        client = _make_client(db, email="e4@example.com", api_key="e4")
-        bot = _make_bot(db, client.id, bot_key="bot-e4", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(
-            db, session_id="e4s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
-        )
-        _make_lead(db, session_id="e4s", bot_id=bot.id, email="jason@buyer.com")
+        client = _make_client(db, email="e3@example.com", api_key="e3")
+        bot = _make_bot(db, client.id, bot_key="bot-e3", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(db, session_id="e3s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_lead(db, session_id="e3s", bot_id=bot.id, email="jason@buyer.com")
 
         def _boom(*_a, **_k):
             raise RuntimeError("brevo down")
 
-        # Worker off → inline send path, so the failing email actually runs.
         monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", False)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", _boom)
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_document_email", _boom)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", _boom)
-
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.post("/chat/quotation/accept", json={"session_id": "e4s"})
-        # Quote is saved; the email blowing up must not fail the request.
-        assert res.status_code == 200
-        assert res.json()["status"] == "complete"
-
-    def test_terminal_reaccept_does_not_resend(self, db, _capture_emails):
-        client = _make_client(db, email="e5@example.com", api_key="e5")
-        bot = _make_bot(db, client.id, bot_key="bot-e5", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(
-            db,
-            session_id="e5s",
-            bot_id=bot.id,
-            client_id=client.id,
-            quotation_state={**self._QUOTING_STATE, "status": "complete"},
-        )
-        _make_lead(db, session_id="e5s", bot_id=bot.id, email="jason@buyer.com")
-
-        api = _bot_api(_app(), bot)
-        with _patch_session(db):
-            res = api.post("/chat/quotation/accept", json={"session_id": "e5s"})
-        # Already complete → idempotent return, no duplicate emails.
-        assert res.status_code == 200
-        assert _capture_emails["visitor"] == []
-        assert _capture_emails["client"] == []
+            res = api.post("/chat/quotation/accept", json={"session_id": "e3s"})
+        assert res.status_code == 200 and res.json()["status"] == "complete"
 
 
 class TestQuotationEmailScheduling:
-    """Split timing at accept: the owner is notified immediately, the visitor
-    confirmation is deferred ~5 min. With the worker enabled, accept sends the
-    client email inline and enqueues ``task_send_quotation_visitor_email`` with
-    an ``_defer_by`` window; the deferred task then re-loads the session and
-    sends the visitor email."""
-
-    _QUOTING_STATE = {
-        "status": "quoting",
-        "selected_service_ids": ["s1"],
-        "answers": {"s1": {"q1": "Modern"}},
-        "quantities": {"s1": 2},
-    }
-
-    def test_accept_notifies_owner_now_and_defers_visitor(self, db, monkeypatch):
+    def test_owner_and_ack_now_document_deferred(self, db, monkeypatch):
         from datetime import timedelta
 
         import app.worker.enqueue as enqueue_mod
 
         client = _make_client(db, email="sch1@example.com", api_key="sch1")
         bot = _make_bot(db, client.id, bot_key="bot-sch1", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(
-            db, session_id="sch1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
-        )
+        _make_session(db, session_id="sch1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
         _make_lead(db, session_id="sch1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
-        calls = []
-        visitor_sent = []
-        client_sent = []
+        calls, visitor_sent, document_sent, client_sent = [], [], [], []
         monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
         monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, *a, **kw: calls.append((name, a, kw)))
         monkeypatch.setattr(
             quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: visitor_sent.append(a)
         )
         monkeypatch.setattr(
+            quotation_routes.email_service, "send_quotation_document_email", lambda *a, **k: document_sent.append(a)
+        )
+        monkeypatch.setattr(
             quotation_routes.email_service, "send_quotation_client_email", lambda *a, **k: client_sent.append(a)
         )
-
         api = _bot_api(_app(), bot)
         with _patch_session(db):
-            res = api.post("/chat/quotation/accept", json={"session_id": "sch1s"})
+            api.post("/chat/quotation/accept", json={"session_id": "sch1s"})
 
-        assert res.status_code == 200
-        assert res.json()["status"] == "complete"
-
-        # Owner: sent immediately, inline.
-        assert len(client_sent) == 1
-        assert client_sent[0][0] == "owner@acme.com"
-
-        # Visitor: NOT inline — deferred via ARQ.
-        assert visitor_sent == []
+        assert len(client_sent) == 1 and len(visitor_sent) == 1
+        assert document_sent == []
         assert len(calls) == 1
         name, args, kwargs = calls[0]
         assert name == "task_send_quotation_visitor_email"
         assert args == ("sch1s", bot.id)
         assert kwargs["_defer_by"] == timedelta(seconds=quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS)
 
-    def test_visitor_dispatch_helper_sends_only_visitor(self, db, monkeypatch):
-        """The deferred task's entry point re-loads the bot + session by id and
-        fires the visitor email only (the owner was already notified at accept)."""
-        calls = {"visitor": [], "client": []}
+    def test_document_dispatch_helper_sends_only_document(self, db, monkeypatch):
+        calls = {"visitor": [], "document": [], "client": []}
         client = _make_client(db, email="sch2@example.com", api_key="sch2")
         bot = _make_bot(
             db,
@@ -984,48 +997,26 @@ class TestQuotationEmailScheduling:
             notification_email="owner@acme.com",
             company_name="Acme Co",
         )
-        _make_session(
-            db, session_id="sch2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
-        )
+        _make_session(db, session_id="sch2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
         _make_lead(db, session_id="sch2s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
         monkeypatch.setattr(
-            quotation_routes.email_service,
-            "send_quotation_visitor_email",
-            lambda *a, **k: calls["visitor"].append((a, k)),
+            quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: calls["visitor"].append(a)
         )
         monkeypatch.setattr(
-            quotation_routes.email_service,
-            "send_quotation_client_email",
-            lambda *a, **k: calls["client"].append((a, k)),
+            quotation_routes.email_service, "send_quotation_document_email", lambda *a, **k: calls["document"].append(a)
         )
-
-        with _patch_session(db):
-            quotation_routes.dispatch_quotation_visitor_email_for_session("sch2s", bot.id)
-
-        assert len(calls["visitor"]) == 1
-        assert calls["visitor"][0][0][0] == "jason@buyer.com"
-        assert calls["client"] == []  # owner is not re-notified on the deferred path
-
-    def test_visitor_dispatch_helper_missing_session_is_noop(self, db, monkeypatch):
-        sent = []
-        client = _make_client(db, email="sch3@example.com", api_key="sch3")
-        bot = _make_bot(db, client.id, bot_key="bot-sch3", catalog=_catalog(), notification_email="owner@acme.com")
-
         monkeypatch.setattr(
-            quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: sent.append("v")
+            quotation_routes.email_service, "send_quotation_client_email", lambda *a, **k: calls["client"].append(a)
         )
-
         with _patch_session(db):
-            # Must not raise, must send nothing.
-            quotation_routes.dispatch_quotation_visitor_email_for_session("does-not-exist", bot.id)
-
-        assert sent == []
+            quotation_routes.dispatch_quotation_document_email_for_session("sch2s", bot.id)
+        assert len(calls["document"]) == 1
+        assert calls["visitor"] == [] and calls["client"] == []
 
 
 class TestQuotationEmailBuilders:
-    """Exercise the real HTML builders (only the Brevo dispatch is stubbed) so a
-    DSL misuse in the money formatting or the itemized table is caught."""
+    """Exercise the real HTML builders (only the Brevo dispatch is stubbed)."""
 
     @pytest.fixture()
     def _sent(self, monkeypatch):
@@ -1039,78 +1030,95 @@ class TestQuotationEmailBuilders:
         )
         return captured
 
-    def test_visitor_email_has_no_pricing(self, _sent):
+    _LINE_ITEMS = [
+        {
+            "service_id": "s1",
+            "service_name": "Landing page",
+            "requirement_id": "r1",
+            "label": "Hero section",
+            "quantity": 1,
+            "price": 8000.0,
+            "subtotal": 8000.0,
+        },
+        {
+            "service_id": "s1",
+            "service_name": "Landing page",
+            "requirement_id": "r2",
+            "label": "Extra page",
+            "quantity": 3,
+            "price": 2000.0,
+            "subtotal": 6000.0,
+        },
+    ]
+
+    def test_visitor_ack_has_no_pricing(self, _sent):
         from app.services import email_service
 
-        email_service.send_quotation_visitor_email("jason@buyer.com", "Acme Co", "Jason", ["Landing page", "SEO audit"])
+        email_service.send_quotation_visitor_email("jason@buyer.com", "Acme Co", "Jason", ["Landing page"])
         assert len(_sent) == 1
         to, subject, body, _ = _sent[0]
         assert to == "jason@buyer.com"
-        assert "Acme Co" in subject
-        assert "Landing page" in body and "SEO audit" in body
-        # No pricing must leak to the visitor.
-        assert "₹" not in body and "200" not in body
+        assert "Landing page" in body
+        assert "₹" not in body and "8,000" not in body
 
-    def test_client_email_renders_itemized_total(self, _sent):
+    def test_document_email_prices_inline_no_attachment(self, _sent):
+        from app.services import email_service
+
+        email_service.send_quotation_document_email(
+            "jason@buyer.com", "Acme Co", "Jason", "INR", self._LINE_ITEMS, 14000.0
+        )
+        _, subject, body, kwargs = _sent[0]
+        assert "Your quotation" in subject
+        assert "Landing page" in body  # service group header
+        assert "Hero section" in body and "Extra page" in body
+        assert "₹8,000" in body and "₹6,000" in body and "₹14,000" in body
+        # The quotation ships inline in the body — never as a PDF attachment.
+        assert kwargs.get("attachments") is None
+
+    def test_document_email_pluralizes_unit_with_quantity(self, _sent):
         from app.services import email_service
 
         line_items = [
-            {"name": "Landing page", "quantity": 2, "subtotal": 200.0},
-            {"name": "SEO audit", "quantity": 1, "subtotal": 49.5},
+            {
+                "service_id": "s1",
+                "service_name": "Development",
+                "requirement_id": "r1",
+                "label": "Laptop",
+                "unit_label": "unit",
+                "quantity": 2,
+                "price": 5000.0,
+                "subtotal": 10000.0,
+            },
+            {
+                "service_id": "s1",
+                "service_name": "Development",
+                "requirement_id": "r2",
+                "label": "Server",
+                "unit_label": "unit",
+                "quantity": 1,
+                "price": 3000.0,
+                "subtotal": 3000.0,
+            },
         ]
+        email_service.send_quotation_document_email("jason@buyer.com", "Acme Co", "Jason", "INR", line_items, 13000.0)
+        _, _, body, _kw = _sent[0]
+        assert "2 units" in body  # plural agrees with quantity
+        assert "1 unit" in body and "1 units" not in body  # singular stays singular
+
+    def test_client_email_renders_grouped_total(self, _sent):
+        from app.services import email_service
+
         email_service.send_quotation_client_email(
             "owner@acme.com",
             "Quote Bot",
             {"name": "Jason", "email": "jason@buyer.com"},
             "INR",
-            line_items,
-            249.5,
+            self._LINE_ITEMS,
+            14000.0,
             reply_to="jason@buyer.com",
         )
-        assert len(_sent) == 1
         to, subject, body, kwargs = _sent[0]
         assert to == "owner@acme.com"
-        assert "Quote Bot" in subject
-        assert "₹200" in body  # whole number, no decimals
-        assert "₹49.5" in body  # fractional keeps places
-        assert "₹249.5" in body  # total
+        assert "Hero section" in body and "Extra page" in body
+        assert "₹14,000" in body
         assert kwargs.get("reply_to") == "jason@buyer.com"
-
-    def test_client_email_includes_per_service_answers(self, _sent):
-        from app.services import email_service
-
-        line_items = [
-            {
-                "name": "Landing page",
-                "quantity": 1,
-                "subtotal": 100.0,
-                "answers": [
-                    {"question_id": "q1", "question_text": "What style?", "answer": "Modern"},
-                    {"question_id": "q2", "question_text": "How many pages?", "answer": "5"},
-                    {"question_id": "q3", "question_text": "Skipped?", "answer": ""},  # empty → omitted
-                ],
-            }
-        ]
-        email_service.send_quotation_client_email(
-            "owner@acme.com", "Quote Bot", {"name": "Jason"}, "INR", line_items, 100.0
-        )
-        _, _, body, _ = _sent[0]
-        assert "What style?" in body and "Modern" in body
-        assert "How many pages?" in body and "5" in body
-        assert "Their answers" in body
-        # An empty answer contributes no row.
-        assert "Skipped?" not in body
-
-    def test_client_email_without_answers_has_no_answers_section(self, _sent):
-        from app.services import email_service
-
-        email_service.send_quotation_client_email(
-            "owner@acme.com",
-            "Quote Bot",
-            {"name": "Jason"},
-            "INR",
-            [{"name": "SEO audit", "quantity": 1, "subtotal": 50.0}],
-            50.0,
-        )
-        _, _, body, _ = _sent[0]
-        assert "Their answers" not in body

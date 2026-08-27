@@ -374,29 +374,19 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
               <>
                 <ul className="divide-y divide-[var(--ds-border)] rounded-md border border-[var(--ds-border)]">
                   {details.quotation.line_items.map((line) => (
-                    <li key={line.service_id} className="space-y-2 p-2.5">
+                    <li key={line.requirement_id} className="p-2.5">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-[12.5px] font-medium text-[var(--ds-text)]">{line.name}</p>
+                          <p className="truncate text-[12.5px] font-medium text-[var(--ds-text)]">{line.label}</p>
                           <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
-                            {line.quantity} × {formatMoney(details.quotation!.currency, line.price_per_unit)} /{' '}
-                            {line.unit_label}
+                            {line.service_name} · {line.quantity} ×{' '}
+                            {formatMoney(details.quotation!.currency, line.price)}
                           </p>
                         </div>
                         <p className="shrink-0 text-[12.5px] font-semibold text-[var(--ds-text)]">
                           {formatMoney(details.quotation!.currency, line.subtotal)}
                         </p>
                       </div>
-                      {line.answers.length > 0 && (
-                        <dl className="space-y-1 rounded bg-[var(--ds-bg-sunken)] p-2">
-                          {line.answers.map((a) => (
-                            <div key={a.question_id} className="flex gap-2 text-[11px]">
-                              <dt className="min-w-0 shrink-0 text-[var(--ds-text-subtle)]">{a.question_text}</dt>
-                              <dd className="min-w-0 flex-1 truncate text-[var(--ds-text)]">{a.answer || '—'}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
                     </li>
                   ))}
                 </ul>

@@ -391,16 +391,14 @@ const postQuotation = async (path, body) => {
 export const submitQuotationServices = (sessionId, serviceIds) =>
     postQuotation('select-services', { session_id: sessionId, service_ids: serviceIds });
 
-export const submitQuotationAnswer = (sessionId, serviceId, questionId, answer) =>
-    postQuotation('answer', {
+// selections: [{ requirement_id, option_id? }] — option_id set for a picked
+// choice option; omitted for a ticked item requirement.
+export const submitQuotationRequirements = (sessionId, serviceId, selections) =>
+    postQuotation('requirements', {
         session_id: sessionId,
         service_id: serviceId,
-        question_id: questionId,
-        answer,
+        selections,
     });
-
-export const submitQuotationQuantity = (sessionId, serviceId, quantity) =>
-    postQuotation('quantity', { session_id: sessionId, service_id: serviceId, quantity });
 
 export const acceptQuotation = (sessionId) =>
     postQuotation('accept', { session_id: sessionId });

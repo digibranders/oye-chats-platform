@@ -6,11 +6,11 @@ import {
   Trash2,
   AlertTriangle,
   CheckCircle2,
-  X,
   ChevronDown,
   ChevronRight,
   Lock,
   Info,
+  X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Input, SectionHeader, Select } from '../../../design-system';
@@ -18,7 +18,6 @@ import { Toggle } from './controls';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getQuotationCatalog, putQuotationCatalog } from '../../../services/api';
 
-type QuestionType = 'text' | 'choice' | 'number';
 type BantDimension = 'need' | 'timeline' | 'authority' | 'budget';
 
 const BANT_DIMENSIONS: { key: BantDimension; label: string; help: string }[] = [
@@ -32,11 +31,7 @@ const QUOTATION_PLAN_SLUGS = new Set(['professional', 'enterprise']);
 
 /**
  * Small `(i)` icon that surfaces an inline explanation instantly on hover
- * and on keyboard focus. Rolled inline (no design-system tooltip primitive
- * exists yet) as a wrapper span whose absolutely-positioned popover appears
- * via CSS `group-hover` / `group-focus-within`, so there's no JS state,
- * timers, or ref work. `aria-label` stays populated so screen readers get
- * the same text without needing the popover.
+ * and on keyboard focus.
  */
 function Hint({ what, example }: { what: string; example: string }): ReactElement {
   return (
@@ -67,22 +62,48 @@ function thresholdCeiling(categories: BantDimension[]): number {
   return categories.length === 0 ? 4 : categories.length;
 }
 
-interface ServiceQuestion {
+type RequirementType = 'item' | 'choice';
+type QtyMode = 'none' | 'fixed' | 'ask';
+
+const REQUIREMENT_QTY_MODES: { value: QtyMode; label: string }[] = [
+  { value: 'none', label: 'No quantity' },
+  { value: 'fixed', label: 'Fixed (you set it)' },
+  { value: 'ask', label: 'Ask the visitor' },
+];
+
+interface RequirementOption {
   id: string;
-  text: string;
-  type: QuestionType;
-  options: string[];
-  required: boolean;
+  label: string;
+  price: number;
+  quantity: number;
+}
+
+interface Requirement {
+  id: string;
+  label: string;
+  question: string;
+  type: RequirementType;
+  quantity_mode: QtyMode;
+  unit_label: string;
+  price: number;
+  quantity: number;
+  options: RequirementOption[];
 }
 
 interface Service {
   id: string;
   name: string;
   description: string;
-  unit_label: string;
-  price_per_unit: number;
-  default_quantity: number;
-  questions: ServiceQuestion[];
+  requirements: Requirement[];
+}
+
+const REQUIREMENT_TYPES: { value: RequirementType; label: string }[] = [
+  { value: 'item', label: 'Simple item' },
+  { value: 'choice', label: 'Choice (priced options)' },
+];
+
+function normQty(value: unknown): number {
+  return Number.isFinite(Number(value)) ? Math.max(1, Math.floor(Number(value))) : 1;
 }
 
 interface QuotationCatalog {
@@ -94,8 +115,8 @@ interface QuotationCatalog {
 }
 
 const MAX_SERVICES = 20;
-const MAX_QUESTIONS_PER_SERVICE = 8;
-const MAX_OPTIONS = 8;
+const MAX_REQUIREMENTS_PER_SERVICE = 20;
+const MAX_OPTIONS_PER_REQUIREMENT = 12;
 
 const CURRENCIES: { value: string; label: string }[] = [
   { value: 'INR', label: 'INR · ₹ Indian Rupee' },
@@ -119,12 +140,6 @@ const CURRENCY_SYMBOL: Record<string, string> = {
   AED: 'د.إ',
 };
 
-const QUESTION_TYPES: { value: QuestionType; label: string }[] = [
-  { value: 'text', label: 'Text' },
-  { value: 'choice', label: 'Multiple choice' },
-  { value: 'number', label: 'Number' },
-];
-
 const EMPTY_CATALOG: QuotationCatalog = {
   enabled: false,
   currency: 'INR',
@@ -140,11 +155,18 @@ function newServiceId(existing: Service[]): string {
   return `s${n}`;
 }
 
-function newQuestionId(existing: ServiceQuestion[]): string {
+function newRequirementId(existing: Requirement[]): string {
   let n = existing.length + 1;
-  const taken = new Set(existing.map((q) => q.id));
-  while (taken.has(`q${n}`)) n += 1;
-  return `q${n}`;
+  const taken = new Set(existing.map((r) => r.id));
+  while (taken.has(`r${n}`)) n += 1;
+  return `r${n}`;
+}
+
+function newOptionId(existing: RequirementOption[]): string {
+  let n = existing.length + 1;
+  const taken = new Set(existing.map((o) => o.id));
+  while (taken.has(`o${n}`)) n += 1;
+  return `o${n}`;
 }
 
 function normalize(raw: QuotationCatalog | null | undefined): QuotationCatalog {
@@ -162,20 +184,38 @@ function normalize(raw: QuotationCatalog | null | undefined): QuotationCatalog {
       id: s.id,
       name: s.name ?? '',
       description: s.description ?? '',
-      unit_label: s.unit_label || 'unit',
-      price_per_unit: Number(s.price_per_unit) || 0,
-      default_quantity: Number.isFinite(Number(s.default_quantity))
-        ? Math.max(0, Math.floor(Number(s.default_quantity)))
-        : 1,
-      questions: (s.questions || []).map((q) => ({
-        id: q.id,
-        text: q.text ?? '',
-        type: (q.type as QuestionType) || 'text',
-        options: Array.isArray(q.options) ? q.options : [],
-        required: q.required !== false,
+      requirements: (s.requirements || []).map((r) => ({
+        id: r.id,
+        label: r.label ?? '',
+        question: r.question ?? '',
+        type: (r.type as RequirementType) === 'choice' ? 'choice' : 'item',
+        quantity_mode: (['none', 'fixed', 'ask'] as QtyMode[]).includes(r.quantity_mode as QtyMode)
+          ? (r.quantity_mode as QtyMode)
+          : 'fixed',
+        unit_label: r.unit_label || 'unit',
+        price: Number(r.price) || 0,
+        quantity: normQty(r.quantity),
+        options: (r.options || []).map((o) => ({
+          id: o.id,
+          label: o.label ?? '',
+          price: Number(o.price) || 0,
+          quantity: normQty(o.quantity),
+        })),
       })),
     })),
   };
+}
+
+/** Sum of the simple-item requirements only. Choice requirements are
+ * inherently variable (the visitor picks one), so they're excluded from this
+ * indicative figure; each option shows its own price inline instead. */
+function serviceItemsSubtotal(service: Service): number {
+  return service.requirements
+    .filter((r) => r.type === 'item' && r.quantity_mode !== 'ask')
+    .reduce(
+      (sum, r) => sum + (Number(r.price) || 0) * (r.quantity_mode === 'none' ? 1 : Number(r.quantity) || 0),
+      0,
+    );
 }
 
 function formatMoney(currency: string, value: number): string {
@@ -189,10 +229,10 @@ interface QuotationCatalogSectionProps {
 }
 
 /**
- * Standalone editor for a bot's quotation catalog. Same self-contained
- * fetch/dirty/save shape as QualificationFlowSection: the service list is
- * dynamic and doesn't fit the flat-field draft model used by the other
- * Advanced sections.
+ * Standalone editor for a bot's quotation catalog. A service is a named group
+ * of priced requirements; each requirement carries its own price and quantity.
+ * The visitor picks a service, checks which requirements they need, and the
+ * bot returns a live estimate summing the chosen requirements.
  */
 export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps): ReactElement | null {
   const navigate = useNavigate();
@@ -243,15 +283,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
     setCatalog((prev) => {
       if (prev.services.length >= MAX_SERVICES) return prev;
       const id = newServiceId(prev.services);
-      const next: Service = {
-        id,
-        name: '',
-        description: '',
-        unit_label: 'unit',
-        price_per_unit: 0,
-        default_quantity: 1,
-        questions: [],
-      };
+      const next: Service = { id, name: '', description: '', requirements: [] };
       setExpandedServiceId(id);
       return { ...prev, services: [...prev.services, next] };
     });
@@ -261,38 +293,32 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
     setCatalog((prev) => ({ ...prev, services: prev.services.filter((_, i) => i !== index) }));
   }, []);
 
-  const addQuestion = useCallback((sIndex: number) => {
+  const addRequirement = useCallback((sIndex: number) => {
     setCatalog((prev) => ({
       ...prev,
       services: prev.services.map((s, i) => {
         if (i !== sIndex) return s;
-        if (s.questions.length >= MAX_QUESTIONS_PER_SERVICE) return s;
+        if (s.requirements.length >= MAX_REQUIREMENTS_PER_SERVICE) return s;
         return {
           ...s,
-          questions: [
-            ...s.questions,
-            {
-              id: newQuestionId(s.questions),
-              text: '',
-              type: 'text',
-              options: [],
-              required: true,
-            },
+          requirements: [
+            ...s.requirements,
+            { id: newRequirementId(s.requirements), label: '', question: '', type: 'item', quantity_mode: 'none', unit_label: 'unit', price: 0, quantity: 1, options: [] },
           ],
         };
       }),
     }));
   }, []);
 
-  const updateQuestion = useCallback(
-    (sIndex: number, qIndex: number, patch: Partial<ServiceQuestion>) => {
+  const updateRequirement = useCallback(
+    (sIndex: number, rIndex: number, patch: Partial<Requirement>) => {
       setCatalog((prev) => ({
         ...prev,
         services: prev.services.map((s, i) => {
           if (i !== sIndex) return s;
           return {
             ...s,
-            questions: s.questions.map((q, qi) => (qi === qIndex ? { ...q, ...patch } : q)),
+            requirements: s.requirements.map((r, ri) => (ri === rIndex ? { ...r, ...patch } : r)),
           };
         }),
       }));
@@ -300,70 +326,57 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
     [],
   );
 
-  const removeQuestion = useCallback((sIndex: number, qIndex: number) => {
+  const removeRequirement = useCallback((sIndex: number, rIndex: number) => {
     setCatalog((prev) => ({
       ...prev,
       services: prev.services.map((s, i) => {
         if (i !== sIndex) return s;
-        return { ...s, questions: s.questions.filter((_, qi) => qi !== qIndex) };
+        return { ...s, requirements: s.requirements.filter((_, ri) => ri !== rIndex) };
       }),
     }));
   }, []);
 
-  const addOption = useCallback((sIndex: number, qIndex: number) => {
-    setCatalog((prev) => ({
-      ...prev,
-      services: prev.services.map((s, i) => {
-        if (i !== sIndex) return s;
-        return {
-          ...s,
-          questions: s.questions.map((q, qi) => {
-            if (qi !== qIndex) return q;
-            if (q.options.length >= MAX_OPTIONS) return q;
-            return { ...q, options: [...q.options, ''] };
-          }),
-        };
-      }),
-    }));
-  }, []);
+  const mapRequirement = useCallback(
+    (sIndex: number, rIndex: number, fn: (r: Requirement) => Requirement) => {
+      setCatalog((prev) => ({
+        ...prev,
+        services: prev.services.map((s, i) =>
+          i === sIndex
+            ? { ...s, requirements: s.requirements.map((r, ri) => (ri === rIndex ? fn(r) : r)) }
+            : s,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const addOption = useCallback(
+    (sIndex: number, rIndex: number) => {
+      mapRequirement(sIndex, rIndex, (r) =>
+        r.options.length >= MAX_OPTIONS_PER_REQUIREMENT
+          ? r
+          : { ...r, options: [...r.options, { id: newOptionId(r.options), label: '', price: 0, quantity: 1 }] },
+      );
+    },
+    [mapRequirement],
+  );
 
   const updateOption = useCallback(
-    (sIndex: number, qIndex: number, oIndex: number, value: string) => {
-      setCatalog((prev) => ({
-        ...prev,
-        services: prev.services.map((s, i) => {
-          if (i !== sIndex) return s;
-          return {
-            ...s,
-            questions: s.questions.map((q, qi) => {
-              if (qi !== qIndex) return q;
-              return {
-                ...q,
-                options: q.options.map((opt, oi) => (oi === oIndex ? value : opt)),
-              };
-            }),
-          };
-        }),
+    (sIndex: number, rIndex: number, oIndex: number, patch: Partial<RequirementOption>) => {
+      mapRequirement(sIndex, rIndex, (r) => ({
+        ...r,
+        options: r.options.map((o, oi) => (oi === oIndex ? { ...o, ...patch } : o)),
       }));
     },
-    [],
+    [mapRequirement],
   );
 
-  const removeOption = useCallback((sIndex: number, qIndex: number, oIndex: number) => {
-    setCatalog((prev) => ({
-      ...prev,
-      services: prev.services.map((s, i) => {
-        if (i !== sIndex) return s;
-        return {
-          ...s,
-          questions: s.questions.map((q, qi) => {
-            if (qi !== qIndex) return q;
-            return { ...q, options: q.options.filter((_, oi) => oi !== oIndex) };
-          }),
-        };
-      }),
-    }));
-  }, []);
+  const removeOption = useCallback(
+    (sIndex: number, rIndex: number, oIndex: number) => {
+      mapRequirement(sIndex, rIndex, (r) => ({ ...r, options: r.options.filter((_, oi) => oi !== oIndex) }));
+    },
+    [mapRequirement],
+  );
 
   const handleSave = useCallback(async () => {
     if (!botId || saving) return;
@@ -376,26 +389,44 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
         required_categories: [...catalog.required_categories],
         threshold: Math.min(catalog.threshold, thresholdCeiling(catalog.required_categories)),
         services: catalog.services.map((s) => ({
-          ...s,
+          id: s.id,
           name: s.name.trim(),
           description: s.description.trim(),
-          unit_label: (s.unit_label || 'unit').trim() || 'unit',
-          price_per_unit: Number(s.price_per_unit) || 0,
-          default_quantity: Math.max(0, Math.floor(Number(s.default_quantity) || 0)),
-          questions: s.questions.map((q) => ({
-            ...q,
-            text: q.text.trim(),
-            options: q.type === 'choice' ? q.options.map((o) => o.trim()).filter(Boolean) : [],
+          requirements: s.requirements.map((r) => ({
+            id: r.id,
+            label: r.label.trim(),
+            question: r.question.trim(),
+            type: r.type,
+            quantity_mode: r.quantity_mode,
+            unit_label: (r.unit_label || 'unit').trim() || 'unit',
+            price: Number(r.price) || 0,
+            quantity: Math.max(1, Math.floor(Number(r.quantity) || 1)),
+            options:
+              r.type === 'choice'
+                ? r.options.map((o) => ({
+                    id: o.id,
+                    label: o.label.trim(),
+                    price: Number(o.price) || 0,
+                    quantity: Math.max(1, Math.floor(Number(o.quantity) || 1)),
+                  }))
+                : [],
           })),
         })),
       };
       for (const s of cleaned.services) {
         if (!s.name) throw new Error('Every service needs a name.');
-        if (s.price_per_unit < 0) throw new Error(`"${s.name}" has a negative price.`);
-        for (const q of s.questions) {
-          if (!q.text) throw new Error(`"${s.name}" has a question with no text.`);
-          if (q.type === 'choice' && q.options.length === 0) {
-            throw new Error(`"${s.name}" → question "${q.text}" needs at least one option.`);
+        for (const r of s.requirements) {
+          if (!r.label) throw new Error(`"${s.name}" has a requirement with no name.`);
+          if (r.type === 'choice') {
+            if (r.options.length === 0) {
+              throw new Error(`"${s.name}" → "${r.label}" is a choice and needs at least one option.`);
+            }
+            for (const o of r.options) {
+              if (!o.label) throw new Error(`"${s.name}" → "${r.label}" has an option with no name.`);
+              if (o.price < 0) throw new Error(`"${s.name}" → "${r.label}" → "${o.label}" has a negative price.`);
+            }
+          } else if (r.price < 0) {
+            throw new Error(`"${s.name}" → "${r.label}" has a negative price.`);
           }
         }
       }
@@ -423,7 +454,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
             Quotations
           </span>
         }
-        description="Define the services this bot can quote for. The bot asks the questions you configure per service, multiplies price × quantity, and returns a live estimate."
+        description="Define the services this bot can quote for. Each service is a set of priced requirements — the visitor picks a service, checks which requirements they need, and the bot returns a live estimate."
       />
 
       {!entitlementsLoading && !planAllows && (
@@ -483,7 +514,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
             />
           </div>
           <p className="self-end text-[11px] text-[var(--ds-text-subtle)]">
-            All service prices are stored and quoted in this currency.
+            All requirement prices are stored and quoted in this currency.
           </p>
         </div>
 
@@ -585,8 +616,8 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
             <p className="inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--ds-text)]">
               Services
               <Hint
-                what="The billable line items this bot can quote. The visitor picks which ones they want, and the bot walks each one to compute a live total."
-                example="Web agency: Landing page · Logo design · SEO audit. SaaS: Starter seats · Growth seats · Onboarding hours."
+                what="A service is a named group the visitor picks from. Its price comes from the requirements you add inside it."
+                example="Web agency: Landing page design · SEO · Branding. SaaS: Onboarding · Migration · Training."
               />
             </p>
             <p className="text-[11px] text-[var(--ds-text-subtle)]">
@@ -602,7 +633,8 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
             <div className="space-y-3">
               {catalog.services.map((service, sIndex) => {
                 const expanded = expandedServiceId === service.id;
-                const subtotal = service.price_per_unit * service.default_quantity;
+                const itemsSubtotal = serviceItemsSubtotal(service);
+                const hasItems = service.requirements.some((r) => r.type === 'item');
                 return (
                   <div key={service.id} className="rounded-md border border-[var(--ds-border)]">
                     <button
@@ -621,48 +653,33 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                             {service.name.trim() || `Service ${sIndex + 1}`}
                           </p>
                           <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
-                            {formatMoney(catalog.currency, service.price_per_unit)} / {service.unit_label || 'unit'} · {service.questions.length} question{service.questions.length === 1 ? '' : 's'}
+                            {service.requirements.length} requirement{service.requirements.length === 1 ? '' : 's'}
                           </p>
                         </div>
                       </div>
-                      <span className="shrink-0 text-[12px] font-medium text-[var(--ds-text-subtle)]">
-                        {formatMoney(catalog.currency, subtotal)}
-                      </span>
+                      {hasItems && (
+                        <span className="shrink-0 text-[12px] font-medium text-[var(--ds-text-subtle)]">
+                          {formatMoney(catalog.currency, itemsSubtotal)}
+                        </span>
+                      )}
                     </button>
 
                     {expanded && (
                       <div className="space-y-4 border-t border-[var(--ds-border)] p-3">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-1">
-                            <label className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
-                              Service name
-                              <Hint
-                                what="What the visitor sees in the service picker card. Keep it short and unambiguous."
-                                example="Landing page design · Logo design · SEO audit · Backend development"
-                              />
-                            </label>
-                            <Input
-                              value={service.name}
-                              onChange={(event) => updateService(sIndex, { name: event.target.value })}
-                              placeholder="e.g. Landing page design"
-                              disabled={saving}
+                        <div className="space-y-1">
+                          <label className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
+                            Service name
+                            <Hint
+                              what="What the visitor sees in the service picker card. Keep it short and unambiguous."
+                              example="Landing page design · SEO · Branding · Backend development"
                             />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
-                              Unit label
-                              <Hint
-                                what="What one unit of this service is billed against. Shown next to the price and used as the label on the quantity prompt."
-                                example="page · hour · seat · revision round · word · month · project"
-                              />
-                            </label>
-                            <Input
-                              value={service.unit_label}
-                              onChange={(event) => updateService(sIndex, { unit_label: event.target.value })}
-                              placeholder="page, hour, word, seat…"
-                              disabled={saving}
-                            />
-                          </div>
+                          </label>
+                          <Input
+                            value={service.name}
+                            onChange={(event) => updateService(sIndex, { name: event.target.value })}
+                            placeholder="e.g. Landing page design"
+                            disabled={saving}
+                          />
                         </div>
 
                         <div className="space-y-1">
@@ -670,7 +687,7 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                             Short description (optional)
                             <Hint
                               what="One-line explainer shown under the service name in the visitor's picker. Optional."
-                              example="'Custom-designed responsive landing page' · 'Includes 3 concepts + revisions'"
+                              example="'Custom-designed responsive landing page' · 'On-page + technical SEO'"
                             />
                           </label>
                           <Input
@@ -681,78 +698,35 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                           />
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-1">
-                            <label className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
-                              Price per {service.unit_label || 'unit'}
-                              <Hint
-                                what="Cost of one unit. The final subtotal is this × quantity. Stored in the currency you picked at the top."
-                                example={`Landing page @ 15000 per page → 3 pages = ${formatNumber((15000 * 3))}`}
-                              />
-                            </label>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={String(service.price_per_unit)}
-                              onChange={(event) =>
-                                updateService(sIndex, { price_per_unit: Number(event.target.value) || 0 })
-                              }
-                              disabled={saving}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-subtle)]">
-                              Default quantity
-                              <Hint
-                                what="The number pre-filled when the bot asks the visitor 'how many?'. They can still change it."
-                                example="1 for a one-off project · 3 for typical logo revision rounds · 10 for a 10-page SEO audit"
-                              />
-                            </label>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={String(service.default_quantity)}
-                              onChange={(event) =>
-                                updateService(sIndex, {
-                                  default_quantity: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                                })
-                              }
-                              disabled={saving}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Per-service questions */}
+                        {/* Priced requirements */}
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <p className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--ds-text)]">
-                              Questions for this service
+                              Requirements
                               <Hint
-                                what="Extra info the bot collects for this service before locking in the quote. Answers are saved with the lead for the operator."
-                                example="Landing page → 'How many sections?' (number) + 'Design style?' (choice). Logo → 'Preferred style?' (Wordmark / Icon / Combination)."
+                                what="The priced line items inside this service. The visitor checks the ones they want; each adds its price × quantity to the quote."
+                                example="Landing page → 'Hero section' @ 8000 ×1, 'Extra content page' @ 2000 ×3, 'Contact form' @ 1500 ×1."
                               />
                             </p>
                             <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                              {service.questions.length} / {MAX_QUESTIONS_PER_SERVICE}
+                              {service.requirements.length} / {MAX_REQUIREMENTS_PER_SERVICE}
                             </p>
                           </div>
-                          {service.questions.length === 0 ? (
+                          {service.requirements.length === 0 ? (
                             <p className="rounded-md border border-dashed border-[var(--ds-border)] p-3 text-[12px] text-[var(--ds-text-subtle)]">
-                              No questions yet. Add questions the bot should ask to scope this service.
+                              No requirements yet. Add the priced items this service is made of.
                             </p>
                           ) : (
                             <div className="space-y-3">
-                              {service.questions.map((q, qIndex) => (
-                                <div key={q.id} className="space-y-2 rounded-md bg-[var(--ds-bg-sunken)] p-3">
+                              {service.requirements.map((r, rIndex) => (
+                                <div key={r.id} className="space-y-2 rounded-md bg-[var(--ds-bg-sunken)] p-3">
                                   <div className="flex items-center justify-between">
                                     <span className="text-[11px] uppercase tracking-wider text-[var(--ds-text-subtle)]">
-                                      Question {qIndex + 1}
+                                      Requirement {rIndex + 1}
                                     </span>
                                     <button
                                       type="button"
-                                      onClick={() => removeQuestion(sIndex, qIndex)}
+                                      onClick={() => removeRequirement(sIndex, rIndex)}
                                       className="inline-flex items-center gap-1 text-[12px] text-[var(--ds-danger)] hover:underline"
                                       disabled={saving}
                                     >
@@ -761,103 +735,225 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                                   </div>
                                   <div className="space-y-1">
                                     <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
-                                      Question text
+                                      Question
                                       <Hint
-                                        what="Exactly what the bot will ask the visitor for this service."
-                                        example="'How many sections per page?' · 'Preferred design style?' · 'Do you need SSO?'"
+                                        what="The prompt the visitor is asked for this requirement, on its own step. Leave blank to fall back to the name below."
+                                        example="'Which tech stack do you prefer?' · 'Do you need a laptop?' · 'How much support?'"
                                       />
                                     </label>
                                     <Input
-                                      value={q.text}
-                                      onChange={(event) => updateQuestion(sIndex, qIndex, { text: event.target.value })}
-                                      placeholder="What should the bot ask?"
+                                      value={r.question}
+                                      onChange={(event) => updateRequirement(sIndex, rIndex, { question: event.target.value })}
+                                      placeholder={r.type === 'choice' ? 'e.g. Which tech stack?' : 'e.g. Do you need a laptop?'}
                                       disabled={saving}
                                     />
                                   </div>
-                                  <div className="space-y-1">
-                                    <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
-                                      Answer type
-                                      <Hint
-                                        what="How the visitor answers. Text = free typing. Multiple choice = pick from your options. Number = numeric input only."
-                                        example="'How many sections?' → Number. 'Design style?' → Multiple choice. 'Any special requirements?' → Text."
-                                      />
-                                    </label>
-                                    <Select
-                                      value={q.type}
-                                      onChange={(value: string) => {
-                                        const nextType = value as QuestionType;
-                                        updateQuestion(sIndex, qIndex, {
-                                          type: nextType,
-                                          options:
-                                            nextType === 'choice' && q.options.length === 0 ? [''] : q.options,
-                                        });
-                                      }}
-                                      options={QUESTION_TYPES}
-                                    />
-                                  </div>
-                                  {q.type === 'choice' && (
-                                    <div className="space-y-1.5 rounded-md bg-[var(--ds-bg-surface)] p-2">
-                                      <p className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
-                                        Options
+                                  <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Name on quote
                                         <Hint
-                                          what="The buttons the visitor picks from. Add one per line, the visitor sees them exactly as you type them."
-                                          example="For 'Design style?' → Modern, Classic, Minimalist. For 'Preferred stack?' → React, Vue, Svelte."
+                                          what="The short name that appears on the quote and PDF. For a choice it prefixes the picked option (e.g. 'Tech stack: Next.js')."
+                                          example="Item: 'Laptop'. Choice: 'Tech stack' → 'Tech stack: Next.js'."
                                         />
-                                      </p>
-                                      {q.options.length === 0 ? (
-                                        <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                                          Add at least one option.
+                                      </label>
+                                      <Input
+                                        value={r.label}
+                                        onChange={(event) => updateRequirement(sIndex, rIndex, { label: event.target.value })}
+                                        placeholder={r.type === 'choice' ? 'e.g. Tech stack' : 'e.g. Laptop'}
+                                        disabled={saving}
+                                      />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Type
+                                        <Hint
+                                          what="Simple item = a tick-box the visitor turns on/off. Choice = a question with priced options; the visitor picks one."
+                                          example="'CI/CD setup' → Simple item. 'Tech stack?' (Next.js/React) → Choice."
+                                        />
+                                      </label>
+                                      <Select
+                                        value={r.type}
+                                        onChange={(value: string) => {
+                                          const nextType = value as RequirementType;
+                                          updateRequirement(sIndex, rIndex, {
+                                            type: nextType,
+                                            options:
+                                              nextType === 'choice' && r.options.length === 0
+                                                ? [{ id: 'o1', label: '', price: 0, quantity: 1 }]
+                                                : r.options,
+                                          });
+                                        }}
+                                        options={REQUIREMENT_TYPES}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {r.type === 'choice' ? (
+                                    <div className="space-y-1.5 rounded-md bg-[var(--ds-bg-surface)] p-2">
+                                      <div className="flex items-center justify-between">
+                                        <p className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
+                                          Options
+                                          <Hint
+                                            what="The priced answers the visitor picks ONE of. Each carries its own price."
+                                            example="Tech stack? → Next.js @ 50000, React @ 40000."
+                                          />
                                         </p>
-                                      ) : (
-                                        <div className="space-y-1">
-                                          {q.options.map((opt, oIndex) => (
-                                            <div key={oIndex} className="flex items-center gap-2">
-                                              <Input
-                                                value={opt}
-                                                onChange={(event) =>
-                                                  updateOption(sIndex, qIndex, oIndex, event.target.value)
-                                                }
-                                                placeholder={`Option ${oIndex + 1}`}
-                                                disabled={saving}
-                                              />
-                                              <button
-                                                type="button"
-                                                onClick={() => removeOption(sIndex, qIndex, oIndex)}
-                                                aria-label={`Remove option ${oIndex + 1}`}
-                                                className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-sunken)] hover:text-[var(--ds-danger)]"
-                                                disabled={saving}
-                                              >
-                                                <X size={14} aria-hidden="true" />
-                                              </button>
-                                            </div>
-                                          ))}
+                                        <p className="text-[11px] text-[var(--ds-text-subtle)]">
+                                          {r.options.length} / {MAX_OPTIONS_PER_REQUIREMENT}
+                                        </p>
+                                      </div>
+                                      {r.options.map((o, oIndex) => (
+                                        <div
+                                          key={o.id}
+                                          className={`grid ${r.quantity_mode === 'fixed' ? 'grid-cols-[1fr_96px_64px_auto]' : 'grid-cols-[1fr_96px_auto]'} items-center gap-2`}
+                                        >
+                                          <Input
+                                            value={o.label}
+                                            onChange={(event) => updateOption(sIndex, rIndex, oIndex, { label: event.target.value })}
+                                            placeholder={`Option ${oIndex + 1}`}
+                                            disabled={saving}
+                                          />
+                                          <Input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={String(o.price)}
+                                            onChange={(event) => updateOption(sIndex, rIndex, oIndex, { price: Number(event.target.value) || 0 })}
+                                            placeholder="Price"
+                                            disabled={saving}
+                                          />
+                                          {r.quantity_mode === 'fixed' && (
+                                            <Input
+                                              type="number"
+                                              min="1"
+                                              step="1"
+                                              value={String(o.quantity)}
+                                              onChange={(event) => updateOption(sIndex, rIndex, oIndex, { quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) })}
+                                              placeholder="Qty"
+                                              disabled={saving}
+                                            />
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => removeOption(sIndex, rIndex, oIndex)}
+                                            aria-label={`Remove option ${oIndex + 1}`}
+                                            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-sunken)] hover:text-[var(--ds-danger)]"
+                                            disabled={saving}
+                                          >
+                                            <X size={14} aria-hidden="true" />
+                                          </button>
                                         </div>
-                                      )}
+                                      ))}
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => addOption(sIndex, qIndex)}
-                                        disabled={saving || q.options.length >= MAX_OPTIONS}
+                                        onClick={() => addOption(sIndex, rIndex)}
+                                        disabled={saving || r.options.length >= MAX_OPTIONS_PER_REQUIREMENT}
                                       >
                                         <Plus size={12} aria-hidden="true" /> Add option
                                       </Button>
                                     </div>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Price
+                                        <Hint
+                                          what="Cost of this item, in the currency at the top."
+                                          example={`8000 per unit · ${formatNumber(5000)} for a laptop`}
+                                        />
+                                      </label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={String(r.price)}
+                                        onChange={(event) => updateRequirement(sIndex, rIndex, { price: Number(event.target.value) || 0 })}
+                                        disabled={saving}
+                                      />
+                                    </div>
                                   )}
-                                  <label className="flex items-center gap-2 text-[12px] text-[var(--ds-text-subtle)]">
-                                    <input
-                                      type="checkbox"
-                                      checked={q.required}
-                                      onChange={(event) =>
-                                        updateQuestion(sIndex, qIndex, { required: event.target.checked })
-                                      }
-                                      disabled={saving}
-                                    />
-                                    Required
-                                    <Hint
-                                      what="If ticked, the visitor can't move past this question without answering. Untick for genuinely optional context."
-                                      example="'How many sections?' → required (affects the price). 'Any special notes?' → optional."
-                                    />
-                                  </label>
+
+                                  {/* Quantity behaviour — applies to both types */}
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Quantity
+                                        <Hint
+                                          what="No quantity = just the price (×1). Fixed = you set the number. Ask the visitor = they pick how many in the widget."
+                                          example="Techstack → No quantity. Support months → Fixed 6. Laptop → Ask the visitor."
+                                        />
+                                      </label>
+                                      <Select
+                                        value={r.quantity_mode}
+                                        onChange={(value: string) => updateRequirement(sIndex, rIndex, { quantity_mode: value as QtyMode })}
+                                        options={REQUIREMENT_QTY_MODES}
+                                      />
+                                    </div>
+                                    {r.quantity_mode !== 'none' && (
+                                      <div className="space-y-1">
+                                        <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                          Unit
+                                          <Hint
+                                            what="The word shown beside the quantity on the widget and quote (auto-pluralised)."
+                                            example="unit · page · hour · month · laptop · seat"
+                                          />
+                                        </label>
+                                        <Input
+                                          value={r.unit_label}
+                                          onChange={(event) => updateRequirement(sIndex, rIndex, { unit_label: event.target.value })}
+                                          placeholder="unit"
+                                          disabled={saving}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {r.quantity_mode === 'fixed' && r.type === 'item' && (
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Quantity (applied automatically)
+                                      </label>
+                                      <Input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={String(r.quantity)}
+                                        onChange={(event) => updateRequirement(sIndex, rIndex, { quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) })}
+                                        disabled={saving}
+                                      />
+                                    </div>
+                                  )}
+                                  {r.quantity_mode === 'ask' && (
+                                    <div className="space-y-1">
+                                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                                        Default quantity
+                                        <Hint
+                                          what="Pre-filled number the visitor sees on the stepper; they can change it (0 skips the item)."
+                                          example="1 for a laptop · 3 for a typical page count"
+                                        />
+                                      </label>
+                                      <Input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={String(r.quantity)}
+                                        onChange={(event) => updateRequirement(sIndex, rIndex, { quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) })}
+                                        disabled={saving}
+                                      />
+                                    </div>
+                                  )}
+                                  {r.type === 'item' && r.quantity_mode !== 'ask' && (
+                                    <p className="text-right text-[11px] text-[var(--ds-text-subtle)]">
+                                      Line total:{' '}
+                                      <span className="font-medium text-[var(--ds-text)]">
+                                        {formatMoney(
+                                          catalog.currency,
+                                          (Number(r.price) || 0) * (r.quantity_mode === 'none' ? 1 : Number(r.quantity) || 0),
+                                        )}
+                                      </span>
+                                    </p>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -865,16 +961,24 @@ export function QuotationCatalogSection({ botId }: QuotationCatalogSectionProps)
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => addQuestion(sIndex)}
-                            disabled={saving || service.questions.length >= MAX_QUESTIONS_PER_SERVICE}
+                            onClick={() => addRequirement(sIndex)}
+                            disabled={saving || service.requirements.length >= MAX_REQUIREMENTS_PER_SERVICE}
                           >
-                            <Plus size={12} aria-hidden="true" /> Add question
+                            <Plus size={12} aria-hidden="true" /> Add requirement
                           </Button>
                         </div>
 
                         <div className="flex items-center justify-between border-t border-[var(--ds-border)] pt-3">
                           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                            Subtotal at default qty: <span className="text-[var(--ds-text)]">{formatMoney(catalog.currency, subtotal)}</span>
+                            {hasItems ? (
+                              <>
+                                Items subtotal:{' '}
+                                <span className="text-[var(--ds-text)]">{formatMoney(catalog.currency, itemsSubtotal)}</span>
+                                {service.requirements.some((r) => r.type === 'choice') && ' + choices'}
+                              </>
+                            ) : (
+                              'Total depends on the options the visitor picks.'
+                            )}
                           </p>
                           <button
                             type="button"

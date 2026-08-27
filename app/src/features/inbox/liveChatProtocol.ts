@@ -148,12 +148,12 @@ export interface SessionDetails {
     currency: string;
     line_items: Array<{
       service_id: string;
-      name: string;
-      unit_label: string;
-      price_per_unit: number;
+      service_name: string;
+      requirement_id: string;
+      label: string;
       quantity: number;
+      price: number;
       subtotal: number;
-      answers: Array<{ question_id: string; question_text: string; answer: string }>;
     }>;
     total: number;
     activated_at: string | null;

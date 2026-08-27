@@ -40,6 +40,7 @@ from app.config import (
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
+from app.services._email_assets import ENVELOPE_ICON
 from app.services.email_design import button, code_box, esc, h1, info_table, link, p, shell, strong
 
 logger = logging.getLogger(__name__)
@@ -899,6 +900,80 @@ def _format_money(currency: str, value: object) -> str:
     return f"{symbol}{rounded:,.2f}"
 
 
+def _plural_unit(unit: str, qty: object) -> str:
+    """Agree a unit label with its quantity (``1 unit`` / ``2 units``). Labels
+    that already read as plural (end in ``s``) are left untouched."""
+    unit = (unit or "").strip()
+    if not unit:
+        return ""
+    try:
+        n = int(qty)
+    except (TypeError, ValueError):
+        return unit
+    if n == 1 or unit[-1].lower() == "s":
+        return unit
+    return f"{unit}s"
+
+
+def _grouped_quote_html(currency: str, line_items: list[dict], total: object) -> str:
+    """Render the priced quote as service sections of requirement rows
+    (``label × qty → subtotal``) plus a bold total. Line items are the
+    requirement rows from ``quotation_routes.build_quotation_summary``."""
+    groups: dict[str, list[tuple[str, str]]] = {}
+    order: list[str] = []
+    for item in line_items or []:
+        service_name = item.get("service_name") or "Service"
+        if service_name not in groups:
+            groups[service_name] = []
+            order.append(service_name)
+        qty = item.get("quantity")
+        unit = item.get("unit_label") or ""
+        label = esc(item.get("label") or "Item")
+        if unit:
+            label = f"{label} &times; {esc(qty)} {esc(_plural_unit(unit, qty))}"
+        elif qty and int(qty) != 1:
+            label = f"{label} &times; {esc(qty)}"
+        groups[service_name].append((label, _format_money(currency, item.get("subtotal", 0))))
+
+    total_row = ("Total", strong(_format_money(currency, total)))
+    html = ""
+    for i, service_name in enumerate(order):
+        rows = list(groups[service_name])
+        # Keep the total inside the same box as the line items (on the last
+        # service group) rather than floating it in a separate box.
+        if i == len(order) - 1:
+            rows.append(total_row)
+        html += ed.section_label(esc(service_name)) + info_table(rows, right=True)
+    if not order:
+        html += info_table([total_row], right=True)
+    return html
+
+
+def _next_steps_callout(body: str) -> str:
+    """A green 'What happens next' card — an envelope badge beside a bold title
+    and a line of body copy. Table-based + a data-URI icon so it survives email
+    clients (no external fetch, no flexbox)."""
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:0 0 18px 0;"><tr>'
+        '<td style="background-color:#f0fdf4;border:1px solid #dcfce7;border-radius:12px;padding:16px 18px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        '<td width="40" valign="middle" style="width:40px;vertical-align:middle;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        '<td width="40" height="40" align="center" valign="middle" '
+        'style="width:40px;height:40px;background-color:#dcfce7;border-radius:100px;'
+        'text-align:center;vertical-align:middle;">'
+        f'<img src="{ENVELOPE_ICON}" width="20" height="20" alt="" style="display:block;border:0;margin:0 auto;">'
+        "</td></tr></table></td>"
+        '<td width="14" style="width:14px;font-size:0;line-height:0;">&nbsp;</td>'
+        '<td valign="middle" style="vertical-align:middle;">'
+        f'<p style="margin:0 0 3px 0;font-family:{ed.FONT};font-size:15px;font-weight:700;'
+        'color:#15803d;">What happens next</p>'
+        f'<p style="margin:0;font-family:{ed.FONT};font-size:14px;color:#166534;line-height:1.6;">{body}</p>'
+        "</td></tr></table></td></tr></table>"
+    )
+
+
 def send_quotation_visitor_email(
     to_email: str,
     company_name: str,
@@ -917,13 +992,11 @@ def send_quotation_visitor_email(
     names = [esc(s) for s in (service_names or []) if s]
     services_line = ", ".join(names) if names else "the services you selected"
     inner = (
-        h1("Your quote request is in")
+        h1("We&rsquo;ve received your request")
         + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
-        + p(
-            f"Thanks for your interest in {strong(safe_company)}. We&rsquo;ve received your "
-            f"request for a quote on {strong(services_line)}."
-        )
-        + ed.alert("Our team is preparing your quotation and will be in touch by email shortly.", "success")
+        + p(f"Thanks for your interest in {strong(safe_company)}.")
+        + p(f"We&rsquo;ve received your request for a quote for {strong(services_line)}.")
+        + _next_steps_callout("Our team is preparing your quotation and will be in touch by email shortly.")
         + p("You can reply directly to this email if you&rsquo;d like to add any details.")
     )
     send_email_async(
@@ -932,6 +1005,55 @@ def send_quotation_visitor_email(
         shell(
             subject=f"Your quote request with {company_name or BRAND_NAME}",
             preheader=f"Thanks {visitor_name or 'there'}. We&rsquo;re preparing your quote.",
+            inner=inner,
+            visitor=True,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(company_name or BRAND_NAME),
+    )
+
+
+def send_quotation_document_email(
+    to_email: str,
+    company_name: str,
+    visitor_name: str | None,
+    currency: str,
+    line_items: list[dict],
+    total: object,
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Send the visitor their finalized quotation, ~10 min after the request.
+
+    Unlike the immediate "Your quote request" acknowledgement, this one carries
+    the full pricing: each selected service with its quantity, per-unit price
+    and subtotal, plus the grand total. The priced quote is rendered inline in
+    the email body.
+    """
+    safe_company = esc(company_name) if company_name else esc(BRAND_NAME)
+
+    inner = (
+        h1("Your quotation")
+        + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
+        + p(
+            f"Thank you for your interest in {strong(safe_company)}. Here is the "
+            f"quotation for the requirements you selected."
+        )
+        + _grouped_quote_html(currency, line_items, total)
+        + (
+            f'<p style="margin:10px 0 0 0;font-family:{ed.FONT};font-size:13px;font-weight:700;'
+            f'color:#c2410c;line-height:1.6;">This is an indicative quotation, not a final quote. '
+            f"Prices may change once our team confirms the exact scope and details with you.</p>"
+        )
+        + p("Reply to this email if you have any questions or would like to proceed.", top=14)
+    )
+
+    send_email_async(
+        to_email,
+        f"Your quotation from {company_name or BRAND_NAME}",
+        shell(
+            subject=f"Your quotation from {company_name or BRAND_NAME}",
+            preheader=f"Your quotation from {company_name or BRAND_NAME} is ready.",
             inner=inner,
             visitor=True,
         ),
@@ -952,52 +1074,36 @@ def send_quotation_client_email(
 ) -> None:
     """Notify the client that a visitor completed a quote request.
 
-    Unlike the visitor email, this one carries the full itemised quote (line
-    items + quantities + subtotals + total), the per-service question answers
-    the visitor gave, and the visitor's contact info so the client can follow
-    up. ``reply_to`` should be the visitor's email so a reply lands straight in
+    Unlike the visitor email, this one carries the full itemised quote (each
+    chosen requirement grouped under its service, with quantities + subtotals +
+    total) and the visitor's contact info so the client can follow up.
+    ``reply_to`` should be the visitor's email so a reply lands straight in
     their inbox.
     """
     safe_bot = esc(bot_name)
     contact = contact or {}
 
-    # Money table: one row per service (name × qty → subtotal) + a bold total.
-    quote_rows: list[tuple[str, str]] = []
-    for item in line_items or []:
-        qty = item.get("quantity")
-        label = esc(item.get("name") or "Service")
-        if qty:
-            label = f"{label} &times; {esc(qty)}"
-        quote_rows.append((label, _format_money(currency, item.get("subtotal", 0))))
-    quote_rows.append(("Total", strong(_format_money(currency, total))))
-
-    # Per-service Q&A: only for services that actually collected answers, so a
-    # simple pick-and-quantity service adds no empty section.
-    answer_sections = ""
-    for item in line_items or []:
-        answer_rows = [
-            (esc(ans.get("question_text") or ans.get("question_id") or "Question"), esc(ans.get("answer")))
-            for ans in item.get("answers") or []
-            if (ans.get("answer") or "").strip()
-        ]
-        if answer_rows:
-            answer_sections += ed.section_label(esc(item.get("name") or "Service")) + info_table(answer_rows)
+    # Only surface contact fields the visitor actually provided — the quote
+    # flow captures just the email, so phone/company are usually empty and
+    # dangling "—" rows read as missing data rather than "not collected".
+    contact_rows: list[tuple[str, str]] = []
+    if contact.get("name"):
+        contact_rows.append(("Name", esc(contact.get("name"))))
+    if contact.get("email"):
+        contact_rows.append(("Email", _mailto(contact.get("email"))))
+    if contact.get("phone"):
+        contact_rows.append(("Phone", esc(contact.get("phone"))))
+    if contact.get("company"):
+        contact_rows.append(("Company", esc(contact.get("company"))))
+    if not contact_rows:
+        contact_rows.append(("Contact", "Not provided"))
 
     inner = (
         h1("New quote request")
         + p(f"A visitor on {strong(safe_bot)} just completed a quote request. Here&rsquo;s what they asked for.")
-        + ed.section_label("Quote")
-        + info_table(quote_rows, right=True)
-        + (ed.section_label("Their answers") + answer_sections if answer_sections else "")
+        + _grouped_quote_html(currency, line_items, total)
         + ed.section_label("Contact")
-        + info_table(
-            [
-                ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
-                ("Email", _mailto(contact.get("email"))),
-                ("Phone", esc(contact.get("phone"))),
-                ("Company", esc(contact.get("company"))),
-            ]
-        )
+        + info_table(contact_rows)
         + button("View lead in dashboard", f"{APP_URL}/leads")
     )
     send_email_async(
