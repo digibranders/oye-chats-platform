@@ -1125,6 +1125,83 @@ def _count_marked_bant_dimensions(bant_state: dict | None) -> int:
     return marked
 
 
+def _quote_gate_state(bot, bant_state: dict | None) -> tuple[bool, int, int]:
+    """Resolve the quotation trigger for this session from the BANT state we
+    already have this turn. Returns ``(enabled, marked, threshold)``.
+
+    Mirrors the widget runtime's trigger in ``quotation_routes``: only the
+    admin-chosen dimensions count (empty ``required_categories`` means any of the
+    four), and the threshold is clamped to the number of chosen dimensions so an
+    unreachable config can never wedge the gate open. ``enabled`` is False when
+    the bot has no usable quotation catalog, in which case ``marked``/
+    ``threshold`` are 0.
+    """
+    catalog = getattr(bot, "quotation_catalog", None) if bot else None
+    if not isinstance(catalog, dict) or not catalog.get("enabled") or not catalog.get("services"):
+        return (False, 0, 0)
+
+    valid = ("need", "budget", "authority", "timeline")
+    required = [d for d in (catalog.get("required_categories") or []) if d in valid]
+    dims = required or list(valid)
+
+    state = bant_state or {}
+    marked = 0
+    for dim in dims:
+        score = int(state.get(f"{dim}_score", 0) or 0)
+        value = state.get(dim)
+        if score > 0 or (isinstance(value, str) and value.strip()):
+            marked += 1
+
+    threshold = max(1, min(len(dims), int(catalog.get("threshold", 2) or 2)))
+    return (True, marked, threshold)
+
+
+def _quote_probe_hold(bot, bant_state: dict | None, answers_last_probe: bool) -> bool:
+    """Whether to hold this turn's qualifying question because the quotation
+    card is already — or about to be — triggerable.
+
+    The quote flow fires once enough BANT dimensions are marked, but the probe
+    for THIS turn is chosen *before* the current answer is scored (extraction is
+    async, after the stream closes). Without this, the bot asks one more
+    qualifying question in the very turn the quote is about to appear — which
+    reads to the visitor as "why ask, then immediately quote?".
+
+    Returns True (suppress the probe) when, using only the state we have this
+    turn:
+      * the bot already has enough marked to quote (over-qualification — no
+        reason to keep probing), OR
+      * it is exactly one dimension short AND the visitor's message answers the
+        probe just asked, so that answer will most likely complete the
+        threshold once extraction lands.
+    """
+    enabled, marked, threshold = _quote_gate_state(bot, bant_state)
+    if not enabled:
+        return False
+    if marked >= threshold:
+        return True
+    return marked >= threshold - 1 and answers_last_probe
+
+
+def _quote_active_or_pending(bot, chat_session, bant_state: dict | None) -> bool:
+    """Whether a quote is currently showing, or will fire this session — the
+    signal for holding the "connect with a team" / book-a-meeting CTA so only
+    one conversion path runs at a time.
+
+    True when the quote is enabled AND the BANT threshold is already met AND the
+    quote is not yet terminal. It flips back to False once the visitor completes
+    or skips the quote, so the team/meeting offer flows again afterwards (the
+    quote flow's own end screen already carries a "Connect now" action, so the
+    human path is only sequenced after the quote, never removed). Deliberately
+    does NOT use the speculative "one dimension away" clause — the team offer is
+    valuable, so it is only held when a quote will genuinely fire.
+    """
+    enabled, marked, threshold = _quote_gate_state(bot, bant_state)
+    if not enabled or marked < threshold:
+        return False
+    status = (getattr(chat_session, "quotation_state", None) or {}).get("status")
+    return status not in ("complete", "skipped")
+
+
 def _safety_net_metric(name: str, **tags) -> None:
     """Structured log line + rolling counter (AR-13) for aggregation.
 
@@ -1196,6 +1273,23 @@ OFF_TOPIC_ESCALATION_VARIANTS: tuple[str, ...] = (
     "specific need, our team can help directly: just let me know and I'll "
     "connect you. Otherwise I'm here for any {company_name} question.",
 )
+
+
+# Phrases that dangle a human handoff. Used to strip such offers from the
+# off-topic refusal pool when the bot's plan has no live-chat / offline channel
+# (Free plan), so a scope refusal never promises contact the plan can't deliver.
+# Named distinctly from ``_HANDOFF_OFFER_RE`` (defined later, for a different
+# intent-detection job) to avoid a module-level name collision, and phrased to
+# catch the refusal-variant wordings ("connecting you with the team", etc.).
+_REFUSAL_TEAM_OFFER_RE = re.compile(
+    r"connect(ing)?\s+you|in\s+touch|talk\s+to\s+someone|put\s+you\s+in\s+touch|hand\s+you\s+off",
+    re.IGNORECASE,
+)
+
+
+def _mentions_team_offer(text: str) -> bool:
+    """True if ``text`` dangles a human-handoff offer (see ``_REFUSAL_TEAM_OFFER_RE``)."""
+    return bool(_REFUSAL_TEAM_OFFER_RE.search(text))
 
 
 def _is_known_refusal(text: str, company_name: str) -> bool:
@@ -1323,6 +1417,7 @@ def _stream_metadata(session_id: str, sources: list, language=None) -> str:
 def _off_topic_refusal(
     company_name: str | None,
     recent_bot_messages: list[str] | None = None,
+    support_enabled: bool = True,
 ) -> str:
     """Return an off-topic refusal scoped to ``company_name``.
 
@@ -1342,8 +1437,11 @@ def _off_topic_refusal(
     # Count how many of the last 3 bot messages were already refusals.
     consecutive_refusals = sum(1 for msg in recent[-3:] if _is_known_refusal(msg, cn))
 
-    if consecutive_refusals >= 2:
+    if consecutive_refusals >= 2 and support_enabled:
         # Filter escalation variants to avoid repeating the most recent one.
+        # Skipped entirely when support is disabled (Free plan): every
+        # escalation variant promises a human handoff this plan can't honor, so
+        # we stay on the plain refusal rotation below instead.
         last = recent[-1] if recent else ""
         candidates = [
             t for t in OFF_TOPIC_ESCALATION_VARIANTS if not last.startswith(t.format(company_name=cn)[:40])
@@ -1353,11 +1451,18 @@ def _off_topic_refusal(
     # Normal path: exclude variants matching any recent bot message so the
     # immediate-neighbour repeat (the user's reported issue) cannot happen.
     used_starts = {msg.strip()[:40] for msg in recent[-2:] if msg}
-    candidates = [t for t in OFF_TOPIC_REFUSAL_VARIANTS if t.format(company_name=cn)[:40] not in used_starts]
+    pool = OFF_TOPIC_REFUSAL_VARIANTS
+    if not support_enabled:
+        # Drop variants that dangle a "connect you with the team" offer; a
+        # Free-plan bot has no such channel, so a passing mention of it in a
+        # scope refusal would still be a broken promise.
+        _clean = tuple(t for t in OFF_TOPIC_REFUSAL_VARIANTS if not _mentions_team_offer(t))
+        pool = _clean or OFF_TOPIC_REFUSAL_VARIANTS
+    candidates = [t for t in pool if t.format(company_name=cn)[:40] not in used_starts]
     if not candidates:
         # All variants used recently (very unlikely with 8 in pool); fall
-        # back to anything rather than block.
-        candidates = list(OFF_TOPIC_REFUSAL_VARIANTS)
+        # back to anything in the pool rather than block.
+        candidates = list(pool)
     return random.choice(candidates).format(company_name=cn)
 
 
@@ -1433,14 +1538,20 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
     return not _has_latin_words(question)
 
 
-def _no_info_pivot(company_name: str | None) -> str:
+def _no_info_pivot(company_name: str | None, support_enabled: bool = True) -> str:
     """Graceful 'I don't have that detail handy' response.
 
     Preserves the company-confident voice (no 'I don't have access to my
-    knowledge base' framing) and offers a forward path. Used when the gate
-    fails but the question is on-scope.
+    knowledge base' framing). Used when the gate fails but the question is
+    on-scope. This is a CANNED early-return that never touches the LLM prompt,
+    so the human-support gate must be applied here too: when ``support_enabled``
+    is False (e.g. a Free-plan bot, whose plan excludes live chat and offline
+    messages) it must NOT offer to connect the visitor with the team, since no
+    such channel exists. It stays a warm bot-only pivot instead.
     """
     cn = f"**{company_name}**" if company_name else "us"
+    if not support_enabled:
+        return f"I don't have that specific detail on hand for {cn}. Is there something else about {cn} I can help you with?"
     return (
         f"I don't have that specific detail on hand for {cn}. Want me to "
         f"connect you with the team so they can help directly?"
@@ -1458,18 +1569,36 @@ def _browsing_ack(company_name: str | None) -> str:
     return f"No rush at all. I'm right here whenever you want to dig into {cn} or have a question."
 
 
-def _refusal_or_browsing_ack(question: str, company_name: str | None, recent_bot: list) -> str:
+def _refusal_or_browsing_ack(
+    question: str, company_name: str | None, recent_bot: list, support_enabled: bool = True
+) -> str:
     """Pick the right off-topic reply: a warm acknowledgement for a browsing /
     time-pass visitor, the standard off-topic refusal otherwise. Fires only on
     the refusal path (the gate already judged the turn non-groundable), so a
-    low-intent message that DID retrieve real content still gets a real answer."""
+    low-intent message that DID retrieve real content still gets a real answer.
+
+    ``support_enabled`` flows into the refusal picker so a plan with no human
+    channel never escalates to a handoff offer or dangles one in a variant."""
     if _is_low_intent_message(question):
         return _browsing_ack(company_name)
-    return _off_topic_refusal(company_name, recent_bot)
+    return _off_topic_refusal(company_name, recent_bot, support_enabled=support_enabled)
 
 
 _TRAILING_QUESTION_RE = re.compile(
     r"(?P<gap>[ \t\n]+)(?P<q>[A-Z][^.!?\n]{2,200}\?)\s*$",
+)
+
+# Follow-up glued DIRECTLY to the prior sentence with no gap: "...be fast.What
+# matters most?". ``_TRAILING_QUESTION_RE`` needs a whitespace gap before the
+# question, so this exact "punctuation+Opener" shape slips through it. A
+# question-opener whitelist (Wh-words + auxiliaries + the Any* family) keeps
+# brand names ("CleanSight") from splitting, and anchoring at end-of-string
+# keeps it clear of mid-text URLs (Python ``re`` has no variable-length
+# lookbehind, so the widget's ``://`` guard can't be reused here — the anchor
+# does the same job for the trailing-question case this function handles).
+_TRAILING_QUESTION_GLUED_RE = re.compile(
+    r"[.!?](?P<q>(?:Would|Could|Should|Do|Does|Did|Can|Will|Are|Is|Was|Were|Am|Have|Has|Had|May|Might|"
+    r"Must|Shall|What|Which|When|Where|Why|Who|How|Any\w*)\b[^.!?\n]{0,200}\?)\s*$",
 )
 
 
@@ -1487,16 +1616,22 @@ def _ensure_followup_spacing(text: str) -> str:
     stripped = text.rstrip()
     if not stripped.endswith("?"):
         return text
+    trailing = text[len(stripped) :]
     match = _TRAILING_QUESTION_RE.search(stripped)
-    if not match:
-        return text
-    gap = match.group("gap")
-    if gap.count("\n") >= 2:
-        return text
-    trailing_ws_len = len(text) - len(stripped)
-    before = stripped[: match.start("gap")].rstrip()
-    question = stripped[match.start("q") :]
-    return before + "\n\n" + question + text[len(stripped) :] if trailing_ws_len else before + "\n\n" + question
+    if match:
+        gap = match.group("gap")
+        if gap.count("\n") >= 2:
+            return text
+        before = stripped[: match.start("gap")].rstrip()
+        question = stripped[match.start("q") :]
+        return before + "\n\n" + question + trailing
+    # No whitespace gap — check for a follow-up glued straight onto the prior
+    # sentence's punctuation ("...fast.What matters most?").
+    glued = _TRAILING_QUESTION_GLUED_RE.search(stripped)
+    if glued:
+        before = stripped[: glued.start("q")]  # keeps the "." between the sentences
+        return before + "\n\n" + glued.group("q") + trailing
+    return text
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
@@ -3856,6 +3991,12 @@ def build_hybrid_prompt(
     bant_enabled: bool = True,
     bant_config: dict = None,
     live_chat_enabled: bool = True,
+    # Plan half of the human-support gate: does this bot's plan include the
+    # ``live_chat`` feature at all? When False, the prompt offers NO human path,
+    # neither a live handoff nor an async leave-a-message card, so a Free-plan
+    # bot gives a graceful bot-only answer. ``live_chat_enabled`` still gates the
+    # LIVE (real-time) half on top of this. Defaults True for backward compat.
+    support_enabled: bool = True,
     custom_system_prompt: str | None = None,
     brand_tone: str | None = None,
     company_name: str | None = None,
@@ -3880,6 +4021,11 @@ def build_hybrid_prompt(
     # qualifying question this turn (browsing visitor, or too early to probe).
     # See ``_should_probe_this_turn``.
     probe_ok: bool = True,
+    # Quote is about to fire (BANT threshold already met). Firms up the no-probe
+    # instruction so the model asks NOTHING at all this turn — not even a soft
+    # clarifying question — because a quote card is about to be offered. See
+    # ``_quote_probe_hold``.
+    quote_imminent: bool = False,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
     # Cloudflare CF-IPCountry for the visitor's request ("IN", "US", ...) or
@@ -4066,7 +4212,16 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 avoid_text=history_context or "",
             )
 
-        if not next_dim_to_probe:
+        if quote_imminent:
+            probing_instruction = (
+                "You already have enough to prepare a quote for this visitor. Do "
+                "NOT ask ANY question this turn — not a qualifying question, not a "
+                "clarifying or scoping question. Give a brief, helpful reply that "
+                "acknowledges what they want; a quote will be offered to them "
+                "automatically right after this. Keep it to one or two short "
+                "sentences and end on a warm note, never a question mark."
+            )
+        elif not next_dim_to_probe:
             probing_instruction = (
                 "Do NOT ask a qualifying question this turn — either everything "
                 "you need is already known, or you just asked about the one thing "
@@ -4269,7 +4424,16 @@ LEAVE A MESSAGE (inline card):
        {LEAVE_MESSAGE_CARD_SENTINEL} token on its own line, no exceptions. A promise
        without the token is a broken promise."""
 
-    if live_chat_enabled:
+    if not support_enabled:
+        # No human escape hatch on this plan (e.g. Free). The bot must not offer
+        # a live handoff OR a leave-a-message card, promising either would dead-
+        # end the visitor at a form that never routes anywhere. Instead it stays
+        # in bot-only mode: answer from the knowledge base, and when it cannot,
+        # acknowledge the gap gracefully without pointing at "the team".
+        handoff_section = """
+NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel. If the visitor asks to speak to a person, reach the team, or leave a message, do NOT promise a handoff, a callback, or a message form, and do NOT emit any card token. Briefly say you can help right here with what you know, then answer their underlying question if you can. Never say "connect you with the team" or imply someone will follow up."""
+        handoff_offer = ""
+    elif live_chat_enabled:
         handoff_section = f"""
 LIVE SUPPORT: If the user asks to speak with a person RIGHT NOW or have a live conversation, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly. Do not say the connection is already established. Say "our team", never "human team". Don't answer their question after they ask for a person.
 {_leave_msg_block}
@@ -4284,6 +4448,12 @@ SUPPORT REQUESTS: {_leave_msg_block}
 
   Say "our team", never "human team"."""
         handoff_offer = "Offer to take a written message for the team."
+
+    # Rule-5 pivot clause. When a human offer exists it is appended as an
+    # optional follow-up to the "share what you do know" fallback; when the plan
+    # has no human path it collapses to a plain sentence break so the rule never
+    # reads "and optionally  Do NOT…" with a dangling gap.
+    _handoff_pivot = f", and optionally {handoff_offer} " if handoff_offer else ". "
 
     meeting_section = ""
     if meeting_booking_enabled:
@@ -5215,7 +5385,7 @@ RULES:
     (d) Dates fall under the VERIFIABLE-CLAIM ground rule (5a): copy the exact date string from the reference. Never re-format an ambiguous fragment ("April 21") into a definite date ("April 21st, 2026"). That adds precision the source doesn't have.
 3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat. Friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
-5. For ON-SCOPE questions: never say "I don't have that information" or "No information is available." You ARE the company. Speak with confidence. When specific details are available in the reference information below, state them directly. Name clients, list services, quote prices, whatever is there. Only when an on-scope specific is genuinely absent from the reference material should you pivot: share what you do know about the company, and optionally {handoff_offer} Do NOT add a "connect with our team" offer to answers where you already have the information. Only offer it when the reference material truly cannot answer the on-scope question. For OFF-SCOPE questions: use the SCOPE refusal. Do not pivot, do not offer handoff.
+5. For ON-SCOPE questions: never say "I don't have that information" or "No information is available." You ARE the company. Speak with confidence. When specific details are available in the reference information below, state them directly. Name clients, list services, quote prices, whatever is there. Only when an on-scope specific is genuinely absent from the reference material should you pivot: share what you do know about the company{_handoff_pivot}Do NOT add a "connect with our team" offer to answers where you already have the information. Only offer it when the reference material truly cannot answer the on-scope question. For OFF-SCOPE questions: use the SCOPE refusal. Do not pivot, do not offer handoff.
 5a. VERIFIABLE-CLAIM GROUND RULE (overrides the "speak with confidence" half of RULE 5 whenever the two collide). Distinguish two kinds of statements before emitting them:
 
   (a) VERIFIABLE CLAIMS. Anything a visitor could fact-check against a public record, an auditor, a contract, our docs, a third party, or our own security/legal/finance team. Examples (illustrative, NOT exhaustive): certification status (SOC 2, ISO, HIPAA, PCI, FedRAMP, etc.); regulatory compliance posture; named customers; customer counts; financial figures (ARR, headcount, funding); SLA numbers; uptime percentages; performance benchmarks (latency, throughput, "X% reduction"); contract terms; pricing numbers; named partnerships/integrations; existence of specific features; dates; locations; founder/leadership names. When a visitor asks about one of these AND the specific answer is NOT present in the reference material, you MUST:
@@ -6051,6 +6221,29 @@ def rag_pipeline(
                 if not _company_name and bot.client:
                     _company_name = bot.client.company_name
 
+            # Human-support gating for this turn, resolved once and reused below.
+            #
+            # ``_plan_support_allowed`` is the PLAN half: does the subscription
+            # funding this bot include the ``live_chat`` feature at all? It gates
+            # EVERY human escape hatch, live queue AND async offline/leave-message,
+            # so a Free-plan bot (whose plan excludes the feature) gives a
+            # graceful bot-only answer with no "connect with the team" CTA and no
+            # message form. This matches the widget-config resolution in
+            # ``bot_routes.get_bot_settings_public``.
+            #
+            # ``live_chat_on`` is the EFFECTIVE real-time value: the plan half AND
+            # the bot's own ``live_chat_enabled`` toggle. It gates only the LIVE
+            # queue handoff. A paid bot that turned live chat off keeps offline
+            # messages (``_plan_support_allowed`` stays True), so this change does
+            # not regress the paid "offline-only" configuration.
+            #
+            # Deny-by-default (False) when the bot is unknown.
+            _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            _plan_support_allowed = (
+                plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
+            )
+            live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
             # Save the visitor's question and commit it immediately, before any
@@ -6174,7 +6367,7 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
-                _refusal = _off_topic_refusal(_company_name)
+                _refusal = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
                 _bot_msg = add_chat_message(
                     session,
                     session_id,
@@ -6205,7 +6398,7 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
-                _refusal = _off_topic_refusal(_company_name)
+                _refusal = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
                 _bot_msg = add_chat_message(
                     session,
                     session_id,
@@ -6229,9 +6422,11 @@ def rag_pipeline(
             if _cache_key and not _affirmed_handoff:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
-                    # Detect handoff intent even on cache hit
+                    # Detect handoff intent even on cache hit. ``live_chat_on``
+                    # is the plan-aware value resolved once at the top of this
+                    # turn, so a Free-plan bot never invalidates its cache to
+                    # generate a handoff it isn't entitled to offer.
                     _cached_handoff = detect_handoff_intent(question)
-                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through
@@ -6455,9 +6650,13 @@ def rag_pipeline(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
-                        _company_name
-                    )
+                    # Skip the admin/localized canned override when the plan has
+                    # no human channel: it may hardcode a "connect with the team"
+                    # offer the Free-plan bot can't honor. Fall to the gated
+                    # default pivot, which drops the offer when support is off.
+                    _pivot = (
+                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
+                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
                     _bot_msg = add_chat_message(
                         session,
                         session_id,
@@ -6486,7 +6685,9 @@ def rag_pipeline(
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
                     "answer": _canned_localized("off_topic_refusal", _company_name, language)
-                    or _refusal_or_browsing_ack(question, _company_name, _recent_bot),
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    ),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -6511,9 +6712,13 @@ def rag_pipeline(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
-                        _company_name
-                    )
+                    # Skip the admin/localized canned override when the plan has
+                    # no human channel: it may hardcode a "connect with the team"
+                    # offer the Free-plan bot can't honor. Fall to the gated
+                    # default pivot, which drops the offer when support is off.
+                    _pivot = (
+                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
+                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
                     _bot_msg = add_chat_message(
                         session,
                         session_id,
@@ -6540,7 +6745,9 @@ def rag_pipeline(
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
                     "answer": _canned_localized("off_topic_refusal", _company_name, language)
-                    or _refusal_or_browsing_ack(question, _company_name, _recent_bot),
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    ),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -6598,7 +6805,10 @@ def rag_pipeline(
             _binding_hint = _prev_probed if _answers_last_probe else None
             # Build-up gate: no qualifying question for a browsing visitor, and
             # not until the bot has led with value (see ``_should_probe_this_turn``).
-            _probe_ok = _should_probe_this_turn(question, history)
+            # Also hold the probe when the quote is already/about-to-be triggerable
+            # so the bot doesn't ask one more question in the turn the quote fires.
+            _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
+            _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
             _next_probe = (
                 select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
                 if is_bant_enabled and bant_config and _probe_ok
@@ -6606,9 +6816,17 @@ def rag_pipeline(
             )
 
             _team_connect_offer = (
-                is_bant_enabled
+                _plan_support_allowed
+                and is_bant_enabled
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
+                # Conditional: when a quote is active or about to fire for this
+                # session, hold the team-connect / book-a-meeting CTA so only one
+                # conversion path runs at a time. An explicit handoff request
+                # still works — it sets ``suggest_handoff``, which the popup
+                # already yields to below. Flips back on once the quote is
+                # completed or skipped.
+                and not _quote_active_or_pending(bot, chat_session, current_bant)
             )
             # When the visitor is qualified (2+ dimensions) AND this bot has
             # meeting booking configured, surface a richer "connect with the
@@ -6626,7 +6844,8 @@ def rag_pipeline(
                 bant_state=current_bant,
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
-                live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
+                live_chat_enabled=live_chat_on,
+                support_enabled=_plan_support_allowed,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,
                 company_name=_company_name,
@@ -6640,6 +6859,7 @@ def rag_pipeline(
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
                 probe_ok=_probe_ok,
+                quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
@@ -6678,7 +6898,7 @@ def rag_pipeline(
                     bot_id=bid,
                     crawled_content=_retrieval_included_crawled_content(final_results),
                 )
-                answer = _off_topic_refusal(_company_name)
+                answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
 
             # ── Output-side moderation guard (AR-46) ─────────────────────
             # Catches generated content that would flag under moderation
@@ -6688,7 +6908,7 @@ def rag_pipeline(
                 answer, bot_id=bid, session_id=session_id, path="nonstream"
             )
             if not _answer_safe:
-                answer = _off_topic_refusal(_company_name)
+                answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
 
             # Strip CTA marker before saving
             answer, _cta, _cta_q = _strip_cta_marker(
@@ -6790,16 +7010,14 @@ def rag_pipeline(
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
-            if not suggest_handoff:
-                _live = getattr(bot, "live_chat_enabled", True) if bot else True
-                if _live and _response_suggests_handoff(answer):
-                    suggest_handoff = True
-                    _safety_net_metric(
-                        "handoff_safety_net_triggered",
-                        path="nonstream",
-                        bot_id=bid,
-                        session=session_id,
-                    )
+            if not suggest_handoff and live_chat_on and _response_suggests_handoff(answer):
+                suggest_handoff = True
+                _safety_net_metric(
+                    "handoff_safety_net_triggered",
+                    path="nonstream",
+                    bot_id=bid,
+                    session=session_id,
+                )
 
             # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly
             # asks for async team contact but the LLM forgot to emit the
@@ -6923,7 +7141,6 @@ def rag_pipeline(
             if should_sample():
                 submit_background(_background_groundedness_check, question, answer, final_results, bid, cid)
 
-            live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
             result = {
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
@@ -6963,9 +7180,12 @@ def rag_pipeline(
                     result["media_secondary"] = _media_secondary
 
             # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
-            # Skipped when a live-chat handoff is already being suggested so the
-            # two calls-to-action never compete in the same turn.
-            if _leave_msg_card_detected and not (suggest_handoff and live_chat_on):
+            # Gated on the plan's human-support entitlement so a Free-plan bot
+            # never renders the offline message form (its prompt no longer emits
+            # the token, but this is the hard boundary). Also skipped when a
+            # live-chat handoff is already being suggested so the two calls-to-
+            # action never compete in the same turn.
+            if _plan_support_allowed and _leave_msg_card_detected and not (suggest_handoff and live_chat_on):
                 result["show_leave_message"] = True
                 _mark_card_shown(chat_session, "leave_message")
                 if _leave_msg_safety_net_fired:
@@ -7204,6 +7424,29 @@ async def rag_pipeline_stream(
                 if not _company_name and bot.client:
                     _company_name = bot.client.company_name
 
+            # Human-support gating for this turn, resolved once and reused below.
+            #
+            # ``_plan_support_allowed`` is the PLAN half: does the subscription
+            # funding this bot include the ``live_chat`` feature at all? It gates
+            # EVERY human escape hatch, live queue AND async offline/leave-message,
+            # so a Free-plan bot (whose plan excludes the feature) gives a
+            # graceful bot-only answer with no "connect with the team" CTA and no
+            # message form. This matches the widget-config resolution in
+            # ``bot_routes.get_bot_settings_public``.
+            #
+            # ``live_chat_on`` is the EFFECTIVE real-time value: the plan half AND
+            # the bot's own ``live_chat_enabled`` toggle. It gates only the LIVE
+            # queue handoff. A paid bot that turned live chat off keeps offline
+            # messages (``_plan_support_allowed`` stays True), so this change does
+            # not regress the paid "offline-only" configuration.
+            #
+            # Deny-by-default (False) when the bot is unknown.
+            _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            _plan_support_allowed = (
+                plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
+            )
+            live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
             # Save the visitor's question and commit it immediately, before any
@@ -7316,7 +7559,7 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
-                _refusal = _off_topic_refusal(_company_name)
+                _refusal = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
@@ -7344,7 +7587,7 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
-                _refusal = _off_topic_refusal(_company_name)
+                _refusal = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal
                 _bot_msg = add_chat_message(
@@ -7369,9 +7612,11 @@ async def rag_pipeline_stream(
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
-                    # trigger the handoff form when appropriate.
+                    # trigger the handoff form when appropriate. ``live_chat_on``
+                    # is the plan-aware value resolved once at the top of this
+                    # turn, so a Free-plan bot never invalidates its cache to
+                    # generate a handoff it isn't entitled to offer.
                     _cached_handoff = await asyncio.to_thread(detect_handoff_intent, question)
-                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
@@ -7667,9 +7912,13 @@ async def rag_pipeline_stream(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
-                        _company_name
-                    )
+                    # Skip the admin/localized canned override when the plan has
+                    # no human channel: it may hardcode a "connect with the team"
+                    # offer the Free-plan bot can't honor. Fall to the gated
+                    # default pivot, which drops the offer when support is off.
+                    _pivot = (
+                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
+                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
@@ -7699,7 +7948,7 @@ async def rag_pipeline_stream(
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield _stream_metadata(session_id, [], language)
                 yield _canned_localized("off_topic_refusal", _company_name, language) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot
+                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
                 )
                 return
 
@@ -7716,9 +7965,13 @@ async def rag_pipeline_stream(
                         session=session_id,
                         bot_id=bid,
                     )
-                    _pivot = _canned_localized("no_info_pivot", _company_name, language) or _no_info_pivot(
-                        _company_name
-                    )
+                    # Skip the admin/localized canned override when the plan has
+                    # no human channel: it may hardcode a "connect with the team"
+                    # offer the Free-plan bot can't honor. Fall to the gated
+                    # default pivot, which drops the offer when support is off.
+                    _pivot = (
+                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
+                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
@@ -7747,7 +8000,7 @@ async def rag_pipeline_stream(
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield _stream_metadata(session_id, [], language)
                 yield _canned_localized("off_topic_refusal", _company_name, language) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot
+                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
                 )
                 return
 
@@ -7792,7 +8045,10 @@ async def rag_pipeline_stream(
             _binding_hint = _prev_probed if _answers_last_probe else None
             # Build-up gate: no qualifying question for a browsing visitor, and
             # not until the bot has led with value (see ``_should_probe_this_turn``).
-            _probe_ok = _should_probe_this_turn(question, history)
+            # Also hold the probe when the quote is already/about-to-be triggerable
+            # so the bot doesn't ask one more question in the turn the quote fires.
+            _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
+            _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
             _next_probe = (
                 select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
                 if is_bant_enabled and bant_config and _probe_ok
@@ -7800,9 +8056,17 @@ async def rag_pipeline_stream(
             )
 
             _team_connect_offer = (
-                is_bant_enabled
+                _plan_support_allowed
+                and is_bant_enabled
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
+                # Conditional: when a quote is active or about to fire for this
+                # session, hold the team-connect / book-a-meeting CTA so only one
+                # conversion path runs at a time. An explicit handoff request
+                # still works — it sets ``suggest_handoff``, which the popup
+                # already yields to below. Flips back on once the quote is
+                # completed or skipped.
+                and not _quote_active_or_pending(bot, chat_session, current_bant)
             )
             # Qualified-lead popup eligibility. See non-streaming path for the
             # full rationale. Resolved before the LLM call so the plain-text
@@ -7819,7 +8083,8 @@ async def rag_pipeline_stream(
                 bant_state=current_bant,
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
-                live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
+                live_chat_enabled=live_chat_on,
+                support_enabled=_plan_support_allowed,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,
                 company_name=_company_name,
@@ -7833,6 +8098,7 @@ async def rag_pipeline_stream(
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
                 probe_ok=_probe_ok,
+                quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
@@ -7914,7 +8180,7 @@ async def rag_pipeline_stream(
                                 crawled_content=_retrieval_included_crawled_content(final_results),
                             )
                             _leak_aborted = True
-                            full_answer = _off_topic_refusal(_company_name)
+                            full_answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
                             yield f"\n\n{full_answer}"
                             suggest_handoff = False
                             break
@@ -7958,7 +8224,7 @@ async def rag_pipeline_stream(
                     full_answer, bot_id=bid, session_id=session_id, path="stream"
                 )
                 if not _answer_safe:
-                    full_answer = _off_topic_refusal(_company_name)
+                    full_answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
 
             # Strip CTA marker from response before saving. The third return
             # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
@@ -8083,16 +8349,14 @@ async def rag_pipeline_stream(
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
-            if not suggest_handoff and not _stream_error:
-                _live = getattr(bot, "live_chat_enabled", True) if bot else True
-                if _live and _response_suggests_handoff(full_answer):
-                    suggest_handoff = True
-                    _safety_net_metric(
-                        "handoff_safety_net_triggered",
-                        path="stream",
-                        bot_id=bid,
-                        session=session_id,
-                    )
+            if not suggest_handoff and not _stream_error and live_chat_on and _response_suggests_handoff(full_answer):
+                suggest_handoff = True
+                _safety_net_metric(
+                    "handoff_safety_net_triggered",
+                    path="stream",
+                    bot_id=bid,
+                    session=session_id,
+                )
 
             # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
             # for async team contact but the LLM forgot to emit the sentinel.
@@ -8262,7 +8526,6 @@ async def rag_pipeline_stream(
                             _background_groundedness_check, question, full_answer, final_results, bid, cid
                         )
 
-                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
                     if suggest_handoff and live_chat_on:
@@ -8283,10 +8546,12 @@ async def rag_pipeline_stream(
                     if _meeting_card_detected and final_meta.get("show_booking"):
                         _mark_card_shown(chat_session, "meeting")
 
-                    # Leave-message card: only show when a live-chat handoff isn't
-                    # already being suggested this turn, so the two CTAs never
-                    # compete for the visitor's attention.
-                    if _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
+                    # Leave-message card: gated on the plan's human-support
+                    # entitlement (a Free-plan bot never renders the offline
+                    # message form), and only shown when a live-chat handoff
+                    # isn't already being suggested this turn, so the two CTAs
+                    # never compete for the visitor's attention.
+                    if _plan_support_allowed and _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
                         final_meta["show_leave_message"] = True
                         _mark_card_shown(chat_session, "leave_message")
                         if _leave_msg_safety_net_fired:

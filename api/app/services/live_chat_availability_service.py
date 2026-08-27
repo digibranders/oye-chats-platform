@@ -204,7 +204,12 @@ def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None)
     """Run the state machine. Internal. Most callers should use the public
     cached entry point above.
     """
-    # 1. Feature gate. Bot toggle + (future) plan entitlement check.
+    # 1. Feature gate (bot toggle). The PLAN entitlement half is enforced
+    # upstream at the visitor entry points (``request_handoff`` and the
+    # offline-message endpoint both 403 a plan that excludes live chat) and in
+    # the RAG pipeline, which never offers a handoff to a Free-plan visitor. By
+    # the time a request reaches this state machine the plan is known to include
+    # the feature, so only the operator toggle is checked here.
     if not bot.live_chat_enabled:
         return LiveChatAvailability(
             state=LiveChatState.FEATURE_DISABLED,

@@ -623,24 +623,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     }, []);
 
-    // Callback ref for the inline handoff card. The card is lazy-imported and
-    // sits inside <Suspense fallback={null}>, so it mounts empty and *grows*
-    // after its chunk resolves, a single scroll-to-bottom fired on injection
-    // lands before the card exists and leaves it clipped below the fold (the
-    // "Continue with AI instead" row cut off). Observing the card's own size
-    // and re-pinning the messages area to the bottom on every growth guarantees
-    // the whole card ends up in view. The observer self-disconnects once the
-    // card has settled so it never fights the visitor's later manual scrolling.
-    const handoffCardRef = useCallback((node) => {
+    // Callback ref for lazy-imported inline cards (handoff form, quotation
+    // card). Each sits inside <Suspense fallback={null}>, so it mounts empty and
+    // *grows* after its chunk resolves — a single scroll-to-bottom fired on
+    // injection lands before the card exists and leaves it clipped below the
+    // fold (handoff: the "Continue with AI instead" row cut off; quotation: the
+    // whole card stuck under the fold). Observing the card's own size and
+    // re-pinning the messages area to the bottom on every growth guarantees the
+    // whole card ends up in view. Crucially this pin is UNCONDITIONAL — unlike
+    // the global late-mount observer it does not gate on "was at bottom", whose
+    // read races the smooth-scroll animation and was leaving the quotation card
+    // stranded. The observer self-disconnects once the card has settled so it
+    // never fights the visitor's later manual scrolling.
+    const pinningCardRef = useCallback((node) => {
         if (!node || typeof ResizeObserver === 'undefined') return;
         const area = containerRef.current?.querySelector('[data-messages-area]');
         if (!area) return;
         const pinToBottom = () => area.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+        pinToBottom();
         const ro = new ResizeObserver(pinToBottom);
         ro.observe(node);
-        // 1.2s comfortably covers a cold lazy import + first paint; after that
+        // 1.6s comfortably covers a cold lazy import + first paint; after that
         // the card is stable and the visitor owns the scroll again.
-        setTimeout(() => ro.disconnect(), 1200);
+        setTimeout(() => ro.disconnect(), 1600);
     }, []);
 
     // Tap-handler for the floating scroll-to-latest pill. Trips the enlarge
@@ -1423,7 +1428,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         handoffTriggeredRef.current = true;
                         consecutiveFallbacks.current = 0;
                         setTimeout(() => { triggerHandoff(); handoffTriggeredRef.current = false; }, (settings.handoff_delay_seconds || 0) * 1000 || 600);
-                    } else if (consecutiveFallbacks.current === 1) {
+                    } else if (consecutiveFallbacks.current === 1 && settings.support_enabled !== false) {
+                        // Prominent live-chat pulse after one fallback — only when
+                        // the plan actually has a human channel to escalate to.
+                        // On Free (support_enabled === false) there is nothing to
+                        // pulse toward, so stay quiet.
                         setShowProminentHandoff(true);
                     }
                 } else {
@@ -1585,6 +1594,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // avoids missing the quote when it arrives at, say, 3.6s. A 2s cap
         // was tried and reliably missed the mark; don't go back below ~4.5s
         // total without re-measuring extraction latency first.
+        // Warm the lazy chunk while we poll so that, once the quote turns
+        // active, the card mounts on the same frame instead of cold-importing
+        // (a cold import mounts the card *after* the injection scroll fired,
+        // which is what left it stranded below the fold). Fire-and-forget; the
+        // dynamic import is cached, so the later Suspense import is instant.
+        import('./QuotationFlow').catch(() => { /* prefetch is best-effort */ });
+
         const POLL_DELAYS_MS = [0, 700, 1000, 1300, 1500];
         for (const delay of POLL_DELAYS_MS) {
             if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -1605,6 +1621,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, [injectQuotationFlow]);
 
     const triggerHandoff = useCallback(async () => {
+        // Hard gate: if the bot's PLAN has no human-support channel at all
+        // (Free plan → support_enabled === false), never open the handoff /
+        // leave-message flow, even from an internal caller that forgot to check
+        // (e.g. the consecutive-fallback auto-trigger below). The backend also
+        // 403s the handoff + offline endpoints, this keeps the visitor from ever
+        // seeing a form that would dead-end. ``support_enabled`` is only false
+        // when the backend explicitly says so; undefined (older config) stays
+        // permissive so paid bots are unaffected.
+        if (settings.support_enabled === false) return;
+
         // Ensure we have a session id, and use the FRESHEST value (React state
         // may still be stale on the first turn). writeSessionId keeps the
         // widget's storage in sync so the async retry loop below can re-read
@@ -1632,7 +1658,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain, settings.support_enabled]);
 
     // When the visitor submits their email at the end of the quote, don't
     // force the handoff form — drop a thank-you card in the chat with a
@@ -2570,7 +2596,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {renderHeader() || <div />}
                 {(() => {
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
-                    const showLeaveMessageOption = !settings.live_chat_enabled && chatMode === 'bot';
+                    // Offline "leave a message" affordance. Shown only when the
+                    // plan HAS a human-support channel (support_enabled) but live
+                    // chat is off for this bot (operator toggle) — i.e. the
+                    // offline-only case. On Free (support_enabled === false) the
+                    // plan has no channel at all, so this must stay hidden; the
+                    // old ``!settings.live_chat_enabled`` alone wrongly showed it
+                    // for Free too, since Free also reports live_chat_enabled=false.
+                    const showLeaveMessageOption =
+                        settings.support_enabled !== false && !settings.live_chat_enabled && chatMode === 'bot';
                     // Only worth showing when there is genuinely something to
                     // switch between. A bot with one supported locale (or none
                     // configured) opened a menu with a single, inert option.
@@ -2791,7 +2825,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             );
                         } else if (msg.type === 'quotation_flow' && msg.status === 'active') {
                             items.push(
-                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                <div key={msg.id} ref={pinningCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
                                     <ErrorBoundary label="QuotationFlow" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message={t('system.chunk_quote') || 'Couldn’t load the quote.'} />}>
                                         <Suspense fallback={null}>
                                             <QuotationFlow
@@ -2842,7 +2876,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             // completed — connect action taken, skip render.
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
-                                <div key={msg.id} ref={handoffCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                <div key={msg.id} ref={pinningCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
                                     <ErrorBoundary label="HandoffForm" fallback={(retry) => (
                                         <ChunkLoadNotice
                                             onRetry={retry}

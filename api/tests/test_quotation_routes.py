@@ -261,6 +261,47 @@ class TestSessionLock:
 # ── Widget runtime: trigger gating ────────────────────────────────────────────
 
 
+class TestEmptyTriggerDelivery:
+    """When NOTHING is selected in the trigger (``required_categories == []``),
+    ANY of the four BANT dimensions count, and the quote is delivered the moment
+    ``threshold`` of them are marked — no matter which four. Documents exactly
+    "how and when the quotation is delivered" for the default (empty) trigger.
+    """
+
+    def _fire_at(self, db, *, key, threshold, marked_dims):
+        client = _make_client(db, email=f"{key}@example.com", api_key=key)
+        cat = _catalog(required_categories=[], threshold=threshold)
+        bot = _make_bot(db, client.id, bot_key=f"bot-{key}", catalog=cat)
+        scores = {d: 1 for d in marked_dims}
+        _make_session(db, session_id=f"{key}s", bot_id=bot.id, client_id=client.id, **scores)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            return api.get("/chat/quotation", params={"session_id": f"{key}s"}).json()
+
+    def test_threshold_2_needs_any_two_of_four(self, db):
+        # One marked → not yet; two (any pair) → delivered.
+        assert self._fire_at(db, key="e2a", threshold=2, marked_dims=["timeline"])["active"] is False
+        assert self._fire_at(db, key="e2b", threshold=2, marked_dims=["timeline", "authority"])["active"] is True
+        # A different pair works identically — nothing is dimension-specific.
+        assert self._fire_at(db, key="e2c", threshold=2, marked_dims=["need", "budget"])["active"] is True
+
+    def test_threshold_1_fires_on_the_first_signal(self, db):
+        # Aggressive: any single BANT signal delivers the quote immediately.
+        assert self._fire_at(db, key="e1", threshold=1, marked_dims=["authority"])["active"] is True
+
+    def test_threshold_4_requires_all_four(self, db):
+        assert self._fire_at(db, key="e4a", threshold=4, marked_dims=["need", "budget", "authority"])["active"] is False
+        assert (
+            self._fire_at(db, key="e4b", threshold=4, marked_dims=["need", "budget", "authority", "timeline"])["active"]
+            is True
+        )
+
+    def test_delivered_state_is_selecting_with_the_service_list(self, db):
+        body = self._fire_at(db, key="e2d", threshold=2, marked_dims=["need", "timeline"])
+        assert body["status"] == "selecting"
+        assert [s["id"] for s in body["services"]] == ["s1"]
+
+
 class TestTriggerGating:
     def test_below_threshold_is_inactive(self, db):
         client = _make_client(db, email="t1@example.com", api_key="t1")
@@ -727,8 +768,11 @@ class TestQuotationSummary:
 
 
 class TestQuotationEmails:
-    """Accepting a quote fires two best-effort emails: a no-pricing confirmation
-    to the visitor and an itemized notification to the client's recipients."""
+    """Accepting a quote fires two best-effort emails: an itemized notification
+    to the client's recipients (immediate) and a no-pricing confirmation to the
+    visitor (deferred ~5 min; see ``_schedule_quotation_emails``). These tests
+    force the worker off so both run inline and their contents can be asserted
+    end-to-end. The split timing has its own class below."""
 
     _QUOTING_STATE = {
         "status": "quoting",
@@ -747,6 +791,9 @@ class TestQuotationEmails:
         def _client(*args, **kwargs):
             calls["client"].append((args, kwargs))
 
+        # Force the worker off so the accept path sends inline instead of
+        # deferring to ARQ — lets us assert the actual email args in-request.
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", False)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", _visitor)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", _client)
         return calls
@@ -834,6 +881,8 @@ class TestQuotationEmails:
         def _boom(*_a, **_k):
             raise RuntimeError("brevo down")
 
+        # Worker off → inline send path, so the failing email actually runs.
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", False)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", _boom)
         monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", _boom)
 
@@ -863,6 +912,115 @@ class TestQuotationEmails:
         assert res.status_code == 200
         assert _capture_emails["visitor"] == []
         assert _capture_emails["client"] == []
+
+
+class TestQuotationEmailScheduling:
+    """Split timing at accept: the owner is notified immediately, the visitor
+    confirmation is deferred ~5 min. With the worker enabled, accept sends the
+    client email inline and enqueues ``task_send_quotation_visitor_email`` with
+    an ``_defer_by`` window; the deferred task then re-loads the session and
+    sends the visitor email."""
+
+    _QUOTING_STATE = {
+        "status": "quoting",
+        "selected_service_ids": ["s1"],
+        "answers": {"s1": {"q1": "Modern"}},
+        "quantities": {"s1": 2},
+    }
+
+    def test_accept_notifies_owner_now_and_defers_visitor(self, db, monkeypatch):
+        from datetime import timedelta
+
+        import app.worker.enqueue as enqueue_mod
+
+        client = _make_client(db, email="sch1@example.com", api_key="sch1")
+        bot = _make_bot(db, client.id, bot_key="bot-sch1", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(
+            db, session_id="sch1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
+        )
+        _make_lead(db, session_id="sch1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+
+        calls = []
+        visitor_sent = []
+        client_sent = []
+        monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
+        monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, *a, **kw: calls.append((name, a, kw)))
+        monkeypatch.setattr(
+            quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: visitor_sent.append(a)
+        )
+        monkeypatch.setattr(
+            quotation_routes.email_service, "send_quotation_client_email", lambda *a, **k: client_sent.append(a)
+        )
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            res = api.post("/chat/quotation/accept", json={"session_id": "sch1s"})
+
+        assert res.status_code == 200
+        assert res.json()["status"] == "complete"
+
+        # Owner: sent immediately, inline.
+        assert len(client_sent) == 1
+        assert client_sent[0][0] == "owner@acme.com"
+
+        # Visitor: NOT inline — deferred via ARQ.
+        assert visitor_sent == []
+        assert len(calls) == 1
+        name, args, kwargs = calls[0]
+        assert name == "task_send_quotation_visitor_email"
+        assert args == ("sch1s", bot.id)
+        assert kwargs["_defer_by"] == timedelta(seconds=quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS)
+
+    def test_visitor_dispatch_helper_sends_only_visitor(self, db, monkeypatch):
+        """The deferred task's entry point re-loads the bot + session by id and
+        fires the visitor email only (the owner was already notified at accept)."""
+        calls = {"visitor": [], "client": []}
+        client = _make_client(db, email="sch2@example.com", api_key="sch2")
+        bot = _make_bot(
+            db,
+            client.id,
+            bot_key="bot-sch2",
+            catalog=_catalog(),
+            notification_email="owner@acme.com",
+            company_name="Acme Co",
+        )
+        _make_session(
+            db, session_id="sch2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(self._QUOTING_STATE)
+        )
+        _make_lead(db, session_id="sch2s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+
+        monkeypatch.setattr(
+            quotation_routes.email_service,
+            "send_quotation_visitor_email",
+            lambda *a, **k: calls["visitor"].append((a, k)),
+        )
+        monkeypatch.setattr(
+            quotation_routes.email_service,
+            "send_quotation_client_email",
+            lambda *a, **k: calls["client"].append((a, k)),
+        )
+
+        with _patch_session(db):
+            quotation_routes.dispatch_quotation_visitor_email_for_session("sch2s", bot.id)
+
+        assert len(calls["visitor"]) == 1
+        assert calls["visitor"][0][0][0] == "jason@buyer.com"
+        assert calls["client"] == []  # owner is not re-notified on the deferred path
+
+    def test_visitor_dispatch_helper_missing_session_is_noop(self, db, monkeypatch):
+        sent = []
+        client = _make_client(db, email="sch3@example.com", api_key="sch3")
+        bot = _make_bot(db, client.id, bot_key="bot-sch3", catalog=_catalog(), notification_email="owner@acme.com")
+
+        monkeypatch.setattr(
+            quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: sent.append("v")
+        )
+
+        with _patch_session(db):
+            # Must not raise, must send nothing.
+            quotation_routes.dispatch_quotation_visitor_email_for_session("does-not-exist", bot.id)
+
+        assert sent == []
 
 
 class TestQuotationEmailBuilders:

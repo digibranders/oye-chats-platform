@@ -79,6 +79,23 @@ test('puts a trailing follow-up question on its own paragraph', () => {
     );
 });
 
+test('splits a follow-up glued directly to a sentence with no space (period+opener)', () => {
+    const input = 'The migration path is designed to be fast.What matters most for your rollout?';
+    assert.equal(
+        formatBotMarkdown(input),
+        'The migration path is designed to be fast.\n\nWhat matters most for your rollout?',
+    );
+});
+
+test('does not split a period that is not a glued follow-up (Node.js, no trailing ?)', () => {
+    assert.equal(formatBotMarkdown('It runs on Node.js today.'), 'It runs on Node.js today.');
+});
+
+test('does not split a glued opener inside a URL', () => {
+    const input = 'See https://example.com/v2.Whatever?ref=1 for details.';
+    assert.equal(formatBotMarkdown(input), 'See https://example.com/v2.Whatever?ref=1 for details.');
+});
+
 test('normalises em-dashes to a comma cadence', () => {
     assert.equal(
         formatBotMarkdown('We offer SEO, including audits'),

@@ -744,6 +744,33 @@ def is_bant_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
     return bool(entitlements.features.get("bant", False))
 
 
+def is_live_chat_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot includes the live-chat feature.
+
+    Per-bot companion mirroring :func:`is_bant_enabled_for_bot`. Returns only the
+    PLAN half of the gate. Callers AND it with the bot's own
+    ``live_chat_enabled`` toggle to get the effective "is the human-handoff /
+    offline-message path available" answer, so the plan check and the operator
+    toggle stay independently inspectable.
+
+    The RAG pipeline, the visitor handoff endpoint, and the offline-message
+    endpoint all gate on this so a Free-plan bot (whose plan excludes live chat)
+    never offers a human escape hatch — matching the widget-config resolution in
+    ``bot_routes.get_bot_settings_public``. Falls back to False on any resolver
+    error (deny-by-default).
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "live_chat_bot_gate: entitlements lookup failed for bot=%s. Denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return bool(entitlements.has_feature("live_chat"))
+
+
 def _compute(
     client_id: int, db_session: Session, *, include_usage: bool, bot_id: int | None = None
 ) -> PlanEntitlements:
