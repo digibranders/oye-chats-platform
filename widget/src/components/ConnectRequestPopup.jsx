@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { UserCheck, Loader2 } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
+import { t } from '../i18n/i18n.js';
 
 /**
  * ConnectRequestPopup. Modal shown to the visitor when an operator proactively
@@ -30,7 +31,7 @@ const ConnectRequestPopup = ({
     primaryColor: rawPrimary,
 }) => {
     const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
-    const displayName = operatorName || 'Our team';
+    const displayName = operatorName || t('system.our_team') || 'Our team';
 
     // Countdown. Drives the small timer chip in the corner. We only render
     // the chip if ``expiresAt`` is supplied so the popup remains useful for
@@ -97,17 +98,19 @@ const ConnectRequestPopup = ({
                                 id="oyechats-connect-title"
                                 className="text-[14px] font-semibold text-[#16202C] leading-tight"
                             >
-                                {displayName} wants to connect
+                                {t('connect.wants_to_connect', { name: displayName })
+                                    || `${displayName} wants to connect`}
                             </h3>
                             <p className="text-[12px] text-gray-500 leading-tight mt-0.5">
-                                Switch to a live chat with our team?
+                                {t('connect.switch_prompt') || 'Switch to a live chat with our team?'}
                             </p>
                         </div>
                     </div>
 
                     {secondsLeft != null && (
                         <div className="text-[10px] text-gray-400 mb-3">
-                            Request expires in {secondsLeft}s
+                            {t('connect.expires_in', { seconds: secondsLeft })
+                                || `Request expires in ${secondsLeft}s`}
                         </div>
                     )}
                 </div>
@@ -121,9 +124,12 @@ const ConnectRequestPopup = ({
                         style={{ backgroundColor: primaryColor }}
                     >
                         {submitting ? (
-                            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Connecting…</>
+                            <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />{' '}
+                                {t('connect.connecting') || 'Connecting…'}
+                            </>
                         ) : (
-                            'Yes, connect me'
+                            t('connect.accept') || 'Yes, connect me'
                         )}
                     </button>
                     <button
@@ -132,7 +138,7 @@ const ConnectRequestPopup = ({
                         disabled={submitting}
                         className="w-full py-2.5 rounded-xl text-[13px] font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-60"
                     >
-                        No, keep chatting with AI
+                        {t('connect.decline') || 'No, keep chatting with AI'}
                     </button>
                 </div>
             </div>

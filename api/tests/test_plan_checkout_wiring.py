@@ -117,6 +117,13 @@ class _RecordingSession:
         self.added: list[object] = []
         self.committed = False
 
+    def get(self, _model, _key):
+        # No stored seller profile row → ``get_seller_profile`` uses its
+        # defaults. The seed and the plan editor both read the GST rate now,
+        # because the RBI e-mandate ceiling applies to the DEBITED amount
+        # rather than to the stored base.
+        return None
+
     def scalars(self, _stmt):
         rows = self._rows
 
@@ -244,6 +251,13 @@ class _IdScriptSession:
     def __init__(self, rows):
         self._rows = rows
         self.committed = False
+
+    def get(self, _model, _key):
+        # No stored seller profile row → ``get_seller_profile`` uses its
+        # defaults. The seed and the plan editor both read the GST rate now,
+        # because the RBI e-mandate ceiling applies to the DEBITED amount
+        # rather than to the stored base.
+        return None
 
     def scalars(self, _stmt):
         rows = self._rows
@@ -385,7 +399,13 @@ def test_the_wiring_warning_travels_with_the_emandate_warnings():
         is_active=True,
     )
 
-    warnings = superadmin_plan_routes._plan_warnings(plan)
+    class _NoSellerProfile:
+        """Session stand-in: no profile row, so the default 18% applies."""
+
+        def get(self, _model, _key):
+            return None
+
+    warnings = superadmin_plan_routes._plan_warnings(plan, _NoSellerProfile())
 
     assert any("Razorpay plan id" in w for w in warnings)
     assert any("e-mandate" in w.lower() for w in warnings), "the annual price is above the RBI AFA ceiling"

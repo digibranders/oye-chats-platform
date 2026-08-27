@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The right-edge "Feedback" tab (desktop-only) that opens the admin →
@@ -13,6 +14,7 @@ import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
  * breakpoint rather than a component that mounts and unmounts.
  */
 export function FeedbackLauncher(): ReactElement {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -51,7 +53,8 @@ export function FeedbackLauncher(): ReactElement {
       <button
         type="button"
         onClick={openLauncher}
-        aria-label="Send feedback"
+        aria-label={t('shell.feedback.send') || 'Send feedback'}
+        title={t('shell.feedback.send') || 'Send feedback'}
         // `--z-topbar`, not `--z-overlay`: this button is permanent chrome, not
         // a transient surface, and it must sit under the scrim the moment any
         // dialog opens — including its own.
@@ -62,7 +65,7 @@ export function FeedbackLauncher(): ReactElement {
           className="select-none whitespace-nowrap text-sm font-semibold tracking-eyebrow"
           style={{ writingMode: 'vertical-lr', transform: 'rotate(360deg)' }}
         >
-          Feedback
+          {t('shell.feedback.label') || 'Feedback'}
         </span>
       </button>
 

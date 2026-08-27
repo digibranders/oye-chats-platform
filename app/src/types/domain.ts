@@ -260,8 +260,19 @@ export interface ChatMessage {
   role: 'user' | 'bot' | 'operator' | 'system';
   content?: string;
   message?: string;
+  /** The lead-detail API serializes a message's time as `timestamp`; other
+   *  endpoints use `created_at`. Read `timestamp ?? created_at`. */
+  timestamp?: string | null;
   created_at?: string;
   trace_id?: string | null;
+  /** Language `content` is written in (Phase 4). Server-resolved. */
+  source_language?: string | null;
+  /**
+   * Derived translations by target language code. `content` above stays the
+   * canonical original; this never replaces it. Returned by
+   * `GET /chat/history` so translations survive a reload.
+   */
+  translations?: Record<string, { content?: string; status: 'ok' | 'failed' }> | null;
 }
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -315,6 +326,43 @@ export interface LeadSignal {
  * A qualified/unqualified lead row from getLeads. ``tier`` and ``status`` are
  * the same value (status is a backward-compat alias). Scores are server-decayed.
  */
+/**
+ * One service a visitor put in their quote, priced against the bot's catalog at
+ * the moment the lead was read.
+ *
+ * `name`, `unit_label` and `price_per_unit` are RESOLVED server-side from the
+ * catalog rather than stored on the session, so a service renamed or repriced
+ * after the chat shows its current identity. A service deleted from the catalog
+ * outright falls back to its id and a zero price — the line stays, because
+ * dropping it would silently change a total the visitor was quoted.
+ */
+export interface LeadQuotationLine {
+  service_id: string;
+  name: string;
+  unit_label: string;
+  price_per_unit: number;
+  quantity: number;
+  subtotal: number;
+  answers: { question_id: string; question_text: string; answer: string }[];
+}
+
+/**
+ * The quotation flow's outcome for one session. Present only when the session
+ * actually entered the flow; `status` distinguishes "never finished" from
+ * "declined", which are different facts about the same empty quote.
+ *
+ * Amounts here are MAJOR units in `currency` (rupees, not paise) — the catalog
+ * is authored in whole currency by the customer, unlike the billing rail.
+ */
+export interface LeadQuotation {
+  status: 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';
+  currency: string;
+  line_items: LeadQuotationLine[];
+  total: number;
+  activated_at: string | null;
+  completed_at: string | null;
+}
+
 export interface Lead {
   session_id: string;
   score: number;
@@ -346,6 +394,11 @@ export interface Lead {
    * Intelligence (Professional).
    */
   visitor_metadata?: Record<string, unknown> | null;
+  /**
+   * The quotation the visitor built, itemised. Detail response only, and only
+   * when the session reached the flow at all.
+   */
+  quotation?: LeadQuotation | null;
 }
 
 /** Paginated lead list envelope from getLeads. */

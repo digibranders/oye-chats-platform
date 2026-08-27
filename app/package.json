@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium webkit",
+    "test:watch": "vitest",
+    "size": "size-limit"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -39,6 +42,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.1",
+    "@size-limit/file": "^12.1.0",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query-devtools": "^5.101.4",
     "@testing-library/jest-dom": "^7.0.0",
@@ -55,6 +60,7 @@
     "globals": "^16.5.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.62.1",
+    "size-limit": "^12.1.0",
     "tailwindcss": "^4.2.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
@@ -63,5 +69,19 @@
   },
   "overrides": {
     "vite": "^8.0.0-beta.13"
-  }
+  },
+  "size-limit": [
+    {
+      "name": "Initial load (entry + preloaded chunks, English path)",
+      "path": ["dist/assets/index-*.js", "dist/assets/chunk-*.js"],
+      "limit": "615 KB",
+      "gzip": true
+    },
+    {
+      "name": "Hindi dictionary (lazy, non-English only)",
+      "path": "dist/assets/hi-*.js",
+      "limit": "40 KB",
+      "gzip": true
+    }
+  ]
 }

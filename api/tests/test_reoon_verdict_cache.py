@@ -107,7 +107,7 @@ class TestAnOutageIsNeverCached:
     def test_an_unreachable_vendor_fails_open_and_writes_nothing(self, cache, post):
         """The next attempt must retry, not inherit the outage."""
         with patch("app.services.reoon_service.verify_email", return_value=None):
-            assert post("priya@infosys.com").json() == {"valid": True}
+            assert post("priya@infosys.com").json() == {"valid": True, "unverified": True}
 
         assert cache == {}
 

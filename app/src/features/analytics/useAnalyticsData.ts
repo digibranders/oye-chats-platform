@@ -4,6 +4,7 @@ import {
   getActivityStats,
   getDashboardStats,
   getLeadStats,
+  getLanguageBreakdown,
   getQualificationFunnel,
   getRatingsSummary,
   getTopQuestions,
@@ -11,10 +12,15 @@ import {
   getVisitorsData,
 } from '../../services/api';
 import { keys } from '../../query/keys';
-import { parseLeadFunnelStats, parseRatingsSummary, parseWorkspaceTotals } from './analytics-types';
+import {
+  parseLanguageBreakdown,
+  parseLeadFunnelStats,
+  parseRatingsSummary,
+  parseWorkspaceTotals,
+} from './analytics-types';
 import { buildDailySeries } from './series';
 import { parseVisitors } from './visitors';
-import type { ResolvedRange } from './range';
+import type { RangeKey, ResolvedRange } from './range';
 
 /**
  * Every server read this surface makes, one hook per endpoint.
@@ -181,6 +187,32 @@ export function useQualificationFunnel(botId: number | null, period: string, ena
   });
   return {
     funnel: query.data ?? null,
+    loading: query.isPending,
+    locked: isForbidden(query.error),
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+/**
+ * Which languages this chatbot's visitors actually chat in.
+ *
+ * Scoped to one chatbot on purpose: `/analytics/language-breakdown` requires a
+ * `bot_id`, and a language mix summed across chatbots that each support a
+ * different set of languages would not mean anything.
+ *
+ * `period` is the page's own range, unmodified — this endpoint speaks the same
+ * `7d|30d|90d|all` vocabulary the funnel does.
+ */
+export function useLanguageBreakdown(botId: number | null, period: RangeKey) {
+  const query = useQuery({
+    queryKey: keys.analytics.language(botId, period),
+    queryFn: () => getLanguageBreakdown(botId as number, period),
+    select: parseLanguageBreakdown,
+    enabled: botId != null,
+  });
+  return {
+    breakdown: query.data ?? null,
     loading: query.isPending,
     locked: isForbidden(query.error),
     error: query.error,

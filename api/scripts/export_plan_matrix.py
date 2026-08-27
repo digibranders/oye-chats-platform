@@ -96,11 +96,17 @@ def _external_capabilities() -> list[dict[str, Any]]:
 # `advanced_analytics`, `custom_sla`, `dedicated_csm` and `whitelabel` exist on
 # the model's server_default but are not seeded per tier, and `api_access` is
 # declared but not enforced anywhere, so publishing them would be a promise.
+#
+# `branding_removable` is deliberately absent: it is no longer a plan
+# inclusion. It is a paid add-on any paid tier can buy, resolved from the
+# subscription's add-on mandate rather than from `Plan.features`, so a matrix
+# row keyed off the plan JSONB would publish an all-dashes row (it is `false`
+# on every tier) and read as "no plan can remove branding". Add-ons are
+# published separately, next to extra operator seats.
 _FEATURE_LABELS: dict[str, str] = {
     "live_chat": "Live chat with human operators",
     "bant": "Lead qualification scoring",
     "webhooks": "Webhooks",
-    "branding_removable": "Remove OyeChats branding",
     "auto_recrawl": "Automatic weekly re-crawl",
     "topup_allowed": "Credit top-ups",
 }

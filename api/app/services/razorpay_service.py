@@ -48,8 +48,12 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.config import (
+    BRANDING_ADDON_PRICE_USD_CENTS,
     CHECKOUT_TEST_CLIENT_IDS,
     EXTRA_SEAT_PRICE_USD_CENTS,
+    RAZORPAY_BRANDING_PLAN_ID,
+    RAZORPAY_BRANDING_PLAN_ID_USD,
+    RAZORPAY_BRANDING_PLAN_PRICE_CENTS,
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
@@ -61,6 +65,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount
+from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
     Bot,
     Client,
@@ -70,8 +75,10 @@ from app.db.models import (
     Plan,
     ProcessedWebhook,
     Subscription,
+    plan_charge_only_clauses,
 )
 from app.services import credit_service, email_service, invoice_service
+from app.services.seller_profile_service import charge_tax_rate_bps
 
 if TYPE_CHECKING:
     import razorpay
@@ -357,6 +364,12 @@ def create_topup_order(
     alias. Any ``usd`` on the pack is DISPLAY ONLY. Razorpay charges INR, so we
     must never bill the USD figure.
 
+    That ``inr`` is the BASE price, exclusive of GST. The order is created for
+    base + tax (see ``gross_charge_minor``), and the charged figure is stamped
+    into ``notes.charge_paise`` because the capture handler reconciles against
+    it. ``notes.amount_inr`` stays the base, which is what the invoice carves
+    back out and what the pack advertises.
+
     Top-ups intentionally do NOT honour referral discounts. That incentive
     fires only on subscription checkout. See subscription_routes.create_checkout.
     """
@@ -372,7 +385,16 @@ def create_topup_order(
     # rounds (Wave 4b), so the CHARGE must round identically or a "1599.99"
     # pack would match a 1600 request and then debit ₹1599.
     amount_inr = int(round(float(amount_inr_major)))
-    amount_paise = amount_inr * 100
+    # Pack prices are BASE prices, like every other price we publish, so the
+    # order must collect base + GST. Classified off the buyer's own country
+    # (this rail bills INR even to an international buyer, so the currency
+    # cannot stand in for the supply kind the way it can for plans).
+    base_paise = amount_inr * 100
+    amount_paise = gross_charge_minor(
+        base_paise,
+        rate_bps=charge_tax_rate_bps(session),
+        kind=supply_kind(None, None, getattr(client, "billing_country", None)),
+    )
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
         amount_paise = 100
@@ -384,7 +406,16 @@ def create_topup_order(
         "purpose": "topup",
         "client_id": str(client.id),
         "credits": str(credits),
+        # BASE rupees, exclusive of GST. This is the pack price we advertise and
+        # the taxable value the invoice carves back out; it is NOT what the
+        # customer is debited.
         "amount_inr": str(amount_inr),
+        # What Razorpay will actually capture, base + GST. Stamped rather than
+        # recomputed at capture time: the GST rate can move between order
+        # creation and capture, and the reconciliation below has to compare
+        # against the amount THIS order was created for, not the amount today's
+        # rate would produce.
+        "charge_paise": str(amount_paise),
         "bonus_pct": str(bonus_pct),
     }
     # The modal advertises USD prices to non-INR buyers while Razorpay charges
@@ -935,7 +966,19 @@ def resolve_discounted_plan(
     # CURRENT base plan produces. Otherwise the base price changed since we
     # cached and the row points at a Razorpay plan billing the old amount, so we
     # must create a fresh discounted plan and refresh the row (audit F34).
-    if cached is not None and cached.amount_paise == discounted_paise:
+    # Published prices are BASE prices, so the mandate must collect base + GST.
+    # Domestic (INR) rail only: the USD rail is an export and carries no Indian
+    # GST. See ``gross_charge_minor``.
+    charge_paise = gross_charge_minor(
+        discounted_paise,
+        rate_bps=charge_tax_rate_bps(session),
+        kind="export" if currency == "USD" else "intra",
+    )
+
+    # The cache is keyed on the CHARGED amount, not the base. A GST rate change
+    # moves the charge without moving the base, and comparing the base would
+    # keep handing out a plan minted at the old rate.
+    if cached is not None and cached.amount_paise == charge_paise:
         return cached.razorpay_plan_id
 
     period = "yearly" if billing_cycle == "annual" else "monthly"
@@ -948,7 +991,7 @@ def resolve_discounted_plan(
                 "interval": 1,
                 "item": {
                     "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
-                    "amount": discounted_paise,
+                    "amount": charge_paise,
                     "currency": currency,
                 },
                 "notes": {
@@ -976,7 +1019,7 @@ def resolve_discounted_plan(
         # Refresh the stale row in place, the UNIQUE (base_plan_id, cycle, bps,
         # currency) constraint means we can't insert a second row for the same key.
         cached.razorpay_plan_id = plan["id"]
-        cached.amount_paise = discounted_paise
+        cached.amount_paise = charge_paise
     else:
         session.add(
             DiscountedPlanCache(
@@ -985,15 +1028,28 @@ def resolve_discounted_plan(
                 discount_bps=discount_bps,
                 currency=currency,
                 razorpay_plan_id=plan["id"],
-                amount_paise=discounted_paise,
+                amount_paise=charge_paise,
             )
         )
     session.flush()
     return plan["id"]
 
 
-def create_plan_for_price(*, name: str, amount_paise: int, period: str, currency: str = "INR") -> str:
-    """Mint a fresh immutable Razorpay plan at ``amount_paise`` and return its id.
+def create_plan_for_price(
+    *, name: str, amount_paise: int, period: str, currency: str = "INR", rate_bps: int | None = None
+) -> str:
+    """Mint a fresh immutable Razorpay plan for a BASE price and return its id.
+
+    ``amount_paise`` is the base, exclusive of GST, exactly as it is stored on
+    the ``Plan`` row. The uplift to what Razorpay actually debits happens HERE,
+    not at the call site, because a mint that forgets it silently reverts that
+    tier to absorbing the tax and nothing downstream notices. The one caller
+    that did compute its own amount (the super-admin price edit) shipped
+    exactly that bug.
+
+    Domestic (INR) is uplifted; USD is an export and is minted at the base. Pass
+    ``rate_bps`` to avoid a second seller-profile read when the caller already
+    has one; omitted, it is looked up.
 
     Used when a super-admin edits a plan's price (finding B): Razorpay plans are
     immutable, so a new price needs a new plan. ``period`` is Razorpay's cadence
@@ -1003,13 +1059,21 @@ def create_plan_for_price(*, name: str, amount_paise: int, period: str, currency
         raise ValueError(f"amount_paise must be positive, got {amount_paise}")
     if period not in ("monthly", "yearly"):
         raise ValueError(f"period must be 'monthly' or 'yearly', got {period!r}")
+    if rate_bps is None:
+        from app.db.session import get_session
+
+        with get_session() as _s:
+            rate_bps = charge_tax_rate_bps(_s)
+    charge_paise = gross_charge_minor(
+        int(amount_paise), rate_bps=rate_bps, kind="export" if currency == "USD" else "intra"
+    )
     rzp = _get_razorpay()
     try:
         plan = rzp.plan.create(
             data={
                 "period": period,
                 "interval": 1,
-                "item": {"name": name[:255], "amount": int(amount_paise), "currency": currency},
+                "item": {"name": name[:255], "amount": charge_paise, "currency": currency},
             }
         )
     except Exception as exc:
@@ -1081,11 +1145,48 @@ def create_seat_addon_subscription(
         extra_seats,
     )
 
-    return _seat_checkout_payload(subscription["id"], client, extra_seats, short_url=subscription.get("short_url"))
+    return _seat_checkout_payload(
+        subscription["id"],
+        client,
+        extra_seats,
+        rate_bps=charge_tax_rate_bps(session),
+        short_url=subscription.get("short_url"),
+    )
+
+
+def charged_price_display(client: Client, base_minor: int, rate_bps: int, *, currency: str | None = None) -> str:
+    """How to quote a price on any surface that names what the customer pays.
+
+    Used by the add-on checkout sheets (one click from the Razorpay modal) and
+    by the dunning and pre-charge emails (which name an amount the customer will
+    compare against their bank statement). Prices are published exclusive of
+    GST, so quoting the base on any of those understates the charge by the tax:
+    the sheets disagreed with the amount Razorpay was about to show, and the
+    emails disagreed with the debit that had just failed.
+
+    Leads with the gross and names the split, so the figure is both correct and
+    reconcilable against the invoice. Exports carry no Indian GST, so they get
+    the bare price with no parenthetical.
+
+    ``currency`` overrides only the SYMBOL, never the tax treatment, and exists
+    because the two email call sites read the plan's INR columns for every
+    customer regardless of rail. Deriving the symbol from the buyer's country
+    there rendered a rupee amount as ``$1,799`` for a foreign customer: the
+    right number wearing the wrong currency, in the one email that must not look
+    like a phishing attempt. The supply kind still follows the country, so an
+    export is not taxed just because it is being quoted in rupees.
+    """
+    rail_currency = charge_currency(getattr(client, "billing_country", None))
+    kind: SupplyKind = "export" if rail_currency == "USD" else "intra"
+    currency = currency or rail_currency
+    gross_minor = gross_charge_minor(base_minor, rate_bps=rate_bps, kind=kind)
+    if gross_minor == base_minor:
+        return format_amount(base_minor, currency)
+    return f"{format_amount(gross_minor, currency)} ({format_amount(base_minor, currency)} + GST)"
 
 
 def _seat_checkout_payload(
-    subscription_id: str, client: Client, extra_seats: int, *, short_url: str | None = None
+    subscription_id: str, client: Client, extra_seats: int, *, rate_bps: int, short_url: str | None = None
 ) -> dict[str, Any]:
     """Checkout payload for a seat add-on subscription. Reused when re-opening an
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
@@ -1094,10 +1195,11 @@ def _seat_checkout_payload(
     path can email the customer a re-authorization link.
 
     The quoted per-seat price follows the client's rail, so the description can
-    never advertise rupees against a dollar charge."""
+    never advertise rupees against a dollar charge, and carries GST so it can
+    never advertise less than the mandate debits."""
     currency = charge_currency(getattr(client, "billing_country", None))
     seat_minor = EXTRA_SEAT_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_SEAT_PLAN_PRICE_CENTS
-    seat_display = format_amount(seat_minor, currency)
+    seat_display = charged_price_display(client, seat_minor, rate_bps)
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
@@ -1194,7 +1296,12 @@ def edit_seat_addon_quantity(
                 raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
         sub.seat_addon_pending_quantity = extra_seats
         session.flush()
-        return _seat_checkout_payload(sub.seat_addon_subscription_id, sub.client, extra_seats)
+        return _seat_checkout_payload(
+            sub.seat_addon_subscription_id,
+            sub.client,
+            extra_seats,
+            rate_bps=charge_tax_rate_bps(session),
+        )
 
     # Existing, already-authorized add-on → the mandate can be charged now, so
     # apply the new quantity immediately.
@@ -1267,6 +1374,220 @@ def cancel_seat_addon_by_id(seat_addon_subscription_id: str) -> None:
         raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
 
 
+def create_branding_addon_subscription(session: Session, client: Client) -> dict[str, Any]:
+    """Create the separate Razorpay subscription billing the branding-removal add-on.
+
+    Its own mandate, for the same reason seats have one: Razorpay cannot add a
+    line to an existing subscription, and putting the add-on on the main plan
+    would move the plan's amount. There is no quantity, the add-on is a
+    boolean, so the plan's amount IS the whole charge.
+
+    Follows the customer's rail (INR or USD) so the add-on currency can never
+    disagree with the main subscription's.
+    """
+    currency = charge_currency(getattr(client, "billing_country", None))
+    # Same service-layer kill switch as ``create_subscription`` and the seat
+    # add-on: this path is reached directly from the route, bypassing the
+    # checkout gate.
+    if currency == "USD" and not config.INTL_PAYMENTS_ENABLED and client.id not in CHECKOUT_TEST_CLIENT_IDS:
+        raise IntlPaymentsDisabled(
+            f"client {client.id} resolves to the USD branding rail but INTL_PAYMENTS_ENABLED is off"
+        )
+    branding_plan_id = RAZORPAY_BRANDING_PLAN_ID_USD if currency == "USD" else RAZORPAY_BRANDING_PLAN_ID
+    if not branding_plan_id:
+        env_var = "RAZORPAY_BRANDING_PLAN_ID_USD" if currency == "USD" else "RAZORPAY_BRANDING_PLAN_ID"
+        raise RazorpayBillingError(
+            f"The branding removal add-on is not configured for the {currency} rail ({env_var} is unset). "
+            "Set it to the environment's branding add-on plan id."
+        )
+
+    rzp = _get_razorpay()
+    try:
+        subscription = rzp.subscription.create(
+            data={
+                "plan_id": branding_plan_id,
+                "total_count": 120,
+                "customer_notify": 1,
+                "notes": {
+                    "oyechats_client_id": str(client.id),
+                    "purpose": "branding_addon",
+                },
+            }
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay branding add-on subscription.create failed for client %s: %s",
+            client.id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not create the branding add-on subscription. Please try again.") from exc
+
+    logger.info("Created Razorpay branding add-on subscription %s for client %s", subscription["id"], client.id)
+    return _branding_checkout_payload(
+        subscription["id"],
+        client,
+        rate_bps=charge_tax_rate_bps(session),
+        short_url=subscription.get("short_url"),
+    )
+
+
+def _branding_checkout_payload(
+    subscription_id: str, client: Client, *, rate_bps: int, short_url: str | None = None
+) -> dict[str, Any]:
+    """Checkout payload for the branding add-on, reused when re-opening an
+    unauthorized pending purchase so rebuilding it needs no Razorpay round-trip.
+
+    The quoted price follows the client's rail, so the description can never
+    advertise rupees against a dollar charge, and carries GST so it can never
+    advertise less than the mandate debits.
+    """
+    currency = charge_currency(getattr(client, "billing_country", None))
+    price_minor = BRANDING_ADDON_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_BRANDING_PLAN_PRICE_CENTS
+    price_display = charged_price_display(client, price_minor, rate_bps)
+    return {
+        "provider": "razorpay",
+        "subscription_id": subscription_id,
+        "short_url": short_url,
+        "key_id": RAZORPAY_KEY_ID,
+        "name": "OyeChats branding removal",
+        "description": f"Remove OyeChats branding - {price_display}/month",
+        "prefill": {
+            "name": client.name or "",
+            "email": client.email or "",
+        },
+        "theme": {"color": "#6366f1"},
+    }
+
+
+def purchase_branding_addon(session: Session, sub: Subscription) -> dict[str, Any] | None:
+    """Start (or re-open) the branding add-on purchase for ``sub``.
+
+    Returns the Razorpay Checkout payload the customer must authorize.
+    Entitlement is NOT granted here: the add-on subscription is minted in
+    Razorpay's ``created`` state and charges nothing until the mandate is
+    authorized, so ``branding_addon_active`` stays False until the ``activated``
+    webhook lands. Without that split, a customer who opens checkout and
+    dismisses it would hide the branding for free (the exact seat-add-on bug,
+    finding A).
+
+    Returns ``None`` when the add-on is already active, the caller treats that
+    as "nothing to buy" rather than minting a second mandate for a feature the
+    customer already holds and pays for.
+    """
+    if sub.branding_addon_active:
+        return None
+
+    # A pending, never-authorized purchase already has a mandate. Re-open THAT
+    # checkout rather than minting a second one, or a customer who dismissed
+    # the first sheet accumulates orphaned mandates that the reconciliation
+    # sweep then has to cancel.
+    if sub.branding_addon_subscription_id:
+        return _branding_checkout_payload(
+            sub.branding_addon_subscription_id,
+            sub.client,
+            rate_bps=charge_tax_rate_bps(session),
+        )
+
+    addon = create_branding_addon_subscription(session, sub.client)
+    sub.branding_addon_subscription_id = addon["subscription_id"]
+    sub.branding_addon_pending = True
+    session.flush()
+    return addon
+
+
+def cancel_branding_addon(session: Session, sub: Subscription) -> None:
+    """Cancel the branding add-on at the gateway and drop the entitlement."""
+    if not sub.branding_addon_subscription_id:
+        # Nothing at the gateway, but still clear the local mirror: a row can
+        # hold an active entitlement with no mandate if a prior cancel failed
+        # part-way, and that combination is precisely a free paid feature.
+        sub.branding_addon_active = False
+        sub.branding_addon_pending = False
+        session.flush()
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            sub.branding_addon_subscription_id,
+            data={"cancel_at_cycle_end": 0},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay branding add-on cancel failed for %s: %s",
+            sub.branding_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not cancel the branding add-on with Razorpay.") from exc
+    sub.branding_addon_subscription_id = None
+    sub.branding_addon_active = False
+    sub.branding_addon_pending = False
+    session.flush()
+
+
+def retire_branding_addon_quietly(session: Session, sub: Subscription, *, context: str) -> bool:
+    """Cancel the branding add-on during a plan teardown, without raising.
+
+    The branding add-on is its own Razorpay mandate, so every path that retires
+    a plan subscription must retire this one too or it keeps debiting a
+    customer who has cancelled or downgraded, exactly the leak F4 closed for
+    seats. Unlike seats there is nothing to park as pending: re-buying is one
+    click, and carrying an unbilled entitlement forward is the failure mode
+    worth avoiding.
+
+    Returns True when the mandate is gone. On failure the local entitlement is
+    deliberately LEFT ALONE: the mandate is still live and still charging, so
+    revoking the feature the customer is still paying for would be the wrong
+    half of the operation to apply. The loud log is the reconciliation signal,
+    and the orphan sweep is the backstop.
+    """
+    # ``getattr``: some teardown paths hand this lightweight subscription
+    # stand-ins that predate the add-on columns. "No such attribute" and "no
+    # such mandate" mean the same thing here, nothing to cancel.
+    addon_id = getattr(sub, "branding_addon_subscription_id", None)
+    if not addon_id:
+        return True
+    try:
+        cancel_branding_addon(session, sub)
+    except Exception:
+        logger.error(
+            "Branding add-on cancel FAILED for subscription %s (add-on %s, client %s) during %s. "
+            "The mandate is STILL LIVE at Razorpay and will keep debiting until the orphan "
+            "sweep or manual reconciliation catches it.",
+            sub.id,
+            addon_id,
+            sub.client_id,
+            context,
+            exc_info=True,
+        )
+        return False
+    _invalidate_branding_entitlement_cache(session, sub)
+    return True
+
+
+def cancel_branding_addon_by_id(branding_addon_subscription_id: str) -> None:
+    """Cancel a branding add-on at the gateway by its raw id.
+
+    Companion to :func:`cancel_seat_addon_by_id`: the reconciliation sweep
+    cancels orphans that may have no local owner at all. The caller clears any
+    stale local pointer separately.
+    """
+    if not branding_addon_subscription_id:
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            branding_addon_subscription_id,
+            data={"cancel_at_cycle_end": 0},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay branding add-on cancel (by id) failed for %s: %s",
+            branding_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not cancel the branding add-on with Razorpay.") from exc
+
+
 def iter_gateway_subscriptions(
     *, page_size: int = 100, max_pages: int = 50, caller: str = "iter_gateway_subscriptions"
 ) -> Iterator[dict[str, Any]]:
@@ -1319,6 +1640,28 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
         # debit with no sweep coverage.
         seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
         if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
+            continue
+        yield item
+
+
+def iter_branding_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
+    """Yield every branding-removal add-on subscription known to Razorpay.
+
+    Same shape and purpose as :func:`iter_seat_addon_subscriptions`: the sweep
+    needs the gateway's view to find add-on mandates whose local owner is gone,
+    because an orphan keeps debiting the customer with nothing on our side
+    pointing at it. Both rails are matched, a USD orphan is just as expensive
+    as an INR one.
+    """
+    for item in iter_gateway_subscriptions(
+        page_size=page_size, max_pages=max_pages, caller="iter_branding_addon_subscriptions"
+    ):
+        item_notes = item.get("notes") or {}
+        if (item_notes.get("purpose") or "").lower() != "branding_addon":
+            continue
+        item_plan_id = item.get("plan_id")
+        branding_plan_ids = {pid for pid in (RAZORPAY_BRANDING_PLAN_ID, RAZORPAY_BRANDING_PLAN_ID_USD) if pid}
+        if item_plan_id and branding_plan_ids and item_plan_id not in branding_plan_ids:
             continue
         yield item
 
@@ -1948,14 +2291,18 @@ def _dead_letter_synthetic(
         )
 
 
-def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str, Any]) -> None:
-    """Emit a payment-history invoice for a seat add-on charge (finding A).
+def _record_addon_invoice(
+    session: Session, sub: Subscription, payload: dict[str, Any], *, kind: str, description: str
+) -> None:
+    """Emit a payment-history invoice for an add-on charge (finding A).
 
-    Seat revenue must be documented for GST/reconciliation just like a plan
-    charge, but it grants NO credits. Idempotent on the Razorpay payment id;
-    routed through ``finalize_invoice_safely`` so it becomes a numbered GST tax
-    invoice when invoicing v2 is on, and so a finalize failure never blocks the
-    webhook.
+    Add-on revenue must be documented for GST/reconciliation just like a plan
+    charge, but it grants NO credits, which is what ``kind`` encodes for
+    clawback routing (P0-1) and for the plan-charge filters built from
+    :data:`~app.db.models.ADDON_INVOICE_KINDS`. Idempotent on the Razorpay
+    payment id; routed through ``finalize_invoice_safely`` so it becomes a
+    numbered GST tax invoice when invoicing v2 is on, and so a finalize failure
+    never blocks the webhook.
     """
     pay_entity = _extract_payment_entity(payload) or {}
     payment_id = pay_entity.get("id")
@@ -1972,14 +2319,87 @@ def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str,
         currency=str(pay_entity.get("currency") or "INR").lower(),
         status="paid",
         razorpay_payment_id=payment_id,
-        kind="seat",  # clawback routing (P0-1): seat charges fund NO credit grant
-        description="Operator seat add-on",
+        kind=kind,
+        description=description,
         paid_at=_capture_paid_at(pay_entity),
         inr_amount_minor=_base_amount_minor(pay_entity),
     )
     session.add(invoice)
     session.flush()
     invoice_service.finalize_invoice_safely(session, invoice)
+
+
+def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str, Any]) -> None:
+    """Payment-history invoice for a seat add-on charge."""
+    _record_addon_invoice(session, sub, payload, kind="seat", description="Operator seat add-on")
+
+
+def _record_branding_invoice(session: Session, sub: Subscription, payload: dict[str, Any]) -> None:
+    """Payment-history invoice for a branding-removal add-on charge."""
+    _record_addon_invoice(session, sub, payload, kind="branding", description="Branding removal add-on")
+
+
+def _handle_branding_addon_event(
+    session: Session, event_name: str, sub_entity: dict[str, Any], payload: dict[str, Any]
+) -> str:
+    """Branding add-on lifecycle. Grants NO plan credits; gates the
+    ``branding_removable`` entitlement on mandate authorization and invoices
+    branding charges. Mirrors :func:`_handle_seat_addon_event`.
+    """
+    addon_sub_id = sub_entity.get("id")
+    local = session.scalars(
+        select(Subscription).where(Subscription.branding_addon_subscription_id == addon_sub_id)
+    ).first()
+    if local is None:
+        logger.info("Branding add-on event %s for unknown add-on sub %s. Acknowledged", event_name, addon_sub_id)
+        return f"Branding add-on event {event_name} (no local sub)"
+
+    if event_name in ("subscription.activated", "subscription.charged"):
+        # Authorization confirmed → grant the entitlement. Idempotent: a plain
+        # renewal charge re-asserts an already-active add-on.
+        local.branding_addon_active = True
+        local.branding_addon_pending = False
+        if event_name == "subscription.charged":
+            _record_branding_invoice(session, local, payload)
+
+    elif event_name in ("subscription.cancelled", "subscription.completed"):
+        # Terminal. The mandate is gone, so the entitlement goes with it and
+        # the pointer is cleared, or a later purchase would re-open checkout
+        # against a dead subscription instead of minting a fresh mandate.
+        local.branding_addon_active = False
+        local.branding_addon_pending = False
+        local.branding_addon_subscription_id = None
+
+    elif event_name == "subscription.halted":
+        # Temporary (repeated payment failure). Suspend the entitlement but KEEP
+        # the mandate pointer: a recovery ``charged`` re-grants it, and dropping
+        # the pointer here would strand a still-live mandate as an orphan.
+        local.branding_addon_active = False
+
+    session.flush()
+    _invalidate_branding_entitlement_cache(session, local)
+    return f"Branding add-on event {event_name} handled"
+
+
+def _invalidate_branding_entitlement_cache(session: Session, sub: Subscription) -> None:
+    """Drop the cached entitlements this add-on change invalidates.
+
+    Without this the customer waits out the 60s TTL after paying before the
+    branding toggle unlocks, which reads as a failed purchase. Both the account
+    slot and every per-bot slot in the workspace are dropped, because the
+    widget's ``GET /settings/public`` reads the per-bot resolver. Best-effort:
+    a cache miss only costs a DB query, so a failure here must never fail the
+    webhook that already granted the entitlement.
+    """
+    from app.services import plan_entitlements_service
+
+    try:
+        plan_entitlements_service.invalidate(sub.client_id)
+        bot_ids = session.execute(select(Bot.id).where(Bot.client_id == sub.client_id)).scalars().all()
+        for bot_id in bot_ids:
+            plan_entitlements_service.invalidate_bot(bot_id)
+    except Exception:
+        logger.debug("branding add-on entitlement cache invalidation failed", exc_info=True)
 
 
 def _handle_seat_addon_event(
@@ -2069,6 +2489,11 @@ def handle_webhook_event(
             # revenue (finding A), so they get their own handler rather than an
             # ack-drop.
             return _handle_seat_addon_event(session, event_name, sub_entity, payload)
+        if (sub_notes.get("purpose") or "").lower() == "branding_addon":
+            # Same split as seats: no plan entitlement and no plan credits, but
+            # it does gate the branding_removable entitlement and must invoice
+            # its revenue, so it gets a handler rather than an ack-drop.
+            return _handle_branding_addon_event(session, event_name, sub_entity, payload)
 
     handlers = {
         # Fires at mandate authorisation, for a subscription that has NOT
@@ -3582,6 +4007,10 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             if wanted_seats > 0:
                 local.seat_addon_pending_quantity = wanted_seats
 
+        # Same reasoning for the branding add-on, and the same last-chance
+        # position: after the status flip below, nothing sees this row again.
+        retire_branding_addon_quietly(session, local, context="the charged backstop")
+
         local.gateway_cancel_executed_at = datetime.now(UTC)
         local.status = "canceled"
         local.canceled_at = local.canceled_at or datetime.now(UTC)
@@ -3692,6 +4121,7 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
                 local.client_id,
                 exc_info=True,
             )
+    retire_branding_addon_quietly(session, local, context="a Razorpay-originated cancellation")
     # Paid → Free: keep the bot's data but deactivate its knowledge so it stops
     # answering from a paid-tier KB until the customer re-adds on Free or
     # re-upgrades (reversible; see knowledge_state_service).
@@ -3826,19 +4256,18 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     # Any successful PLAN charge on THIS subscription writes a paid Invoice;
     # its absence means the activation grant was never paid. Scoped to this sub
     # so a client's other (per-bot) subscriptions can't mask an unpaid first
-    # charge. Seat add-on invoices are excluded (F5): they stamp the main sub's
-    # id but pay for seats, not the plan, a successfully-charged seat mandate
-    # must not mask a failed first plan debit and let the customer keep a full
-    # unpaid period of credits (the exact leak this revoke exists to close).
+    # charge. Add-on invoices are excluded (F5): they stamp the main sub's id
+    # but pay for seats or branding removal, not the plan, and a successfully
+    # charged add-on mandate must not mask a failed first plan debit and let
+    # the customer keep a full unpaid period of credits (the exact leak this
+    # revoke exists to close).
     has_paid_charge = (
         session.execute(
             select(Invoice.id)
             .where(
                 Invoice.subscription_id == local.id,
                 Invoice.status == "paid",
-                # is_distinct_from: legacy rows (kind IS NULL) must still count
-                # as plan charges, a plain != would exclude them too.
-                Invoice.kind.is_distinct_from("seat"),
+                *plan_charge_only_clauses(),
             )
             .limit(1)
         )
@@ -4069,14 +4498,30 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     # didn't pay for. ``CHECKOUT_TEST_CLIENT_IDS`` orders are deliberately
     # charged ₹1 (100 paise) while their notes carry the real pack price, so we
     # exempt exactly that documented override and nothing else.
+    #
+    # Prices are published exclusive of GST, so the captured amount is base +
+    # tax while ``amount_inr`` is the base. Compare against ``charge_paise``,
+    # the amount the order was actually created for. Falling back to
+    # ``amount_inr × 100`` would reject every domestic top-up: the customer is
+    # debited and the credits are never granted.
+    notes_charge_paise = notes.get("charge_paise")
     notes_amount_inr = notes.get("amount_inr")
-    if notes_amount_inr is not None:
+    expected_paise: int | None = None
+    if notes_charge_paise is not None:
+        expected_paise = int(notes_charge_paise)
+    elif notes_amount_inr is not None:
+        # Legacy order created before the exclusive-pricing switch stamped
+        # ``charge_paise``. Those were charged the base, so the base is the
+        # right expectation for them and only for them.
         expected_paise = int(notes_amount_inr) * 100
+
+    if expected_paise is not None:
         is_test_override = client_id in CHECKOUT_TEST_CLIENT_IDS and amount_paise == 100
         if not is_test_override and amount_paise != expected_paise:
             raise RazorpayBillingError(
                 f"Top-up amount mismatch for client {client_id}: captured {amount_paise} paise "
-                f"but order notes declare ₹{notes_amount_inr} ({expected_paise} paise); "
+                f"but order notes declare {expected_paise} paise "
+                f"(base {'₹' + str(notes_amount_inr) if notes_amount_inr is not None else 'unstated'}); "
                 f"refusing to grant {credits} credits (payment {rzp_payment_id})"
             )
 

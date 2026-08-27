@@ -18,6 +18,7 @@ from app.schemas.ws import OPERATOR_FRAMES, VISITOR_FRAMES, parse_frame
 from app.services.live_chat_service import is_client_gone, manager
 from app.services.plan_service import get_client_subscription
 from app.services.session_state_machine import InvalidTransitionError, transition_session
+from app.services.translation_service import is_translation_enabled, translate_outgoing
 
 logger = logging.getLogger(__name__)
 
@@ -372,17 +373,41 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
                 cs_status: str | None = None
                 cs_bot_id: int | None = None
+                source_language: str | None = None
                 with get_session() as session:
-                    persisted = add_chat_message(session, session_id, role="user", content=content, bot_id=bot_id)
-                    session.commit()
-                    db_id = persisted.id
+                    # Read the session's resolved language BEFORE the insert so
+                    # it can be stamped on the row. This is Phase 2 state, read
+                    # from the server's own record: the widget is never asked
+                    # what language it thinks it is writing in.
                     cs = session.execute(
-                        select(ChatSession.status, ChatSession.bot_id).where(ChatSession.id == session_id)
+                        select(ChatSession.status, ChatSession.bot_id, ChatSession.language_code).where(
+                            ChatSession.id == session_id
+                        )
                     ).one_or_none()
                     if cs is not None:
-                        cs_status, cs_bot_id = cs
+                        cs_status, cs_bot_id, source_language = cs
 
-                delivered = await manager.route_visitor_message(session_id, content, db_id=db_id)
+                    persisted = add_chat_message(
+                        session,
+                        session_id,
+                        role="user",
+                        content=content,
+                        bot_id=bot_id,
+                        source_language=source_language,
+                    )
+                    session.commit()
+                    db_id = persisted.id
+
+                delivered = await manager.route_visitor_message(
+                    session_id,
+                    content,
+                    db_id=db_id,
+                    source_language=source_language,
+                    # Already read above. Lets the manager fall back to the
+                    # database for the assignment on a live chat without doing
+                    # so for the bot-only sessions that are the common case.
+                    session_status=cs_status,
+                )
 
                 # Operator alert ladder for the "visitor sent a message in an
                 # unattended waiting session" case. We deliberately removed the
@@ -421,6 +446,30 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                         "timestamp": datetime.now(UTC).isoformat(),
                     }
                 )
+
+                # ── Translation, strictly AFTER the ack (Phase 4) ──
+                # Detached on purpose. This loop is a sequential
+                # ``await ws.receive_json()``, so a provider call placed
+                # anywhere above would both stall the visitor's
+                # sending → sent → delivered tick and head-of-line block their
+                # next message behind their own translation. The original is
+                # already persisted and delivered by this point; the operator
+                # gets the translation as a follow-up ``message_translation``
+                # frame, or never, and live chat is unaffected either way.
+                # Gated ONLY on the session having a resolved language, never on
+                # ``delivered``. That flag reflects whether the operator's
+                # socket is held by THIS worker: with WS_BACKPLANE_ENABLED it is
+                # False for a perfectly healthy cross-process pair, and it is
+                # also False while the operator is inside their reconnect grace
+                # period, when the translation still needs persisting so it is
+                # there when they come back. Who to translate for is decided
+                # from the database in ``resolve_incoming_target``, which
+                # returns no target when there is genuinely nobody to translate
+                # for and makes this a cheap no-op.
+                if source_language:
+                    from app.services.translation_service import spawn_incoming_translation
+
+                    spawn_incoming_translation(session_id, db_id, content)
 
             elif msg_type == "file":
                 # File shares consume the same per-connection rate budget as
@@ -621,16 +670,28 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool] | None:
-    """Resolve operator_id, operator_name, client_id, department_id, is_online from an api_key or operator_key.
+def _resolve_operator_from_key(
+    key: str, key_type: str
+) -> tuple[int, str, int, int | None, bool, str | None, str | None] | None:
+    """Resolve operator identity + workspace scope from an api_key or operator_key.
 
-    Returns (operator_id, operator_name, client_id, department_id, is_online) or None if auth fails.
+    Returns ``(operator_id, operator_name, client_id, department_id, is_online,
+    preferred_locale, avatar_url)`` or None if auth fails.
 
     BOTH branches refuse a deactivated operator. That symmetry is the point:
     each one sets ``is_online = True`` as a side effect, and the seat cap this
     module enforces counts ``is_online`` with no ``is_active`` filter, so a
     branch that skipped the check would hand a deactivated operator back both
     their seat and their queue.
+
+    ``preferred_locale`` (Phase 4) is carried here so ``connect_operator`` can
+    cache it for the console's own language badge without a second query. It is
+    NOT what drives translation targeting: that reads the DB per message, see
+    ``translation_service.resolve_incoming_target``.
+
+    ``avatar_url`` is the operator's uploaded photo (may be ``None``); it is
+    threaded to the widget so the live-chat "joined" pill and operator message
+    bubbles show the real avatar instead of initials.
     """
     with get_session() as session:
         if key_type == "operator_key":
@@ -639,7 +700,15 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
                 return None
             operator.is_online = True
             session.commit()
-            return operator.id, operator.name, operator.client_id, operator.department_id, True
+            return (
+                operator.id,
+                operator.name,
+                operator.client_id,
+                operator.department_id,
+                True,
+                operator.preferred_locale,
+                operator.avatar_url,
+            )
 
         # Client api_key auth. Find or create the owner's operator record.
         # Use role='owner' to avoid matching sub-operators created for the same client.
@@ -695,7 +764,15 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
             operator.is_online = True
             session.commit()
 
-        return operator.id, operator.name, client.id, operator.department_id, operator.is_online
+        return (
+            operator.id,
+            operator.name,
+            client.id,
+            operator.department_id,
+            operator.is_online,
+            operator.preferred_locale,
+            operator.avatar_url,
+        )
 
 
 @router.websocket("/ws/operator")
@@ -743,7 +820,7 @@ async def operator_websocket(
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    operator_id, operator_name, client_id, department_id, is_online = result
+    operator_id, operator_name, client_id, department_id, is_online, operator_locale, operator_avatar = result
 
     # ── Seat-limit enforcement: cap concurrent online operators per subscription ──
     # ``operator_quantity`` on Subscription is the customer's purchased seat count
@@ -785,6 +862,8 @@ async def operator_websocket(
         is_online=is_online,
         client_id=client_id,
         subprotocol=accepted_subprotocol,
+        preferred_locale=operator_locale,
+        operator_avatar=operator_avatar,
     )
 
     heartbeat_task = asyncio.create_task(_operator_presence_heartbeat(ws, operator_id, client_id))
@@ -838,6 +917,9 @@ async def operator_websocket(
 
                 # Validate session ownership. Operator can only message sessions
                 # belonging to their client's bots and in "live" status
+                translation_bot = None
+                target_language: str | None = None
+                op_db_id: int | None = None
                 with get_session() as session:
                     chat_session = session.execute(
                         select(ChatSession).where(ChatSession.id == target_session)
@@ -852,10 +934,49 @@ async def operator_websocket(
                         )
                         continue
 
-                    add_chat_message(session, target_session, role="operator", content=content, bot_id=None)
+                    # The operator writes in THEIR language; the visitor reads
+                    # in the session's. Both come from server state.
+                    target_language = chat_session.language_code
+                    persisted_op = add_chat_message(
+                        session,
+                        target_session,
+                        role="operator",
+                        content=content,
+                        bot_id=None,
+                        source_language=operator_locale,
+                    )
                     session.commit()
+                    op_db_id = persisted_op.id
 
-                await manager.route_operator_message(target_session, content, operator_name)
+                    if is_translation_enabled(bot) and operator_locale and target_language:
+                        translation_bot = bot
+                        session.expunge(bot)
+
+                # The original is committed above, so translation can only ever
+                # change WHICH string the visitor is shown, never whether a
+                # message exists. Awaiting is safe here (no delivery tick is
+                # pending) and necessary: the translated text must be persisted
+                # before delivery so a reconnect re-renders the same string.
+                delivered_content, translated_from = content, None
+                if translation_bot is not None:
+                    delivered_content, translated_from = await translate_outgoing(
+                        target_session,
+                        op_db_id,
+                        content,
+                        translation_bot,
+                        operator_locale,
+                        target_language,
+                    )
+
+                await manager.route_operator_message(
+                    target_session,
+                    content,
+                    operator_name,
+                    operator_avatar,
+                    delivered_content=delivered_content,
+                    translated_from=translated_from,
+                    message_id=op_db_id,
+                )
 
             elif msg_type == "file":
                 # File sharing. Operator sends a file URL. Rate-limited on the
@@ -884,7 +1005,9 @@ async def operator_websocket(
                     add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
                     session.commit()
 
-                await manager.route_operator_file(target_session, file_url, filename, content_type_val, operator_name)
+                await manager.route_operator_file(
+                    target_session, file_url, filename, content_type_val, operator_name, operator_avatar
+                )
 
             elif msg_type == "typing":
                 target_session = frame.session_id

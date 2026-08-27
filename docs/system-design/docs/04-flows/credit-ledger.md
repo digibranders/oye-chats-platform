@@ -108,7 +108,7 @@ sequenceDiagram
 | `credit_cost.ai_message` | 1 | Per chat message |
 | `credit_cost.url_scan` | 3 | Per page crawled |
 | `credit_cost.email` | 1 | Per customer-facing email |
-| `topup_packs` | `[{credits: 50, price_cents: 24900}, …]` | Available packs |
+| `topup_packs` | `[{credits: 50, price_cents: 24900}, …]` | Available packs. Prices are BASE, exclusive of GST; `GET /credits/packs` also returns `gross_inr` |
 | `kill_switch` | false | If true, all deductions become no-ops |
 
 Super-admin tweaks these via the super-admin pages — no deploy needed.

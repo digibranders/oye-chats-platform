@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { getBots } from '../services/api';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
+import { t as translateNow } from '../i18n/i18n';
 
 const BotContext = createContext(null);
 
@@ -82,7 +83,7 @@ export function BotProvider({ children }) {
             setBots([]);
             setSelectedBot(null);
             setError({
-                message: err?.message || 'Failed to load bots',
+                message: err?.message || translateNow('app.failedToLoadBots') || 'Failed to load bots',
                 status: err?.status || null,
             });
             return [];

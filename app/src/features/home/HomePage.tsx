@@ -25,6 +25,7 @@ import {
   type Column,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
+import { AgentAvatar } from '../agents/AgentAvatar';
 import { useSetupChecklist } from '../../onboarding/useSetupChecklist';
 import { wantsEmptyHome } from '../../onboarding/firstRun';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -315,7 +316,7 @@ function AgentTable({
         rowHeader: true,
         render: ({ bot }) => (
           <span className="flex items-center gap-2.5">
-            <Avatar name={bot.name ?? 'Chatbot'} size="sm" shape="rounded" />
+            <AgentAvatar agent={bot} size="sm" />
             <span className="min-w-0">
               <Link
                 to={agentPath(bot.id, 'overview')}

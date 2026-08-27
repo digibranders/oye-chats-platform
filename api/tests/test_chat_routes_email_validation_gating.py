@@ -53,7 +53,7 @@ class TestValidateEmailEndpointGating:
             )
 
         assert response.status_code == 200
-        assert response.json() == {"valid": True}
+        assert response.json() == {"valid": True, "unverified": True}
         mock_verify.assert_not_called()
 
     def test_runs_reoon_when_plan_has_feature_and_agent_opted_in(self, monkeypatch):
@@ -85,7 +85,7 @@ class TestValidateEmailEndpointGating:
             )
 
         assert response.status_code == 200
-        assert response.json() == {"valid": True}
+        assert response.json() == {"valid": True, "unverified": True}
         mock_verify.assert_not_called()
 
 

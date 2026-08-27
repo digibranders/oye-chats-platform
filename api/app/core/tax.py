@@ -15,6 +15,14 @@ can make the halves sum to ``total_tax ± 1`` paisa and break the inclusive
 exactly at whole-rupee taxable bases (the only granularity billed here); they
 diverge only for sub-rupee bases, which do not occur.
 
+Pricing model: every price OyeChats publishes is a BASE price, exclusive of
+GST, and the tax is added at CHARGE time by :func:`gross_charge_minor`. The
+gateway therefore collects base + tax, which means the captured amount is
+itself tax-inclusive of the base, which is why invoicing still runs the
+``inclusive=True`` carve-out and recovers the advertised price exactly. Adding
+tax here and carving it out there are two halves of one design: change either
+without the other and invoices stop reconciling against what was charged.
+
 Tax direction (v2 plan §2a): OyeChats/Digibranders is the domestic supplier
 (forward charge), so we compute, show, and remit GST ourselves.
 
@@ -156,3 +164,41 @@ def compute_tax(
         rate_bps=rate_bps,
         zero_rated_export=False,
     )
+
+
+def gross_charge_minor(base_minor: int, *, rate_bps: int, kind: SupplyKind) -> int:
+    """The amount to actually DEBIT for an advertised base price.
+
+    Every price OyeChats publishes is a base price, exclusive of GST, so the
+    gateway must be told to collect base + tax. This is the single place that
+    uplift is computed; a second implementation is a second rounding rule, and
+    two rounding rules on money eventually disagree by a paisa on somebody's
+    invoice.
+
+    Domestic supplies are uplifted by the full rate. Exports are NOT: billing
+    Indian GST to a foreign customer is not a thing, and the Terms already put
+    any local tax in the buyer's own jurisdiction on the buyer. Whether an
+    export carries IGST that OyeChats absorbs (no LUT filed, Rule 96A) is a
+    remittance question, not a "what do we charge" one, so it deliberately does
+    not move the price.
+
+    For a domestic supply the result round-trips exactly: carving tax back out
+    with ``compute_tax(gross, rate, inclusive=True)`` returns ``base_minor`` and
+    the tax that was added. That property is what lets invoicing stay untouched
+    by the switch to exclusive pricing. The invoice still carves out of what was
+    charged, and the carve-out yields the advertised base by construction.
+    Pinned for every live price by ``test_gross_charge_round_trip``.
+
+    It round-trips for a ZERO-RATED export too (charge and carve are both the
+    base). It deliberately does NOT for an export without an LUT: the customer
+    is still charged the base, but the carve-out extracts IGST from it under the
+    Rule 96A fallback, so the invoiced taxable value is ``base / 1.18`` and
+    OyeChats absorbs the tax. That asymmetry is the chosen remittance position,
+    not a rounding bug. "Fixing" it by uplifting exports would turn it into an
+    18% price rise for every international customer.
+    """
+    if base_minor < 0:
+        raise ValueError("base_minor must be non-negative")
+    if kind == "export":
+        return base_minor
+    return compute_tax(base_minor, rate_bps, inclusive=False, kind=kind).total_minor

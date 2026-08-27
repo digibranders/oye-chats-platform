@@ -1,6 +1,7 @@
 import React from 'react';
 import { MessageCircle, CalendarClock } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
+import { t } from '../i18n/i18n.js';
 
 /**
  * QualifiedLeadCard. Warm-lead conversion prompt rendered inline in the chat
@@ -57,23 +58,23 @@ const QualifiedLeadCard = ({
             className="mx-3 -mt-3 flex flex-col gap-2.5"
             style={{ animation: 'fadeUp 0.3s ease-out' }}
             role="group"
-            aria-label="Connect with our team"
+            aria-label={t('message.connect_team_aria') || 'Connect with our team'}
         >
             <p className="px-0.5 text-[12px] leading-snug text-gray-500">
-                Want to talk to our team?
+                {t('message.want_to_talk') || 'Want to talk to our team?'}
             </p>
 
             <div className="flex flex-wrap gap-2">
                 {liveChatEnabled && (
                     <button type="button" onClick={onConnectSupport} className={chipClass}>
                         <MessageCircle className="w-3.5 h-3.5" style={{ color: primaryColor }} />
-                        Live chat
+                        {t('input.live_chat_aria') || 'Live chat'}
                     </button>
                 )}
                 {hasMeeting && (
                     <button type="button" onClick={onBookMeeting} className={chipClass}>
                         <CalendarClock className="w-3.5 h-3.5" style={{ color: primaryColor }} />
-                        Book a meeting
+                        {t('input.book_meeting') || 'Book a meeting'}
                     </button>
                 )}
             </div>
@@ -83,7 +84,7 @@ const QualifiedLeadCard = ({
                 onClick={onDismiss}
                 className="self-start px-0.5 text-[12px] font-medium text-gray-400 hover:text-gray-600 transition-colors"
             >
-                Continue with AI
+                {t('message.continue_with_ai') || 'Continue with AI'}
             </button>
         </div>
     );

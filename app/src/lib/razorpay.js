@@ -1,3 +1,4 @@
+import { t as translateNow } from '../i18n/i18n';
 /**
  * Razorpay Checkout JS loader.
  *
@@ -23,7 +24,7 @@ function loadRazorpayScript() {
     const existing = document.querySelector(`script[src="${RAZORPAY_SCRIPT_URL}"]`);
     if (existing) {
       existing.addEventListener('load', () => resolve(window.Razorpay));
-      existing.addEventListener('error', () => reject(new Error('Failed to load Razorpay Checkout')));
+      existing.addEventListener('error', () => reject(new Error(translateNow('app.failedToLoadRazorpayCheckout') || 'Failed to load Razorpay Checkout')));
       return;
     }
     const tag = document.createElement('script');
@@ -32,11 +33,11 @@ function loadRazorpayScript() {
     tag.crossOrigin = 'anonymous';
     tag.onload = () => {
       if (window.Razorpay) resolve(window.Razorpay);
-      else reject(new Error('Razorpay loaded but constructor missing'));
+      else reject(new Error(translateNow('app.razorpayLoadedButConstructorMissing') || 'Razorpay loaded but constructor missing'));
     };
     tag.onerror = () => {
       scriptPromise = null;
-      reject(new Error('Failed to load Razorpay Checkout (network error)'));
+      reject(new Error(translateNow('app.failedToLoadRazorpayCheckout') || 'Failed to load Razorpay Checkout'));
     };
     document.head.appendChild(tag);
   });
@@ -62,7 +63,7 @@ export async function openRazorpayCheckout(options) {
       modal: {
         ...(options.modal || {}),
         ondismiss: () => {
-          const dismissError = new Error('Checkout dismissed by user');
+          const dismissError = new Error(translateNow('app.checkoutDismissedByUser') || 'Checkout dismissed by user');
           dismissError.code = 'dismissed';
           reject(dismissError);
         },
@@ -72,7 +73,7 @@ export async function openRazorpayCheckout(options) {
       const rzp = new Razorpay(merged);
       rzp.on('payment.failed', (resp) => {
         const failureError = new Error(
-          resp?.error?.description || 'Payment failed. Please try again.',
+          resp?.error?.description || translateNow('app.paymentFailedPleaseTryAgain') || 'Payment failed. Please try again.',
         );
         failureError.code = 'payment_failed';
         failureError.detail = resp?.error;

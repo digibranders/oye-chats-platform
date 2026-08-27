@@ -38,13 +38,14 @@ import { DEFAULT_PRIMARY_COLOR, DEFAULT_USER_BUBBLE_COLOR } from './widgetTheme'
 
 // ── The four groups the page is divided into ─────────────────────────────────
 
-export const SECTION_KEYS = ['branding', 'messages', 'voice', 'handoff'] as const;
+export const SECTION_KEYS = ['branding', 'messages', 'voice', 'language', 'handoff'] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
 export const SECTION_LABELS: Record<SectionKey, string> = {
   branding: 'Branding',
   messages: 'Messages',
   voice: 'Voice',
+  language: 'Language',
   handoff: 'Handoff',
 };
 
@@ -147,6 +148,29 @@ export interface ExperienceDraft {
   services: ServiceEntry[];
   smartLinks: SmartLink[];
 
+  // Language
+  /**
+   * Master switch for multilingual. Everything else in this group is inert
+   * while it is off, and the widget behaves exactly as a single-language bot.
+   */
+  multilingualEnabled: boolean;
+  /** BCP-47 tags this chatbot will hold a conversation in. Never empty. */
+  supportedLocales: string[];
+  /** Used when a visitor's language cannot be determined. Always in the list. */
+  defaultLocale: string;
+  /** Infer the visitor's language from their browser, page and first message. */
+  autoDetectLanguage: boolean;
+  /** Offer the language picker in the widget. Meaningless below two locales. */
+  allowVisitorLanguageSwitch: boolean;
+  /**
+   * Translate live chat between visitor and operator.
+   *
+   * Not the operator's own reading language — that is
+   * `Operator.preferred_locale`, chosen by each operator in the inbox. This
+   * decides whether that translation runs at all.
+   */
+  operatorTranslation: boolean;
+
   // Handoff
   liveChatEnabled: boolean;
   waitingMessage: string;
@@ -207,6 +231,12 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
   handoffDelaySeconds: 'handoff',
   queueTimeoutSeconds: 'handoff',
   maxQueueSize: 'handoff',
+  multilingualEnabled: 'language',
+  supportedLocales: 'language',
+  defaultLocale: 'language',
+  autoDetectLanguage: 'language',
+  allowVisitorLanguageSwitch: 'language',
+  operatorTranslation: 'language',
   businessHours: 'handoff',
   leadFormEnabled: 'handoff',
   leadFormFields: 'handoff',
@@ -282,6 +312,13 @@ export const HANDOFF_DELAY_OPTIONS: readonly { value: string; label: string }[] 
   { value: '5', label: 'After 5 seconds' },
   { value: '10', label: 'After 10 seconds' },
 ];
+
+/**
+ * The locale a chatbot falls back to before anyone configures one. Matches the
+ * documented default on `Bot.language_config` in `db/models.py`, so an
+ * untouched chatbot reads the same here as it does server-side.
+ */
+export const DEFAULT_LOCALE = 'en-IN';
 
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
 
@@ -442,6 +479,20 @@ function parseSmartLinks(value: unknown): SmartLink[] {
   });
 }
 
+/**
+ * `Bot.language_config` is a loose JSONB blob in snake_case, and every key in
+ * it is optional — a chatbot created before multilingual shipped has none of
+ * them. Absent means "the single-language default", never "invalid".
+ */
+function parseSupportedLocales(value: unknown): string[] {
+  const tags = (Array.isArray(value) ? value : [])
+    .filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0)
+    .map((tag) => tag.trim());
+  // Never empty: an empty list would leave the default locale pointing at
+  // nothing, and the picker with no option to select.
+  return tags.length > 0 ? [...new Set(tags)] : [DEFAULT_LOCALE];
+}
+
 // ── Reading the bot ──────────────────────────────────────────────────────────
 
 /**
@@ -454,6 +505,7 @@ function parseSmartLinks(value: unknown): SmartLink[] {
 export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
   const messages = asRecord(raw.widget_messages);
   const flags = asRecord(raw.feature_flags);
+  const language = asRecord(raw.language_config);
 
   return {
     primaryColor: asColor(raw.primary_color, DEFAULT_PRIMARY_COLOR),
@@ -485,6 +537,16 @@ export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
     companyDescription: asString(raw.company_description),
     services: parseServices(raw.services),
     smartLinks: parseSmartLinks(raw.answer_links),
+
+    multilingualEnabled: asBoolean(language.enabled),
+    supportedLocales: parseSupportedLocales(language.supported_locales),
+    defaultLocale: asString(language.default_locale) || DEFAULT_LOCALE,
+    // Both default ON: detection is what makes a multilingual chatbot work
+    // without the visitor doing anything, and it is inert until the master
+    // switch is on anyway.
+    autoDetectLanguage: asBoolean(language.auto_detect, true),
+    allowVisitorLanguageSwitch: asBoolean(language.allow_visitor_language_switch),
+    operatorTranslation: asBoolean(language.operator_translation_enabled),
 
     liveChatEnabled: asBoolean(raw.live_chat_enabled),
     waitingMessage: asString(raw.waiting_message),
@@ -540,6 +602,28 @@ export function normalizeDraft(draft: ExperienceDraft): ExperienceDraft {
     smartLinks: normalizeSmartLinks(draft.smartLinks),
     queueTimeoutSeconds: clamp(draft.queueTimeoutSeconds, QUEUE_TIMEOUT.min, QUEUE_TIMEOUT.max),
     maxQueueSize: clamp(draft.maxQueueSize, MAX_QUEUE.min, MAX_QUEUE.max),
+    ...normalizeLanguage(draft),
+  };
+}
+
+/**
+ * The two language invariants the server also enforces, applied here so a
+ * customer meets them as a corrected value rather than as a 422.
+ *
+ * The list is never empty, and the default is always a member of it — a
+ * default outside the supported set is a chatbot that falls back to a language
+ * it will not answer in.
+ */
+function normalizeLanguage(
+  draft: ExperienceDraft,
+): Pick<ExperienceDraft, 'supportedLocales' | 'defaultLocale'> {
+  const supportedLocales = [...new Set(draft.supportedLocales.map((tag) => tag.trim()).filter(Boolean))];
+  if (supportedLocales.length === 0) supportedLocales.push(draft.defaultLocale.trim() || DEFAULT_LOCALE);
+  return {
+    supportedLocales,
+    defaultLocale: supportedLocales.includes(draft.defaultLocale)
+      ? draft.defaultLocale
+      : supportedLocales[0],
   };
 }
 
@@ -709,6 +793,30 @@ export function patchFromDraft(
   if (changed.has('businessHours')) patch.business_hours = businessHoursPayload(draft.businessHours);
   if (changed.has('leadFormEnabled')) patch.lead_form_enabled = draft.leadFormEnabled;
   if (changed.has('leadFormFields')) patch.lead_form_fields = draft.leadFormFields;
+
+  // `language_config` is one JSONB column, not a merged sub-document: the
+  // server replaces it wholesale, so a partial patch would drop the keys it
+  // omitted. Any change to the group therefore sends the whole group.
+  if (
+    changed.has('multilingualEnabled') ||
+    changed.has('supportedLocales') ||
+    changed.has('defaultLocale') ||
+    changed.has('autoDetectLanguage') ||
+    changed.has('allowVisitorLanguageSwitch') ||
+    changed.has('operatorTranslation')
+  ) {
+    patch.language_config = {
+      enabled: draft.multilingualEnabled,
+      supported_locales: draft.supportedLocales,
+      default_locale: draft.defaultLocale,
+      auto_detect: draft.autoDetectLanguage,
+      allow_visitor_language_switch: draft.allowVisitorLanguageSwitch,
+      // Translation cannot run without the master switch, and sending it as
+      // true under a disabled config would leave the stored row asserting
+      // something the widget will never do.
+      operator_translation_enabled: draft.multilingualEnabled && draft.operatorTranslation,
+    };
+  }
 
   if (Object.keys(messages).length > 0) patch.widget_messages = messages;
   if (Object.keys(flags).length > 0) patch.feature_flags = flags;

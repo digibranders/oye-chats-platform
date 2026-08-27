@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
+import { t as translateNow } from './i18n/i18n';
 import { isSessionExpired, clearAuthStorage } from './utils/authStorage'
 import { isLocalHostname } from './utils/isLocalHostname'
 import {
@@ -89,8 +90,8 @@ function renderImpersonationNotice(title, message, busy = false) {
 
 if (impersonationHandoffToken) {
   renderImpersonationNotice(
-    'Starting support session',
-    'Verifying this impersonation link…',
+    translateNow('app.startingSupportSession') || 'Starting support session',
+    translateNow('app.verifyingImpersonationLink') || 'Verifying this impersonation link…',
     true,
   );
   redeemImpersonation(impersonationHandoffToken)
@@ -106,10 +107,10 @@ if (impersonationHandoffToken) {
       // own password.
       const rejectedByServer = error?.status === 401 || error?.status === 404;
       renderImpersonationNotice(
-        'Impersonation link not accepted',
+        translateNow('app.impersonationLinkRejected') || 'Impersonation link not accepted',
         rejectedByServer
-          ? 'This impersonation link has expired or been revoked.'
-          : error?.message || 'This impersonation session could not be started.',
+          ? translateNow('app.impersonationLinkExpired') || 'This impersonation link has expired or been revoked.'
+          : error?.message || translateNow('app.impersonationCouldNotStart') || 'This impersonation session could not be started.',
       );
     });
 } else {

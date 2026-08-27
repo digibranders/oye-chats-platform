@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react';
 import { Badge, Button, ConfirmDialog, SettingGroup, SettingRow, buttonClass } from '../../ui';
 import { clearAuthStorage } from '../../utils/authStorage';
 import { endImpersonationSession, isImpersonating } from '../../utils/impersonation';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface AccountSessionsSectionProps {
   /** The signed-in address, shown against the current device. */
@@ -24,6 +25,7 @@ export interface AccountSessionsSectionProps {
  */
 export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
 
   function signOut(): void {
@@ -31,7 +33,10 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
     // `clearAuthStorage()` wipes the shared localStorage bundle, which holds
     // the super-admin's own credentials for every other tab of this browser.
     if (isImpersonating()) {
-      endImpersonationSession('Impersonation session ended. You can close this tab.');
+      endImpersonationSession(
+        t('settings.sessions.impersonationEnded') ||
+          'Impersonation session ended. You can close this tab.',
+      );
       return;
     }
     clearAuthStorage();

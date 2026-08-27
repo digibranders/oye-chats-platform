@@ -26,9 +26,7 @@ def get_session_audit_trail(session_id: str, auth: dict = Depends(get_current_cl
     is itself an information leak.
     """
     with get_session() as db_session:
-        session_row = db_session.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
-        ).scalar_one_or_none()
+        session_row = db_session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if session_row is None:
             raise HTTPException(status_code=404, detail="Session not found.")
 

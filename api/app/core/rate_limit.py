@@ -57,6 +57,25 @@ def key_from_api_key(request: Request) -> str:
     return request.headers.get("x-api-key", get_remote_address(request))
 
 
+def key_from_operator_credential(request: Request) -> str:
+    """Rate-limit key for routes that accept EITHER operator or client auth.
+
+    The inbox is reachable two ways: a team member presents ``X-Operator-Key``,
+    a workspace owner presents ``X-API-Key`` (see
+    ``get_current_client_or_operator``). ``key_from_api_key`` reads only the
+    latter, so every operator-key caller would fall through to its default and
+    share one bucket keyed on IP, letting one operator throttle their whole
+    team from behind a shared office NAT. Prefer the operator key, fall back to
+    the client key, then the address.
+    """
+    return (
+        request.headers.get("x-operator-key")
+        or request.headers.get("x-agent-key")
+        or request.headers.get("x-api-key")
+        or get_remote_address(request)
+    )
+
+
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[],
@@ -114,6 +133,32 @@ def clear_failed_logins(identity: str) -> None:
         limiter.limiter.clear(parse(_FAILED_LOGIN_LIMIT), "login", identity)
     except Exception:  # noqa: BLE001 - cosmetic cleanup
         logger.debug("failed_login_counter_clear_failed", exc_info=True)
+
+
+def consume_vendor_budget(scope: str, key: str, limit_string: str) -> bool:
+    """Consume one unit of a named PAID-CALL budget. ``True`` when granted.
+
+    Separate from the ``@limiter.limit`` decorators on purpose. A decorator
+    counts REQUESTS, which is the wrong unit for a route whose cost is a
+    third-party call it usually avoids: a cached answer costs a Redis GET and
+    must not spend the budget that exists to bound vendor spend. Call this at
+    the point the vendor call would actually be made, and let the route decide
+    what to do when it is refused.
+
+    Fails CLOSED on a storage error, unlike :func:`login_attempts_exhausted`.
+    The counter and the response cache share one Redis, so a storage outage is
+    exactly the moment every request becomes a live vendor call. Failing closed
+    there costs an optional check; failing open costs money. It locks nobody
+    out: the routes that use this treat a refusal as "unverified", never as a
+    rejection.
+    """
+    from limits import parse
+
+    try:
+        return bool(limiter.limiter.hit(parse(limit_string), "vendor", scope, key))
+    except Exception:  # noqa: BLE001 - a counter outage must not become a spend leak
+        logger.warning("vendor_budget_counter_unavailable scope=%s. Skipping the paid call", scope)
+        return False
 
 
 def money_route_limit(scope: str, *limit_strings: str):

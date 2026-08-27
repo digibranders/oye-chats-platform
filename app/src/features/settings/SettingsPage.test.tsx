@@ -28,6 +28,12 @@ const api = vi.hoisted(() => ({
   cancelClientEmailChange: vi.fn(),
   getNotificationPreferences: vi.fn(),
   updateNotificationPreferences: vi.fn(),
+  // The language selector subscribes to the backend locale catalogue. An empty
+  // one is a real state (the request has not landed yet), and the section
+  // falls back to the shipped endonyms, which is what these tests read.
+  getLocales: vi.fn().mockResolvedValue({ locales: [], languages: {} }),
+  uploadOperatorAvatar: vi.fn(),
+  removeOperatorAvatar: vi.fn(),
 }));
 vi.mock('../../services/api', () => api);
 

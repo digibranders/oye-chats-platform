@@ -8,6 +8,7 @@ Key prefix ``oyechats:`` namespaces all keys so the same Redis instance can be
 shared with other services without collisions.
 """
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -25,6 +26,7 @@ PREFIX = "oyechats:"
 # TTL constants (seconds)
 BOT_CONFIG_TTL = 600  # 10 minutes
 QA_RESPONSE_TTL = 3600  # 1 hour
+TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 
 def get_redis():
@@ -139,9 +141,43 @@ def bot_config_key(bot_key: str) -> str:
     return f"{PREFIX}bot:{bot_key}"
 
 
-def qa_response_key(bot_id: int, question_hash: str) -> str:
-    """Cache key for a cached QA response."""
+def qa_response_key(bot_id: int, question_hash: str, lang: str | None = None) -> str:
+    """Cache key for a cached QA response.
+
+    ``lang`` partitions the cache by conversation language for multilingual bots
+    so a Hindi question can never be served an English cached answer that hashed
+    to the same question bucket. It is passed ONLY when multilingual is enabled
+    for the bot; when it is ``None`` (every bot with the feature off) the key is
+    byte-identical to the pre-multilingual format, so existing entries keep
+    hitting and no bot takes a mass cache miss on deploy.
+    """
+    if lang:
+        return f"{PREFIX}qa:{bot_id}:{lang}:{question_hash}"
     return f"{PREFIX}qa:{bot_id}:{question_hash}"
+
+
+def translation_key(source_language: str, target_language: str, text: str) -> str:
+    """Cache key for one translation (Phase 4).
+
+    HASH-ONLY BY DESIGN. The message text never appears in the key, so a Redis
+    keyspace dump (``SCAN``, ``--bigkeys``, a slowlog entry) discloses nothing
+    about what visitors and operators said. For the same reason the key must
+    never be logged next to the text it was derived from, which would make the
+    hash reversible from the log.
+
+    DELIBERATELY CROSS-TENANT. The value is a pure function of
+    (source, target, text), so two workspaces sending byte-identical text share
+    one entry. A hit reveals nothing the caller could not obtain by making the
+    call themselves, and the key is a preimage-resistant hash of content the
+    caller already holds. Recorded here as a decision, not an accident: if a
+    customer segment ever needs strict isolation, prefix with ``client_id`` and
+    nothing else changes.
+
+    The ``v1`` segment lets a prompt/model change invalidate every entry at
+    once without a keyspace sweep.
+    """
+    digest = hashlib.sha256(f"{source_language}|{target_language}|{text}".encode()).hexdigest()
+    return f"{PREFIX}translation:v1:{digest}"
 
 
 def qa_prefix_for_bot(bot_id: int) -> str:

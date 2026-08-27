@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import {
@@ -60,14 +61,17 @@ const api = axios.create({
  */
 export const httpClient = api;
 
-const buildApiError = (error, fallbackMessage = 'Request failed') => {
+const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed') || 'Request failed') => {
     const status = error.response?.status;
     const data = error.response?.data;
     let detail = data?.detail;
 
     // Handle Pydantic 422 validation errors (detail is an array of error objects)
     if (status === 422 && Array.isArray(detail) && detail.length > 0) {
-        const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+        const msg = detail[0]?.msg || detail[0]?.message || translateNow('app.validationError') || 'Validation error';
+        // @i18n-exempt: this strips a prefix the SERVER emits (FastAPI's
+        // pydantic message). Translating it would stop the replace matching
+        // and leak "Value error, " into the message shown to the user.
         detail = msg.replace('Value error, ', '');
     }
 
@@ -83,7 +87,7 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
         // SlowAPI uses {"error": "Rate limit exceeded: ..."} - not FastAPI's {"detail": "..."}
         message = (typeof data?.error === 'string' && data.error)
             ? data.error
-            : 'Too many requests - please wait a moment and try again.';
+            : translateNow('app.tooManyRequestsPleaseWait') || 'Too many requests - please wait a moment and try again.';
     } else {
         message = error.message || fallbackMessage;
     }
@@ -182,7 +186,7 @@ api.interceptors.request.use(
         // the super-admin's own account. Cancellations are swallowed by the
         // response interceptor's ``isCancel`` guard.
         if (isImpersonationSessionEnded()) {
-            return Promise.reject(new axios.CanceledError('Impersonation session ended'));
+            return Promise.reject(new axios.CanceledError(translateNow('app.impersonationEnded') || 'Impersonation session ended'));
         }
 
         const token = getAuthItem('admin_token');
@@ -307,7 +311,7 @@ api.interceptors.response.use(
             || isImpersonationSessionEnded()
         ) {
             if (status === 401) {
-                endImpersonationSession('This impersonation session expired or was revoked.');
+                endImpersonationSession(translateNow('app.thisImpersonationSessionExpiredOr') || 'This impersonation session expired or was revoked.');
             } else if (status === 403 && isImpersonationBlockedWrite(error)) {
                 applyImpersonationForbiddenCopy(error);
             }
@@ -984,6 +988,28 @@ export const getQueueSummary = async (botId, days = 30) => {
     }
 };
 
+/**
+ * Conversations broken down by the language they were held in (Phase 5C).
+ *
+ * Two different kinds of number come back and must not be conflated:
+ * `conversations` and `cost` are durable Postgres reads over `period`, while
+ * `translation` is a rolling 24-hour window from expiring Redis counters.
+ *
+ * @param {number} botId
+ * @param {'7d'|'30d'|'90d'|'all'} [period]
+ */
+export const getLanguageBreakdown = async (botId, period = '30d') => {
+    try {
+        const response = await api.get('/analytics/language-breakdown', {
+            params: { bot_id: botId, period },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching language breakdown:', error);
+        throw buildApiError(error, 'Failed to load language breakdown');
+    }
+};
+
 // ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
 // Account-wide, never scoped to the shell's agent switcher: the whole point is
 // one row per agent side by side, so an agency can show each of its own clients
@@ -1190,6 +1216,68 @@ export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) =
 };
 
 /**
+ * Reads the platform's locale catalogue: every locale a bot can be configured
+ * with, plus the base-language names a conversation is labelled by.
+ *
+ * Deploy-static, so callers fetch it once per session (see
+ * `hooks/useLocaleCatalog`) rather than per screen.
+ *
+ * @returns {Promise<{locales: Array<{code: string, locale: string, name: string, native_name: string, direction: 'ltr'|'rtl'}>, languages: Record<string, string>}>}
+ */
+export const getLocales = async () => {
+    const response = await api.get('/locales');
+    return response.data;
+};
+
+/**
+ * Reads the caller's own live-chat working language.
+ * @returns {Promise<{preferred_locale: string|null, supported_languages: string[]}>}
+ */
+export const getMyLanguage = async () => {
+    const response = await api.get('/operators/me/language');
+    return response.data;
+};
+
+/**
+ * Sets the caller's OWN live-chat working language. Pass null/'' to clear it,
+ * which turns translation off for this operator.
+ * @param {string|null} preferredLocale - BCP-47 tag, e.g. 'en-IN'
+ * @returns {Promise<{preferred_locale: string|null}>}
+ */
+export const setMyLanguage = async (preferredLocale) => {
+    try {
+        const response = await api.put('/operators/me/language', { preferred_locale: preferredLocale ?? '' });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save your language preference');
+    }
+};
+
+/**
+ * Translates text in the context of a conversation the caller owns.
+ *
+ * The target language is derived server-side: passing `messageId` backfills an
+ * existing message into the reader's language, omitting it previews an
+ * outgoing reply in the visitor's. There is deliberately no way to ask for an
+ * arbitrary target.
+ *
+ * @param {string} sessionId - must belong to the caller's workspace
+ * @param {string} text
+ * @param {number} [messageId] - persist the result onto this message
+ * @returns {Promise<{translated: string, target_locale: string, cached: boolean, status: string}>}
+ */
+export const translateForSession = async (sessionId, text, messageId) => {
+    try {
+        const body = { session_id: sessionId, text };
+        if (messageId != null) body.message_id = messageId;
+        const response = await api.post('/operators/translate', body);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Translation is unavailable right now');
+    }
+};
+
+/**
  * Fetches all feedback data for the admin dashboard.
  * @returns {Promise<Array>} Array of feedback objects
  */
@@ -1363,6 +1451,42 @@ export const uploadLogo = async (file) => {
     } catch (error) {
         console.error('API Error uploading logo:', error);
         throw buildApiError(error, 'Failed to upload logo');
+    }
+};
+
+/**
+ * Uploads (or replaces) the current operator's own profile picture. Purely
+ * optional - an operator who never calls this just shows initials.
+ * @param {File} file - The image file to upload
+ * @returns {Promise<{avatar_url: string}>}
+ */
+export const uploadOperatorAvatar = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const response = await api.post('/operators/me/avatar', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error uploading operator avatar:', error);
+        throw buildApiError(error, 'Failed to upload profile picture');
+    }
+};
+
+/**
+ * Removes the current operator's own profile picture, reverting to initials.
+ * @returns {Promise<{success: boolean}>}
+ */
+export const removeOperatorAvatar = async () => {
+    try {
+        const response = await api.delete('/operators/me/avatar');
+        return response.data;
+    } catch (error) {
+        console.error('API Error removing operator avatar:', error);
+        throw buildApiError(error, 'Failed to remove profile picture');
     }
 };
 
@@ -2959,6 +3083,45 @@ export const changeOperatorSeats = async (delta, botId = null) => {
     }
 };
 
+/**
+ * Buy the branding-removal add-on for a subscription.
+ *
+ * Branding removal is not bundled into any plan tier - it rides on its own
+ * Razorpay mandate, exactly like an extra operator seat. The entitlement is NOT
+ * granted by this call: the mandate is minted in `created` state and
+ * `branding_removable` only flips once the customer authorizes the returned
+ * `checkout` payload and the `activated` webhook lands. Callers must re-read
+ * entitlements rather than assume success.
+ *
+ * 400 when the subscription is on the Free plan.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const purchaseBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.post('/subscriptions/branding-addon', { bot_id: botId ?? null });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start the branding removal add-on');
+    }
+};
+
+/**
+ * Cancel the branding-removal add-on. Cancels immediately (not at cycle end),
+ * so billing stops the moment the customer asks; the badge reappears on their
+ * widget within the entitlements cache TTL.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const cancelBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.delete('/subscriptions/branding-addon', {
+            data: { bot_id: botId ?? null },
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to cancel the branding removal add-on');
+    }
+};
+
 
 
 // ─── Affiliate Program v1 ────────────────────────────────────────────────
@@ -3605,6 +3768,29 @@ export const addSelfAsOperator = async (botId) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to add yourself as an operator');
+    }
+};
+
+/**
+ * Read the quotation catalog for a bot.
+ * Returns { enabled, currency, services[] }.
+ */
+export const getQuotationCatalog = async (botId) => {
+    try {
+        const response = await api.get(`/bots/${botId}/quotation-catalog`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load quotation catalog');
+    }
+};
+
+/** Replace the quotation catalog for a bot. */
+export const putQuotationCatalog = async (botId, catalog) => {
+    try {
+        const response = await api.put(`/bots/${botId}/quotation-catalog`, catalog);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to save quotation catalog');
     }
 };
 

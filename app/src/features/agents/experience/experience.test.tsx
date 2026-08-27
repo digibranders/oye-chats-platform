@@ -290,7 +290,7 @@ describe('unsaved changes are visible and recoverable', () => {
 
   it('asks before leaving the page with work on it', async () => {
     // Any in-app link will do; this workspace cannot remove branding, so the
-    // Branding tab carries a real one to Billing.
+    // Branding tab carries a real one to Billing, where the add-on is sold.
     entitlements.branding_removable = false;
     renderPage();
     await ready();
@@ -299,7 +299,7 @@ describe('unsaved changes are visible and recoverable', () => {
     await userEvent.type(hex, '#111111');
     await screen.findByText(/Unsaved changes to Branding/);
 
-    await userEvent.click(screen.getByRole('link', { name: /Compare plans/i }));
+    await userEvent.click(screen.getByRole('link', { name: /Add it in Billing/i }));
     expect(await screen.findByRole('alertdialog', { name: /Leave without saving\?/ })).toBeInTheDocument();
     // Still here: the navigation was intercepted, not merely warned about.
     expect(screen.getByLabelText('Brand colour')).toBeInTheDocument();
@@ -312,7 +312,7 @@ describe('unsaved changes are visible and recoverable', () => {
     const hex = screen.getByLabelText('Brand colour');
     await userEvent.clear(hex);
     await userEvent.type(hex, '#111111');
-    await userEvent.click(screen.getByRole('link', { name: /Compare plans/i }));
+    await userEvent.click(screen.getByRole('link', { name: /Add it in Billing/i }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
     expect(await screen.findByText('Billing')).toBeInTheDocument();

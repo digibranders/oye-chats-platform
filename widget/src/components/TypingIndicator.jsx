@@ -1,5 +1,6 @@
 import React from 'react';
 import BotAvatar from './BotAvatar';
+import { t } from '../i18n/i18n.js';
 
 /**
  * Typing indicator shown while the bot is generating a response.
@@ -30,7 +31,7 @@ const TypingIndicator = ({ settings }) => {
             <div
                 role="status"
                 aria-live="polite"
-                aria-label="Assistant is typing"
+                aria-label={t('system.typing_aria') || 'Assistant is typing'}
                 className="flex items-center gap-1.5 px-3 py-2.5 rounded-2xl rounded-bl-sm"
                 style={{ background: '#f3f4f6' }}
             >

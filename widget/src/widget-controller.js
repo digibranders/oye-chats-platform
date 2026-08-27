@@ -7,6 +7,10 @@
 // before React mounts.
 
 import { clearSessionId } from './services/storage-keys.js'
+// localeCatalog only, never i18n.js: this module is bundled in the eager vendor
+// chunk, and importing the translation store here would drag every dictionary
+// into the payload that loads on page view, before the visitor opens the chat.
+import { getDirection, getLanguageCode, normalizeLocale, DEFAULT_LOCALE } from './i18n/localeCatalog.js'
 
 const VALID_EVENTS = new Set([
   'ready',
@@ -19,6 +23,7 @@ const VALID_EVENTS = new Set([
   'rating:submitted',
   'lead:captured',
   'error',
+  'localeChanged',
 ])
 
 // How long a queued action / send waits for a subscriber before being
@@ -32,6 +37,7 @@ const createController = () => {
   const stateListeners = new Set()  // ({visitor?, runtimeConfig?}) -> void
   const actionListeners = new Set()  // (action) -> void
   const sendListeners = new Set()    // (text) -> void  (chat panel takes deliveries here)
+  let activeLocale = null            // live locale, reported by the React layer
 
   // Pending action / send queues. Drained when the first listener subscribes.
   // Without this, OyeChats.open() called before ChatWidget's useEffect runs is
@@ -163,10 +169,49 @@ const createController = () => {
       dispatch({ type: 'boot' })
     },
     update(config) {
+      const nextLocale = config && config.locale ? normalizeLocale(config.locale) : null
       runtimeConfig = { ...runtimeConfig, ...(config || {}) }
+      if (nextLocale) {
+        runtimeConfig = { ...runtimeConfig, locale: nextLocale }
+        // 'site': the host page asked for this locale, so it outranks the page
+        // language and the browser but not the visitor's own choice.
+        dispatch({ type: 'setLocale', locale: nextLocale, source: 'site' })
+        emit('localeChanged', {
+          locale: nextLocale,
+          language: getLanguageCode(nextLocale),
+          direction: getDirection(nextLocale),
+          source: 'site',
+        })
+      }
       for (const cb of stateListeners) {
         try { cb({ runtimeConfig }) } catch (e) { console.error('[OyeChats] state handler error:', e) }
       }
+    },
+    setLocale(loc) {
+      const normalized = normalizeLocale(loc)
+      if (!normalized) return
+      runtimeConfig = { ...runtimeConfig, locale: normalized }
+      dispatch({ type: 'setLocale', locale: normalized, source: 'site' })
+      emit('localeChanged', {
+        locale: normalized,
+        language: getLanguageCode(normalized),
+        direction: getDirection(normalized),
+        source: 'site',
+      })
+      for (const cb of stateListeners) {
+        try { cb({ runtimeConfig }) } catch (e) { console.error('[OyeChats] state handler error:', e) }
+      }
+    },
+    // The React layer reports the locale it actually resolved and rendered, so
+    // OyeChats.getLocale() answers with the live value rather than only what
+    // the host page requested. Kept as a plain setter to avoid importing the
+    // translation store into this eagerly-bundled module.
+    reportActiveLocale(loc) {
+      const normalized = normalizeLocale(loc)
+      if (normalized) activeLocale = normalized
+    },
+    getLocale() {
+      return activeLocale || runtimeConfig.locale || DEFAULT_LOCALE
     },
     getVisitor()       { return visitor },
     getRuntimeConfig() { return runtimeConfig },

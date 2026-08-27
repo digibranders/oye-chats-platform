@@ -7,6 +7,7 @@ import { BrandingSection } from './BrandingSection';
 import { MessagesSection } from './MessagesSection';
 import { VoiceSection } from './VoiceSection';
 import { HandoffSection } from './HandoffSection';
+import { LanguageSection } from './LanguageSection';
 import { PreviewPanel } from './PreviewPanel';
 import { isSectionKey, SECTION_KEYS, SECTION_LABELS, summarizeSections, type SectionKey } from './experience-model';
 
@@ -138,7 +139,10 @@ export function ExperiencePage(): ReactElement {
     );
   }
 
-  if (experience.status === 'error' || !experience.draft || !experience.meta) {
+  // `baseline` is loaded with `draft`, but narrowing it needs saying: the
+  // Language section compares the two to warn about turning multilingual off
+  // on a live widget.
+  if (experience.status === 'error' || !experience.draft || !experience.baseline || !experience.meta) {
     return (
       <Page width="wide">
         {header}
@@ -152,7 +156,7 @@ export function ExperiencePage(): ReactElement {
     );
   }
 
-  const { draft, meta, errors, readOnly } = experience;
+  const { draft, baseline, meta, errors, readOnly } = experience;
   const blocked = Object.keys(errors).length > 0;
   const tabs = tabItems(experience.dirtySections);
 
@@ -193,6 +197,7 @@ export function ExperiencePage(): ReactElement {
                         meta={meta}
                         errors={errors}
                         readOnly={readOnly}
+                        agentId={experience.agentId}
                         onChange={experience.update}
                       />
                     ) : null}
@@ -214,6 +219,14 @@ export function ExperiencePage(): ReactElement {
                         readOnly={readOnly}
                         onChange={experience.update}
                         onServerCommit={experience.commitServerValues}
+                      />
+                    ) : null}
+                    {item.value === 'language' ? (
+                      <LanguageSection
+                        draft={draft}
+                        baseline={baseline}
+                        readOnly={readOnly}
+                        onChange={experience.update}
                       />
                     ) : null}
                     {item.value === 'handoff' ? (

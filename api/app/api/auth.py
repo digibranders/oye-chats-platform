@@ -966,6 +966,12 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "user_bubble_color": bot.user_bubble_color,
         "bant_enabled": bot.bant_enabled,
         "bant_config": bot.bant_config,
+        # Quotation catalog — the admin-defined service list + BANT trigger for
+        # the pre-handoff quote flow. Omitting it here silently strips the
+        # column on every cache hit, which flips ``catalog.enabled`` to False
+        # in quotation_routes and the widget's quote card never fires (root
+        # cause of the "quote not showing" bug tracked to 2026-08-22).
+        "quotation_catalog": bot.quotation_catalog,
         "avatar_type": bot.avatar_type,
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
@@ -1032,6 +1038,7 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "meeting_provider": bot.meeting_provider,
         "meeting_booking_enabled": bot.meeting_booking_enabled,
         "feature_flags": bot.feature_flags,
+        "language_config": getattr(bot, "language_config", None),
         "widget_messages": bot.widget_messages,
         "widget_config": bot.widget_config,
         "branding_text": bot.branding_text,

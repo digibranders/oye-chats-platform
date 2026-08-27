@@ -1,3 +1,7 @@
+
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
+
 /**
  * Pure derivations behind the Journeys diagram's outcome column.
  *
@@ -39,13 +43,13 @@ export function isFilterableOutcome(id: string): id is FilterableOutcome {
 export function outcomeLabel(id: string): string {
   switch (id) {
     case 'meeting_booked':
-      return 'Meeting booked';
+      return translateNow('analytics.outcomeMeetingBooked') || 'Meeting booked';
     case 'handoff_requested':
-      return 'Live chat';
+      return translateNow('analytics.outcomeLiveChat') || 'Live chat';
     case 'offline_message_sent':
-      return 'Offline message';
+      return translateNow('analytics.outcomeOfflineMessage') || 'Offline message';
     case 'exit':
-      return 'Drop-off';
+      return translateNow('analytics.outcomeDropOff') || 'Drop-off';
     default:
       return id;
   }
@@ -114,11 +118,20 @@ export function deriveDropOffTotal(data: DropOffInput): DropOffTotal {
  * plans against it as if it were measured.
  */
 export function dropOffTooltip(total: DropOffTotal): string {
-  const sessions = `${total.count.toLocaleString()} ${total.count === 1 ? 'session' : 'sessions'}`;
+  const count = formatNumber(total.count);
+  const sessions =
+    translateNow(total.count === 1 ? 'analytics.sessionOne' : 'analytics.sessionMany', { count }) ||
+    `${count} session${total.count === 1 ? '' : 's'}`;
   if (total.basis === 'reported') {
-    return `${sessions} opened chat and then did nothing, no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`;
+    return (
+      translateNow('analytics.dropOffReported', { sessions }) ||
+      `${sessions} opened chat and then did nothing, no conversion and no further page views. Individual drop-off journeys aren't attributed, so this card can't be opened as a path filter.`
+    );
   }
-  return `Estimate: ${sessions}. This API build doesn't report the exact drop-off count, so it's total sessions minus conversions minus post-chat browsing. Sessions that did both are subtracted twice, so the real figure may be higher.`;
+  return (
+    translateNow('analytics.dropOffEstimate', { sessions }) ||
+    `Estimate: ${sessions}. This API build doesn't report the exact drop-off count, so it's total sessions minus conversions minus post-chat browsing. Sessions that did both are subtracted twice, so the real figure may be higher.`
+  );
 }
 
 // ── Empty-state copy ────────────────────────────────────────────────────────
@@ -137,19 +150,29 @@ export interface FilterEmptyInput {
 /** Description for the "no journeys match this filter" state. */
 export function filterEmptyDescription(input: FilterEmptyInput): string {
   if (!input.hasTrackedJourneys) {
-    return 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
+    return translateNow('analytics.noPageJourneysWereTracked') || 'No page journeys were tracked in this window. This view needs visitors who browsed at least one page before opening chat.';
   }
-  const scope = input.startPage ? ` starting on ${input.startPage}` : '';
+  const scope = input.startPage
+    ? ` ${translateNow('analytics.scopeStartingOn', { page: input.startPage }) || `starting on ${input.startPage}`}`
+    : '';
   if (input.outcome) {
     // "Attributed to", not "ended in": a conversion whose session had no
     // tracked pre-chat page still counts on the outcome card but has no path
     // to show here. Claiming none ended in it would be false.
-    return `No tracked journeys are attributed to ${outcomeLabel(input.outcome)} in this window${scope}.`;
+    return (
+      translateNow('analytics.noJourneysForOutcome', {
+        outcome: outcomeLabel(input.outcome),
+        scope,
+      }) || `No tracked journeys are attributed to ${outcomeLabel(input.outcome)} in this window${scope}.`
+    );
   }
   if (input.startPage) {
-    return `No tracked journeys started on ${input.startPage} in this window.`;
+    return (
+      translateNow('analytics.noJourneysFromPage', { page: input.startPage }) ||
+      `No tracked journeys started on ${input.startPage} in this window.`
+    );
   }
-  return 'No tracked journeys match the current filters.';
+  return translateNow('analytics.noTrackedJourneysMatchThe') || 'No tracked journeys match the current filters.';
 }
 
 // ── Outcome buckets ─────────────────────────────────────────────────────────

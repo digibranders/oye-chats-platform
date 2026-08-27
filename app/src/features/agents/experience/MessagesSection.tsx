@@ -18,6 +18,7 @@ import {
   buttonClass,
 } from '../../../ui';
 import { useEntitlements } from '../../../hooks/useEntitlements';
+import { CustomCopyNotice } from './CustomCopyNotice';
 import { errorMessage, fetchSuggestedQuestions } from './experience-api';
 import {
   LIMITS,
@@ -150,6 +151,10 @@ export function MessagesSection({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Above the fields, not under them: it changes what the customer is
+          about to write, so it has to be read before they write it. */}
+      <CustomCopyNotice multilingual={draft.multilingualEnabled} />
+
       <Card>
         <CardHeader
           eyebrow="Identity"

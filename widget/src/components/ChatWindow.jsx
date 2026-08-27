@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
-import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
+import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured, writeLocale } from '../services/storage-keys';
 import { setSmartLinkUrls, setSmartLinkSession } from '../services/smartLinks';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
@@ -19,6 +19,11 @@ import QualifiedLeadCard from './QualifiedLeadCard';
 import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
+import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCode } from '../i18n/i18n.js';
+import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
+import { displayTextFor } from '../lib/liveChatTranslation.js';
+import { isInvalidTransition, nextChatMode } from '../lib/chatModeMachine.js';
+import { formatHeaderDateTime } from '../i18n/formatters.js';
 
 // Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean. lazyWithRetry + the ErrorBoundary wrapping each
@@ -28,10 +33,31 @@ const LeadCaptureForm = lazyWithRetry(() => import('./LeadCaptureForm'));
 const HandoffForm = lazyWithRetry(() => import('./HandoffForm'));
 const LiveChatMode = lazyWithRetry(() => import('./LiveChatMode'));
 const MeetingBooking = lazyWithRetry(() => import('./MeetingBooking'));
+const QuotationFlow = lazyWithRetry(() => import('./QuotationFlow'));
+const LanguageSelector = lazyWithRetry(() => import('./LanguageSelector'));
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+// Stable identifiers for system dividers. Several effects add and later remove
+// the "connecting" divider; they used to find it by comparing `m.text` against
+// an English string literal, which silently stopped matching the moment that
+// copy was translated. Match on `systemId` instead, so the identity of a system
+// message is independent of the language it is rendered in.
+const SYSTEM_MSG = {
+    CONNECTING: 'connecting',
+};
+
+const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === systemId;
+
+// Trailing sentences the bot's LLM tends to append when it thinks a handoff
+// is imminent. If the quotation card is about to render, we strip this off
+// the last bot message so the visitor doesn't see the invitation AND the
+// quote card competing side-by-side. On Skip the stashed text is replayed
+// as its own bot message so the follow-up still lands, just AFTER the
+// quote decision.
+const HANDOFF_INVITATION_TAIL_RE = /\n?\s*(would you like (me )?to (connect|introduce|arrange)|shall i connect|should i connect|do you want me to connect|can i connect you|would you like to (chat|speak) with (our|the) team|would you like to talk to (our|the) team|would you like me to loop in (our|the) team|let me know if you'?d like me to (connect|introduce))[^.?!]*[.?!]?\s*$/i;
 
 // Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
@@ -41,16 +67,9 @@ const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure abo
 // a handoff submission while the resolver re-checks for operator availability.
 // From there it either rolls forward to `waiting` (operator found) or
 // `unavailable` (timeout. Show the compact message-only form).
-const _VALID_TRANSITIONS = {
-    // ``bot → live`` covers the operator-initiated connect-request consent
-    // flow: operator clicks Connect in the dashboard, the visitor accepts the
-    // popup, and the session promotes to live chat without ever queueing.
-    bot: ['waiting', 'unavailable', 'connecting', 'live'],
-    connecting: ['waiting', 'unavailable', 'bot'],
-    waiting: ['live', 'bot', 'unavailable'],
-    live: ['bot', 'unavailable'],
-    unavailable: ['bot'],
-};
+// The chat-mode state machine lives in lib/chatModeMachine.js so it can be
+// unit-tested. It was a private const here, which is why a missing transition
+// went unnoticed: exercising it needed a real browser and a timing race.
 
 // Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
 // e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
@@ -67,13 +86,23 @@ const sanitizeMarkdown = (text) => {
 // timestamp, "Alice left") stay on one line with side dividers; a long
 // sentence wraps to a centered pill without dividers, so it never forces the
 // chat panel wider than its container.
-const SystemMessage = ({ text }) => {
-    const isShort = typeof text === 'string' && text.length <= 28;
+// `textKey` + `textParams` are preferred over `text`: a system line created by
+// the client is resolved HERE, on every render, so a mid-session language
+// switch re-renders it in the new language. Resolving at creation time instead
+// would bake in whichever language was active when the transition happened and
+// leave a stranded English line above Hindi ones.
+//
+// `text` remains the fallback for lines that have no key: server-persisted
+// system rows replayed from history (their copy is authored backend-side) and
+// the timestamp divider, which is already locale-formatted by its caller.
+const SystemMessage = ({ text, textKey, textParams }) => {
+    const label = (textKey ? t(textKey, textParams) : null) || text || '';
+    const isShort = label.length <= 28;
     if (isShort) {
         return (
             <div className="flex items-center gap-2 my-2 px-4 min-w-0">
                 <div className="flex-1 h-px bg-gray-100" />
-                <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{text}</span>
+                <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{label}</span>
                 <div className="flex-1 h-px bg-gray-100" />
             </div>
         );
@@ -81,7 +110,7 @@ const SystemMessage = ({ text }) => {
     return (
         <div className="my-2 px-4 flex justify-center min-w-0">
             <span className="max-w-[85%] text-center text-[11px] leading-relaxed text-gray-400 font-medium break-words">
-                {text}
+                {label}
             </span>
         </div>
     );
@@ -99,8 +128,9 @@ const getInitials = (name) => {
 // prominent pill showing the operator's initials, name, department, and time.
 // Mirrors the bot-identity badge style so the live-chat handoff feels like a
 // natural identity swap rather than a silent system event.
-const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
+const OperatorJoinedNotice = ({ name, department, avatarUrl, timestamp, settings }) => {
     const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
+    const [imgOk, setImgOk] = useState(!!avatarUrl);
     const timeLabel = (() => {
         if (!timestamp) return '';
         const d = new Date(timestamp);
@@ -113,22 +143,33 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
                 className="inline-flex items-center gap-2.5 rounded-full pl-1.5 pr-3.5 py-1.5 bg-white border shadow-sm"
                 style={{ borderColor: `${primaryColor}26` }}
             >
-                <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0"
-                    style={{ backgroundColor: primaryColor }}
-                    aria-hidden="true"
-                >
-                    {getInitials(name)}
-                </div>
+                {avatarUrl && imgOk ? (
+                    <img
+                        src={avatarUrl}
+                        alt=""
+                        aria-hidden="true"
+                        onError={() => setImgOk(false)}
+                        className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+                    />
+                ) : (
+                    <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0"
+                        style={{ backgroundColor: primaryColor }}
+                        aria-hidden="true"
+                    >
+                        {getInitials(name)}
+                    </div>
+                )}
                 <div className="flex flex-col leading-tight">
                     <span className="text-[12px] font-semibold text-[#16202C]">
-                        {name || 'Our team'}
+                        {name || t('system.our_team') || 'Our team'}
                         {department ? (
                             <span className="font-normal text-gray-500"> · {department}</span>
                         ) : null}
                     </span>
                     <span className="text-[10px] text-gray-400">
-                        joined the chat{timeLabel ? ` · ${timeLabel}` : ''}
+                        {t('system.joined_the_chat') || 'joined the chat'}
+                        {timeLabel ? ` · ${timeLabel}` : ''}
                     </span>
                 </div>
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" aria-hidden="true" />
@@ -144,8 +185,8 @@ const DateSeparator = ({ date }) => {
         const today = new Date();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
-        if (d.toDateString() === today.toDateString()) return 'Today';
-        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+        if (d.toDateString() === today.toDateString()) return t('system.today') || 'Today';
+        if (d.toDateString() === yesterday.toDateString()) return t('system.yesterday') || 'Yesterday';
         return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     })();
     return (
@@ -157,12 +198,12 @@ const DateSeparator = ({ date }) => {
     );
 };
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage, initialLocaleSource = null }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
             id: 'welcome',
-            text: "Hi There, How can I help you today?",
+            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null
@@ -199,6 +240,49 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => readSessionId());
+    const [currentLocale, setCurrentLocale] = useState(() => getLocale());
+    const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+    // How the active locale was chosen. Sent to the backend on every turn as
+    // `language_source`; 'explicit' is what makes the backend lock the session
+    // language against later re-detection.
+    const [localeSource, setLocaleSource] = useState(initialLocaleSource || 'default');
+
+    useEffect(() => {
+        return onLocaleChange(({ locale }) => setCurrentLocale(locale));
+    }, []);
+
+    const handleSelectLocale = useCallback(async (newLocale) => {
+        // Apply optimistically so the UI switches immediately, then reconcile
+        // with whatever the backend says is authoritative. The backend may
+        // narrow the tag (fr-CA against a bot that supports only fr-FR), and
+        // rendering a locale the session does not actually hold would leave the
+        // widget and the conversation disagreeing.
+        setI18nLocale(newLocale);
+        setCurrentLocale(newLocale);
+        setLocaleSource('explicit');
+        writeLocale(newLocale, 'explicit');
+        getController().setLocale(newLocale);
+        getController().reportActiveLocale(newLocale);
+
+        if (!sessionId) {
+            // No session yet: the choice is still authoritative. It rides the
+            // first /chat/stream call as language_source='explicit', which is
+            // what locks it when the session row is created.
+            return;
+        }
+        try {
+            const result = await changeSessionLanguage(sessionId, newLocale);
+            const effective = result?.locale;
+            if (effective && effective !== newLocale) {
+                setI18nLocale(effective);
+                setCurrentLocale(effective);
+                writeLocale(effective, 'explicit');
+                getController().reportActiveLocale(effective);
+            }
+        } catch (err) {
+            console.warn('[OyeChats] Session language update failed (non-fatal):', err);
+        }
+    }, [sessionId]);
 
     // Smart links: register the bot's smart-link destinations and bind the
     // click registry to the active conversation. Once the visitor clicks a
@@ -223,14 +307,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [chatMode, setChatModeRaw] = useState('bot');
     const setChatMode = useCallback((next) => {
         setChatModeRaw(prev => {
-            const allowed = _VALID_TRANSITIONS[prev];
-            if (allowed && allowed.includes(next)) return next;
-            console.warn(`[OyeChats] Invalid chatMode transition: ${prev} → ${next}`);
-            return prev;
+            if (isInvalidTransition(prev, next)) {
+                console.warn(`[OyeChats] Invalid chatMode transition: ${prev} → ${next}`);
+                return prev;
+            }
+            return nextChatMode(prev, next);
         });
     }, []);
     const [operatorName, setOperatorName] = useState(null);
     const [operatorDepartment, setOperatorDepartment] = useState(null);
+    const [operatorAvatar, setOperatorAvatar] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [hasMoreHistory, setHasMoreHistory] = useState(false);
@@ -312,10 +398,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineError, setOfflineError] = useState(false);
     // Real-time email check on blur. 'idle' | 'checking' | 'valid' | 'invalid'.
+    // PRESENTATION ONLY: it drives the spinner and the disabled state. The
+    // submit gate is keyed on the address in the field, never on this flag,
+    // which describes whichever address was checked last.
     const [offlineEmailCheckState, setOfflineEmailCheckState] = useState('idle');
     const [offlineEmailError, setOfflineEmailError] = useState('');
-    const offlineEmailCheckPromiseRef = useRef(null);
-    const offlineLastCheckedEmailRef = useRef('');
+    // Latest value in the field, so an in-flight check can tell whether its
+    // verdict still applies to what the visitor has typed.
+    const offlineEmailValueRef = useRef('');
 
     // WS function handles exposed by LiveChatMode via onWsReady
     const wsSendRef = useRef(null);
@@ -587,7 +677,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (initialSettings) {
                 setSettings(initialSettings);
                 setMessages(prev => prev.map(m =>
-                    m.id === 'welcome' ? { ...m, text: `Hi There, How can I help you today?` } : m
+                    m.id === 'welcome'
+                        ? { ...m, text: t('welcome.initial_message') || 'Hi There, How can I help you today?' }
+                        : m
                 ));
             }
 
@@ -616,7 +708,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     if (history && history.length > 0) {
                         const mapped = history.map(m => ({
                             id: m.id,
-                            text: m.content,
+                            // Prefer the persisted translation for this visitor's
+                            // language (Phase 4). An operator reply is stored in
+                            // the OPERATOR's language, so reading `content` here
+                            // put the English original in the bot-history list
+                            // while LiveChatMode restored the Hindi translation
+                            // into the live list, and the visitor saw the same
+                            // reply twice in two languages. Same helper as the
+                            // live path so both lists always agree.
+                            text: displayTextFor(m, getLocale()),
                             sender: m.role === 'user' ? 'user' : 'bot',
                             timestamp: m.timestamp,
                             feedback: typeof m.feedback === 'number' ? m.feedback : null,
@@ -662,6 +762,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setChatModeRaw('live');
                         if (sessionStatus.operator_name) {
                             setOperatorName(sessionStatus.operator_name);
+                        }
+                        if (sessionStatus.operator_avatar) {
+                            setOperatorAvatar(sessionStatus.operator_avatar);
                         }
                     }
                 } catch { /* non-critical */ }
@@ -765,18 +868,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (operatorName && !prevOperatorNameRef.current) {
             setMessages(prev => [
-                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...')),
+                ...prev.filter(m => !isSystemMessage(m, SYSTEM_MSG.CONNECTING)),
                 {
                     id: `sys-joined-${Date.now()}`,
                     type: 'operator_joined',
                     operatorName,
                     operatorDepartment,
+                    operatorAvatar,
                     timestamp: new Date().toISOString(),
                 }
             ]);
         }
         prevOperatorNameRef.current = operatorName;
-    }, [operatorName, operatorDepartment]);
+    }, [operatorName, operatorDepartment, operatorAvatar]);
 
     // Strip the "Connecting…" system divider once the offline-message form
     // takes over (handoff timed out or the user chose "Leave a message").
@@ -784,10 +888,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // duplicates intent that no longer matches the state.
     useEffect(() => {
         if (chatMode !== 'unavailable') return;
-        setMessages(prev => prev.some(
-            m => m.type === 'system' && m.text === 'Connecting you with our team...'
-        )
-            ? prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...'))
+        setMessages(prev => prev.some(m => isSystemMessage(m, SYSTEM_MSG.CONNECTING))
+            ? prev.filter(m => !isSystemMessage(m, SYSTEM_MSG.CONNECTING))
             : prev);
     }, [chatMode]);
 
@@ -804,9 +906,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const retryTimer = setTimeout(async () => {
             if (cancelled) return;
             try {
+                // Availability probe only. Pass the contact the visitor
+                // already submitted through the validated handoff form, and
+                // nothing else: ``requestHandoff`` captures a lead as a side
+                // effect, so anything half-typed handed to it here is a lead
+                // row the visitor never submitted. See the offline-form poll
+                // below, where the same fallback was writing rejected
+                // addresses.
                 const retry = await requestHandoff(sessionId, {
-                    name: liveChatState?.capturedName || offlineForm.name,
-                    email: liveChatState?.capturedEmail || offlineForm.email,
+                    name: liveChatState?.capturedName || '',
+                    email: liveChatState?.capturedEmail || '',
                 });
                 if (cancelled) return;
                 const retryAction = retry?.suggested_action;
@@ -839,9 +948,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             clearTimeout(retryTimer);
             clearTimeout(fallbackTimer);
         };
-        // sessionId / form fields are stable for the duration of this
-        // connecting window; we intentionally don't re-run the timer on
-        // every keystroke. eslint-disable to silence the exhaustive-deps warn.
+        // sessionId and the captured contact are stable for the duration of
+        // this connecting window, and the timer must not restart when they
+        // settle. eslint-disable to silence the exhaustive-deps warn.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatMode]);
 
@@ -930,9 +1039,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     //             the copy. Clients found "you can leave a message
     //             instead" too pushy in the waiting state)
     const getWaitingMessage = () => {
-        if (waitingSeconds >= 23) return 'Taking a bit longer than usual. Hang tight';
-        if (waitingSeconds >= 12) return 'Still connecting. Our team will be right with you';
-        return settings.waiting_message || 'Please wait a moment';
+        if (waitingSeconds >= 23) return t('system.waiting_longer') || 'Taking a bit longer than usual. Hang tight';
+        if (waitingSeconds >= 12) return t('system.waiting_still_connecting') || 'Still connecting. Our team will be right with you';
+        // Same three cases as the welcome screen: authored wins verbatim, the
+        // backend's seeded wording gets translated, and a genuinely empty field
+        // falls back to the widget's own shorter line.
+        if (settings.waiting_message?.trim()) {
+            return (
+                authoredCopy(settings.waiting_message, SEEDED.waiting_message)
+                || t('presets.waiting_message')
+                || SEEDED.waiting_message
+            );
+        }
+        return t('system.waiting_default') || 'Please wait a moment';
     };
 
     // ── Welcome exit ─────────────────────────────────────────────────────────────
@@ -980,7 +1099,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             await sendTranscriptEmail(sessionId, transcriptEmail.trim());
             setTranscriptSent(true);
         } catch (err) {
-            setTranscriptError(err.message || 'Failed to send transcript');
+            setTranscriptError(
+                err.message || t('system.transcript_failed') || 'Failed to send transcript'
+            );
         } finally {
             setTranscriptSending(false);
         }
@@ -997,7 +1118,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (earlier && earlier.length > 0) {
                 const mapped = earlier.map(m => ({
                     id: m.id,
-                    text: m.content,
+                    // Same rule as the initial history load above: paging back
+                    // through a translated conversation must not switch language
+                    // partway up the thread.
+                    text: displayTextFor(m, getLocale()),
                     sender: m.role === 'user' ? 'user' : 'bot',
                     timestamp: m.timestamp,
                     feedback: null,
@@ -1026,7 +1150,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const handleClearMessages = () => {
         setMessages([{
             id: 'welcome',
-            text: `Hi There, How can I help you today?`,
+            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null,
@@ -1067,7 +1191,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setTimeout(() => {
             setMessages([{
                 id: 'welcome',
-                text: `Hi There, How can I help you today?`,
+                text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
@@ -1077,6 +1201,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setShowWelcomeBackBanner(true);
             setChatMode('bot');
             setOperatorName(null);
+            setOperatorAvatar(null);
             setIsInitializing(false);
         }, 600);
     };
@@ -1114,6 +1239,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             await sendMessageStream(userMsg.text, sessionId, {
                 ctaDimension,
+                locale: currentLocale,
+                language: getLanguageCode(currentLocale),
+                languageSource: localeSource,
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
@@ -1156,7 +1284,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         });
                     }
                 },
-                onFinalMetadata: (finalMeta) => {
+                onFinalMetadata: async (finalMeta) => {
                     // Flush any buffered chunks to state BEFORE processing metadata.
                     // Prevents the handoff form from appearing while text is still
                     // waiting in the rAF buffer (race condition: truncated response).
@@ -1222,6 +1350,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             triggerHandoff();
                             handoffTriggeredRef.current = false;
                         }, delay);
+                    } else if (!handoffFormInjectedRef.current) {
+                        // No explicit handoff intent this turn, but BANT may have
+                        // just crossed the quotation threshold on the previous
+                        // message (extraction runs async after stream close). Poll
+                        // proactively so the visitor sees the quote card WITHOUT
+                        // having to type "connect me". Handoff-intent turns keep
+                        // their existing path (above); this branch only covers the
+                        // "bot mentioned quoting on its own" case.
+                        const activeSessionId = sessionId || readSessionId({ shareDomain });
+                        if (activeSessionId) {
+                            const injected = await maybeInjectQuotation(activeSessionId);
+                            if (injected) {
+                                handoffFormInjectedRef.current = true;
+                            }
+                        }
                     }
                 },
                 onError: (err) => {
@@ -1231,10 +1374,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     // billing terms. These messages are deliberately neutral.
                     const friendly =
                         err?.status === 402
-                            ? "We're temporarily over capacity for this chatbot. Please try again later or reach us by email."
+                            ? (t('system.error_over_capacity')
+                                || 'We’re temporarily over capacity for this chatbot. Please try again later or reach us by email.')
                             : err?.status === 503
-                            ? "We're briefly offline for maintenance. Please try again in a few minutes."
-                            : "I'm sorry, I couldn't generate a response. Please try again.";
+                            ? (t('system.error_maintenance')
+                                || 'We’re briefly offline for maintenance. Please try again in a few minutes.')
+                            : (t('system.error_generic')
+                                || 'I’m sorry, I couldn’t generate a response. Please try again.');
                     if (placeholderId !== null) {
                         setMessages(prev => prev.map(msg => {
                             if (msg.id !== placeholderId) return msg;
@@ -1295,7 +1441,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setIsTyping(false);
             setMessages(prev => [...prev, {
                 id: Date.now() + 2,
-                text: "I'm sorry, I couldn't generate a response. Please try again.",
+                text: t('system.error_generic')
+                    || 'I’m sorry, I couldn’t generate a response. Please try again.',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
@@ -1376,22 +1523,172 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'unavailable') refreshLeadInfo();
     }, [chatMode, refreshLeadInfo]);
 
-    const triggerHandoff = useCallback(() => {
-        if (!sessionId) {
-            const newSession = `session_${crypto.randomUUID()}`;
-            setSessionId(newSession);
-            writeSessionId(newSession, { shareDomain });
+    // Stashed handoff invitation text pulled off the last bot message when
+    // the quote card fires. Restored as a new bot message on Skip.
+    const strippedHandoffTextRef = useRef(null);
+
+    const injectQuotationFlow = useCallback((initialState) => {
+        setMessages(prev => {
+            if (prev.some(m => m.type === 'quotation_flow' && m.status === 'active')) return prev;
+            // Peel any trailing handoff-invitation sentence off the last bot
+            // message (walking backwards past cards / typing indicators so we
+            // don't accidentally target a system row). Idempotent on repeated
+            // injections since after the first strip the regex no longer matches.
+            let stripped = null;
+            const updated = prev.map((msg) => msg);
+            for (let i = updated.length - 1; i >= 0; i -= 1) {
+                const m = updated[i];
+                if (m.sender !== 'bot' || m.type || !m.text) continue;
+                const match = m.text.match(HANDOFF_INVITATION_TAIL_RE);
+                if (match) {
+                    stripped = match[0].trim();
+                    updated[i] = { ...m, text: m.text.slice(0, match.index).trimEnd() };
+                }
+                break;
+            }
+            strippedHandoffTextRef.current = stripped;
+            return [
+                ...updated.filter((m) => m.type !== 'quotation_flow'),
+                {
+                    id: 'quotation-flow',
+                    type: 'quotation_flow',
+                    status: 'active',
+                    initialState,
+                    timestamp: new Date().toISOString(),
+                },
+            ];
+        });
+        // The card is lazy-imported (Suspense fallback={null}), so it mounts
+        // empty and grows after its chunk resolves. Land the visitor directly
+        // on it rather than leaving it below the fold behind the "scroll to
+        // latest" chevron — same multi-stop pattern as injectHandoffForm:
+        // 60ms covers a warm chunk cache, 280ms a cold import, 600ms a slow
+        // network.
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (messagesArea) {
+            [60, 280, 600].forEach((delay) => {
+                setTimeout(() => {
+                    const area = containerRef.current?.querySelector('[data-messages-area]');
+                    area?.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+                }, delay);
+            });
+        }
+    }, []);
+
+    // Try quotation next in the pre-handoff chain. Returns true when the
+    // quotation card was injected (caller must NOT fall through to handoff).
+    const maybeInjectQuotation = useCallback(async (activeSessionId) => {
+        // BANT extraction is an async LLM call after the stream closes —
+        // measured 2.5s-4.0s in practice (mega bot sample: 2.45/2.55/2.96/
+        // 3.04/3.61/3.87/3.99s). This poll is silent (no visible loading
+        // state), so widening it doesn't cost perceived speed — it just
+        // avoids missing the quote when it arrives at, say, 3.6s. A 2s cap
+        // was tried and reliably missed the mark; don't go back below ~4.5s
+        // total without re-measuring extraction latency first.
+        const POLL_DELAYS_MS = [0, 700, 1000, 1300, 1500];
+        for (const delay of POLL_DELAYS_MS) {
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+            try {
+                const quoteState = await getQuotationState(activeSessionId);
+                if (quoteState && (quoteState.status === 'complete' || quoteState.status === 'skipped')) {
+                    return false;
+                }
+                if (quoteState && quoteState.active) {
+                    injectQuotationFlow(quoteState);
+                    return true;
+                }
+            } catch {
+                // keep polling
+            }
+        }
+        return false;
+    }, [injectQuotationFlow]);
+
+    const triggerHandoff = useCallback(async () => {
+        // Ensure we have a session id, and use the FRESHEST value (React state
+        // may still be stale on the first turn). writeSessionId keeps the
+        // widget's storage in sync so the async retry loop below can re-read
+        // it if state hasn't rebuilt yet.
+        let activeSessionId = sessionId || readSessionId({ shareDomain });
+        if (!activeSessionId) {
+            activeSessionId = `session_${crypto.randomUUID()}`;
+            setSessionId(activeSessionId);
+            writeSessionId(activeSessionId, { shareDomain });
         }
         if (handoffFormInjectedRef.current) return;
+
+        // Pre-handoff quotation gate. BANT extraction runs async AFTER the
+        // LLM stream closes (see rag_service._background_bant_extraction), so
+        // the marked-count is often still behind by one turn when the visitor
+        // asks to connect. The maybeInjectQuotation helper polls a few times
+        // with short spacing before falling through to the plain handoff.
         handoffFormInjectedRef.current = true;
+        if (showWelcome) exitWelcome();
+        const injectedQuote = await maybeInjectQuotation(activeSessionId);
+        if (injectedQuote) return;
 
         if (showWelcome) {
-            exitWelcome();
             setTimeout(injectHandoffForm, WELCOME_EXIT_DURATION);
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, shareDomain]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain]);
+
+    // When the visitor submits their email at the end of the quote, don't
+    // force the handoff form — drop a thank-you card in the chat with a
+    // "Connect now" action instead, and let them take it or keep chatting.
+    // On Skip, replay the invitation sentence we stripped when the quote
+    // card fired and hand control back to the normal conversation. Either
+    // way, BANT/explicit "talk to human" intent (triggerHandoff /
+    // suggest_handoff) still decides if and when the handoff form appears
+    // on its own, same as if the quote card had never interrupted.
+    const handleQuotationFlowComplete = useCallback(({ status } = {}) => {
+        setMessages(prev => {
+            const next = prev.map(m =>
+                m.type === 'quotation_flow' ? { ...m, status: 'completed' } : m,
+            );
+            if (status === 'skipped' && strippedHandoffTextRef.current) {
+                next.push({
+                    id: `bot-followup-${Date.now()}`,
+                    text: strippedHandoffTextRef.current,
+                    sender: 'bot',
+                    timestamp: new Date().toISOString(),
+                    feedback: null,
+                });
+            }
+            if (status === 'complete') {
+                next.push({
+                    id: `quotation-thankyou-${Date.now()}`,
+                    type: 'quotation_thankyou',
+                    status: 'active',
+                    timestamp: new Date().toISOString(),
+                });
+            }
+            return next;
+        });
+        strippedHandoffTextRef.current = null;
+        handoffFormInjectedRef.current = false;
+
+        // Pre-warm the lead info (name + the email just captured) so it's
+        // ready the instant the visitor clicks "Connect now" below.
+        if (status === 'complete') refreshLeadInfo();
+    }, [refreshLeadInfo]);
+
+    const handleQuotationConnectNow = useCallback((thankyouMsgId) => {
+        setMessages(prev => prev.map(m =>
+            m.id === thankyouMsgId ? { ...m, status: 'completed' } : m,
+        ));
+        injectHandoffForm();
+        handoffFormInjectedRef.current = true;
+    }, [injectHandoffForm]);
+
+    // Visitor dismisses the post-quote thank-you card without connecting —
+    // just hide it and keep chatting with the bot.
+    const handleQuotationDismiss = useCallback((thankyouMsgId) => {
+        setMessages(prev => prev.map(m =>
+            m.id === thankyouMsgId ? { ...m, status: 'completed' } : m,
+        ));
+    }, []);
 
     const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
     // Live chat availability state from the backend resolver. Set on the
@@ -1464,6 +1761,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connecting-${Date.now()}`,
                         type: 'system',
+                        systemId: SYSTEM_MSG.CONNECTING,
+                        textKey: 'system.connecting_team',
                         text: 'Connecting you with our team...',
                         timestamp: new Date().toISOString(),
                     },
@@ -1504,6 +1803,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-connecting-${Date.now()}`,
                     type: 'system',
+                    systemId: SYSTEM_MSG.CONNECTING,
+                    textKey: 'system.connecting_team',
                     text: 'Connecting you with our team...',
                     timestamp: new Date().toISOString(),
                 }
@@ -1517,6 +1818,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-handoff-err-${Date.now()}`,
                     type: 'system',
+                    textKey: 'system.handoff_failed',
                     text: 'Unable to connect with our team right now. Please try again.',
                     timestamp: new Date().toISOString(),
                 },
@@ -1592,8 +1894,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         try {
             const res = await respondToConnectRequest(sessionId, true, connectRequest.request_id);
             if (res?.ok && res.result === 'accepted') {
-                const opName = res.operator_name || connectRequest.operator_name || 'Our team';
+                const opName = res.operator_name
+                    || connectRequest.operator_name
+                    || t('system.our_team')
+                    || 'Our team';
                 setOperatorName(opName);
+                setOperatorAvatar(res.operator_avatar || connectRequest.operator_avatar || null);
                 setLiveChatState({
                     suggestedAction: 'accepted',
                     state: 'AVAILABLE',
@@ -1603,6 +1909,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connect-accept-${Date.now()}`,
                         type: 'system',
+                        textKey: 'system.operator_joined_conversation',
+                        textParams: { name: opName },
                         text: `${opName} has joined the conversation.`,
                         timestamp: new Date().toISOString(),
                     },
@@ -1615,6 +1923,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connect-stale-${Date.now()}`,
                         type: 'system',
+                        textKey: 'system.invitation_expired',
                         text: 'That invitation expired before we could connect you.',
                         timestamp: new Date().toISOString(),
                     },
@@ -1691,14 +2000,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         let cancelled = false;
         const poll = async () => {
             try {
+                // Availability probe only, so it carries ONLY contact the
+                // visitor has already submitted through a validated form.
+                //
+                // ``requestHandoff`` fires ``submitLeadCapture`` as a side
+                // effect whenever it is given a name or an email, and this
+                // runs every 15s while the visitor is still typing. Falling
+                // back to ``offlineForm`` therefore persisted an address the
+                // blur check may have just REJECTED, and let the visitor
+                // carry it into live chat by accepting the toast below. The
+                // offline form captures its own contact when it is
+                // submitted, which is the point the address has passed the
+                // gate.
                 const res = await requestHandoff(sessionId, {
-                    name: liveChatState?.capturedName || offlineForm.name,
-                    email: liveChatState?.capturedEmail || offlineForm.email,
+                    name: liveChatState?.capturedName || '',
+                    email: liveChatState?.capturedEmail || '',
                 });
                 if (cancelled) return;
                 const action = res?.suggested_action;
                 if (action === 'route' || action === 'wait') {
-                    const opName = res?.online_operator_name || res?.operator_name || 'Someone from our team';
+                    const opName = res?.online_operator_name
+                        || res?.operator_name
+                        || t('system.someone_from_team')
+                        || 'Someone from our team';
                     setIncomingOperator(opName);
                     setLiveChatState(prev => ({
                         ...(prev || {}),
@@ -1731,6 +2055,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {
                 id: `sys-connecting-${Date.now()}`,
                 type: 'system',
+                systemId: SYSTEM_MSG.CONNECTING,
+                textKey: 'system.connecting_team',
                 text: 'Connecting you with our team...',
                 timestamp: new Date().toISOString(),
             },
@@ -1817,6 +2143,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         leaveMessageCardShownRef.current = false;
         setChatMode('bot');
         setOperatorName(null);
+        setOperatorAvatar(null);
         handoffFormInjectedRef.current = false;
         setMessages(prev => {
             const now = Date.now();
@@ -1825,13 +2152,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 next.push({
                     id: `sys-offline-recorded-${now}`,
                     type: 'system',
-                    text: "Your message has been recorded. We'll get back to you shortly.",
+                    textKey: 'system.offline_recorded',
+                    text: 'Your message has been recorded. We’ll get back to you shortly.',
                     timestamp: new Date().toISOString(),
                 });
             }
             next.push({
                 id: now,
-                text: 'Thanks for reaching out to our support! Feel free to ask me anything.',
+                text: t('system.back_to_bot_greeting')
+                    || 'Thanks for reaching out to our support! Feel free to ask me anything.',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null,
@@ -1849,6 +2178,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setMessages(prev => [...prev, {
                 id: `sys-left-${Date.now()}`,
                 type: 'system',
+                textKey: 'system.operator_left_named',
+                textParams: { name: departingOperator },
                 text: `${departingOperator} left`,
                 timestamp: new Date().toISOString(),
             }]);
@@ -1882,6 +2213,31 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     };
 
+    // ── Offline form shape ───────────────────────────────────────────────────
+    //
+    // Derived from EXTERNAL sources only (never from ``offlineForm`` state) so
+    // typing into the message field can't flip the gate and unmount inputs
+    // mid-keystroke. Hoisted out of the render branch below because the submit
+    // handler needs the same answer: whether the email input is on screen is
+    // exactly what decides whether the visitor's address gets validated.
+    const offlineExternalName = (
+        liveChatState?.capturedName?.trim() ||
+        existingLeadInfo?.name?.trim() ||
+        ''
+    );
+    const offlineExternalEmail = (
+        liveChatState?.capturedEmail?.trim() ||
+        existingLeadInfo?.email?.trim() ||
+        ''
+    );
+    const offlineExternalPhone = existingLeadInfo?.phone?.trim() || '';
+    const isOfflineFormCompact = Boolean(offlineExternalName && offlineExternalEmail);
+
+    const offlineEmailValue = offlineForm.email || '';
+    useEffect(() => {
+        offlineEmailValueRef.current = offlineEmailValue;
+    }, [offlineEmailValue]);
+
     // ── Offline message submit ───────────────────────────────────────────────────
     const offlineLooksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -1889,60 +2245,61 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // fills in the remaining fields, same pattern as HandoffForm.
     const handleOfflineEmailBlur = () => {
         const email = offlineForm.email.trim();
-        if (!email || email === offlineLastCheckedEmailRef.current) return;
+        if (!email) return;
         if (!offlineLooksLikeEmail(email)) {
             setOfflineEmailCheckState('invalid');
-            setOfflineEmailError('Please enter a valid email address.');
+            setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
-        offlineLastCheckedEmailRef.current = email;
         setOfflineEmailCheckState('checking');
-        const promise = checkEmailWithServer(email).then((result) => {
-            if (offlineLastCheckedEmailRef.current !== email) return result;
+        checkEmailWithServer(email).then((result) => {
+            // A newer edit may have superseded this check. Only show the
+            // verdict while it still describes what's in the field.
+            if (offlineEmailValueRef.current.trim() !== email) return;
             if (result.valid) {
                 setOfflineEmailCheckState('valid');
                 setOfflineEmailError('');
             } else {
                 setOfflineEmailCheckState('invalid');
-                setOfflineEmailError(result.reason || 'Please enter a valid email address.');
+                setOfflineEmailError(
+                    result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
+                );
             }
-            return result;
         });
-        offlineEmailCheckPromiseRef.current = promise;
     };
 
     const handleOfflineSubmit = async (e) => {
         e.preventDefault();
 
-        // Skip the check entirely when the email is already known/trusted
-        // from an earlier step (compact form never even shows this input).
-        // Only a freshly-typed email in the full form needs validating.
-        const hasKnownEmail = Boolean(
-            liveChatState?.capturedEmail?.trim() || existingLeadInfo?.email?.trim()
-        );
-        if (!hasKnownEmail) {
+        // Validate whenever the visitor can actually see and edit the email
+        // input, which is the full form. The compact form renders no email
+        // input at all: its address comes from an earlier step and the
+        // visitor has no way to correct one we reject, so blocking there
+        // would be a dead end.
+        //
+        // Gated on the address that is IN THE FIELD right now, resolved by
+        // value rather than by reading the mode flag. Keying on "we already
+        // know an email for this visitor" was the bug: once any address had
+        // been captured this session, every later one the visitor typed
+        // skipped the check outright.
+        if (!isOfflineFormCompact) {
             const email = offlineForm.email.trim();
             if (!offlineLooksLikeEmail(email)) {
                 setOfflineEmailCheckState('invalid');
-                setOfflineEmailError('Please enter a valid email address.');
+                setOfflineEmailError(t('offline.invalid_email') || 'Please enter a valid email address.');
                 return;
             }
-            if (offlineEmailCheckState === 'checking' && offlineEmailCheckPromiseRef.current) {
-                const result = await offlineEmailCheckPromiseRef.current;
-                if (!result.valid) return;
-            } else if (offlineEmailCheckState === 'invalid') {
+            setOfflineEmailCheckState('checking');
+            const result = await checkEmailWithServer(email);
+            if (!result.valid) {
+                setOfflineEmailCheckState('invalid');
+                setOfflineEmailError(
+                    result.reason || t('offline.invalid_email') || 'Please enter a valid email address.'
+                );
                 return;
-            } else if (offlineEmailCheckState === 'idle') {
-                setOfflineEmailCheckState('checking');
-                const result = await checkEmailWithServer(email);
-                if (!result.valid) {
-                    setOfflineEmailCheckState('invalid');
-                    setOfflineEmailError(result.reason || 'Please enter a valid email address.');
-                    return;
-                }
-                setOfflineEmailCheckState('valid');
             }
+            setOfflineEmailCheckState('valid');
         }
         setOfflineEmailError('');
 
@@ -2032,13 +2389,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
             return (
                 <span className="text-[11px] font-medium text-amber-600 tracking-wide">
-                    Reconnecting...
+                    {t('header.reconnecting') || 'Reconnecting...'}
                 </span>
             );
         }
         return (
             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {formatHeaderDateTime(now, currentLocale)}
             </span>
         );
     };
@@ -2057,7 +2414,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // Shadow DOM, where Tailwind's transform/shadow custom-property
         // composition does not resolve. ``--oyechats-brand`` feeds the hover glow.
         const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
-        const botName = settings.bot_name || 'AI Assistant';
+        const botName = settings.bot_name || t('launcher.ai_assistant') || 'AI Assistant';
         return (
             <div
                 className="oyechats-bot-pill inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border pointer-events-auto"
@@ -2119,12 +2476,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 msg.content_type?.startsWith('image/') ? (
                                     <img
                                         src={sanitizeImageUrl(msg.file_url)}
-                                        alt={msg.filename || 'image'}
+                                        alt={msg.filename || t('livechat.image_alt') || 'image'}
                                         className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
                                     />
                                 ) : (
                                     <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
-                                        📎 {msg.filename || 'file'}
+                                        📎 {msg.filename || t('livechat.file_fallback') || 'file'}
                                     </a>
                                 )
                             ) : (
@@ -2144,7 +2501,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {msg.failed || msg.status === 'failed' ? (
                             <button
                                 type="button"
-                                aria-label="Message not sent. Tap to retry"
+                                aria-label={t('system.retry_send_aria') || 'Message not sent. Tap to retry'}
                                 onClick={() => {
                                     if (!wsSendRef.current) return;
                                     const retryId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2161,7 +2518,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
                             >
-                                <AlertCircle className="w-3 h-3" /> Not sent · Retry
+                                <AlertCircle className="w-3 h-3" />{' '}
+                                {t('system.not_sent_retry') || 'Not sent · Retry'}
                             </button>
                         ) : operatorHasEngaged ? (
                             <MessageStatus
@@ -2186,12 +2544,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     msg.content_type?.startsWith('image/') ? (
                         <img
                             src={sanitizeImageUrl(msg.file_url)}
-                            alt={msg.filename || 'image'}
+                            alt={msg.filename || t('livechat.image_alt') || 'image'}
                             className="max-w-[200px] rounded-xl block hover:opacity-90 transition-opacity"
                         />
                     ) : (
                         <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
-                            📎 {msg.filename || 'file'}
+                            📎 {msg.filename || t('livechat.file_fallback') || 'file'}
                         </a>
                     )
                 ) : (
@@ -2213,14 +2571,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {(() => {
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
                     const showLeaveMessageOption = !settings.live_chat_enabled && chatMode === 'bot';
-                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption;
+                    // Only worth showing when there is genuinely something to
+                    // switch between. A bot with one supported locale (or none
+                    // configured) opened a menu with a single, inert option.
+                    const showLanguageOption = settings.language_config?.enabled === true
+                        && settings.language_config?.allow_visitor_language_switch !== false
+                        && (settings.language_config?.supported_locales?.length || 0) > 1;
+                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption || showLanguageOption;
                     return (
                         <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
                             {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                                 <button
                                     onClick={handleNewChat}
                                     className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title="Start New Chat"
+                                    title={t('header.start_new_chat') || 'Start New Chat'}
                                 >
                                     <Plus className="w-4 h-4" />
                                 </button>
@@ -2229,7 +2593,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={() => setShowHeaderMenu(prev => !prev)}
                                     className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title="More options"
+                                    title={t('header.more_options') || 'More options'}
                                 >
                                     <MoreHorizontal className="w-4 h-4" />
                                 </button>
@@ -2237,20 +2601,32 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <button
                                 onClick={handleHeaderClose}
                                 className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
-                                title="Close"
+                                title={t('header.close') || 'Close'}
                             >
                                 <X className="w-5 h-5" />
                             </button>
 
                             {showHeaderMenu && hasMenuOptions && (
                                 <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
+                                    {showLanguageOption && (
+                                        <button
+                                            onClick={() => {
+                                                setShowHeaderMenu(false);
+                                                setShowLanguageSelector(true);
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                        >
+                                            <Globe className="w-4 h-4 text-gray-400" />
+                                            {t('header.change_language') || 'Language'}
+                                        </button>
+                                    )}
                                     {showTranscriptOption && (
                                         <button
                                             onClick={handleSendTranscript}
                                             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
                                         >
                                             <Mail className="w-4 h-4 text-gray-400" />
-                                            Send transcript
+                                            {t('header.send_transcript') || 'Send transcript'}
                                         </button>
                                     )}
                                     {showLeaveMessageOption && (
@@ -2265,7 +2641,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
                                             </svg>
-                                            Leave a message
+                                            {t('header.leave_message') || 'Leave a message'}
                                         </button>
                                     )}
                                 </div>
@@ -2302,7 +2678,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     paddingTop: !isInitializing && !showLeadForm ? 24 : undefined,
                 }}
                 aria-live="polite"
-                aria-label="Chat messages"
+                aria-label={t('system.messages_aria') || 'Chat messages'}
                 role="log"
             >
                 {/* Welcome overlay. Absolute, covers the messages area until first send */}
@@ -2359,7 +2735,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isInitializing && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3">
                         <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-                        <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
+                        <p className="text-gray-500 font-medium animate-pulse text-sm">{t('system.starting_new_chat') || 'Starting new chat...'}</p>
                     </div>
                 )}
 
@@ -2372,9 +2748,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium text-gray-500 bg-white border border-gray-200 rounded-full hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {isLoadingEarlier ? (
-                                <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />Loading...</>
+                                <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />{t('system.loading') || 'Loading...'}</>
                             ) : (
-                                'Load earlier messages'
+                                t('system.load_earlier') || 'Load earlier messages'
                             )}
                         </button>
                     </div>
@@ -2394,21 +2770,85 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             }
                         }
                         if (msg.type === 'system') {
-                            items.push(<SystemMessage key={msg.id} text={msg.text} />);
+                            items.push(
+                                <SystemMessage
+                                    key={msg.id}
+                                    text={msg.text}
+                                    textKey={msg.textKey}
+                                    textParams={msg.textParams}
+                                />
+                            );
                         } else if (msg.type === 'operator_joined') {
                             items.push(
                                 <OperatorJoinedNotice
                                     key={msg.id}
                                     name={msg.operatorName}
                                     department={msg.operatorDepartment}
+                                    avatarUrl={msg.operatorAvatar}
                                     timestamp={msg.timestamp}
                                     settings={settings}
                                 />
                             );
+                        } else if (msg.type === 'quotation_flow' && msg.status === 'active') {
+                            items.push(
+                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                    <ErrorBoundary label="QuotationFlow" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message={t('system.chunk_quote') || 'Couldn’t load the quote.'} />}>
+                                        <Suspense fallback={null}>
+                                            <QuotationFlow
+                                                sessionId={sessionId}
+                                                settings={settings}
+                                                initialState={msg.initialState}
+                                                onComplete={handleQuotationFlowComplete}
+                                            />
+                                        </Suspense>
+                                    </ErrorBoundary>
+                                </div>
+                            );
+                        } else if (msg.type === 'quotation_flow') {
+                            // completed / skipped — already handed off, skip render.
+                        } else if (msg.type === 'quotation_thankyou' && msg.status === 'active') {
+                            items.push(
+                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px', background: '#ffffff' }}>
+                                        <p style={{ fontSize: '13px', color: '#111827', margin: '0 0 10px', lineHeight: 1.5 }}>
+                                            Thanks! We&apos;ve got your quotation request, our team will reach out to you regarding it. Want to connect with support right now instead?
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleQuotationConnectNow(msg.id)}
+                                            style={{
+                                                width: '100%', padding: '10px 12px', borderRadius: '8px',
+                                                border: 'none', background: sanitizeColor(settings?.primary_color, '#3A0CA3'), color: '#ffffff',
+                                                fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                                            }}
+                                        >
+                                            Connect now
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleQuotationDismiss(msg.id)}
+                                            style={{
+                                                width: '100%', marginTop: '8px', padding: '8px 12px', borderRadius: '8px',
+                                                border: 'none', background: 'transparent', color: '#6b7280',
+                                                fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                                            }}
+                                        >
+                                            Continue with AI instead
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        } else if (msg.type === 'quotation_thankyou') {
+                            // completed — connect action taken, skip render.
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} ref={handoffCardRef} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
-                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the connect form." />}>
+                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => (
+                                        <ChunkLoadNotice
+                                            onRetry={retry}
+                                            message={t('system.chunk_connect_form') || 'Couldn’t load the connect form.'}
+                                        />
+                                    )}>
                                         <Suspense fallback={null}>
                                             <HandoffForm
                                                 settings={settings}
@@ -2454,10 +2894,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     >
                         <div className="flex items-center gap-2 mb-2">
                             <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message for our team</p>
+                            <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.leave_message_for_team') || 'Leave a message for our team'}</p>
                         </div>
                         <p className="text-[12px] text-gray-500 mb-3">
-                            We&apos;ll reply by email as soon as we can.
+                            {t('offline.reply_by_email') || 'We’ll reply by email as soon as we can.'}
                         </p>
                         <div className="flex gap-2">
                             <button
@@ -2469,7 +2909,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 className="flex-1 py-2 rounded-xl text-white text-[13px] font-medium transition-opacity hover:opacity-90"
                                 style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
-                                Leave a message
+                                {t('offline.leave_message_title') || 'Leave a message'}
                             </button>
                             <button
                                 type="button"
@@ -2482,7 +2922,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="px-4 py-2 rounded-xl border border-gray-200 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                             >
-                                Not now
+                                {t('offline.not_now') || 'Not now'}
                             </button>
                         </div>
                     </div>
@@ -2559,7 +2999,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isLiveReconnecting && (
                     <div className="mx-3 my-1 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
                         <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
+                        <span className="text-xs text-amber-700 font-medium">{t('system.reconnecting') || 'Reconnecting...'}</span>
                     </div>
                 )}
 
@@ -2602,7 +3042,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 className="mt-2 text-[12px] font-medium hover:underline transition-colors"
                                 style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
-                                Leave a message instead
+                                {t('offline.leave_message_instead') || 'Leave a message instead'}
                             </button>
                         )}
                         <button
@@ -2615,10 +3055,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }
                                 setChatModeRaw('bot');
                                 setOperatorName(null);
+                                setOperatorAvatar(null);
                             }}
                             className="mt-1 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                         >
-                            Cancel and return to AI chat
+                            {t('system.cancel_return_ai') || 'Cancel and return to AI chat'}
                         </button>
                     </div>
                 )}
@@ -2639,10 +3080,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     className="w-9 h-9 rounded-full flex items-center justify-center"
                                     style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
                                 >
-                                    <Headphones
+                                    <svg
                                         className="w-4 h-4"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
                                         style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
-                                    />
+                                    >
+                                        <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+                                    </svg>
                                 </div>
                                 <span
                                     className="absolute inset-0 rounded-full animate-ping"
@@ -2654,10 +3103,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-[13px] font-semibold text-[#16202C] leading-tight">
-                                    Connecting you with our team
+                                    {t('system.connecting_team_title') || 'Connecting you with our team'}
                                 </p>
                                 <p className="text-[11px] text-gray-400 leading-tight mt-1">
-                                    This usually takes just a few seconds…
+                                    {t('system.connecting_seconds') || 'This usually takes just a few seconds…'}
                                 </p>
                             </div>
                         </div>
@@ -2681,55 +3130,57 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {offlineError ? (
                             <div className="text-center py-2">
                                 <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
-                                <p className="text-[13px] text-gray-600 mb-3">We couldn&apos;t send your message. Please try again.</p>
+                                <p className="text-[13px] text-gray-600 mb-3">{t('system.send_failed') || 'We couldn\u2019t send your message. Please try again.'}</p>
                                 <button
                                     onClick={() => setOfflineError(false)}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
-                                    Try Again
+                                    {t('offline.try_again') || 'Try Again'}
                                 </button>
                             </div>
                         ) : offlineSubmitted ? (
                             <div className="text-center py-2">
                                 <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
-                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
+                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">{t('offline.sent_title') || 'Message sent!'}</p>
                                 <p className="text-[12px] text-gray-500 mb-3">
-                                    We&apos;ll get back to you at <strong>{offlineForm.email}</strong>
-                                    {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
+                                    {(() => {
+                                        // Split on the literal placeholder rather than letting t()
+                                        // interpolate, so the address keeps its <strong> AND each
+                                        // language keeps its own word order around it.
+                                        const key = offlineForm.phone ? 'offline.sent_body_phone' : 'offline.sent_body';
+                                        const template = t(key) || (offlineForm.phone
+                                            ? 'We’ll get back to you at {email} or give you a callback as soon as possible.'
+                                            : 'We’ll get back to you at {email} as soon as possible.');
+                                        const [before, after = ''] = template.split('{email}');
+                                        return (
+                                            <>
+                                                {before}
+                                                <strong>{offlineForm.email}</strong>
+                                                {after}
+                                            </>
+                                        );
+                                    })()}
                                 </p>
                                 <button
                                     onClick={handleReturnToBot}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
-                                    Continue chatting with AI
+                                    {t('offline.continue_chatting_ai') || 'Continue chatting with AI'}
                                 </button>
                             </div>
                         ) : (() => {
                             // If we already captured name + email upstream
                             // (handoff form or an existing lead row), skip
                             // the redundant contact fields and show only
-                            // the message textarea. The compact gate is
-                            // derived from EXTERNAL sources only (never
-                            // from offlineForm state) so typing into the
-                            // message field can't flip the gate and
-                            // unmount inputs mid-keystroke.
-                            const externalName = (
-                                liveChatState?.capturedName?.trim() ||
-                                existingLeadInfo?.name?.trim() ||
-                                ''
-                            );
-                            const externalEmail = (
-                                liveChatState?.capturedEmail?.trim() ||
-                                existingLeadInfo?.email?.trim() ||
-                                ''
-                            );
-                            const externalPhone = (
-                                existingLeadInfo?.phone?.trim() ||
-                                ''
-                            );
-                            const isCompact = Boolean(externalName && externalEmail);
+                            // the message textarea. See the derivation of
+                            // these values above handleOfflineSubmit, which
+                            // gates validation on the same answer.
+                            const externalName = offlineExternalName;
+                            const externalEmail = offlineExternalEmail;
+                            const externalPhone = offlineExternalPhone;
+                            const isCompact = isOfflineFormCompact;
 
                             const primary = sanitizeColor(settings.primary_color, '#3A0CA3');
 
@@ -2758,16 +3209,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message</p>
+                                            <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.leave_message_title') || 'Leave a message'}</p>
                                         </div>
                                         <p className="text-[12px] text-gray-500 mb-3">
-                                            We&apos;ll reply to <strong className="text-gray-700">{externalEmail}</strong> as soon as we can.
+                                            {t('offline.reply_to_email', { email: externalEmail }) ||
+                                                `We\u2019ll reply to ${externalEmail} as soon as we can.`}
                                         </p>
                                         <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                             <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                                 <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
                                                 <textarea
-                                                    placeholder="How can we help you?"
+                                                    placeholder={t('offline.message_placeholder') || 'How can we help you?'}
                                                     required
                                                     rows={3}
                                                     value={offlineForm.message}
@@ -2783,7 +3235,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             >
                                                 {offlineSubmitting
                                                     ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    : 'Send message'}
+                                                    : (t('offline.submit') || 'Send message')}
                                             </button>
                                             <button
                                                 type="button"
@@ -2791,7 +3243,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                                 disabled={offlineSubmitting}
                                                 className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                             >
-                                                Continue with AI instead
+                                                {t('offline.continue_with_ai') || 'Continue with AI instead'}
                                             </button>
                                         </form>
                                     </>
@@ -2822,14 +3274,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">Send message</p>
+                                    <p className="text-[13px] font-semibold text-[#16202C]">{t('offline.send_message_title') || 'Send message'}</p>
                                 </div>
-                                <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
+                                <p className="text-[12px] text-gray-500 mb-3">{t('offline.get_back_soon') || 'We\u2019ll get back to you as soon as we can.'}</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                     <div>
                                         <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 ${offlineEmailError ? 'border-red-300' : 'border-gray-200'}`}>
                                             <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                            <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                            <input type="email" placeholder={t('offline.email_placeholder') || 'Email address'} required value={offlineForm.email}
                                                 onChange={(e) => {
                                                     setOfflineForm(p => ({ ...p, email: e.target.value }));
                                                     if (offlineEmailError) setOfflineEmailError('');
@@ -2847,19 +3299,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="text" placeholder="Your name" required value={offlineForm.name}
+                                        <input type="text" placeholder={t('offline.name_placeholder') || 'Your name'} required value={offlineForm.name}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
                                     </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
+                                        <input type="tel" placeholder={t('offline.phone_placeholder') || 'Phone number (optional)'} value={offlineForm.phone}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
                                     </div>
                                     <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                                        <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
+                                        <textarea placeholder={t('offline.message_placeholder') || 'How can we help you?'} required rows={2} value={offlineForm.message}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
                                     </div>
@@ -2868,7 +3320,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         style={{ backgroundColor: primary }}>
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            : 'Send message'}
+                                            : (t('offline.submit') || 'Send message')}
                                     </button>
                                     <button
                                         type="button"
@@ -2876,7 +3328,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         disabled={offlineSubmitting}
                                         className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                     >
-                                        Continue with AI instead
+                                        {t('offline.continue_with_ai') || 'Continue with AI instead'}
                                     </button>
                                 </form>
                             </>
@@ -2892,30 +3344,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         style={{ animation: 'fadeUp 0.4s ease-out' }}
                     >
                         <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                        <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">Chat ended</p>
+                        <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">{t('survey.chat_ended') || 'Chat ended'}</p>
 
                         {/* Step 1: Was your issue resolved? */}
                         {surveyStep === 1 && (
                             <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
-                                <p className="text-[12px] text-gray-500 mb-3">Was your issue resolved?</p>
+                                <p className="text-[12px] text-gray-500 mb-3">{t('survey.resolved_question') || 'Was your issue resolved?'}</p>
                                 <div className="flex justify-center gap-3 mb-3">
                                     <button
                                         onClick={() => { setResolvedAnswer(true); setSurveyStep(2); }}
                                         disabled={ratingSubmitting}
-                                        aria-label="Yes, issue was resolved"
+                                        aria-label={t('survey.resolved_yes_aria') || 'Yes, issue was resolved'}
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-green-200 bg-green-50 text-green-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-green-100 hover:border-green-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400 disabled:opacity-50"
                                     >
                                         <CheckCircle2 className="w-4 h-4" />
-                                        Yes
+                                        {t('survey.yes') || 'Yes'}
                                     </button>
                                     <button
                                         onClick={() => { setResolvedAnswer(false); setSurveyStep(2); }}
                                         disabled={ratingSubmitting}
-                                        aria-label="No, issue was not resolved"
+                                        aria-label={t('survey.resolved_no_aria') || 'No, issue was not resolved'}
                                         className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-red-200 bg-red-50 text-red-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-100 hover:border-red-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-50"
                                     >
                                         <XCircle className="w-4 h-4" />
-                                        No
+                                        {t('survey.no') || 'No'}
                                     </button>
                                 </div>
                             </div>
@@ -2925,7 +3377,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         {surveyStep === 2 && (
                             <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
                                 <p className="text-[12px] text-gray-500 mb-3">
-                                    {settings?.widget_messages?.rating_prompt || 'How would you rate this experience?'}
+                                    {settings?.widget_messages?.rating_prompt?.trim()
+                                        ? authoredCopy(
+                                            settings.widget_messages.rating_prompt,
+                                            SEEDED.rating_prompt,
+                                        )
+                                            || t('presets.rating_prompt')
+                                            || SEEDED.rating_prompt
+                                        : t('survey.rating_prompt')
+                                            || 'How would you rate this experience?'}
                                 </p>
                                 <div
                                     className="flex justify-center gap-2 mb-3"
@@ -2937,7 +3397,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             onClick={() => !ratingSubmitting && handleSubmitRating(star)}
                                             onMouseEnter={() => setHoveredStar(star)}
                                             disabled={ratingSubmitting}
-                                            aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                            aria-label={
+                                                (star === 1
+                                                    ? t('survey.rate_star_aria', { count: star })
+                                                    : t('survey.rate_stars_aria', { count: star }))
+                                                || `Rate ${star} star${star !== 1 ? 's' : ''}`
+                                            }
                                             className="p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-110 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-lg"
                                         >
                                             <Star
@@ -2954,7 +3419,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                         {/* Step dots + skip */}
                         <div className="flex items-center justify-center gap-3">
-                            <div className="flex gap-1.5" aria-label={`Step ${surveyStep} of 2`}>
+                            <div
+                                className="flex gap-1.5"
+                                aria-label={
+                                    t('survey.step_aria', { step: surveyStep, total: 2 })
+                                    || `Step ${surveyStep} of 2`
+                                }
+                            >
                                 <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 1 ? 'bg-gray-600' : 'bg-gray-300'}`} />
                                 <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 2 ? 'bg-gray-600' : 'bg-gray-300'}`} />
                             </div>
@@ -2963,7 +3434,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 disabled={ratingSubmitting}
                                 className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 rounded px-1"
                             >
-                                Skip
+                                {t('survey.skip') || 'Skip'}
                             </button>
                         </div>
                     </div>
@@ -2988,14 +3459,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 const fullName = (existingLeadInfo?.name || liveChatState?.capturedName || '').trim();
                                 const firstName = fullName.split(/\s+/)[0];
                                 return firstName
-                                    ? `Welcome back ${firstName}! Continue your conversation or start something new.`
-                                    : 'Welcome back! Continue your conversation or start something new.';
+                                    ? (t('system.welcome_back_named', { name: firstName })
+                                        || `Welcome back ${firstName}! Continue your conversation or start something new.`)
+                                    : (t('system.welcome_back')
+                                        || 'Welcome back! Continue your conversation or start something new.');
                             })()}
                         </span>
                         <button
                             onClick={() => setShowWelcomeBackBanner(false)}
                             className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-                            aria-label="Dismiss welcome banner"
+                            aria-label={t('system.dismiss_banner_aria') || 'Dismiss welcome banner'}
                         >
                             <X className="w-3.5 h-3.5" />
                         </button>
@@ -3013,7 +3486,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 <button
                     type="button"
                     onClick={handleScrollToLatest}
-                    aria-label="Scroll to latest message"
+                    aria-label={t('system.scroll_latest_aria') || 'Scroll to latest message'}
                     aria-hidden={isAtBottom}
                     tabIndex={isAtBottom ? -1 : 0}
                     className={`sticky bottom-3 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 -mb-8 md:-mb-6 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
@@ -3030,7 +3503,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 here it pins to the widget shell (the fixed theme container)
                 and stays visible regardless of scroll position. */}
             {showBooking && calendlyUrl && (
-                <ErrorBoundary label="MeetingBooking" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the booking form." />}>
+                <ErrorBoundary label="MeetingBooking" fallback={(retry) => (
+                    <ChunkLoadNotice
+                        onRetry={retry}
+                        message={t('system.chunk_booking_form') || 'Couldn’t load the booking form.'}
+                    />
+                )}>
                 <Suspense fallback={null}>
                 <MeetingBooking
                     calendlyUrl={calendlyUrl}
@@ -3049,7 +3527,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 ...prev,
                                 {
                                     id: `meeting-booked-${Date.now()}`,
-                                    text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
+                                    text: t('meeting.confirmed')
+                                        || 'Great, your meeting is confirmed. Our team will connect with you soon.',
                                     sender: 'bot',
                                     timestamp: new Date().toISOString(),
                                     feedback: null,
@@ -3060,7 +3539,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 ...prev,
                                 {
                                     id: `meeting-booked-error-${Date.now()}`,
-                                    text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
+                                    text: t('meeting.sync_failed')
+                                        || 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
                                     sender: 'bot',
                                     timestamp: new Date().toISOString(),
                                     feedback: null,
@@ -3134,6 +3614,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setChatMode={setChatMode}
                         setOperatorName={setOperatorName}
                         setOperatorDepartment={setOperatorDepartment}
+                        setOperatorAvatar={setOperatorAvatar}
                         onConnectionStatusChange={(status) => {
                             setLiveConnectionStatus(status);
                             if (status === 'reconnecting') setIsLiveReconnecting(true);
@@ -3168,13 +3649,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                                     </svg>
                                 </div>
-                                <p className="text-sm font-medium text-gray-800 mb-1">Transcript sent!</p>
-                                <p className="text-xs text-gray-500">Check your inbox at {transcriptEmail}</p>
+                                <p className="text-sm font-medium text-gray-800 mb-1">{t('system.transcript_sent') || 'Transcript sent!'}</p>
+                                <p className="text-xs text-gray-500">
+                                    {t('system.transcript_check_inbox', { email: transcriptEmail })
+                                        || `Check your inbox at ${transcriptEmail}`}
+                                </p>
                                 <button
                                     onClick={() => setShowTranscriptModal(false)}
                                     className="mt-4 w-full py-2.5 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
                                 >
-                                    Close
+                                    {t('header.close') || 'Close'}
                                 </button>
                             </div>
                         ) : (
@@ -3185,13 +3669,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                 </div>
                                 <p className="text-sm font-medium text-gray-800 text-center mb-4">
-                                    Send the chat transcript to your e-mail.
+                                    {t('system.transcript_prompt') || 'Send the chat transcript to your e-mail.'}
                                 </p>
                                 <input
                                     type="email"
                                     value={transcriptEmail}
                                     onChange={(e) => setTranscriptEmail(e.target.value)}
-                                    placeholder="your@email.com"
+                                    placeholder={t('system.transcript_email_placeholder') || 'your@email.com'}
                                     required
                                     autoFocus
                                     className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 mb-3"
@@ -3205,7 +3689,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-50"
                                     style={{ backgroundColor: sanitizeColor(settings.primary_color, '#2563eb') }}
                                 >
-                                    {transcriptSending ? 'Sending...' : 'Send'}
+                                    {transcriptSending
+                                        ? (t('system.sending') || 'Sending...')
+                                        : (t('system.send') || 'Send')}
                                 </button>
                             </form>
                         )}
@@ -3248,13 +3734,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
                         </div>
                         <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
-                            End conversation?
+                            {t('system.end_conversation_title') || 'End conversation?'}
                         </p>
                         {operatorName && (
-                            <p className="text-[12px] text-gray-500 mb-1">with {operatorName}</p>
+                            <p className="text-[12px] text-gray-500 mb-1">
+                                {t('system.end_conversation_with', { name: operatorName })
+                                    || `with ${operatorName}`}
+                            </p>
                         )}
                         <p id="end-chat-desc" className="text-[12px] text-gray-400 mb-4">
-                            You'll be returned to the AI assistant.
+                            {t('system.end_conversation_desc') || 'You’ll be returned to the AI assistant.'}
                         </p>
                         <div className="flex flex-col gap-2">
                             <button
@@ -3264,14 +3753,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 }}
                                 className="w-full py-2.5 min-h-[44px] rounded-xl bg-red-500 text-white text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-600 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                             >
-                                End chat
+                                {t('input.end_chat') || 'End chat'}
                             </button>
                             <button
                                 onClick={() => setShowEndConfirm(false)}
                                 autoFocus
                                 className="w-full py-2.5 min-h-[44px] rounded-xl bg-white border border-gray-200 text-gray-600 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                             >
-                                Keep chatting
+                                {t('system.keep_chatting') || 'Keep chatting'}
                             </button>
                         </div>
                     </div>
@@ -3291,6 +3780,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onExpire={handleConnectRequestExpire}
                     primaryColor={settings.primary_color}
                 />
+            )}
+
+            {/* Language Selection Modal */}
+            {showLanguageSelector && (
+                <ErrorBoundary label="LanguageSelector" fallback={null}>
+                    <Suspense fallback={null}>
+                        <LanguageSelector
+                            isOpen={showLanguageSelector}
+                            onClose={() => setShowLanguageSelector(false)}
+                            supportedLocales={settings?.language_config?.supported_locales || ['en-IN']}
+                            activeLocale={currentLocale}
+                            onSelectLocale={handleSelectLocale}
+                        />
+                    </Suspense>
+                </ErrorBoundary>
             )}
         </div>
     );

@@ -40,6 +40,13 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          # Email transport: "brevo" (HTTP API) or "ses" (AWS SES over SMTP).
+          # Both providers' credentials can be present at once; EMAIL_PROVIDER
+          # decides which one email_service._send_raw_email actually uses.
+          EMAIL_PROVIDER: ${{ vars.EMAIL_PROVIDER }}
+          SES_AWS_REGION: ${{ vars.SES_AWS_REGION }}
+          SES_AWS_ACCESS_KEY_ID: ${{ secrets.SES_AWS_ACCESS_KEY_ID }}
+          SES_AWS_SECRET_ACCESS_KEY: ${{ secrets.SES_AWS_SECRET_ACCESS_KEY }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           # Pass the deployed git SHA so Sentry tags every event with a
           # release; spikes can then be pinned to a specific commit.
@@ -96,6 +103,10 @@ jobs:
           # fail at Razorpay's payment step.
           RAZORPAY_SEAT_PLAN_ID_USD: ${{ vars.RAZORPAY_SEAT_PLAN_ID_USD }}
           INTL_PAYMENTS_ENABLED: ${{ vars.INTL_PAYMENTS_ENABLED }}
+          # Repo variable, not a secret: it is a topology switch, not a credential.
+          # Set to true only once oyechats-ws.service is installed and nginx routes
+          # /ws/ to it -- see docs/live-chat-process-split-rollout.md.
+          WS_BACKPLANE_ENABLED: ${{ vars.WS_BACKPLANE_ENABLED }}
           CHECKOUT_TEST_CLIENT_IDS: ${{ vars.CHECKOUT_TEST_CLIENT_IDS }}
           # Frontend URL for Stripe success/cancel and Razorpay return redirects.
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
@@ -135,7 +146,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,EMAIL_PROVIDER,SES_AWS_REGION,SES_AWS_ACCESS_KEY_ID,SES_AWS_SECRET_ACCESS_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY,WS_BACKPLANE_ENABLED
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -159,7 +170,8 @@ jobs:
             fi
             for v in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY BREVO_API_KEY REDIS_URL \
                      SENTRY_DSN_BACKEND LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY \
-                     STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET REOON_API_KEY IPAPI_IS_KEY; do
+                     STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET REOON_API_KEY IPAPI_IS_KEY \
+                     SES_AWS_ACCESS_KEY_ID SES_AWS_SECRET_ACCESS_KEY; do
               if [ -z "$(printenv "$v" || true)" ]; then
                 echo "::warning::optional secret $v not set — related feature disabled"
               fi
@@ -211,6 +223,17 @@ jobs:
               VAPID_PRIVATE_KEY_FILE_PATH=""
             fi
 
+            # WS_BACKPLANE_ENABLED belongs HERE, not hand-edited on the box.
+            # This block rewrites api/.env in full on every deploy, so a manual
+            # entry survives exactly until the next one. That failure is silent
+            # and badly timed: with the WebSocket process split live, the API
+            # runs several workers and the backplane is what carries a frame
+            # from the worker that produced it to the process holding the
+            # socket. Lose it and a visitor and their operator stop seeing each
+            # other -- the precise bug the split exists to prevent -- days after
+            # the deploy that caused it, with nothing in the diff to point at.
+            # Default false keeps it inert until the rollout sets the variable.
+            #
             # Generate .env from secrets + hardcoded prod values
             printf '%s\n' \
               "DB_URL=${DB_URL}" \
@@ -230,6 +253,10 @@ jobs:
               "LANGFUSE_HOST=https://cloud.langfuse.com" \
               "OTEL_BSP_SCHEDULE_DELAY=1000" \
               "BREVO_API_KEY=${BREVO_API_KEY}" \
+              "EMAIL_PROVIDER=${EMAIL_PROVIDER:-brevo}" \
+              "SES_AWS_REGION=${SES_AWS_REGION:-ap-south-1}" \
+              "SES_AWS_ACCESS_KEY_ID=${SES_AWS_ACCESS_KEY_ID}" \
+              "SES_AWS_SECRET_ACCESS_KEY=${SES_AWS_SECRET_ACCESS_KEY}" \
               "REDIS_URL=${REDIS_URL}" \
               "LLM_MODEL=openai/gpt-5.4-mini" \
               "FALLBACK_MODEL=gemini/gemini-2.5-flash" \
@@ -283,6 +310,7 @@ jobs:
               "VAPID_PRIVATE_KEY_FILE=${VAPID_PRIVATE_KEY_FILE_PATH}" \
               "REOON_API_KEY=${REOON_API_KEY}" \
               "IPAPI_IS_KEY=${IPAPI_IS_KEY}" \
+              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-false}" \
               > api/.env
 
             # Non-root services (audit F06): after the one-time
@@ -381,6 +409,31 @@ jobs:
             systemctl restart oyechats-worker
             systemctl restart oyechats-api
 
+            # oyechats-ws.service serves every WebSocket (nginx proxies /ws/ to
+            # 127.0.0.1:8001). It was never in this list, so it kept running
+            # whatever code it started with while api and worker moved on: on
+            # 2026-08-25 it was a full deploy behind. That process is where ALL
+            # live-chat translation executes, so a translation hotfix could look
+            # deployed and silently not be.
+            #
+            # Restarted LAST and only if the unit is installed, because it drops
+            # open sockets: visitors and operators reconnect (the widget has
+            # backoff and re-fetches history), but doing it before the API is
+            # healthy would reconnect them into a half-deployed backend.
+            # `systemctl cat` is the existence test: it fails only when no unit
+            # file exists. `is-enabled` was wrong here -- a unit that is
+            # installed and running but never `systemctl enable`d reports
+            # "disabled" and would be skipped, which is the exact silent-skip
+            # this block exists to end. The else branch is deliberate: a skip
+            # has to be visible in the deploy log, not inferred from its
+            # absence.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
+              systemctl restart oyechats-ws
+              echo "restarted oyechats-ws"
+            else
+              echo "oyechats-ws.service not installed on this host; skipping"
+            fi
+
             # Reload Nginx if config exists (Phase 1 scalability: reverse proxy)
             if [ -f /etc/nginx/sites-enabled/oyechats-api.conf ]; then
               nginx -t && systemctl reload nginx
@@ -434,6 +487,21 @@ jobs:
             fi
             systemctl restart oyechats-worker
             systemctl restart oyechats-api
+            # Same reasoning as the forward path: a rollback that leaves the
+            # WebSocket process on the rolled-back-FROM code is not a rollback.
+            # `systemctl cat` is the existence test: it fails only when no unit
+            # file exists. `is-enabled` was wrong here -- a unit that is
+            # installed and running but never `systemctl enable`d reports
+            # "disabled" and would be skipped, which is the exact silent-skip
+            # this block exists to end. The else branch is deliberate: a skip
+            # has to be visible in the deploy log, not inferred from its
+            # absence.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
+              systemctl restart oyechats-ws
+              echo "restarted oyechats-ws"
+            else
+              echo "oyechats-ws.service not installed on this host; skipping"
+            fi
             sleep 15
             for i in 1 2 3 4 5 6; do
               if curl -sf http://localhost:8000/health/full > /dev/null 2>&1; then

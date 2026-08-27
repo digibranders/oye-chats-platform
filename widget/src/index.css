@@ -27,6 +27,17 @@
   pointer-events: auto;
 }
 
+/* RTL language support inside Shadow DOM */
+:host([dir="rtl"]),
+#oyechats-shadow-inner[dir="rtl"] {
+  direction: rtl;
+}
+
+:host([dir="ltr"]),
+#oyechats-shadow-inner[dir="ltr"] {
+  direction: ltr;
+}
+
 /* iOS safe area support. Prevents content from going behind notch/home indicator.
    Uses max() so the rule never shrinks the Tailwind base padding on desktop
    (where env(safe-area-inset-bottom) = 0). On iOS with notch the safe inset wins. */
@@ -282,6 +293,18 @@
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide the native number input spin buttons (quotation quantity/number
+   questions, etc.) across browsers — plain digit entry only. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* Premium orb avatar. Living procedural energy field. Interior motion

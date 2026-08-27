@@ -557,7 +557,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     from sqlalchemy import select
 
     from app.core.dates import add_months
-    from app.db.models import Invoice, Subscription
+    from app.db.models import Invoice, Subscription, plan_charge_only_clauses
     from app.db.session import get_session
     from app.services import credit_service
 
@@ -623,14 +623,14 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                                 Invoice.status == "paid",
                                 Invoice.paid_at.is_not(None),
                                 Invoice.paid_at >= sub.current_period_end - timedelta(days=2),
-                                # PLAN charges only. Seat add-on invoices stamp
-                                # the main sub's id but pay for seats, and a
-                                # withheld charge explicitly funded nothing. A
-                                # ₹449 seat debit must not evidence a full plan
-                                # renewal (same masking class as the F5 revoke
-                                # probe). is_distinct_from keeps legacy NULL-kind
-                                # rows counting as plan charges.
-                                Invoice.kind.is_distinct_from("seat"),
+                                # PLAN charges only. Add-on invoices (seats,
+                                # branding removal) stamp the main sub's id but
+                                # pay for the add-on, and a withheld charge
+                                # explicitly funded nothing. A ₹449 seat or
+                                # ₹499 branding debit must not evidence a full
+                                # plan renewal (same masking class as the F5
+                                # revoke probe).
+                                *plan_charge_only_clauses(),
                                 Invoice.kind.is_distinct_from("withheld_charge"),
                             )
                             .limit(1)
@@ -878,6 +878,13 @@ async def task_promo_precharge_reminders(ctx: dict) -> int:
                 .scalars()
                 .all()
             )
+            # One read for the whole batch, so two customers reminded in the
+            # same pass can never be quoted different tax.
+            from app.services.razorpay_service import charged_price_display
+            from app.services.seller_profile_service import charge_tax_rate_bps
+
+            seller_rate_bps = charge_tax_rate_bps(session)
+
             for sub in subs:
                 if (sub.promo_reminder_sent or {}).get("pre_charge"):
                     continue
@@ -887,7 +894,15 @@ async def task_promo_precharge_reminders(ctx: dict) -> int:
                 plan = sub.plan
                 plan_name = plan.name if plan else "your plan"
                 price_minor = (plan.monthly_price_cents if plan else 0) or 0
-                amount_display = f"₹{price_minor // 100:,}"
+                # The GROSS. This email exists to warn the customer what is
+                # about to leave their account when the free period ends, so
+                # quoting the ex-GST base would understate the first charge by
+                # the tax and hand them a number their statement contradicts.
+                # Also drops the hand-rolled "₹{x // 100}" formatting, which
+                # truncated any paisa and was rupee-only regardless of rail.
+                amount_display = charged_price_display(
+                    owner, price_minor, seller_rate_bps, currency=(plan.currency if plan else None) or "INR"
+                )
                 pfu = sub.promo_free_until
                 if pfu.tzinfo is None:
                     pfu = pfu.replace(tzinfo=UTC)
@@ -2591,15 +2606,17 @@ async def task_invoice_reconciliation_alert(ctx: dict) -> int:
 
 
 async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
-    """Daily cron: cancel operator-seat add-ons whose parent subscription is gone.
+    """Daily cron: cancel add-ons whose parent subscription is gone.
 
-    The seat add-on (P0-3) is a separate Razorpay subscription. The cancel,
+    Covers BOTH add-on kinds (operator seats and branding removal), despite the
+    task's seat-era name, which is kept because it is the registered cron
+    identity. Each add-on is a separate Razorpay subscription. The cancel,
     plan-cutover, and scheduled-downgrade paths all cancel it best-effort and
     only log on failure, and the cutover re-create is an external call a
-    rolled-back activation can strand. Any of which leaves an orphan billing
-    a churned/plan-changed customer ₹499/seat/month forever. This sweep
-    reconciles the gateway against local state, auto-cancels each orphan, and
-    surfaces the outcome loudly (error → Sentry). Returns the number cancelled.
+    rolled-back activation can strand. Any of which leaves an orphan billing a
+    churned or plan-changed customer every month forever. This sweep reconciles
+    the gateway against local state, auto-cancels each orphan, and surfaces the
+    outcome loudly (error → Sentry). Returns the number cancelled.
     """
     import asyncio
 
@@ -2612,15 +2629,16 @@ async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
 
     def _run() -> int:
         with get_session() as session:
-            result = seat_addon_reports.reconcile_orphaned_seat_addons(session)
+            result = seat_addon_reports.reconcile_orphaned_addons(session)
             session.commit()
         cancelled = result["cancelled"]
         failed = result["failed"]
         if cancelled or failed:
             logger.error(
-                "orphaned seat add-on reconciliation: cancelled=%s failed=%s",
+                "orphaned add-on reconciliation: cancelled=%s failed=%s by_addon=%s",
                 cancelled,
                 failed,
+                {name: {"cancelled": r["cancelled"], "failed": r["failed"]} for name, r in result["by_addon"].items()},
             )
         return len(cancelled)
 
@@ -2628,7 +2646,7 @@ async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
     return await loop.run_in_executor(None, _run)
 
 
-def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) -> bool:
+def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int, rate_bps: int) -> bool:
     """Send the email for ``marker``. Returns True when it was handed off.
 
     Split out so the cron's control flow is testable without Brevo or Razorpay,
@@ -2639,7 +2657,6 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
     Returns False rather than raising: one bad address or one gateway blip must
     not abort the loop and starve every other customer.
     """
-    from app.core.pricing import format_amount
     from app.services.dunning_service import get_recovery_link
     from app.services.email_service import (
         send_payment_action_required_email,
@@ -2664,7 +2681,16 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) ->
                 if (sub.billing_cycle or "monthly") == "annual"
                 else sub.plan.monthly_price_cents
             )
-            amount = format_amount(minor, sub.plan.currency)
+            # The GROSS, not the base. Prices are published exclusive of GST, so
+            # the base is not what Razorpay attempted and not what the customer
+            # will see on their statement. "The ₹1,799 charge failed" against a
+            # ₹2,122.82 debit is exactly the kind of mismatch that makes a
+            # dunning email look like a phishing attempt.
+            from app.services.razorpay_service import charged_price_display
+
+            # ``minor`` is an INR column for every rail, so the symbol is pinned
+            # to INR rather than derived from the buyer's country.
+            amount = charged_price_display(owner, minor, rate_bps, currency=sub.plan.currency or "INR")
 
         if marker == "failed_0":
             # Day 0 asks for nothing, so it needs no recovery link, which also
@@ -2745,6 +2771,12 @@ def _run_dunning_cycle(session) -> int:
         .scalars()
         .all()
     )
+    # One read for the whole pass: the rate cannot shift between two customers'
+    # dunning emails in the same run.
+    from app.services.seller_profile_service import charge_tax_rate_bps
+
+    seller_rate_bps = charge_tax_rate_bps(session)
+
     for sub in subs:
         since = sub.past_due_since
         if since.tzinfo is None:
@@ -2763,7 +2795,9 @@ def _run_dunning_cycle(session) -> int:
         plan_name = sub.plan.name if sub.plan else "your plan"
         days_left = max(0, PAYMENT_FAILED_GRACE_DAYS - int(days))
 
-        if _dunning_send(marker, owner=owner, sub=sub, plan_name=plan_name, days_left=days_left):
+        if _dunning_send(
+            marker, owner=owner, sub=sub, plan_name=plan_name, days_left=days_left, rate_bps=seller_rate_bps
+        ):
             _mark_dunning_sent(sub, marker, now)
             # Commit the marker BEFORE any further I/O. The email is already
             # irreversible; if anything downstream fails and rolls the session

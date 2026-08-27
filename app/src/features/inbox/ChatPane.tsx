@@ -36,6 +36,7 @@ import { Composer } from './Composer';
 import { Transcript } from './Transcript';
 import { TransferDialog } from './TransferDialog';
 import { useInboxSocket } from './inboxSocket';
+import { translateForSession } from '../../services/api';
 import { useTranscript } from './inboxQueries';
 import { maxVisitorDbId } from './liveChatHelpers';
 import { waitLabel, waitTone, type InboxItem } from './inboxModel';
@@ -369,6 +370,18 @@ export function ChatPane({
         onRetry={live ? undefined : readOnly.reload}
         onLoadOlder={
           live && socket.hasMoreBySession[sessionId] ? () => void socket.loadOlder(sessionId) : undefined
+        }
+        readerLanguage={socket.operatorLanguage}
+        // Only a message the server has persisted can be backfilled: the
+        // endpoint keys the result onto a row id, so an optimistic local echo
+        // has nothing to write to.
+        onRetryTranslation={
+          live
+            ? async (message) => {
+                if (message.dbId == null) return;
+                await translateForSession(sessionId, message.content, message.dbId);
+              }
+            : undefined
         }
         footnote={
           ended ? (

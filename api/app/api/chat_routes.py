@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import (
@@ -28,7 +28,7 @@ from app.api.auth import (
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
-from app.core.rate_limit import key_from_bot_key, limiter
+from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatSession
@@ -36,10 +36,17 @@ from app.db.repository import (
     create_or_update_lead_info,
     ensure_chat_session,
     get_lead_info_by_session,
+    update_chat_session_language,
     update_message_feedback,
 )
 from app.db.session import get_session
-from app.schemas.chat import ChatRequest, FeedbackRequest
+from app.schemas.chat import (
+    ChangeLanguageRequest,
+    ChangeLanguageResponse,
+    ChatRequest,
+    FeedbackRequest,
+)
+from app.schemas.language import LanguageContext
 from app.schemas.validators import (
     MAX_EMAIL,
     CountValue,
@@ -55,6 +62,15 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.services.ip_intel_service import fetch_ip_intel
+from app.services.language_service import (
+    detect_message_language,
+    get_locale_direction,
+    is_multilingual_enabled,
+    language_from_locale,
+    match_supported_locale,
+    normalize_locale,
+    resolve_initial_locale,
+)
 from app.services.plan_entitlements_service import (
     is_email_validation_enabled_for_bot,
     is_visitor_intelligence_enabled_for_bot,
@@ -225,6 +241,153 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
         # Session exists but belongs to a different bot. Reject and mint a fresh ID
         return str(uuid.uuid4())
     return provided
+
+
+# Message-detection confidence floor. A first-turn detection below this is not
+# trusted enough to persist; the session falls to the bot default instead.
+_LANGUAGE_DETECTION_THRESHOLD = 0.85
+
+
+def _reconstruct_context(language_code, locale, locked) -> "LanguageContext":
+    """Build a LanguageContext from persisted ChatSession columns, for the
+    branches that keep an already-resolved language without re-resolving."""
+    loc = locale or "en-IN"
+    return LanguageContext(
+        language=language_code or (language_from_locale(loc) or "en"),
+        locale=loc,
+        source="explicit" if locked else "persisted",
+        confidence=1.0 if locked else 0.85,
+        direction=get_locale_direction(loc),
+        locked=bool(locked),
+    )
+
+
+def _resolve_visitor_language_and_update_session(
+    fastapi_request: Request,
+    body: ChatRequest,
+    bot: Bot,
+    session_id: str,
+) -> "LanguageContext | None":
+    """Resolve the visitor's language, persist it on the ChatSession if needed,
+    and RETURN the effective LanguageContext for the pipeline to consume.
+
+    Returns:
+      * ``None`` when multilingual is disabled for this bot, OR when the
+        platform-wide ``feature.multilingual_chat_enabled`` switch is off. This
+        is the single signal the RAG pipeline uses to stay byte-identical to
+        pre-Phase-3 behaviour (no directive, legacy cache key, English canned
+        paths, English-tuned retrieval).
+      * a ``LanguageContext`` for every enabled bot, whether the language was
+        already locked, already settled, freshly resolved, or detected.
+
+    Order of decisions:
+      1. Multilingual off, per bot or platform-wide: return None immediately.
+      2. Locked session: return the locked context, no write (unless this turn
+         is itself an explicit selection).
+      3. Settled session with no higher-precedence client signal: return the
+         settled context, no write.
+      4. Otherwise resolve through the precedence chain. If nothing above the
+         default matched, attempt first-turn message detection. Persist and
+         return the result.
+
+    Steps 2 and 3 keep this off the hot path: after the first turn the common
+    case is a single indexed read with no transaction.
+    """
+    lang_cfg = getattr(bot, "language_config", None) or {}
+    if not is_multilingual_enabled(bot):
+        return None
+
+    client_source = (body.language_source or "").strip().lower() or None
+    client_locale = body.locale
+    # Only these two outrank a language already resolved for the session.
+    asserts_override = client_source in ("explicit", "site")
+
+    with get_session() as db:
+        # Column-only read: the full ORM entity is not needed to decide this.
+        row = db.execute(
+            select(
+                ChatSession.language_code,
+                ChatSession.locale,
+                ChatSession.language_locked,
+            ).where(ChatSession.id == session_id)
+        ).one_or_none()
+
+        existing_locale = None
+        if row is not None:
+            existing_code, existing_locale, existing_locked = row
+            if existing_locked and client_source != "explicit":
+                return _reconstruct_context(existing_code, existing_locale, True)
+            if existing_code and not asserts_override:
+                return _reconstruct_context(existing_code, existing_locale, existing_locked)
+
+        supported = lang_cfg.get("supported_locales") or ["en-IN"]
+        default_loc = lang_cfg.get("default_locale") or "en-IN"
+        header_lang = fastapi_request.headers.get("accept-language")
+
+        context = resolve_initial_locale(
+            explicit=client_locale if client_source == "explicit" else None,
+            # 'site' is the host page's own locale, supplied through
+            # OyeChats.init/update/setLocale. Dropping it (as this did) let the
+            # browser language outrank a website that had declared its language.
+            site=client_locale if client_source == "site" else None,
+            html_lang=client_locale if client_source == "html_lang" else None,
+            browser=client_locale if client_source == "browser" else header_lang,
+            persisted=client_locale if client_source == "persisted" else existing_locale,
+            supported=supported,
+            default=default_loc,
+        )
+
+        # First-turn message detection: only when nothing above the default
+        # tier resolved (context.source == "default"), the session has no
+        # language yet, and no explicit selection is in play. This is the ONLY
+        # place detection runs; a locked or settled session already returned
+        # above. Detected locales are narrowed through match_supported_locale,
+        # and low-confidence / unsupported detections are never persisted.
+        if context.source == "default" and client_source != "explicit":
+            detected_lang, confidence = detect_message_language(body.question or "")
+            if detected_lang and confidence >= _LANGUAGE_DETECTION_THRESHOLD:
+                matched = match_supported_locale(detected_lang, supported)
+                if matched:
+                    context = LanguageContext(
+                        language=language_from_locale(matched) or detected_lang,
+                        locale=matched,
+                        source="message_detected",
+                        confidence=confidence,
+                        direction=get_locale_direction(matched),
+                        locked=False,
+                    )
+
+        if row is not None:
+            # Nothing actually changed: skip the write and the transaction.
+            if existing_locale == context.locale and not context.locked:
+                return context
+            db.execute(
+                update(ChatSession)
+                .where(ChatSession.id == session_id)
+                .values(
+                    language_code=context.language,
+                    locale=context.locale,
+                    language_source=context.source,
+                    language_confidence=context.confidence,
+                    language_locked=context.locked,
+                )
+            )
+            db.commit()
+        else:
+            ensure_chat_session(
+                db,
+                session_id,
+                client_id=bot.client_id,
+                bot_id=bot.id,
+                language_code=context.language,
+                locale=context.locale,
+                language_source=context.source,
+                language_confidence=context.confidence,
+                language_locked=context.locked,
+            )
+            db.commit()
+
+        return context
 
 
 class LeadCaptureRequest(PydanticBaseModel):
@@ -1210,6 +1373,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         location = f"IP: {ip_address}"
         visitor_country = _visitor_country_from_request(request)
         session_id = _resolve_session_id(body.session_id, bot.id)
+        language_ctx = _resolve_visitor_language_and_update_session(request, body, bot, session_id)
 
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
@@ -1230,6 +1394,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
             bot_id=bot.id,
             cta_dimension=body.cta_dimension,
             visitor_country=visitor_country,
+            language=language_ctx,
         )
 
         ans_len = len(result.get("answer", ""))
@@ -1338,6 +1503,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     location = f"IP: {ip_address}"
     visitor_country = _visitor_country_from_request(request)
     session_id = await asyncio.to_thread(_resolve_session_id, body.session_id, bot.id)
+    language_ctx = await asyncio.to_thread(_resolve_visitor_language_and_update_session, request, body, bot, session_id)
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
@@ -1385,6 +1551,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                 bot_id=bot.id,
                 cta_dimension=body.cta_dimension,
                 visitor_country=visitor_country,
+                language=language_ctx,
             ):
                 if isinstance(chunk, str):
                     flag = _final_metadata_failure_flag(chunk)
@@ -1404,6 +1571,80 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
+# Same limiter treatment as the other public widget endpoints on this router.
+# This one writes and locks session state from an unauthenticated visitor
+# context (the bot key is public), so leaving it unthrottled let a single
+# visitor rewrite a session's language without bound.
+@router.post("/chat/language", response_model=ChangeLanguageResponse)
+@limiter.limit("20/minute", key_func=key_from_bot_key)
+def change_chat_language(
+    request: Request,
+    body: ChangeLanguageRequest,
+    bot: Bot = Depends(get_current_bot),
+):
+    """Explicitly change the language for an active chat session.
+
+    Validates that the bot has multilingual enabled, that the locale is one the
+    bot actually offers, and that the session belongs to this bot, then locks
+    the session language.
+    """
+    lang_cfg = getattr(bot, "language_config", None) or {}
+
+    # A bot that has not enabled multilingual must not accept language writes at
+    # all. Previously the `enabled` flag only gated *validation*, so a disabled
+    # bot accepted any well-formed locale and locked it onto the session, which
+    # broke the guarantee that such bots behave exactly as they did before.
+    # Also refused when the platform switch is off: otherwise a visitor could
+    # still lock a language onto a session that the pipeline will then ignore,
+    # leaving the session marked Hindi while every answer comes back English.
+    if not is_multilingual_enabled(bot):
+        raise HTTPException(status_code=403, detail="Multilingual is not enabled for this bot")
+
+    normalized = normalize_locale(body.locale)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid locale format")
+
+    supported = lang_cfg.get("supported_locales") or ["en-IN"]
+
+    # Always narrow through match_supported_locale. Gating this on
+    # `is_supported_locale` skipped the narrowing whenever the base language
+    # matched, so a request for fr-CA against a bot offering only fr-FR stored
+    # fr-CA: a locale the bot has neither configuration nor content for.
+    matched = match_supported_locale(normalized, supported)
+    if not matched:
+        raise HTTPException(status_code=400, detail="Unsupported locale")
+    normalized = matched
+
+    lang_code = language_from_locale(normalized) or "en"
+
+    with get_session() as db:
+        try:
+            update_chat_session_language(
+                db,
+                body.session_id,
+                bot.id,
+                language_code=lang_code,
+                locale=normalized,
+                language_source="explicit",
+                language_confidence=1.0,
+                language_locked=True,
+            )
+            db.commit()
+        except SessionOwnershipError:
+            raise HTTPException(status_code=404, detail="Chat session not found") from None
+        except Exception as e:
+            db.rollback()
+            logger.exception("Failed to update chat session language: %s", e)
+            raise HTTPException(status_code=500, detail="Failed to update language") from e
+
+    return ChangeLanguageResponse(
+        language=lang_code,
+        locale=normalized,
+        source="explicit",
+        locked=True,
+    )
+
+
 # A Reoon verdict for a given address does not change day to day, and this
 # check is unmetered, so caching it is the cheapest way to bound vendor spend
 # on a public endpoint.
@@ -1412,9 +1653,24 @@ _REOON_VERDICT_TTL_S = 24 * 60 * 60
 # See `validate_email_endpoint` for why the two are not symmetric.
 _REOON_BLOCKED_TTL_S = 5 * 60
 
+# Two different ceilings, because this route has two different costs.
+#
+# The decorator below bounds REQUESTS from one visitor (the limit key is
+# ``<bot-key>:<client-ip>``). It is a flood guard for the DB gate checks and
+# the cache read, set far above anything a person filling a form can reach.
+#
+# ``_REOON_BUDGET`` bounds the only expensive thing here, the vendor call, and
+# is spent in the handler at the point we are about to make one. A cached
+# answer costs nothing and must not consume it. Keeping them separate is what
+# stops a visitor who re-checks addresses we already hold verdicts for from
+# exhausting the budget that guards our Reoon bill, and then having their next
+# address let through unchecked.
+_REOON_REQUEST_LIMIT = "60/minute"
+_REOON_BUDGET = "20/minute"
+
 
 @router.post("/chat/validate-email")
-@limiter.limit("20/minute", key_func=key_from_bot_key)
+@limiter.limit(_REOON_REQUEST_LIMIT, key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Real-time check the widget calls on email-field blur, before the
     visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
@@ -1434,6 +1690,13 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     plan doesn't include this feature, an infra hiccup or a lower tier
     must never block a real visitor from talking to a human. See
     docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
+
+    Every fail-open path returns ``200`` with ``unverified: true`` rather than
+    an error status. The widget must never have to infer a verdict from a
+    status code: a ``429`` says something about our budget, nothing about the
+    address, and a client that reads one as "valid" turns every throttled
+    moment into a validation hole. Saying so explicitly also makes the skips
+    countable in logs instead of invisible.
     """
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
@@ -1452,7 +1715,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
             or not credit_service.is_feature_enabled(session, "email_verification")
             or not _agent_enrichment_opt_in(bot.id, "email_verification")
         ):
-            return {"valid": True}
+            return {"valid": True, "unverified": True}
 
     from app.core.cache import cache_get, cache_set
     from app.services.reoon_service import is_obviously_undeliverable, verify_email
@@ -1460,11 +1723,11 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     # CACHED, because this call is UNMETERED and the endpoint is public.
     #
     # It is authenticated only by the widget's bot key (embedded in customer
-    # pages) and rate-limited at 20/min per key, so it was 20 free Reoon calls
-    # a minute per widget, on OyeChats' account, with no ledger row anywhere.
-    # Metering it would be the wrong fix: this is a pre-submit UX helper that
-    # fires on field blur, and charging a customer because a visitor tabbed
-    # through a form twice is indefensible.
+    # pages), so every Reoon call it makes lands on OyeChats' account with no
+    # ledger row anywhere. Metering it would be the wrong fix: this is a
+    # pre-submit UX helper that fires on field blur, and charging a customer
+    # because a visitor tabbed through a form twice is indefensible. The cache
+    # plus ``_REOON_BUDGET`` bound the spend instead.
     #
     # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
     # directions. A "deliverable" answer is safe to hold for a day: the worst
@@ -1489,12 +1752,22 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     if isinstance(cached, dict) and "undeliverable" in cached:
         undeliverable = bool(cached["undeliverable"])
     else:
+        # About to spend money. This is the point the budget is for, and the
+        # only path that reaches it, so a visitor re-checking addresses we
+        # already have verdicts for can never exhaust it.
+        if not consume_vendor_budget("reoon_verify", key_from_bot_key(request), _REOON_BUDGET):
+            logger.warning(
+                "reoon_budget_exhausted | bot=%s. Returning unverified",
+                bot.id,
+            )
+            return {"valid": True, "unverified": True}
+
         validation = verify_email(email)
         if validation is None:
             # Reoon unreachable. Fail OPEN. A visitor must never be blocked
             # from submitting because our vendor is down. Not cached: the next
             # attempt should retry rather than inherit an outage.
-            return {"valid": True}
+            return {"valid": True, "unverified": True}
         undeliverable = is_obviously_undeliverable(validation)
         ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
         cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
@@ -1819,6 +2092,27 @@ def submit_feedback_endpoint(
         raise HTTPException(status_code=500, detail="Failed to save feedback.") from e
 
 
+def _public_translations(raw: dict | None) -> dict | None:
+    """Strip internal fields from a ``ChatMessage.translations`` blob.
+
+    ``provider`` / ``model`` / ``created_at`` are stored for audit and cost
+    attribution, not for rendering, and the widget serves this endpoint to
+    anyone holding the (public) bot key. Only what a client actually draws
+    leaves the server.
+    """
+    if not isinstance(raw, dict):
+        return None
+    public = {}
+    for lang, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        trimmed = {"status": entry.get("status", "ok")}
+        if isinstance(entry.get("content"), str):
+            trimmed["content"] = entry["content"]
+        public[lang] = trimmed
+    return public or None
+
+
 @router.get("/chat/history/{session_id}")
 @limiter.limit("60/minute", key_func=key_from_bot_key)
 def get_history_endpoint(
@@ -1948,6 +2242,13 @@ def get_history_endpoint(
                     # from history the same way it does from a live stream.
                     "media_card": getattr(m, "media_card", None),
                     "media_secondary": getattr(m, "media_secondary", None),
+                    # Phase 4. Both clients rebuild their thread from THIS
+                    # endpoint on every reconnect, so a translation that lived
+                    # only on the wire vanished on refresh and left the visitor
+                    # looking at a half-translated conversation. ``content``
+                    # above is always the canonical original; these are derived.
+                    "source_language": getattr(m, "source_language", None),
+                    "translations": _public_translations(getattr(m, "translations", None)),
                 }
                 for m in all_history
             ]
@@ -2206,6 +2507,9 @@ async def respond_to_connect_request(
             live_manager.clear_connect_request(session_id)
             await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired", visitor_name=None)
             return {"ok": True, "result": "expired"}
+        # Capture the avatar while the session is open (the object is read again
+        # after the block, where a lazy-load would raise DetachedInstanceError).
+        operator_avatar = operator.avatar_url
 
         if not body.accepted:
             live_manager.clear_connect_request(session_id)
@@ -2262,7 +2566,7 @@ async def respond_to_connect_request(
     if department_id is not None:
         live_manager._session_departments[session_id] = department_id
 
-    accepted_ok = await live_manager.accept_chat(session_id, operator_id, operator_name)
+    accepted_ok = await live_manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
     if not accepted_ok:
         logger.warning(
             "DB accepted connect-request for %s → operator %s but manager rejected it. "
@@ -2283,5 +2587,6 @@ async def respond_to_connect_request(
         "ok": True,
         "result": "accepted",
         "operator_name": operator_name,
+        "operator_avatar": operator_avatar,
         "visitor_name": visitor_name,
     }

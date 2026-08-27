@@ -127,7 +127,9 @@ describe('InvoicesTab', () => {
     get.mockResolvedValue(page([invoice({ currency: null, amount_cents: 149_900 })], 1));
     renderTab();
 
-    expect(await screen.findByText(/149,900 minor units \(currency not recorded\)/)).toBeInTheDocument();
+    // `1,49,900`, not `149,900`: figures follow the dashboard's locale, and
+    // the console's default is `en-IN`.
+    expect(await screen.findByText(/1,49,900 minor units \(currency not recorded\)/)).toBeInTheDocument();
     expect(screen.getByText('not recorded')).toBeInTheDocument();
   });
 

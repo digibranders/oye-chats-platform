@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getChatHistory } from '../../services/api';
+import { getChatHistory, getMyLanguage } from '../../services/api';
 import { getAuthItem } from '../../utils/authStorage';
 import { isImpersonating } from '../../utils/impersonation';
 import {
@@ -23,6 +23,7 @@ import {
 } from './liveChatProtocol';
 import { mergeHistoryWithLive, parseHistoryMessage } from './liveChatHelpers';
 import { alertOperator, ensureNotificationPermission } from './notifications';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Resolution of a proactive connect-request, surfaced to the panel. */
 export interface ConnectResolution {
@@ -54,6 +55,24 @@ export interface OperatorSocketState {
   /** Latest resolution per session for a proactive connect-request. */
   connectResolutions: Record<string, ConnectResolution>;
   lastError: string | null;
+  /**
+   * The operator's own live-chat working language (BCP-47), or null when
+   * unset. Decides which `translations` key each bubble renders; null means
+   * every message shows in the language it was written in.
+   */
+  operatorLanguage: string | null;
+  /**
+   * Locales this operator's bot supports, from the same endpoint. These are
+   * what the working-language picker may offer: translating into a language
+   * no visitor of this bot can write in would produce nothing to read.
+   */
+  operatorAvailableLocales: string[];
+  /**
+   * Apply a newly saved working language. Called by the picker after the
+   * server confirms the write, so every rendered bubble re-resolves against
+   * the new language immediately rather than after a reload.
+   */
+  setOperatorLanguage: (locale: string | null) => void;
 }
 
 /** An uploaded attachment ready to be broadcast to the visitor. */
@@ -82,6 +101,12 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'ht
 interface UseOperatorSocketOptions {
   /** Connect only when true (operator online + workspace ready). */
   enabled: boolean;
+  /**
+   * True once the caller is known to have an operator profile, whether or not
+   * they are online. Governs the self-service reads (the working language)
+   * that describe the operator rather than the live connection.
+   */
+  isOperator: boolean;
 }
 
 /**
@@ -96,7 +121,7 @@ interface UseOperatorSocketOptions {
  * an effect body - to satisfy react-hooks/set-state-in-effect and to avoid
  * updating state after unmount.
  */
-export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): OperatorSocketApi {
+export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOptions): OperatorSocketApi {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [operatorId, setOperatorId] = useState<number | null>(null);
   const [operatorName, setOperatorName] = useState<string | null>(null);
@@ -116,6 +141,14 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const [qualifiedVersion, setQualifiedVersion] = useState(0);
   const [connectResolutions, setConnectResolutions] = useState<Record<string, ConnectResolution>>({});
   const [lastError, setLastError] = useState<string | null>(null);
+  // The operator's own working language, from `GET /operators/me/language`.
+  // Decides which `translations` key each bubble renders. Null means "not
+  // set", which reads every message in the language it was written in.
+  const [operatorLanguage, setOperatorLanguage] = useState<string | null>(null);
+  // The locales the picker may offer, derived server-side from this operator's
+  // bot config. Empty until the same fetch resolves, which leaves the picker
+  // offering "Don't translate" only rather than a stale hardcoded list.
+  const [operatorAvailableLocales, setOperatorAvailableLocales] = useState<string[]>([]);
 
   // ── Refs (stable across renders; avoid stale closures + reconnect churn) ──
   const socketRef = useRef<WebSocket | null>(null);
@@ -173,7 +206,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       case 'queue_update': {
         const waiting = Array.isArray(msg.waiting) ? msg.waiting : [];
         if (waiting.length > prevQueueCountRef.current) {
-          alertOperator('New chat waiting', 'A visitor is waiting for a live agent.');
+          alertOperator(translateNow('inbox.newChatWaiting') || 'New chat waiting', translateNow('inbox.aVisitorIsWaitingFor') || 'A visitor is waiting for a live agent.');
         }
         prevQueueCountRef.current = waiting.length;
         setQueue(waiting);
@@ -207,6 +240,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
                 role: msg.role,
                 content: msg.content,
                 timestamp: msg.timestamp,
+                sourceLanguage: msg.source_language ?? null,
               };
         setMessagesBySession((prev) => {
           const existing = prev[sid] ?? [];
@@ -219,12 +253,44 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
           setTypingBySession((prev) => (prev[sid] ? { ...prev, [sid]: false } : prev));
           const preview =
             msg.type === 'file'
-              ? msg.filename || 'Sent a file'
+              ? msg.filename || translateNow('inbox.sentAFile') || 'Sent a file'
               : typeof msg.content === 'string' && msg.content.trim()
                 ? msg.content.slice(0, 120)
-                : 'New message';
-          alertOperator('New message from a visitor', preview);
+                : translateNow('inbox.newMessage') || 'New message';
+          alertOperator(translateNow('inbox.newMessageFromAVisitor') || 'New message from a visitor', preview);
         }
+        break;
+      }
+
+      case 'message_translation': {
+        // Arrives separately from, and after, the message it belongs to: the
+        // visitor's original is persisted, routed and acknowledged before any
+        // translation is attempted. Merge by `message_id`.
+        //
+        // IDEMPOTENT BY CONSTRUCTION. The same frame can legitimately arrive
+        // twice (a Redis backplane redelivery, an operator-initiated retry
+        // landing next to the original), and writing the same language key
+        // with the same value twice is a no-op. The `dbId` match also means a
+        // translation for a message this tab has not seen is simply dropped
+        // rather than creating a phantom bubble - history will carry it.
+        const sid = msg.session_id;
+        const entry =
+          msg.status === 'ok' && typeof msg.content === 'string' && msg.content
+            ? { content: msg.content, status: 'ok' as const }
+            : { status: 'failed' as const };
+        setMessagesBySession((prev) => {
+          const existing = prev[sid];
+          if (!existing) return prev;
+          let changed = false;
+          const next = existing.map((m) => {
+            if (m.dbId !== msg.message_id) return m;
+            const current = m.translations?.[msg.language];
+            if (current?.status === entry.status && current?.content === entry.content) return m;
+            changed = true;
+            return { ...m, translations: { ...(m.translations ?? {}), [msg.language]: entry } };
+          });
+          return changed ? { ...prev, [sid]: next } : prev;
+        });
         break;
       }
 
@@ -252,7 +318,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         const sid = msg.session_id;
         const chat: ActiveChat = {
           session_id: sid,
-          visitor_name: msg.visitor_name || 'Anonymous',
+          visitor_name: msg.visitor_name || translateNow('inbox.anonymous') || 'Anonymous',
           reason: msg.reason ?? null,
           bot_id: msg.bot_id ?? null,
           bot_name: msg.bot_name ?? null,
@@ -324,7 +390,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
           for (const c of chats) {
             next[c.session_id] = {
               session_id: c.session_id,
-              visitor_name: c.visitor_name || 'Anonymous',
+              visitor_name: c.visitor_name || translateNow('inbox.anonymous') || 'Anonymous',
               reason: c.reason ?? null,
               bot_id: c.bot_id ?? null,
               bot_name: c.bot_name ?? null,
@@ -374,7 +440,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       }
 
       case 'error': {
-        setLastError(msg.message || 'A live-chat error occurred.');
+        setLastError(msg.message || translateNow('inbox.aLiveChatErrorOccurred') || 'A live-chat error occurred.');
         break;
       }
 
@@ -492,7 +558,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         terminalCloseRef.current = true;
         if (mountedRef.current) {
           setStatus('idle');
-          setLastError(event.reason || 'Live chat authentication failed.');
+          setLastError(event.reason || translateNow('inbox.liveChatAuthenticationFailed') || 'Live chat authentication failed.');
         }
         return;
       }
@@ -536,6 +602,41 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   useEffect(() => {
     if (enabled) ensureNotificationPermission();
   }, [enabled]);
+
+  // Load the operator's own working language as soon as we know they have an
+  // operator profile - NOT when they go online.
+  //
+  // This preference describes the person, not the connection. Gating it on the
+  // socket meant an offline operator saw the picker claim "Don't translate"
+  // and "Messages show in their original language" while the server held a
+  // saved locale: the control misreported their own setting, and anyone who
+  // adjusted it while offline was acting on a false reading.
+  //
+  // `isOperator` (rather than no gate at all) keeps the request off screens
+  // where the caller has no operator profile and the endpoint would 404.
+  // Still best-effort: on failure translations simply do not render and every
+  // bubble shows the original, which is the same state as "no preference set".
+  useEffect(() => {
+    if (!isOperator) return;
+    let cancelled = false;
+    void getMyLanguage()
+      .then((res) => {
+        if (cancelled) return;
+        setOperatorLanguage(res?.preferred_locale ?? null);
+        setOperatorAvailableLocales(
+          Array.isArray(res?.available_locales) ? res.available_locales.filter((l) => typeof l === 'string') : [],
+        );
+      })
+      .catch(() => {
+        /* non-fatal: originals only */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `enabled` stays in the deps deliberately: going online re-reads
+    // `available_locales`, picking up a locale an admin added to the bot since
+    // this screen was opened.
+  }, [isOperator, enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -714,6 +815,9 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     qualifiedVersion,
     connectResolutions,
     lastError,
+    operatorLanguage,
+    operatorAvailableLocales,
+    setOperatorLanguage,
     sendMessage,
     sendFile,
     sendTyping,

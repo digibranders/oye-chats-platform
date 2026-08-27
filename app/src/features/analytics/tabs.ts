@@ -1,5 +1,5 @@
 /**
- * The five analytics views, and the address of each.
+ * The analytics views, and the address of each.
  *
  * They were `Tabs` plus `navigate()` — a `role="tablist"` over five things that
  * are routes. `Tabs`' own docstring names the problem: "If switching tabs
@@ -20,7 +20,13 @@
  * showing the wrong one. That is the only reason `tabFromUrl` still exists.
  */
 
-export type AnalyticsTab = 'overview' | 'conversations' | 'journey' | 'visitors' | 'feedback';
+export type AnalyticsTab =
+  | 'overview'
+  | 'conversations'
+  | 'journey'
+  | 'visitors'
+  | 'languages'
+  | 'feedback';
 
 /** The section's root. Every view's address is built from it. */
 export const ANALYTICS_BASE = '/analytics';
@@ -32,6 +38,13 @@ export interface AnalyticsTabDef {
   path: string;
   /** Only the index view matches on the exact path. */
   end?: boolean;
+  /**
+   * The view only makes sense for some chatbots, so the row hides it for the
+   * rest — but the ROUTE always exists. A hidden tab whose route 404s turns a
+   * bookmark into a dead end the moment a setting changes; this way the view
+   * still resolves and explains itself.
+   */
+  conditional?: boolean;
 }
 
 export const ANALYTICS_TABS: readonly AnalyticsTabDef[] = [
@@ -39,6 +52,9 @@ export const ANALYTICS_TABS: readonly AnalyticsTabDef[] = [
   { value: 'conversations', label: 'Conversations', path: `${ANALYTICS_BASE}/conversations` },
   { value: 'journey', label: 'Journey', path: `${ANALYTICS_BASE}/journey` },
   { value: 'visitors', label: 'Visitors', path: `${ANALYTICS_BASE}/visitors` },
+  // Hidden for a single-language chatbot: its breakdown would be one row
+  // reading "English, 100%".
+  { value: 'languages', label: 'Languages', path: `${ANALYTICS_BASE}/languages`, conditional: true },
   { value: 'feedback', label: 'Feedback', path: `${ANALYTICS_BASE}/feedback` },
 ];
 

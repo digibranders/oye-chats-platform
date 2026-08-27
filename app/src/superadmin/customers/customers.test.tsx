@@ -83,7 +83,8 @@ describe('credit adjustment rules', () => {
   it('refuses what the API would refuse, with the API’s own numbers', () => {
     expect(creditAmountProblem(0)).toMatch(/above zero/);
     expect(creditAmountProblem(Number.NaN)).toMatch(/above zero/);
-    expect(creditAmountProblem(MAX_CREDIT_DELTA + 1)).toMatch(/10,000,000/);
+    // Indian grouping: the ceiling reads as one crore in the console's `en-IN` default.
+    expect(creditAmountProblem(MAX_CREDIT_DELTA + 1)).toMatch(/1,00,00,000/);
     expect(creditAmountProblem(MAX_CREDIT_DELTA)).toBeNull();
     expect(creditReasonProblem('ok')).toMatch(/at least 3/);
     expect(creditReasonProblem('  a  ')).toMatch(/at least 3/);

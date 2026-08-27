@@ -2046,7 +2046,30 @@ def update_seller_profile(
             request=request,
         )
         session.commit()
-        return after
+
+        # Changing the GST rate is not a display setting. Prices are published
+        # exclusive of tax and the uplift is baked into every immutable Razorpay
+        # plan, so a new rate silently disagrees with every mandate already
+        # authorised: quotes and checkout sheets move, the actual debits do not,
+        # and ``plan-price-check`` starts reporting every plan as drifted. The
+        # save is still allowed (it is a legitimate, if rare, event) but it must
+        # never be a silent one. Same treatment as ``emandate_warning``.
+        warnings: list[str] = []
+        if before.get("tax_rate_bps") != after.get("tax_rate_bps"):
+            warnings.append(
+                f"Tax rate changed from {before.get('tax_rate_bps')} to {after.get('tax_rate_bps')} bps. "
+                "Every Razorpay plan is minted at base + tax and is immutable, so existing mandates "
+                "still debit the OLD rate. Re-mint every plan and add-on and repoint their ids, then "
+                "verify with GET /subscriptions/admin/plan-price-check."
+            )
+        if before.get("gstin") != after.get("gstin"):
+            warnings.append(
+                "GSTIN changed. Tax is only charged while a GSTIN is configured, so this switches the "
+                "uplift on or off for every domestic customer at the next checkout."
+            )
+        if warnings:
+            logger.warning("seller profile change needs a re-mint: %s", warnings)
+        return {**after, "warnings": warnings}
 
 
 # ── billing: invoice console (invoicing v2 Phase 6) ─────────────────────────

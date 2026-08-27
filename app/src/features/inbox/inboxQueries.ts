@@ -61,6 +61,11 @@ export function parseSessionDetails(raw: Record<string, unknown>): SessionDetail
     referrer: str(raw.referrer),
     visitor_rating:
       typeof raw.visitor_rating === 'number' && raw.visitor_rating > 0 ? raw.visitor_rating : null,
+    // The BASE language the conversation settled into ("hi"), and the full
+    // tag it was pinned to ("hi-IN"). Both are null until Phase 2 resolves
+    // one, which is the normal state for a single-language chatbot.
+    language_code: str(raw.language_code),
+    locale: str(raw.locale),
     bant: bant
       ? {
           need: str(bant.need),
@@ -77,6 +82,10 @@ export function parseSessionDetails(raw: Record<string, unknown>): SessionDetail
           company: str(lead.company),
         }
       : null,
+    // Passed through as the server built it. The panel renders it with the
+    // same component the lead record uses, so narrowing it twice would be two
+    // shapes to keep in step.
+    quotation: (raw.quotation as SessionDetails['quotation']) ?? null,
   };
 }
 

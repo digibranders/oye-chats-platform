@@ -94,15 +94,25 @@ if ! timeout -k 5 20 ssh -n "${SSH_OPTS[@]}" "ubuntu@$APP_HOST" \
   exit 1
 fi
 
+# --- keep the host awake ------------------------------------------------------
+# The first 24h attempt died at 8h47m. The Multipass VMs are guests of THIS Mac,
+# so host sleep suspends the load generators and the servers under test at the
+# same instant -- the k6 logs and the VM's own sampler both stopped within two
+# minutes of each other, and neither wrote a summary. `caffeinate -dimsu` holds
+# off display, idle, disk and system sleep for the run's duration; each k6 arm is
+# launched under it so the assertion dies with the run rather than outliving it.
+CAFFEINATE=(caffeinate -dimsu)
+command -v caffeinate >/dev/null || CAFFEINATE=()   # non-macOS host: no-op
+
 # --- the two arms -------------------------------------------------------------
 echo "== launching soak: $DURATION, ${HTTP_VUS} http VUs, ${WS_CONNS}+${WS_CHURN} sockets =="
-nohup k6 run -e "DURATION=$DURATION" -e "VUS=$HTTP_VUS" -e CHAT=1 \
+nohup "${CAFFEINATE[@]}" k6 run -e "DURATION=$DURATION" -e "VUS=$HTTP_VUS" -e CHAT=1 \
   --summary-export "$OUT/k6_http.json" "$ROOT/scenarios/soak.js" \
   >"$OUT/k6_http.log" 2>&1 &
 disown
 
 BASE_URL="http://$APP_HOST:$WS_PORT" \
-nohup k6 run -e "DURATION=$DURATION" -e "CONNS=$WS_CONNS" -e "CHURN_CONNS=$WS_CHURN" \
+nohup "${CAFFEINATE[@]}" k6 run -e "DURATION=$DURATION" -e "CONNS=$WS_CONNS" -e "CHURN_CONNS=$WS_CHURN" \
   --summary-export "$OUT/k6_ws.json" "$ROOT/scenarios/ws-soak.js" \
   >"$OUT/k6_ws.log" 2>&1 &
 disown
@@ -114,6 +124,8 @@ http arm   $HTTP_VUS VUs -> $BASE_URL  (soak.js, per-VU X-Forwarded-For)
 ws   arm   $WS_CONNS held + $WS_CHURN churning -> ws://$APP_HOST:$WS_PORT (ws-soak.js)
 sampler    ubuntu@$APP_HOST:/home/ubuntu/soak_$STAMP.csv  (60s interval)
 recycling  GUNICORN_MAX_REQUESTS=0 on oye-loadapi and oye-loadws
+sleep      host held awake by caffeinate -dimsu for the duration
+NOTE       a host reboot still ends the run; k6 is nohup'd, not a service
 verdict    python3 runner/soak-verdict.py <sampler.csv> [$OUT/k6_ws.json]
 EOF
 

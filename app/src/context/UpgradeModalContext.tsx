@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactEl
 import { UpgradeModal } from './UpgradeModal';
 import { UPGRADE_INTENTS, type AddBotIntentParams, type UpgradeIntent, type UpgradeIntentKey } from './upgradeIntents';
 import type { FeatureKey } from '../types/domain';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * Escape-hatch payload for callers that need bespoke one-off copy without a
@@ -59,9 +60,17 @@ function humanizeFeature(key: FeatureKey): string {
 function reasonToIntent(reason: UpgradeModalReason): UpgradeIntent {
   const featureLabel = reason.feature ? humanizeFeature(reason.feature) : null;
   return {
-    eyebrow: featureLabel ? `${featureLabel} is a paid feature` : 'Upgrade required',
-    title: reason.title ?? (featureLabel ? `${featureLabel} is a paid feature` : 'Upgrade your plan'),
-    description: reason.description ?? 'Upgrade your plan to unlock this for your workspace.',
+    eyebrow: featureLabel
+      ? translateNow('app.featureIsPaid', { feature: featureLabel }) ||
+        `${featureLabel} is a paid feature`
+      : translateNow('app.upgradeRequired') || 'Upgrade required',
+    title:
+      reason.title ??
+      (featureLabel
+        ? translateNow('app.featureIsPaid', { feature: featureLabel }) ||
+          `${featureLabel} is a paid feature`
+        : translateNow('app.upgradeYourPlan') || 'Upgrade your plan'),
+    description: reason.description ?? (translateNow('app.upgradeYourPlanToUnlock') || 'Upgrade your plan to unlock this for your workspace.'),
     highlights: [],
     recommendedPlan: '',
   };
@@ -71,11 +80,11 @@ function reasonToIntent(reason: UpgradeModalReason): UpgradeIntent {
  * something rather than silently dropping the click. */
 function genericFallback(): UpgradeIntent {
   return {
-    eyebrow: 'Upgrade required',
-    title: 'Upgrade your plan',
-    description: 'This feature is available on paid plans.',
+    eyebrow: translateNow('app.upgradeRequired') || 'Upgrade required',
+    title: translateNow('app.upgradeYourPlan') || 'Upgrade your plan',
+    description: translateNow('app.thisFeatureIsAvailableOn') || 'This feature is available on paid plans.',
     highlights: [],
-    recommendedPlan: 'Starter',
+    recommendedPlan: translateNow('app.starter') || 'Starter',
   };
 }
 
