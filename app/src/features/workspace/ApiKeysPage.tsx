@@ -22,7 +22,7 @@ import {
   toast,
 } from '../../ui';
 import { getApiBaseUrl, getClientApiKey, regenerateClientApiKey } from '../../services/api';
-import { setAuthItem } from '../../utils/authStorage';
+import { getAuthItem, setAuthItem } from '../../utils/authStorage';
 import { keys } from '../../query/keys';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -32,10 +32,26 @@ import { useWorkspace } from '../../context/WorkspaceContext';
  *
  * Two things this page has to get right.
  *
- * **A key is shown in full exactly once.** After that it is a mask, and a mask
- * has no copy button: the console this replaces put one there, and it copied
- * the bullets. A button that silently puts `••••••a3f9` on the clipboard is
- * worse than no button, because the user believes they have the key.
+ * **Never offer to copy a mask.** The console this replaces had a copy button
+ * beside the bullets, and it copied the bullets. A button that silently puts
+ * `••••••a3f9` on the clipboard is worse than no button, because the user
+ * believes they have the key.
+ *
+ * That rule used to be enforced by having no copy control at all, on the
+ * belief — printed on the page as "Stored as a hash" — that the key was
+ * unrecoverable. It is not: `Client.api_key` is a plain column, `GET
+ * /client/api-key` masks it only for display, and this browser is holding the
+ * full value already, because the console authenticates with the very same
+ * `X-API-Key`. So the honest conclusion was never "no copy button", it was
+ * "copy the real key, which we have". Without one, the only route to a key you
+ * had not written down was Rotate — which revokes every live integration to
+ * recover a secret sitting in this tab's own storage.
+ *
+ * The copy is offered **only when the local credential is provably the current
+ * one**: its last four characters have to match the mask the server just sent.
+ * Rotate on another device and this tab's copy is stale, at which point
+ * offering it would be the same lie as copying the bullets — see
+ * `localKeyIfCurrent`.
  *
  * **Rotating it signs out every integration — including this browser.** The
  * console authenticates with the same `X-API-Key` the API does (see the request
@@ -46,6 +62,27 @@ import { useWorkspace } from '../../context/WorkspaceContext';
  * back to the session before the reveal dialog opens, and the confirmation says
  * plainly what else breaks.
  */
+
+/**
+ * This browser's copy of the workspace key, but only when it is provably the
+ * key the server currently holds.
+ *
+ * The console signs in with the workspace credential itself, so `admin_token`
+ * IS the API key. That makes it copyable — but it can also go stale, because a
+ * rotation on another device changes the server's key without touching this
+ * tab's storage. `api_key_masked` is `••••••` plus the real key's last four, so
+ * comparing those four is a cheap proof that the local copy is still live.
+ *
+ * `null` means "do not offer a copy": either there is no local credential, or
+ * it no longer matches, and handing over a dead key is the same failure as
+ * copying the mask.
+ */
+function localKeyIfCurrent(masked: string | undefined): string | null {
+  const local = getAuthItem('admin_token');
+  if (!local || local.length < 4) return null;
+  if (!masked || masked.length < 4) return null;
+  return local.slice(-4) === masked.slice(-4) ? local : null;
+}
 
 export function ApiKeysPage() {
   const queryClient = useQueryClient();
@@ -83,6 +120,10 @@ export function ApiKeysPage() {
   });
 
   const forbidden = isOperator || (apiKey.isError && statusOf(apiKey.error) === 403);
+  // Recomputed per render rather than memoised: `rotate` writes the new key
+  // straight to storage, and a stale memo here would keep showing the old
+  // one as copyable for the rest of the session.
+  const copyable = localKeyIfCurrent(apiKey.data?.api_key_masked);
 
   if (forbidden) {
     return (
@@ -132,14 +173,29 @@ export function ApiKeysPage() {
             ) : (
               <SettingRow
                 label="Current key"
-                description="Stored as a hash — rotate to get a new one."
+                description={
+                  copyable
+                    ? 'The credential this browser is signed in with. Reveal it to copy.'
+                    : 'Rotated on another device, so this browser no longer holds it. Rotate again to issue a key you can copy.'
+                }
                 controlWidth="auto"
               >
-                {/* Deliberately not a `CopyField`: this is the mask, and the
-                    only honest thing to do with a mask is show it. */}
-                <span className="figure text-base text-text-primary">
-                  {apiKey.data.api_key_masked}
-                </span>
+                {copyable ? (
+                  <CopyField
+                    className="w-72"
+                    compact
+                    secret
+                    maskedValue={apiKey.data.api_key_masked}
+                    value={copyable}
+                    label="Workspace API key"
+                  />
+                ) : (
+                  // No local copy, or a stale one. The mask is all there
+                  // honestly is, and a mask never gets a copy button.
+                  <span className="figure text-base text-text-primary">
+                    {apiKey.data.api_key_masked}
+                  </span>
+                )}
               </SettingRow>
             )}
 

@@ -21,7 +21,11 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../../services/api', () => api);
 
-const authStorage = vi.hoisted(() => ({ setAuthItem: vi.fn() }));
+const authStorage = vi.hoisted(() => ({
+  setAuthItem: vi.fn(),
+  // Null by default: most cases here are 'this browser has no live copy'.
+  getAuthItem: vi.fn((_key: string) => null as string | null),
+}));
 vi.mock('../../utils/authStorage', () => authStorage);
 
 const entitlements = vi.hoisted(() => ({
@@ -94,11 +98,43 @@ describe('ApiKeysPage — the four states', () => {
 
 describe('ApiKeysPage — the key itself', () => {
   it('never offers to copy the mask', async () => {
+    // No local credential at all, so the mask is the only truth there is.
     renderPage();
     expect(await screen.findByText('••••••a3f9')).toBeInTheDocument();
     // The only copyable things on the page before a rotation are the base URL
     // and the example request — never the masked key.
     expect(screen.queryByRole('button', { name: /copy .*api key/i })).not.toBeInTheDocument();
+  });
+
+  it('offers the real key when this browser is holding the current one', async () => {
+    // The console authenticates with the workspace key itself, so `admin_token`
+    // IS the key. Without this the only way to recover a key you had not
+    // written down was Rotate — revoking every live integration to read a
+    // secret already sitting in this tab.
+    authStorage.getAuthItem.mockReturnValue('livekey00000000a3f9');
+    const user = userEvent.setup();
+    renderPage();
+
+    const reveal = await screen.findByRole('button', { name: /reveal workspace api key/i });
+    expect(screen.getByRole('button', { name: /copy workspace api key/i })).toBeInTheDocument();
+    // Masked until asked for, and then the whole key — not the bullets.
+    expect(screen.queryByText('livekey00000000a3f9')).not.toBeInTheDocument();
+    await user.click(reveal);
+    expect(await screen.findByText('livekey00000000a3f9')).toBeInTheDocument();
+  });
+
+  it('withholds a local key that no longer matches the server', async () => {
+    // Rotated on another device: storage still holds the old value, and the
+    // server's mask ends in different characters. Handing that over would be
+    // the same lie as copying the mask.
+    authStorage.getAuthItem.mockReturnValue('stalekey0000dead');
+    renderPage();
+
+    expect(await screen.findByText('••••••a3f9')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /copy workspace api key/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/rotated on another device/i)).toBeInTheDocument();
   });
 
   it('states the whole consequence before rotating, including this session', async () => {
