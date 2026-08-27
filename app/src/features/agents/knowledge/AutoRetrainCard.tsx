@@ -173,7 +173,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             }
           />
         </CardBody>
-      ) : !status.enabled && status.sourcesCount === 0 ? (
+      ) : !status.enabled && status.pageCount === 0 ? (
         /* Off, with nothing it could refresh. The full card below reserves
            space for facts that cannot exist yet: four definition rows that all
            read "—", and a run table for a schedule that cannot run. Rendered in
@@ -210,10 +210,15 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
                   ),
                 },
                 {
-                  label: 'Websites in the set',
+                  // Pages, not websites. The count is every crawled URL, which
+                  // is what the weekly job iterates — and what this card's own
+                  // subtitle already promises ("Only pages that changed are
+                  // re-read"). Saying "websites" made one site of 20 pages
+                  // read as 20 sites.
+                  label: 'Pages in the set',
                   value:
-                    status.sourcesCount > 0
-                      ? `${formatNumber(status.sourcesCount)} trained website${status.sourcesCount === 1 ? '' : 's'}`
+                    status.pageCount > 0
+                      ? `${formatNumber(status.pageCount)} page${status.pageCount === 1 ? '' : 's'}`
                       : undefined,
                 },
                 {
@@ -229,7 +234,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
                 },
               ]}
             />
-            {status.sourcesCount === 0 ? (
+            {status.pageCount === 0 ? (
               <Alert tone="neutral" className="mt-4">
                 There are no trained websites to refresh yet. Uploaded documents are not re-read —
                 they only change when you replace them.

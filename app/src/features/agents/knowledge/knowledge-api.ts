@@ -108,8 +108,18 @@ export interface RecrawlStatus {
   nextRecrawlAt: string | null;
   lastRecrawlAt: string | null;
   lastRecrawlStatus: string | null;
-  /** How many crawled websites are in the weekly refresh set. */
-  sourcesCount: number;
+  /**
+   * How many crawled PAGES the weekly job re-reads.
+   *
+   * Named for what it counts, not for the wire field it comes from. The API
+   * calls it `sources_count`, and it is
+   * `count(distinct document_name) where source = 'crawl'` — one crawled page
+   * is one Document named by its own URL, so a single website of 20 pages
+   * answers 20. That name is what made this card say "20 trained websites".
+   * The number is right: `_load_crawl_urls_for_bot`, which decides what the
+   * weekly job actually fetches, runs the identical query.
+   */
+  pageCount: number;
   history: RecrawlRun[];
 }
 
@@ -122,7 +132,7 @@ function parseRecrawlStatus(raw: Record<string, unknown>): RecrawlStatus {
     nextRecrawlAt: asString(raw.next_recrawl_at),
     lastRecrawlAt: asString(raw.last_recrawl_at),
     lastRecrawlStatus: asString(raw.last_recrawl_status),
-    sourcesCount: asNumber(raw.sources_count),
+    pageCount: asNumber(raw.sources_count),
     history: history.map((entry) => {
       const row = asRecord(entry);
       return {

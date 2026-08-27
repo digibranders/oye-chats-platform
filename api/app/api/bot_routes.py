@@ -826,6 +826,11 @@ class BotResponse(BaseModel):
     # None means "not seen since the heartbeat shipped" -- there is no backfill,
     # so an older install reads None until its widget next bootstraps.
     widget_last_seen_at: datetime | None = None
+    # Who the install briefing was last emailed to, and when. Drives the
+    # Deploy page's "already sent" state, which has to survive a reload and a
+    # change of device. None on both means it has never been sent.
+    dev_invite_email: str | None = None
+    dev_invite_sent_at: datetime | None = None
     # Hostname of the most recent bootstrap. Browser-forgeable, so this is a
     # support diagnostic ("which domain is it actually running on?") and never
     # an authorisation input.
@@ -983,6 +988,8 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         live_chat_enabled=bot.live_chat_enabled,
         widget_installed_at=bot.widget_installed_at,
         widget_last_seen_at=bot.widget_last_seen_at,
+        dev_invite_email=bot.dev_invite_email,
+        dev_invite_sent_at=bot.dev_invite_sent_at,
         widget_last_origin=bot.widget_last_origin,
         demo_screenshot_status=bot.demo_screenshot_status,
         demo_screenshot_captured_at=bot.demo_screenshot_captured_at,
@@ -3625,6 +3632,12 @@ class RecrawlStatusResponse(BaseModel):
     last_recrawl_at: str | None
     last_recrawl_status: str | None
     last_recrawl_summary: dict | None
+    # PAGES, not sources. `count(distinct document_name) where source='crawl'`,
+    # and a crawled page is one Document named by its own URL — so one website
+    # of 20 pages answers 20. The name predates the console and is kept because
+    # it is a published field, but it is what made the dashboard render "20
+    # trained websites" for a single site. The count itself is right: it is the
+    # same query `_load_crawl_urls_for_bot` runs to decide what to re-fetch.
     sources_count: int
     # Rolling window (newest first) of past auto-recrawl runs. Each entry:
     # ``{"ran_at": str, "status": str, "total": int, "unchanged": int,
@@ -3638,12 +3651,19 @@ class RecrawlUpdateRequest(BaseModel):
 
 
 def _load_recrawl_context(bot_id: int, client_id: int):
-    """Shared read: bot row, entitlements, and crawled-source count.
+    """Shared read: bot row, entitlements, and crawled-PAGE count.
 
     Kept as a helper so every recrawl route enforces the same tenant
     isolation (``bot.client_id == client_id``) and the same feature check
     path. Returns a ``(bot, entitlements, sources_count)`` tuple; raises
     404 if the bot isn't in the workspace.
+
+    ``sources_count`` counts distinct ``document_name``, and a crawled page is
+    one Document named by its own URL — so this is a count of PAGES, despite
+    the name. Deliberately the same query as
+    ``recrawl_service._load_crawl_urls_for_bot``: the figure the dashboard
+    shows has to be the set the weekly job will actually re-fetch, or it is
+    telling the customer about work that will not happen.
     """
     from sqlalchemy import func as sa_func
 

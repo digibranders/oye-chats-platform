@@ -579,7 +579,7 @@ function status(overrides: Partial<RecrawlStatus> = {}): RecrawlStatus {
     nextRecrawlAt: '2026-08-26T09:00:00Z',
     lastRecrawlAt: '2026-08-19T09:00:00Z',
     lastRecrawlStatus: 'ok',
-    sourcesCount: 2,
+    pageCount: 2,
     history: [{ ranAt: '2026-08-19T09:00:00Z', status: 'ok', unchanged: 40, changed: 2, failed: 0 }],
     ...overrides,
   };
@@ -598,7 +598,7 @@ describe('AutoRetrainCard', () => {
       <AutoRetrainCard
         agentId={7}
         section={section<RecrawlStatus | null>(
-          status({ enabled: false, sourcesCount: 0, history: [], lastRecrawlAt: null, nextRecrawlAt: null }),
+          status({ enabled: false, pageCount: 0, history: [], lastRecrawlAt: null, nextRecrawlAt: null }),
         )}
         planName="Standard"
       />,
@@ -619,11 +619,11 @@ describe('AutoRetrainCard', () => {
     mount(
       <AutoRetrainCard
         agentId={7}
-        section={section<RecrawlStatus | null>(status({ enabled: false, sourcesCount: 2, history: [] }))}
+        section={section<RecrawlStatus | null>(status({ enabled: false, pageCount: 2, history: [] }))}
         planName="Standard"
       />,
     );
-    expect(screen.getByText('Websites in the set')).toBeInTheDocument();
+    expect(screen.getByText('Pages in the set')).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: /recent weekly retrains/i })).not.toBeInTheDocument();
   });
 
@@ -631,7 +631,7 @@ describe('AutoRetrainCard', () => {
     mount(
       <AutoRetrainCard
         agentId={7}
-        section={section<RecrawlStatus | null>(status({ enabled: false, sourcesCount: 2 }))}
+        section={section<RecrawlStatus | null>(status({ enabled: false, pageCount: 2 }))}
         planName="Standard"
       />,
     );
@@ -644,12 +644,44 @@ describe('AutoRetrainCard', () => {
     mount(
       <AutoRetrainCard
         agentId={7}
-        section={section<RecrawlStatus | null>(status({ enabled: true, sourcesCount: 2, history: [] }))}
+        section={section<RecrawlStatus | null>(status({ enabled: true, pageCount: 2, history: [] }))}
         planName="Standard"
       />,
     );
     expect(screen.getByRole('table', { name: /recent weekly retrains/i })).toBeInTheDocument();
     expect(screen.getByText(/no runs yet/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The count is pages, not websites. `sources_count` is
+   * `count(distinct document_name) where source='crawl'`, and a crawled PAGE
+   * is one Document named by its own URL — the same query
+   * `_load_crawl_urls_for_bot` runs to decide what the weekly job re-reads. So
+   * the number was right and the noun was wrong: one website of 20 pages read
+   * "20 trained websites", which also contradicted this card's own subtitle
+   * ("Only pages that changed are re-read").
+   */
+  it('counts what the weekly job actually re-reads: pages, not websites', () => {
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(status({ enabled: true, pageCount: 20 }))}
+        planName="Standard"
+      />,
+    );
+    expect(screen.getByText('20 pages')).toBeInTheDocument();
+    expect(screen.queryByText(/trained websites?/i)).not.toBeInTheDocument();
+  });
+
+  it('counts one page as one page', () => {
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(status({ enabled: true, pageCount: 1 }))}
+        planName="Standard"
+      />,
+    );
+    expect(screen.getByText('1 page')).toBeInTheDocument();
   });
 
   it('shows the run history the backend has always written', () => {
