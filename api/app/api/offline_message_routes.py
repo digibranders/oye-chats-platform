@@ -26,6 +26,7 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.schemas.ws import MAX_TRANSCRIPT_TURNS, TranscriptTurn
+from app.services import plan_entitlements_service
 from app.services.email_service import (
     get_notification_recipients,
     redact_email,
@@ -101,6 +102,19 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
         ).scalar_one_or_none()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found.")
+
+        # Plan gate: the offline message form is part of the human-support
+        # channel, which is entitlement-gated together with live chat. A
+        # Free-plan bot's widget never offers this form (the RAG prompt no
+        # longer emits the card), but the endpoint is the real boundary, so a
+        # crafted request carrying a Free bot's public key must not be able to
+        # store messages or fan out notification emails. Deny-by-default on
+        # resolver error keeps a lookup hiccup from leaking the paid channel.
+        if not plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session):
+            raise HTTPException(
+                status_code=403,
+                detail="This workspace's plan does not include message support.",
+            )
 
         msg = OfflineMessage(
             bot_id=bot.id,

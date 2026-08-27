@@ -28,7 +28,7 @@ implicit idle state so legacy sessions cost nothing to migrate.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_strict
+from app.config import QUOTATION_EMAIL_DELAY_SECONDS
 from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, ChatSession, Client
 from app.db.repository import get_lead_info_by_session
@@ -431,16 +432,12 @@ def build_quotation_summary(bot: Bot, chat_session: ChatSession) -> dict | None:
     }
 
 
-def _send_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
-    """Fire the visitor confirmation + client notification emails for a just
-    completed quote. Best-effort: any failure is logged, never raised into the
-    request path (the quote is already saved; email is a side effect).
-
-    Two audiences, two contents:
-    * **Visitor** — a no-pricing confirmation. The widget never shows visitors
-      prices, so neither does their email; it only acknowledges the request.
-    * **Client** — the itemised quote (line items + total) plus the visitor's
-      contact info, sent to the bot's configured notification recipients.
+def _send_quotation_owner_email(db, bot: Bot, session: ChatSession) -> None:
+    """Notify the client's configured recipients with the full itemised quote
+    (line items + total) plus the visitor's contact info. Sent **immediately**
+    at accept so the owner learns of a fresh lead without delay. Reply-To is the
+    visitor so the owner can reply straight to the lead. Best-effort: any
+    failure is logged, never raised into the request path.
     """
     try:
         summary = build_quotation_summary(bot, session)
@@ -456,23 +453,8 @@ def _send_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
         }
 
         bot_name = getattr(bot, "name", None) or "AI Assistant"
-        company_name = getattr(bot, "company_name", None) or bot_name
-        client_reply_to = getattr(bot, "reply_to_email", None)
         visitor_email = (contact["email"] or "").strip() if contact["email"] else ""
 
-        # Visitor confirmation (no pricing). Reply-To routes back to the client.
-        if visitor_email:
-            service_names = [item.get("name") for item in summary["line_items"]]
-            email_service.send_quotation_visitor_email(
-                visitor_email,
-                company_name,
-                contact["name"],
-                service_names,
-                reply_to=client_reply_to,
-            )
-
-        # Client notification (full itemised quote). Reply-To is the visitor so
-        # the client can reply straight to the lead.
         recipients = email_service.get_notification_recipients(bot, "quote")
         for addr in recipients:
             email_service.send_quotation_client_email(
@@ -485,7 +467,106 @@ def _send_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
                 reply_to=visitor_email or None,
             )
     except Exception:
-        logger.warning("Quotation email dispatch failed (non-blocking)", exc_info=True)
+        logger.warning("Quotation owner-email dispatch failed (non-blocking)", exc_info=True)
+
+
+def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
+    """Confirm to the visitor that their quote request was received. Carries NO
+    pricing (the widget never shows visitors prices, so neither does the email).
+    Sent on a delay after accept; Reply-To routes back to the client. Best-effort:
+    any failure is logged, never raised.
+    """
+    try:
+        summary = build_quotation_summary(bot, session)
+        if not summary or not summary.get("line_items"):
+            return
+
+        lead = get_lead_info_by_session(db, session.id)
+        visitor_email = (getattr(lead, "email", None) or "").strip()
+        if not visitor_email:
+            return
+
+        bot_name = getattr(bot, "name", None) or "AI Assistant"
+        company_name = getattr(bot, "company_name", None) or bot_name
+        client_reply_to = getattr(bot, "reply_to_email", None)
+        service_names = [item.get("name") for item in summary["line_items"]]
+        email_service.send_quotation_visitor_email(
+            visitor_email,
+            company_name,
+            getattr(lead, "name", None),
+            service_names,
+            reply_to=client_reply_to,
+        )
+    except Exception:
+        logger.warning("Quotation visitor-email dispatch failed (non-blocking)", exc_info=True)
+
+
+def dispatch_quotation_visitor_email_for_session(session_id: str, bot_id: int) -> None:
+    """Re-load the bot + session on a fresh DB session and fire the visitor
+    confirmation email. Entry point for the deferred ARQ task
+    ``task_send_quotation_visitor_email``, which runs ~5 minutes after the
+    visitor accepts the quote.
+
+    Loading fresh at send time (rather than closing over the request's ORM
+    objects) means the email reflects the state as it stands 5 minutes later —
+    a lead who added their phone in the meantime, say — and keeps the worker
+    from touching a session bound to a long-closed request. Best-effort: a
+    missing bot/session or any downstream failure is logged, never raised, so
+    the ARQ job doesn't churn retries over an email side effect.
+    """
+    try:
+        with get_session() as db:
+            bot = db.get(Bot, bot_id)
+            if bot is None:
+                logger.warning("Quotation visitor-email dispatch: bot %s not found", bot_id)
+                return
+            session = _load_session(db, bot, session_id)
+            if session is None:
+                logger.warning("Quotation visitor-email dispatch: session %s not found for bot %s", session_id, bot_id)
+                return
+            _send_quotation_visitor_email(db, bot, session)
+    except Exception:
+        logger.warning(
+            "Quotation visitor-email dispatch failed for session %s (non-blocking)", session_id, exc_info=True
+        )
+
+
+def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
+    """Dispatch the two completion emails with different timing:
+
+    * **Owner** — notified **immediately** so a fresh lead never waits.
+    * **Visitor** — a no-pricing confirmation deferred by
+      ``QUOTATION_EMAIL_DELAY_SECONDS`` (default 5 min).
+
+    The visitor delay is durable via ARQ when the worker is enabled so it
+    survives an API restart. When the worker is disabled (local dev without a
+    worker) there is no durable scheduler, so we fall back to sending the
+    visitor email inline rather than dropping it — better an on-time email in
+    dev than none. Best-effort throughout: neither send nor an enqueue blip may
+    fail the accept the quote has already committed to.
+    """
+    # Owner: immediate.
+    _send_quotation_owner_email(db, bot, session)
+
+    # Visitor: deferred ~5 min.
+    from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
+
+    if WORKER_ENABLED:
+        try:
+            enqueue_sync(
+                "task_send_quotation_visitor_email",
+                session.id,
+                bot.id,
+                _defer_by=timedelta(seconds=QUOTATION_EMAIL_DELAY_SECONDS),
+            )
+            return
+        except Exception:
+            logger.warning(
+                "Failed to enqueue deferred quotation visitor email for session %s; sending inline",
+                session.id,
+                exc_info=True,
+            )
+    _send_quotation_visitor_email(db, bot, session)
 
 
 def _view_current(catalog: QuotationCatalog, state: dict) -> CurrentServiceView | None:
@@ -940,10 +1021,11 @@ def accept_quote(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> Quotat
         session.quotation_state = state
         db.commit()
         lines, total = _compute_quote(catalog, state)
-        # Notify the visitor (confirmation, no pricing) and the client (full
-        # itemised quote). Non-blocking + best-effort; the quote is already
-        # saved, so an email failure must never fail the accept.
-        _send_quotation_emails(db, bot, session)
+        # Notify the owner immediately (full itemised quote) and send the
+        # visitor confirmation (no pricing) on a ~5-min delay per spec.
+        # Best-effort; the quote is already saved, so a dispatch/scheduling
+        # failure must never fail the accept.
+        _schedule_quotation_emails(db, bot, session)
         return QuotationStateOut(
             active=False,
             status="complete",

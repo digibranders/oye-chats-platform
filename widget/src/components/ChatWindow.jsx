@@ -1428,7 +1428,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         handoffTriggeredRef.current = true;
                         consecutiveFallbacks.current = 0;
                         setTimeout(() => { triggerHandoff(); handoffTriggeredRef.current = false; }, (settings.handoff_delay_seconds || 0) * 1000 || 600);
-                    } else if (consecutiveFallbacks.current === 1) {
+                    } else if (consecutiveFallbacks.current === 1 && settings.support_enabled !== false) {
+                        // Prominent live-chat pulse after one fallback — only when
+                        // the plan actually has a human channel to escalate to.
+                        // On Free (support_enabled === false) there is nothing to
+                        // pulse toward, so stay quiet.
                         setShowProminentHandoff(true);
                     }
                 } else {
@@ -1617,6 +1621,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, [injectQuotationFlow]);
 
     const triggerHandoff = useCallback(async () => {
+        // Hard gate: if the bot's PLAN has no human-support channel at all
+        // (Free plan → support_enabled === false), never open the handoff /
+        // leave-message flow, even from an internal caller that forgot to check
+        // (e.g. the consecutive-fallback auto-trigger below). The backend also
+        // 403s the handoff + offline endpoints, this keeps the visitor from ever
+        // seeing a form that would dead-end. ``support_enabled`` is only false
+        // when the backend explicitly says so; undefined (older config) stays
+        // permissive so paid bots are unaffected.
+        if (settings.support_enabled === false) return;
+
         // Ensure we have a session id, and use the FRESHEST value (React state
         // may still be stale on the first turn). writeSessionId keeps the
         // widget's storage in sync so the async retry loop below can re-read
@@ -1644,7 +1658,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, maybeInjectQuotation, shareDomain, settings.support_enabled]);
 
     // When the visitor submits their email at the end of the quote, don't
     // force the handoff form — drop a thank-you card in the chat with a
@@ -2582,7 +2596,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {renderHeader() || <div />}
                 {(() => {
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
-                    const showLeaveMessageOption = !settings.live_chat_enabled && chatMode === 'bot';
+                    // Offline "leave a message" affordance. Shown only when the
+                    // plan HAS a human-support channel (support_enabled) but live
+                    // chat is off for this bot (operator toggle) — i.e. the
+                    // offline-only case. On Free (support_enabled === false) the
+                    // plan has no channel at all, so this must stay hidden; the
+                    // old ``!settings.live_chat_enabled`` alone wrongly showed it
+                    // for Free too, since Free also reports live_chat_enabled=false.
+                    const showLeaveMessageOption =
+                        settings.support_enabled !== false && !settings.live_chat_enabled && chatMode === 'bot';
                     // Only worth showing when there is genuinely something to
                     // switch between. A bot with one supported locale (or none
                     // configured) opened a menu with a single, inert option.
