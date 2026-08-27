@@ -1,12 +1,8 @@
-import { useEffect } from 'react';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../query/client';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { router } from './routes';
-
-/** CDN URL for the embeddable OyeChats chat widget. */
-const OYECHATS_WIDGET_SRC = 'https://cdn.oyechats.com/oyechats-widget.js';
 
 /**
  * Application root (Admin Platform 2.0 foundation).
@@ -28,20 +24,17 @@ const OYECHATS_WIDGET_SRC = 'https://cdn.oyechats.com/oyechats-widget.js';
  * There is no theme provider. The console is light-only by design: one theme
  * done properly, and every ground in the token file a known quantity because of
  * it. See `DESIGN.md`.
+ *
+ * **The product's own chat widget is not embedded here.** The root used to
+ * inject `cdn.oyechats.com/oyechats-widget.js` on every admin page. It sat over
+ * the bottom-right corner of every surface — which is where the console puts
+ * real controls: the Leads table's paging, a `SaveBar`'s buttons, the inbox
+ * composer — and its launcher and greeting panel covered them. It is a support
+ * channel for *customers of our customers*, running inside the tool its own
+ * operators work in all day. Support for this app belongs in the feedback
+ * launcher the shell already has.
  */
 export default function App() {
-  // Embed the OyeChats chat widget on the admin app itself. Guarded against
-  // double-injection - React StrictMode double-invokes effects in dev and the
-  // root can remount - so the self-initializing widget IIFE runs at most once.
-  useEffect(() => {
-    if (document.querySelector(`script[src="${OYECHATS_WIDGET_SRC}"]`)) return;
-    const script = document.createElement('script');
-    script.src = OYECHATS_WIDGET_SRC;
-    script.async = true;
-    script.setAttribute('data-bot-key', 'bot-ba37e8a8216a');
-    document.body.appendChild(script);
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <I18nProvider>
