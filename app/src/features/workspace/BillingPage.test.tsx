@@ -383,8 +383,15 @@ describe('cancelling', () => {
     await userEvent.click(screen.getByRole('button', { name: /cancel subscription/i }));
     const dialog = await screen.findByRole('alertdialog');
 
-    // Focus lands on the way out, not on the destructive button.
-    expect(within(dialog).getByRole('button', { name: 'Keep my plan' })).toHaveFocus();
+    // Focus lands on the way out, not on the destructive button. Waited for
+    // rather than asserted outright: `findByRole` resolves as soon as the
+    // dialog is in the DOM, and Base UI moves focus into it a tick later, so
+    // the bare assertion caught focus still on the page's own trigger. It
+    // failed every run in isolation and passed under the full suite, where the
+    // machine is busy enough for the focus to land first.
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Keep my plan' })).toHaveFocus(),
+    );
     expect(api.cancelSubscription).not.toHaveBeenCalled();
 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel subscription' }));

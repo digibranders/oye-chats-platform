@@ -199,13 +199,31 @@ describe('SourcesTable — deleting indexed knowledge', () => {
     expect(onDelete.mock.calls[0][0].name).toBe('handbook.pdf');
   });
 
-  it('offers a re-train only on websites, and never mid-crawl', async () => {
+  // These two were one test that opened the document's menu, pressed Escape,
+  // then opened the website's. That sequence is what made the file
+  // order-dependent: Base UI marks the rest of the page `inert` while a menu is
+  // open and clears it when the close finishes, and in jsdom — where no
+  // animation ever runs — the marker outlived the popup. The second trigger was
+  // then inside inert content, so clicking it did nothing and the re-train item
+  // never appeared. It failed every run of this file alone and passed in the
+  // full suite, which is slow enough for the marker to clear in time.
+  //
+  // Neither assertion needs two menus in one mount. Escape-closes-a-menu is the
+  // menu's own contract and is covered in `ui.test.tsx`.
+  it('offers no re-train on a document', async () => {
     const user = userEvent.setup();
-    const { onRecrawl } = sourcesTable({ crawlRunning: true });
+    sourcesTable({ crawlRunning: true });
 
     await user.click(screen.getByRole('button', { name: 'Actions for handbook.pdf' }));
+    // Wait for the menu itself: without this the query below would pass just as
+    // happily against a menu that never opened.
+    await screen.findByRole('menu');
     expect(screen.queryByRole('menuitem', { name: /re-train/i })).not.toBeInTheDocument();
-    await user.keyboard('{Escape}');
+  });
+
+  it('offers a re-train on a website, but never mid-crawl', async () => {
+    const user = userEvent.setup();
+    const { onRecrawl } = sourcesTable({ crawlRunning: true });
 
     await user.click(screen.getByRole('button', { name: 'Actions for https://acme.com' }));
     const full = await screen.findByRole('menuitem', { name: /re-train every page/i });
