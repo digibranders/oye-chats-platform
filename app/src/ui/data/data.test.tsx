@@ -379,6 +379,24 @@ describe('CopyField', () => {
     expect(field).toContainElement(screen.getByRole('button', { name: 'Reveal API key' }));
   });
 
+  it('sizes its controls under the field, so a hover cannot paint over the border', () => {
+    // Everything is `box-sizing: border-box`, so a compact field's 28px is 26
+    // of content once its own 1px border is out. `icon-sm` is 28 — the buttons
+    // were a pixel taller than the room they had, and `ghost`'s opaque hover
+    // fill covered the top and bottom border wherever the pointer landed. The
+    // outline looked like it broke under the cursor, on all nine compact
+    // fields in the app.
+    const { rerender } = render(<CopyField compact label="API key" value="sk_live_123" secret />);
+    // `icon-xs`: 24 inside 26, a pixel of ground each side.
+    expect(screen.getByRole('button', { name: 'Copy API key' }).className).toMatch(/\bh-6\b/);
+
+    // The default field is 34 (32 of content) and has always had room for a 28.
+    rerender(<CopyField label="API key" value="sk_live_123" secret />);
+    expect(screen.getByRole('button', { name: 'Copy API key' }).className).toMatch(
+      /\bh-control-sm\b/,
+    );
+  });
+
   it('masks a secret until it is revealed', async () => {
     const user = userEvent.setup();
     render(<CopyField label="API key" value="sk_live_123" secret />);

@@ -51,6 +51,26 @@ export function CopyField({
   const [revealed, setRevealed] = useState(!secret);
   const shown = revealed ? value : (maskedValue ?? '•'.repeat(Math.min(value.length, 32)));
 
+  /**
+   * The buttons have to be a rung SMALLER than the box that holds them.
+   *
+   * Everything here is `box-sizing: border-box`, so a `compact` field's
+   * `h-control-sm` (28) is 26px of content once its own 1px border is taken
+   * out — and `icon-sm` is `h-control-sm`, a full 28. The buttons were
+   * therefore 1px taller than the space they sat in, and `ghost`'s hover fill
+   * is opaque, so hovering either of them painted over the field's top and
+   * bottom border: the outline appeared to break exactly where the pointer
+   * was. `overflow-hidden` would have hidden it rather than fixed it, and
+   * would have squared off the buttons' own corners doing so.
+   *
+   * `icon-xs` is 24, which leaves a pixel of ground above and below inside a
+   * compact field, and it keeps a 24px target through `HIT_AREA` — the hit box
+   * grows by a pseudo-element that paints nothing, so it cannot cover the
+   * border either. The default field is 34 (32 of content) and has always had
+   * room for a 28.
+   */
+  const controlSize = compact ? 'icon-xs' : 'icon-sm';
+
   return (
     <div
       className={cn(
@@ -62,7 +82,7 @@ export function CopyField({
       <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">{shown}</code>
       {secret ? (
         <Button
-          size="icon-sm"
+          size={controlSize}
           variant="ghost"
           aria-label={revealed ? `Hide ${label}` : `Reveal ${label}`}
           onClick={() => setRevealed((current) => !current)}
@@ -75,7 +95,7 @@ export function CopyField({
         </Button>
       ) : null}
       <Button
-        size="icon-sm"
+        size={controlSize}
         variant="ghost"
         aria-label={`Copy ${label}`}
         onClick={() => void copy(value).then((ok) => onCopy?.(ok))}
