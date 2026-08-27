@@ -81,34 +81,46 @@ export function ReportsPage() {
     <Page width="wide">
       <PageHeader
         title="Reports"
-        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
-        actions={
-          <>
-            <SegmentedControl
-              label="Reporting window"
-              size="sm"
-              value={String(range)}
-              onChange={(next) => setRange(Number(next) as ReportRange)}
-              items={REPORT_RANGES.map((option) => ({
-                value: String(option.days),
-                label: option.label,
-                // Locked while an export is in flight: the file being built
-                // covers the window that was selected when the customer
-                // clicked, so let it finish rather than let the two disagree.
-                disabled: downloading,
-              }))}
-            />
-            <Button
-              variant="secondary"
-              onClick={() => void download()}
-              // Nothing to export is a real state, not an error: a header-only
-              // CSV looks like a broken download rather than a quiet month.
-              disabled={downloading || rowCount === 0}
-            >
-              <Download aria-hidden />
-              {downloading ? 'Preparing…' : 'Download CSV'}
-            </Button>
-          </>
+        titleVisuallyHidden
+        // Window and export ride the tab row, as the scope picker does on the
+        // other two tabs. In `actions` they took a row of their own above the
+        // tabs, which put this tab strip 58px below the Plan tab's — the tabs
+        // moved when you used them.
+        toolbar={
+          <NavTabs
+            label="Billing sections"
+            items={BILLING_SECTIONS}
+            trailing={
+              <>
+                <SegmentedControl
+                  label="Reporting window"
+                  size="sm"
+                  value={String(range)}
+                  onChange={(next) => setRange(Number(next) as ReportRange)}
+                  items={REPORT_RANGES.map((option) => ({
+                    value: String(option.days),
+                    label: option.label,
+                    // Locked while an export is in flight: the file being built
+                    // covers the window that was selected when the customer
+                    // clicked, so let it finish rather than let the two disagree.
+                    disabled: downloading,
+                  }))}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void download()}
+                  // Nothing to export is a real state, not an error: a
+                  // header-only CSV looks like a broken download rather than a
+                  // quiet month.
+                  disabled={downloading || rowCount === 0}
+                >
+                  <Download aria-hidden />
+                  {downloading ? 'Preparing…' : 'Download CSV'}
+                </Button>
+              </>
+            }
+          />
         }
       />
 

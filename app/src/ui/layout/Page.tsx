@@ -133,11 +133,17 @@ export interface PageHeaderProps {
    * describes for two `h1`s on one page, in reverse: not a missing heading,
    * a heading that is also printed as chrome a few pixels above itself.
    *
-   * Only set this when `title` is the *same word* the breadcrumb already
-   * shows — a nested page (`/settings/workspace`, whose crumb reads
-   * "Settings, Workspace") still needs its own visible title, because the
-   * breadcrumb's last segment and the page's title are the one place that
-   * word appears.
+   * Set it when the page's name is already on screen, which happens two
+   * ways. The breadcrumb's last segment IS the title — true of `/leads`, and
+   * equally of `/settings/workspace`, whose trail reads "Settings › Workspace"
+   * and so prints both words before the page starts. Or a tab row in
+   * `toolbar` names the current view: across Billing the crumb says "Usage",
+   * the active tab says "Usage", and the `h1` between them was a third
+   * statement of it. That one shipped half-done — Plan hid its title while
+   * Usage and Reports kept theirs, so the same tab strip grew and shrank a
+   * heading depending on which tab you were on.
+   *
+   * Leave it off when the page's name appears nowhere else on the screen.
    */
   titleVisuallyHidden?: boolean;
   /**

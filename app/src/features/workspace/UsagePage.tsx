@@ -224,6 +224,7 @@ export function UsagePage() {
       <Page width="wide">
         <PageHeader
           title="Usage"
+          titleVisuallyHidden
           toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
         />
         {/* Forbidden, not failed: a seat that may not read the workspace's
@@ -241,17 +242,28 @@ export function UsagePage() {
     <Page width="wide">
       <PageHeader
         title="Usage"
-        toolbar={<NavTabs label="Billing sections" items={BILLING_SECTIONS} />}
-        actions={
-          scopeOptions.length > 1 ? (
-            <Select
-              label="Usage scope"
-              size="sm"
-              options={scopeOptions}
-              value={scopeParam ?? ''}
-              onValueChange={(value) => setParam('chatbot', value || null)}
-            />
-          ) : undefined
+        titleVisuallyHidden
+        // The scope picker rides the tab row, exactly as `BillingPage` puts
+        // the identical control. In `actions` it earned a row of its own above
+        // the tabs — one right-aligned select over an otherwise empty shelf —
+        // which pushed this tab strip 52px below the Plan tab's. Switching
+        // tabs moved the tabs.
+        toolbar={
+          <NavTabs
+            label="Billing sections"
+            items={BILLING_SECTIONS}
+            trailing={
+              scopeOptions.length > 1 ? (
+                <Select
+                  label="Usage scope"
+                  size="sm"
+                  options={scopeOptions}
+                  value={scopeParam ?? ''}
+                  onValueChange={(value) => setParam('chatbot', value || null)}
+                />
+              ) : undefined
+            }
+          />
         }
       />
 
