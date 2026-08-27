@@ -90,7 +90,28 @@ export function Page({
 }
 
 export interface PageHeaderProps {
-  title: string;
+  /**
+   * The page's `h1`.
+   *
+   * `ReactNode`, not `string`, for the one thing a string cannot carry: a
+   * decorative glyph that has to be hidden from assistive tech. Home's
+   * greeting ends in an emoji, and a screen reader announcing "Good
+   * afternoon, Gaurav, sun behind cloud" is noise — so that glyph is a
+   * child `span` with `aria-hidden`. `PaneHeader.title` is already typed
+   * this way for the same reason.
+   */
+  title: ReactNode;
+  /**
+   * How large the title prints.
+   *
+   * `page` (22px) is the default and is right for a title that NAMES the
+   * surface — "Leads", "Settings". `display` (28px, the rung `tokens.css`
+   * reserves for heroes) is for the rarer heading that IS the content
+   * rather than a label for it: Home greets the person by name, and that
+   * line is the most important thing on the page rather than a caption
+   * over it.
+   */
+  titleSize?: 'page' | 'display';
   /**
    * One line. If it needs two, it is documentation, not a page description —
    * put it behind a link or in the control's own hint.
@@ -146,6 +167,7 @@ export interface PageHeaderProps {
  */
 export function PageHeader({
   title,
+  titleSize = 'page',
   description,
   eyebrow,
   actions,
@@ -185,7 +207,11 @@ export function PageHeader({
               className={cn(
                 titleVisuallyHidden
                   ? 'sr-only'
-                  : cn('text-xl font-semibold text-text-primary', eyebrow && 'mt-1'),
+                  : cn(
+                      'font-semibold text-text-primary',
+                      titleSize === 'display' ? 'text-2xl' : 'text-xl',
+                      eyebrow && 'mt-1',
+                    ),
               )}
             >
               {title}

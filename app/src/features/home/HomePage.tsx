@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Bot as BotIcon, Plus, X } from 'lucide-react';
 import {
   ABSENT,
@@ -32,6 +33,8 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { leadDisplayName } from '../leads/leadModel';
 import type { Lead } from '../../types/domain';
 import { useHomeData, type HomeAgent } from './useHomeData';
+import { getCurrentUser } from '../../services/api';
+import { keys } from '../../query/keys';
 
 /**
  * Home is today's work, not a dashboard.
@@ -66,11 +69,47 @@ import { useHomeData, type HomeAgent } from './useHomeData';
  * the tiles are gone.
  */
 
-function greeting(now: Date): string {
+/**
+ * The greeting, and the glyph that goes with it.
+ *
+ * One table rather than three `if`s returning bare strings, so the word and
+ * its emoji cannot drift apart — they are the same fact stated twice, and the
+ * afternoon sun turning up beside "Good evening" is the kind of thing nobody
+ * notices in review because reviews do not happen at 19:00.
+ */
+const GREETINGS = [
+  { before: 12, text: 'Good morning', emoji: '🌅' },
+  { before: 18, text: 'Good afternoon', emoji: '☀️' },
+  { before: 24, text: 'Good evening', emoji: '🌙' },
+] as const;
+
+function greeting(now: Date): (typeof GREETINGS)[number] {
   const hour = now.getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  return GREETINGS.find((slot) => hour < slot.before) ?? GREETINGS[GREETINGS.length - 1];
+}
+
+/**
+ * The name to greet somebody by, or `null` to greet them without one.
+ *
+ * First token only: "Good afternoon, Gaurav", not the full legal name the
+ * account happens to hold. Capitalised because the stored value is whatever
+ * they typed at sign-up — the account menu renders "gaurav" faithfully, which
+ * is right for an identity row and wrong in the middle of a sentence.
+ *
+ * An email is not a name. `AccountMenu` falls back to the email when the name
+ * is blank, which is correct for a row whose job is "which account is this";
+ * greeting somebody as "Good afternoon, gaurav@fynix.digital" is not. There is
+ * no name in that case, so the greeting simply does without one.
+ */
+function firstName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.includes('@')) return null;
+  const first = trimmed.split(/\s+/)[0];
+  if (!first) return null;
+  // `toUpperCase` on a script without case (Devanagari, CJK) is a no-op, so
+  // this is safe for every name, not only Latin ones.
+  return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
 /** Per workspace, so dismissing it on one does not dismiss it on another. */
@@ -91,6 +130,15 @@ export function HomePage() {
   // the page's own byline could flip from "Good afternoon" to "Good evening"
   // while somebody was typing somewhere else on the screen.
   const hello = useMemo(() => greeting(new Date()), []);
+  // The same cached `/auth/me` the account menu reads, so putting a name in
+  // the greeting costs no extra request — `keys.session.me()` is already warm
+  // by the time Home paints.
+  const { data: me } = useQuery({
+    queryKey: keys.session.me(),
+    queryFn: getCurrentUser,
+    staleTime: 5 * 60_000,
+  });
+  const name = firstName(me?.name);
   const home = useHomeData();
   const setup = useSetupChecklist();
   const { currentWorkspaceId } = useWorkspace();
@@ -119,9 +167,30 @@ export function HomePage() {
   return (
     <Page width="wide">
       <PageHeader
-        eyebrow={hello}
-        title="Home"
-        titleVisuallyHidden
+        // The greeting IS this page's heading, and it is deliberately no
+        // longer a 22px "Home" hidden behind an 11px uppercase byline. An
+        // earlier pass moved the greeting into the eyebrow on the grounds
+        // that "Good afternoon" is a heading that names no page — true of a
+        // bare time-of-day string, and not true once it carries the person's
+        // name: "Good afternoon, Gaurav" identifies a personal dashboard the
+        // way every console this is measured against does. The page's own
+        // name is not lost, it is in the shell's breadcrumb, which is the
+        // component whose job that is. Rendering 28px semibold text that
+        // merely LOOKS like a heading while the real `h1` stayed hidden
+        // would have been the worse of the two options.
+        title={
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2">
+            <span className="min-w-0 truncate">
+              {name ? `${hello.text}, ${name}` : hello.text}
+            </span>
+            {/* Decoration. A screen reader should hear the greeting, not
+                "sun behind cloud" appended to it. */}
+            <span aria-hidden className="shrink-0">
+              {hello.emoji}
+            </span>
+          </span>
+        }
+        titleSize="display"
         actions={
           <Link
             to="/chatbots?new=1"

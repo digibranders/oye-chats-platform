@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   getLeadStats: vi.fn(),
   getLeads: vi.fn(),
   getOfflineMessages: vi.fn(),
+  getCurrentUser: vi.fn(),
 }));
 
 vi.mock('../../services/api', () => api);
@@ -45,6 +46,13 @@ vi.mock('../../context/WorkspaceContext', () => ({
 }));
 
 const { HomePage } = await import('./HomePage');
+
+/**
+ * The page's `h1`, which is the greeting and therefore moves with the clock
+ * and with whether `/auth/me` has landed. Tests that only need "the page has
+ * rendered" match on this rather than pinning one time of day.
+ */
+const GREETING = /^Good (morning|afternoon|evening)(, \w+)?$/;
 
 function bot(overrides: Record<string, unknown> = {}) {
   return {
@@ -84,15 +92,43 @@ beforeEach(() => {
   api.getLeadStats.mockResolvedValue({ total: 12, qualified: 5 });
   api.getLeads.mockResolvedValue({ leads: [], total: 0, page: 1, limit: 8 });
   api.getOfflineMessages.mockResolvedValue({ total: 3 });
+  // Lowercase on purpose: it is what the account actually stores, and the
+  // greeting is expected to capitalise it rather than print it mid-sentence.
+  api.getCurrentUser.mockResolvedValue({ name: 'gaurav', email: 'gaurav@fynix.digital' });
 });
 
 describe('HomePage', () => {
-  it('titles itself, and puts the greeting in the eyebrow', async () => {
+  it('greets the person by name, and keeps the emoji out of the accessible name', async () => {
     renderHome();
-    // The document's only `h1` used to be "Good afternoon" — a heading that
-    // changes three times a day and names no page.
-    expect(await screen.findByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
-    expect(screen.getByText(/^Good (morning|afternoon|evening)$/)).toBeInTheDocument();
+    // This reverses an earlier decision on purpose. The greeting was moved to
+    // the eyebrow when it was a bare "Good afternoon" — a heading that named
+    // no page — but with the person's name in it, it names a personal
+    // dashboard, which is what this page is. "Home" still reaches assistive
+    // tech, from the shell's breadcrumb.
+    //
+    // The accessible name must be the greeting ALONE: the emoji is `aria-hidden`,
+    // so matching it here would fail, and that is the point of the assertion.
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: /^Good (morning|afternoon|evening), Gaurav$/,
+    });
+    expect(heading).toBeInTheDocument();
+    // Printed, not hidden — the earlier version rendered the `h1` `sr-only`.
+    expect(heading).not.toHaveClass('sr-only');
+  });
+
+  it('greets without a name rather than greeting an email address', async () => {
+    // `/auth/me` carries no name for accounts that never set one, and the
+    // account menu falls back to the email. A greeting must not: "Good
+    // afternoon, gaurav@fynix.digital" is worse than no name at all.
+    api.getCurrentUser.mockResolvedValue({ email: 'gaurav@fynix.digital' });
+    renderHome();
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /^Good (morning|afternoon|evening)$/,
+      }),
+    ).toBeInTheDocument();
   });
 
   it('anchors the headline figure to a window and compares it to the last one', async () => {
@@ -178,7 +214,7 @@ describe('HomePage', () => {
 
   it('does not restate the rail at the bottom of its own aside', async () => {
     renderHome();
-    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    await screen.findByRole('heading', { level: 1, name: GREETING });
 
     // Two 76px tiles linking to Inbox and Leads — rows two and three of the
     // navigation rail, repeated below the fold of the page they are already on.
@@ -210,7 +246,7 @@ describe('HomePage', () => {
     // unconditional redirect.
     sessionStorage.setItem('oyechats_skip_first_run', 'true');
     renderHome();
-    expect(await screen.findByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: GREETING })).toBeInTheDocument();
     expect(screen.getByText('No chatbots yet')).toBeInTheDocument();
   });
 });
