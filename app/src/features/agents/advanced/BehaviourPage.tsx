@@ -4,9 +4,9 @@ import {
   Badge,
   Card,
   CardBody,
+  Columns,
   ConfirmDialog,
   ErrorState,
-  Measure,
   Page,
   PageHeader,
   SaveBar,
@@ -166,14 +166,29 @@ function BehaviourContent({
     <Page>
       <PageHeader title={TITLE} eyebrow={agentName} />
 
-      {/* No `Measure` around the groups: `SettingGroup` caps itself at
-          `--container-form` (672) now, so wrapping it was the compensation this
-          page was written before the primitive learned it. The measure is kept
-          for the two children that are *not* groups — the timing disclosure's
-          card and the floating save bar — because neither has a measure of its
-          own and a 1,128px save bar under a 672px form is two right edges. */}
-      <Measure width="form">
-        <Stack>
+      {/* Two tracks, like every other tab in this shell.
+
+          This page used to wrap everything in `Measure width="form"`, and it
+          was the only tab that did: measured at 1440, Overview, Knowledge,
+          Experience, Deploy and Qualification all fill 1,152px of the 1,216
+          available and this one filled 672, leaving 512px — 42% of the content
+          area — empty beside a column that then ran a screen and a half tall.
+          Tabbing between Experience and Behaviour visibly changed the width of
+          the page, which reads as a broken shell rather than as a choice.
+
+          The form itself is not what was wrong: `main` still lands at ~740px,
+          which is the form measure, near enough. What changed is that the
+          timing knobs — a collapsed disclosure nobody opens on most visits —
+          stop taking a full-width turn in the primary column and move to the
+          aside, where `Columns` already had room. The save bar sits outside the
+          grid for the reason `ExperiencePage` states at its own: it spans the
+          form it saves. */}
+      <Columns
+        asideWidth="md"
+        stickyAside
+        asideLabel="Timing"
+        main={
+          <Stack>
           <SettingGroup title="Answering">
             <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
             <OperatorResponseSection
@@ -226,29 +241,30 @@ function BehaviourContent({
             />
           </SettingGroup>
 
-          <TimingSection config={draft.widgetConfig} onChange={setConfigField} />
+          </Stack>
+        }
+        aside={<TimingSection config={draft.widgetConfig} onChange={setConfigField} />}
+      />
 
-          <SaveBar
-            dirty={state.dirty}
-            saving={state.saving}
-            saved={state.saved}
-            saveError={state.saveError}
-            blockedReason={
-              timeoutError
-                ? `The operator response window must be between 5 and 3600 seconds. ${draft.operatorTimeoutSeconds} would be rejected.`
-                : sessionError
-                  ? 'Fix the pinned parent domain under Access to save.'
-                  : null
-            }
-            onSave={() => {
-              if (lockingOut) setConfirmingLockout(true);
-              else void state.commit();
-            }}
-            onDiscard={state.discard}
-            guard="this chatbot’s behaviour settings"
-          />
-        </Stack>
-      </Measure>
+      <SaveBar
+        dirty={state.dirty}
+        saving={state.saving}
+        saved={state.saved}
+        saveError={state.saveError}
+        blockedReason={
+          timeoutError
+            ? `The operator response window must be between 5 and 3600 seconds. ${draft.operatorTimeoutSeconds} would be rejected.`
+            : sessionError
+              ? 'Fix the pinned parent domain under Access to save.'
+              : null
+        }
+        onSave={() => {
+          if (lockingOut) setConfirmingLockout(true);
+          else void state.commit();
+        }}
+        onDiscard={state.discard}
+        guard="this chatbot’s behaviour settings"
+      />
 
       {/* The allow-list is the fastest way in the product for a customer to take
           their own widget offline, so saving one that does not cover their own
