@@ -13,7 +13,9 @@
  */
 export const LEGACY_PATHS: ReadonlyArray<readonly [from: string, to: string]> = [
   ['agents', '/chatbots'],
-  ['journey', '/analytics/journey'],
+  // Journey sat under Analytics for a while before moving back to its own
+  // top-level page — see `REBUILD.md`'s Consolidations table.
+  ['analytics/journey', '/journey'],
   ['support', '/inbox'],
   ['build', '/setup'],
   ['launch', '/setup'],

@@ -75,8 +75,8 @@ export const WORKSPACE_NAV: readonly NavItem[] = [
   { to: '/', label: 'Home', icon: House, end: true, hint: 'What needs you today' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, hint: 'Live chat and messages', operator: true },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', operator: true },
-  { to: '/analytics/journey', label: 'Journey', icon: Compass, hint: 'Visitor journey flow' },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, end: true, hint: 'Conversations, journeys and outcomes' },
+  { to: '/journey', label: 'Journey', icon: Compass, hint: 'Visitor journey flow' },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, end: true, hint: 'Conversations and outcomes' },
   { to: '/chatbots', label: 'Chatbots', icon: Bot, hint: 'Create, train and deploy chatbots', placement: 'chatbots' },
   { to: '/billing', label: 'Billing', icon: CreditCard, hint: 'Plan, credits, invoices and usage', placement: 'footer' },
 ];
@@ -117,13 +117,14 @@ export const FOOTER_NAV: readonly NavItem[] = [
  * the current page was "Billing". A shortened trail is fine; a wrong one is not.
  */
 export const NAV_SECTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  // Analytics' four sub-views became real paths (`features/analytics/tabs.ts`),
-  // so the trail names all of them. It knew only `journey` — the one that had a
-  // path before — which would have left `/analytics/feedback` with a bare
-  // "Analytics" crumb while `/analytics/journey` got two.
+  // Analytics' sub-views became real paths (`features/analytics/tabs.ts`), so
+  // the trail names all of them rather than leaving `/analytics/feedback` with
+  // a bare "Analytics" crumb. Journey is not one of them — it moved back out to
+  // its own top-level route, `/journey`, and needs no entry here for the same
+  // reason `/leads` and `/inbox` don't: the single-segment fallback below
+  // already names a top-level route from its own nav label.
   '/analytics': {
     conversations: 'Conversations',
-    journey: 'Journeys',
     visitors: 'Visitors',
     feedback: 'Feedback',
   },

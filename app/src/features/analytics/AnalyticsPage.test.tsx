@@ -43,11 +43,6 @@ vi.mock('../../services/api', () => ({
   getQualificationFunnel: vi.fn(async () => ({})),
   getVisitorsData: vi.fn(async () => []),
   getFeedbackData: vi.fn(async () => []),
-  getJourneySummary: vi.fn(async () => ({})),
-  getJourneyTopPages: vi.fn(async () => ({ rows: [] })),
-  getJourneyPostChat: vi.fn(async () => ({ first_hops: [] })),
-  getJourneyPreChatSequences: vi.fn(async () => ({ sequences: [] })),
-  getJourneyConversionPaths: vi.fn(async () => ({ paths: [] })),
 }));
 
 function Probe() {
@@ -90,9 +85,9 @@ describe('AnalyticsPage', () => {
     // middle-click, cmd-click and open-in-new-tab.
     renderPage('/analytics');
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Journey' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Feedback' })).toHaveAttribute(
       'href',
-      '/analytics/journey',
+      '/analytics/feedback',
     );
   });
 
@@ -118,8 +113,8 @@ describe('AnalyticsPage', () => {
     renderPage('/analytics');
     await user.click(screen.getByRole('link', { name: 'Visitors' }));
     expect(screen.getByTestId('url')).toHaveTextContent('/analytics/visitors');
-    await user.click(screen.getByRole('link', { name: 'Journey' }));
-    expect(screen.getByTestId('url')).toHaveTextContent('/analytics/journey');
+    await user.click(screen.getByRole('link', { name: 'Feedback' }));
+    expect(screen.getByTestId('url')).toHaveTextContent('/analytics/feedback');
   });
 
   it('carries the reporting period across a change of view', async () => {

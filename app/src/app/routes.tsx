@@ -61,6 +61,7 @@ const BehaviourPage = named(() => import('../features/agents/advanced/BehaviourP
 const InboxPage = named(() => import('../features/inbox/InboxPage'), 'InboxPage');
 const LeadsPage = named(() => import('../features/leads/LeadsPage'), 'LeadsPage');
 const AnalyticsPage = named(() => import('../features/analytics/AnalyticsPage'), 'AnalyticsPage');
+const JourneyPage = named(() => import('../features/analytics/JourneyPage'), 'JourneyPage');
 const WorkspaceLayout = named(() => import('../features/workspace/WorkspaceLayout'), 'WorkspaceLayout');
 const GeneralPage = named(() => import('../features/workspace/GeneralPage'), 'GeneralPage');
 const MembersPage = named(() => import('../features/workspace/MembersPage'), 'MembersPage');
@@ -200,13 +201,13 @@ export const router = createBrowserRouter([
                   // ── Operations ──────────────────────────────────────────
                   { path: 'inbox', element: <Route><InboxPage /></Route> },
                   { path: 'leads', element: <Route><LeadsPage /></Route> },
-                  // A splat, because Analytics owns its own five views — the
-                  // same shape `platformRoutes` gives the super-admin record
-                  // lists. `/analytics/journey` used to be a second route
-                  // pointing at a second lazy chunk that re-exported
-                  // `AnalyticsPage`, so moving between Journey and any other
-                  // view remounted the page and threw away its scroll position
-                  // and every cached panel below the fold.
+                  // Its own top-level page and its own single lazy chunk — not
+                  // nested under Analytics. It sat at `/analytics/journey` for a
+                  // while; see `REBUILD.md`'s Consolidations table for the full
+                  // history of why it moved there and why it moved back.
+                  { path: 'journey', element: <Route><JourneyPage /></Route> },
+                  // A splat, because Analytics owns its own views — the same
+                  // shape `platformRoutes` gives the super-admin record lists.
                   { path: 'analytics/*', element: <Route><AnalyticsPage /></Route> },
 
                   // ── Billing ─────────────────────────────────────────────

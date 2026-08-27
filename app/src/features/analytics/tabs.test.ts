@@ -14,7 +14,6 @@ describe('tabFromPath', () => {
   it('reads the view out of the path', () => {
     expect(tabFromPath('/analytics')).toBe('overview');
     expect(tabFromPath('/analytics/conversations')).toBe('conversations');
-    expect(tabFromPath('/analytics/journey')).toBe('journey');
     expect(tabFromPath('/analytics/visitors')).toBe('visitors');
     expect(tabFromPath('/analytics/feedback')).toBe('feedback');
   });
@@ -26,7 +25,7 @@ describe('tabFromPath', () => {
   });
 
   it('tolerates a trailing slash', () => {
-    expect(tabFromPath('/analytics/journey/')).toBe('journey');
+    expect(tabFromPath('/analytics/visitors/')).toBe('visitors');
   });
 
   it('falls back to the index for a path it does not know', () => {
@@ -40,9 +39,9 @@ describe('tabFromUrl', () => {
   });
 
   it('lets the path win over a stale tab parameter', () => {
-    // A bookmark of `/analytics/journey?tab=feedback` is a link to Journey with
-    // a leftover parameter on it, not a link to Feedback.
-    expect(tabFromUrl('/analytics/journey', new URLSearchParams('tab=feedback'))).toBe('journey');
+    // A bookmark of `/analytics/visitors?tab=feedback` is a link to Visitors
+    // with a leftover parameter on it, not a link to Feedback.
+    expect(tabFromUrl('/analytics/visitors', new URLSearchParams('tab=feedback'))).toBe('visitors');
   });
 
   it('falls back to the first view for an unknown value', () => {
@@ -59,7 +58,7 @@ describe('tabUrl', () => {
   });
 
   it('gives every view its own path', () => {
-    expect(tabUrl('journey', new URLSearchParams('range=7d'))).toBe('/analytics/journey?range=7d');
+    expect(tabUrl('feedback', new URLSearchParams('range=7d'))).toBe('/analytics/feedback?range=7d');
     expect(tabUrl('conversations', new URLSearchParams())).toBe('/analytics/conversations');
   });
 
@@ -70,7 +69,7 @@ describe('tabUrl', () => {
   it('drops the legacy tab parameter rather than carrying it forward', () => {
     // Otherwise every URL the row produces would wear a stale `?tab=` naming
     // whichever view the reader happened to arrive from.
-    expect(tabUrl('journey', new URLSearchParams('tab=visitors'))).toBe('/analytics/journey');
+    expect(tabUrl('visitors', new URLSearchParams('tab=feedback'))).toBe('/analytics/visitors');
     expect(tabUrl('overview', new URLSearchParams('tab=visitors&range=7d'))).toBe(
       '/analytics?range=7d',
     );
