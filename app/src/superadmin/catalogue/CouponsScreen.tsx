@@ -6,6 +6,7 @@ import {
   Button,
   ConfirmDialog,
   DataTable,
+  DatePicker,
   Dialog,
   EmptyState,
   Field,
@@ -405,11 +406,11 @@ export function CouponsScreen() {
           </Field>
 
           <Field label="Expires" error={shown.expires_at} hint="Blank never expires.">
-            <Input
-              type="date"
-              className="figure"
-              value={draft.expires_at}
-              onChange={(event) => setDraft({ ...draft, expires_at: event.target.value })}
+            <DatePicker
+              label="Expires"
+              value={draft.expires_at || null}
+              onValueChange={(value) => setDraft({ ...draft, expires_at: value ?? '' })}
+              clearable
             />
           </Field>
 

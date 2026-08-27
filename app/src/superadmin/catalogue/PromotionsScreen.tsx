@@ -7,6 +7,7 @@ import {
   Checkbox,
   ConfirmDialog,
   DataTable,
+  DateTimePicker,
   Dialog,
   Drawer,
   EmptyState,
@@ -391,11 +392,10 @@ export function PromotionsScreen() {
 
           <Grid cols={2}>
             <Field label="Starts" required error={shown.starts_at} hint="Local time.">
-              <Input
-                type="datetime-local"
-                className="figure"
+              <DateTimePicker
+                label="Starts"
                 value={draft.starts_at}
-                onChange={(event) => setDraft({ ...draft, starts_at: event.target.value })}
+                onValueChange={(starts_at) => setDraft({ ...draft, starts_at })}
               />
             </Field>
             <Field
@@ -404,11 +404,10 @@ export function PromotionsScreen() {
               error={shown.ends_at}
               hint="Must be in the future when it is set — a past end saves an offer nobody can redeem."
             >
-              <Input
-                type="datetime-local"
-                className="figure"
+              <DateTimePicker
+                label="Ends"
                 value={draft.ends_at}
-                onChange={(event) => setDraft({ ...draft, ends_at: event.target.value })}
+                onValueChange={(ends_at) => setDraft({ ...draft, ends_at })}
               />
             </Field>
             <Field label="Free cycles" required error={shown.free_cycles} hint="1 to 36 billing cycles at no charge.">

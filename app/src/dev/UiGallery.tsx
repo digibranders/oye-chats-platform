@@ -62,6 +62,8 @@ import {
   controlClass,
   CopyField,
   DataTable,
+  DatePicker,
+  DateTimePicker,
   DefinitionList,
   Dialog,
   Disclosure,
@@ -886,6 +888,8 @@ function PrimitivesPanel() {
   const [query, setQuery] = useState('');
   const [emails, setEmails] = useState<string[]>(['ops@acme.com']);
   const [agent, setAgent] = useState<string | null>('acme');
+  const [dateCaptured, setDateCaptured] = useState<string | null>('2026-08-15');
+  const [promoStarts, setPromoStarts] = useState('2026-08-15T09:00');
   const [strictness, setStrictness] = useState('balanced');
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [uploads] = useState(() => [
@@ -981,6 +985,17 @@ function PrimitivesPanel() {
                   { value: 'closed', label: 'Retired bot', description: 'archived', disabled: true },
                 ]}
               />
+            </Field>
+            <Field label="Date captured" hint="A calendar grid, not the platform's own date picker.">
+              <DatePicker
+                label="Date captured"
+                value={dateCaptured}
+                onValueChange={setDateCaptured}
+                clearable
+              />
+            </Field>
+            <Field label="Promotion starts" hint="Date and time together — the datetime-local field this replaces.">
+              <DateTimePicker label="Promotion starts" value={promoStarts} onValueChange={setPromoStarts} />
             </Field>
             <Field label="Notification recipients" hint="Enter, comma or paste a list.">
               <TagInput
