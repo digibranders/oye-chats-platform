@@ -53,17 +53,35 @@ import { describeDirty, useDraft } from './draft';
  * reproducing a control that edits the wrong object.
  */
 
+/**
+ * What this form edits, and what each field is really called.
+ *
+ * `company_name` is labelled "Workspace name" because that is what it *is*:
+ * `GET /me/workspaces` resolves a workspace's display name as
+ * `company_name or name or email`, so this field is the one that actually
+ * names the workspace everywhere the product shows one.
+ *
+ * The Client row's `name` used to be edited here too, under the label "Name"
+ * and the hint "Shown in the workspace switcher." Both were wrong. It is the
+ * PERSON's name — the account menu at the foot of the rail renders it, and so
+ * does Home's greeting — and the switcher it named was removed. Worse, it was
+ * a second editor for a field `/account` already owns (see
+ * `ProfileSection`, whose own docstring says a workspace owner's name lives
+ * on the Client row and goes through this same endpoint). Two forms writing
+ * one field, one of them describing it as something else entirely. It is gone
+ * from here; "Managed elsewhere" at the foot of the page points at its real
+ * home.
+ */
 const FIELD_LABELS = {
-  name: 'Name',
-  company_name: 'Company',
+  company_name: 'Workspace name',
   website: 'Website',
 } as const;
 
-type ProfileFields = { name: string; company_name: string; website: string };
+type ProfileFields = { company_name: string; website: string };
 
 export function GeneralPage() {
   const queryClient = useQueryClient();
-  const { currentWorkspaceId, currentRole, workspaces, refresh: refreshWorkspace } = useWorkspace();
+  const { currentWorkspaceId, currentRole, refresh: refreshWorkspace } = useWorkspace();
   const { bots } = useBotContext();
   const { planName, planSlug, limitFor } = useEntitlements();
   const fieldId = useId();
@@ -75,7 +93,6 @@ export function GeneralPage() {
   });
 
   const draft = useDraft<ProfileFields>({
-    name: '',
     company_name: '',
     website: '',
   });
@@ -89,7 +106,6 @@ export function GeneralPage() {
   if (me.data && committedFor !== me.data.id) {
     setCommittedFor(me.data.id);
     draft.commit({
-      name: me.data.name ?? '',
       company_name: me.data.company_name ?? '',
       website: me.data.website ?? '',
     });
@@ -98,14 +114,12 @@ export function GeneralPage() {
   const save = useMutation({
     mutationFn: async () => {
       const patch: Record<string, string> = {};
-      if (draft.patch.name !== undefined) patch.name = draft.patch.name;
       if (draft.patch.company_name !== undefined) patch.company_name = draft.patch.company_name;
       if (draft.patch.website !== undefined) patch.website = normalizeUrl(draft.patch.website);
       return updateClientProfile(patch);
     },
     onSuccess: (updated) => {
       draft.commit({
-        name: updated.name ?? '',
         company_name: updated.company_name ?? '',
         website: updated.website ?? '',
       });
@@ -120,9 +134,11 @@ export function GeneralPage() {
 
   function handleSave() {
     const errors: Partial<Record<keyof ProfileFields, string>> = {};
-    if (!draft.values.name.trim()) {
-      errors.name = 'Give the workspace a name — it is what your team sees in the switcher.';
-    }
+    // No required rule on the workspace name. Blank is a real answer: the
+    // backend falls back to the owner's own name, so an empty field still
+    // produces a workspace that is named somewhere — the row's own hint says
+    // as much. Rejecting it would be inventing a constraint the API does not
+    // have.
     const website = draft.values.website.trim();
     if (website) {
       const reason = validateUrl(website);
@@ -207,25 +223,9 @@ export function GeneralPage() {
         ) : null}
 
         <SettingRow
-          label={FIELD_LABELS.name}
-          htmlFor={`${fieldId}-name`}
-          description="Shown in the workspace switcher."
-          error={draft.errors.name}
-        >
-          <Input
-            id={`${fieldId}-name`}
-            required
-            value={draft.values.name}
-            onChange={(event) => draft.set('name', event.target.value)}
-            placeholder="Acme Support"
-            autoComplete="organization"
-          />
-        </SettingRow>
-
-        <SettingRow
           label={FIELD_LABELS.company_name}
           htmlFor={`${fieldId}-company`}
-          description="Printed on invoices."
+          description="Names this workspace across the app, and on your invoices. Leave it blank to use your own name."
           error={draft.errors.company_name}
         >
           <Input
@@ -233,12 +233,16 @@ export function GeneralPage() {
             value={draft.values.company_name}
             onChange={(event) => draft.set('company_name', event.target.value)}
             placeholder="Acme Corporation"
+            autoComplete="organization"
           />
         </SettingRow>
 
         <SettingRow
           label={FIELD_LABELS.website}
           htmlFor={`${fieldId}-website`}
+          // Every other row in this group carries a clause, and a bare label
+          // beside two described ones reads as a row that lost its hint.
+          description="Where your chatbot lives. Used as the default crawl target."
           error={draft.errors.website}
         >
           <Input
@@ -260,6 +264,11 @@ export function GeneralPage() {
         />
       </SettingGroup>
 
+      {/* Facts only, and only the ones somebody reads. "Workspaces: 1" went:
+          a count that says "one" to almost every account is not information,
+          and the accounts it would say "two" to already switch from the
+          account menu. `Workspace ID` stays but sits last — it is the one
+          value here nobody wants until support asks for it. */}
       <SettingGroup title="This workspace" titleAs="h2">
         <SettingBand>
           <PropertyGrid
@@ -294,18 +303,30 @@ export function GeneralPage() {
                   </span>
                 ),
               },
+              { label: 'Sign-in email', value: me.data?.email },
               {
                 label: 'Workspace ID',
                 value: <span className="figure">{currentWorkspaceId ?? me.data?.id}</span>,
               },
-              {
-                label: 'Workspaces',
-                value: <span className="figure">{formatNumber(workspaces.length || 1)}</span>,
-              },
-              { label: 'Sign-in email', value: me.data?.email },
             ]}
           />
         </SettingBand>
+      </SettingGroup>
+
+      {/* The two things people come to Settings for and do not find here.
+          Both used to be either absent (your own profile) or a lone row
+          hanging off the bottom of the fact sheet, where a navigation link
+          read as one more read-only property. Named as a group, the absence
+          is an answer rather than a gap. */}
+      <SettingGroup title="Managed elsewhere" titleAs="h2">
+        <SettingRow
+          label="Your profile"
+          description="Your own name, password, email and alerts."
+        >
+          <Link to="/account" className={buttonClass('secondary', 'sm')}>
+            Open account
+          </Link>
+        </SettingRow>
         <SettingRow
           label="Chatbot settings"
           description="Hours, greeting, tone and the install snippet live on each chatbot."

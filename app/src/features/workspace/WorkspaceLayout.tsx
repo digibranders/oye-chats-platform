@@ -100,7 +100,12 @@ export function WorkspaceLayout() {
 
   return (
     <Page>
-      <PageHeader eyebrow="Settings" title={active?.label ?? 'Settings'} />
+      {/* Hidden, because the shell's breadcrumb above it already reads
+          "Settings › Workspace" — the eyebrow and the title printed here were
+          those same two words a second time, twenty pixels below the first.
+          The `h1` still exists for heading navigation; what is gone is the
+          duplicate ink and the ~60px it cost above the section nav. */}
+      <PageHeader title={active?.label ?? 'Settings'} titleVisuallyHidden />
       <SidebarLayout
         navLabel="Settings sections"
         navWidth="sm"
