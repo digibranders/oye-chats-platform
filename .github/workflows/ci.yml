@@ -97,7 +97,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install
         working-directory: widget
@@ -108,12 +108,15 @@ jobs:
         run: npm run lint
 
       # 79 tests that nothing was running. `npm test` existed in package.json
-      # and was simply never wired into CI — and had rotted unnoticed while
+      # and was simply never wired into CI, and had rotted unnoticed while
       # nothing ran it: the script globbed `src/services/**/*.test.js`, which
-      # only Node >= 22 expands itself. On this runner's Node 20 it resolved to
-      # nothing and exited 1. The script now uses a single-level glob the SHELL
-      # expands, which behaves the same on every Node and every shell. Widget
-      # tests therefore have to live directly in `src/services/`.
+      # only Node >= 22 expands itself, so on the Node 20 runner of the day it
+      # resolved to nothing and exited 1. The script now uses single-level
+      # globs the SHELL expands, which behaves the same on every Node and
+      # every shell, so it no longer depends on the runner's version. The
+      # tradeoff is that each glob is one level deep: a widget test has to sit
+      # directly in `src/services/`, `src/lib/` or `src/i18n/`, not in a
+      # subdirectory of one.
       - name: Test
         working-directory: widget
         run: npm test
@@ -158,7 +161,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Lint
         working-directory: app
