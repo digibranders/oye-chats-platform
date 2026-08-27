@@ -4,9 +4,7 @@ import { ExternalLink } from 'lucide-react';
 import {
   Card,
   CardBody,
-  CardHeader,
   Columns,
-  CopyField,
   EmptyState,
   ErrorState,
   LockedState,
@@ -20,11 +18,12 @@ import {
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import { getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
+import { getBotDemoUrl } from '../../../services/api';
 import { agentPath } from '../../../shell/nav';
 import { platforms } from '../../../data/platformIntegrations';
 import { useDeployData } from './useDeployData';
 import { widgetHeartbeat } from './deployModel';
+import { DemoLinkCard } from './DemoLinkCard';
 import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
@@ -339,34 +338,24 @@ export function DeployPage() {
               />
 
               {/* A hosted page that runs this chatbot, for a customer whose site
-                  is not ready — or who wants a colleague to try it before it
-                  goes live. How often it is opened is counted on this chatbot's
-                  Overview, under "Demo shares", where every other figure about
-                  it already lives — this card carries the link and nothing else.
-                  It used to carry a second ghost control labelled "Opens", which
-                  read as a truncated label rather than as a destination. */}
-              <Card>
-                <CardHeader size="sm" titleAs="h2" title="Share a link instead" />
-                <CardBody className="space-y-2">
-                  <CopyField value={demoUrl} label="demo link" compact />
-                  <a
-                    href={demoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={buttonClass('ghost', 'sm')}
-                    onClick={() => {
-                      // Attribution is best-effort and deliberately unawaited: a
-                      // failed count must never stand between the customer and
-                      // the link they just clicked.
-                      void trackDemoShareClick(agentId).catch(() => undefined);
-                    }}
-                  >
-                    <ExternalLink aria-hidden />
-                    Open it
-                    <span className="sr-only"> (opens in a new tab)</span>
-                  </a>
-                </CardBody>
-              </Card>
+                  is not ready, or who wants a colleague to try it before it
+                  goes live. It opens the customer's OWN website with the chat
+                  on it, from a screenshot captured during training, so the card
+                  also has to say when that capture is missing, running, failed
+                  or old: in every one of those cases the link quietly falls
+                  back to a stand-in page, and a customer sending it to a
+                  prospect needs to know that before they send it.
+
+                  How often it is opened is counted on this chatbot's Overview,
+                  under "Demo shares", where every other figure about it lives. */}
+              <DemoLinkCard
+                agentId={agentId}
+                demoUrl={demoUrl}
+                website={website}
+                screenshotStatus={bot.demo_screenshot_status}
+                screenshotCapturedAt={bot.demo_screenshot_captured_at}
+                onRefresh={deploy.retry}
+              />
             </Stack>
           }
         />

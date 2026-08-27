@@ -1085,6 +1085,10 @@ export function previewBrandTone(
 // ── Demo share tracking (channels) ───────────────────────────────────────────
 /** POST /bots/{id}/demo-share-click - record a shared demo-link click. */
 export function trackDemoShareClick(botId: number): Promise<Record<string, unknown>>;
+/** `POST /bots/{botId}/demo-screenshot` — queue a recapture of the demo backdrop. */
+export function recaptureDemoScreenshot(
+  botId: number,
+): Promise<{ success: boolean; status: string; website: string }>;
 
 // ── Operator profile picture (settings, members) ─────────────────────────────
 /** POST /operators/me/avatar (multipart) - upload the caller's profile picture. */

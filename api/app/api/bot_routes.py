@@ -4,14 +4,22 @@ import logging
 import re
 import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,9 +31,17 @@ from app.api.auth import (
     require_active_subscription_for_workspace,
     require_verified_email_for_workspace,
 )
-from app.config import API_BASE_URL, APP_URL, FRONTEND_URL, MARKETING_URL
+from app.config import (
+    API_BASE_URL,
+    APP_URL,
+    DEMO_SCREENSHOT_ENABLED,
+    DEMO_SCREENSHOT_TTL_DAYS,
+    FRONTEND_URL,
+    MARKETING_URL,
+)
+from app.config import WIDGET_SCRIPT_URL as CONFIGURED_WIDGET_SCRIPT_URL
 from app.core.cache import PREFIX, bot_config_key, cache_delete, get_redis
-from app.core.origin_check import extract_hostname, normalize_domain_input
+from app.core.origin_check import extract_hostname, is_origin_allowed, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import ActivationEvent, Bot, BotGrowthEvent
@@ -814,6 +830,12 @@ class BotResponse(BaseModel):
     # support diagnostic ("which domain is it actually running on?") and never
     # an authorisation input.
     widget_last_origin: str | None = None
+    # State of the capture that backs the hosted demo page. The Deploy page
+    # reports this so the customer can tell "we are still taking the picture"
+    # from "we could not render your site" instead of wondering why their demo
+    # link shows a stand-in. None = never attempted.
+    demo_screenshot_status: str | None = None
+    demo_screenshot_captured_at: datetime | None = None
     # Durable per-bot ingestion ("trained") state, a persistent fact the UI can
     # read instead of racing the ephemeral /crawl/progress toast.
     last_crawl_status: str | None = None
@@ -962,6 +984,8 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         widget_installed_at=bot.widget_installed_at,
         widget_last_seen_at=bot.widget_last_seen_at,
         widget_last_origin=bot.widget_last_origin,
+        demo_screenshot_status=bot.demo_screenshot_status,
+        demo_screenshot_captured_at=bot.demo_screenshot_captured_at,
         last_crawl_status=bot.last_crawl_status,
         crawl_completed_at=bot.crawl_completed_at,
         indexed_chunk_count=bot.indexed_chunk_count or 0,
@@ -1304,6 +1328,240 @@ def _build_public_cta_options(bot) -> dict:
     return cta_options
 
 
+def _demo_url_belongs_to_bot(bot: Bot, raw_url: str) -> bool:
+    """Is ``raw_url`` a site this bot is entitled to have previewed?
+
+    Accepts the bot's own ``website`` (with the usual apex/``www.``
+    equivalence) and anything on its configured ``allowed_domains``. Everything
+    else is refused.
+
+    The guard exists because ``/demo/{bot_key}`` is unauthenticated and its key
+    is public by design: it ships in every embed snippet and is printed on the
+    Deploy page. Without this, that key is all anyone needs to serve arbitrary
+    third-party content from an oyechats.com URL under a "Powered by OyeChats"
+    toolbar.
+
+    Note this is deliberately independent of ``domain_check_enabled``. That
+    flag governs whether the WIDGET refuses to boot on a foreign origin, and it
+    fails open on an empty allow-list so a new bot still works. Failing open
+    here would reinstate exactly the abuse this prevents, so an empty
+    allow-list simply means the bot's own website is the only previewable site.
+    """
+    host = extract_hostname(raw_url)
+    if not host:
+        return False
+    host = host.lower()
+
+    own_host = extract_hostname(bot.website) if bot.website else None
+    if not own_host and bot.website:
+        # ``website`` is very often stored as a bare hostname, which
+        # ``extract_hostname`` cannot read without a scheme.
+        own_host = extract_hostname(f"https://{bot.website.strip()}")
+    if own_host:
+        own_host = own_host.lower()
+        if host == own_host:
+            return True
+        # Apex and ``www.`` are the same site to everyone except a string
+        # comparison, and customers store whichever one they typed.
+        if host.removeprefix("www.") == own_host.removeprefix("www."):
+            return True
+
+    allowed = bot.allowed_domains or []
+    return is_origin_allowed(host, allowed)
+
+
+def _demo_capture_is_usable(bot: Bot) -> bool:
+    """Should the demo page render this bot's stored capture?
+
+    Staleness is checked here rather than only at capture time because the
+    capture is refreshed by training, and a bot that stopped being retrained
+    would otherwise show a screenshot of a site design its owner replaced
+    long ago. Past the TTL the hero page is the more honest answer, and the
+    next training run (or an explicit recapture) restores the real one.
+
+    A capture of a DIFFERENT site than the bot currently points at is never
+    usable, no matter how recent: that is the case where showing it would be
+    actively misleading rather than merely dated.
+    """
+    if not DEMO_SCREENSHOT_ENABLED or not bot.demo_screenshot_url:
+        return False
+    if bot.demo_screenshot_status != "ready":
+        return False
+
+    current = (bot.website or "").strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
+    captured = (
+        (bot.demo_screenshot_source_url or "").strip().lower().removeprefix("https://").removeprefix("http://")
+    ).rstrip("/")
+    if current and captured and current.removeprefix("www.") != captured.removeprefix("www."):
+        return False
+
+    captured_at = bot.demo_screenshot_captured_at
+    if captured_at is None:
+        return False
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=UTC)
+    return captured_at > datetime.now(UTC) - timedelta(days=DEMO_SCREENSHOT_TTL_DAYS)
+
+
+def _widget_script_tag(bot_key: str) -> str:
+    """The demo page's own copy of the embed snippet.
+
+    Sourced from config rather than hardcoded to the production CDN: a local or
+    staging demo page used to load the LIVE widget build, so the one surface
+    whose whole job is showing what the customer will get was the one surface
+    that could not show a change before it shipped.
+    """
+    return f'<script src="{html.escape(CONFIGURED_WIDGET_SCRIPT_URL)}" data-bot-key="{html.escape(bot_key)}"></script>'
+
+
+def _build_screenshot_demo_page_html(bot: Bot, edit: bool = False) -> str:
+    """The customer's own website, captured, with the real widget live on top.
+
+    This is the demo page proper. The backdrop is a full-page capture of their
+    site stored on our CDN (see ``screenshot_service``), drawn inside light
+    browser chrome so nobody mistakes it for the live site, and the widget on
+    top is the real one loaded by bot key. Everything the visitor clicks in the
+    widget is real; the page behind it is a picture.
+
+    A capture rather than an iframe because roughly 40% of sites forbid framing
+    outright, and a demo that fails in front of a prospect is worse than no
+    demo. This is also what LiveChat does.
+    """
+    bot_name = html.escape(bot.name or "OyeChats")
+    shot_url = html.escape(bot.demo_screenshot_url or "")
+    source_url = bot.demo_screenshot_source_url or bot.website or ""
+    display_host = html.escape(urlparse(source_url).hostname or source_url or "your website")
+    safe_source = html.escape(source_url) if source_url.startswith(("http://", "https://")) else ""
+    visit_link = (
+        f'<a class="chrome-visit" href="{safe_source}" target="_blank" rel="noopener noreferrer">Open the real site</a>'
+        if safe_source
+        else ""
+    )
+    editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{bot_name} Demo | OyeChats</title>
+  <meta name="description" content="Try the {bot_name} assistant on {display_host}, powered by OyeChats." />
+  <meta name="robots" content="noindex" />
+  <style>
+    /*
+     * Scope every reset to the demo shell. Never touch #oyechats-widget-root
+     * or its children: the widget ships its own self-contained styles and
+     * renders into a shadow root.
+     */
+    .demo-shell, .demo-shell *, .demo-shell *::before, .demo-shell *::after {{
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      background: #eef2f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .demo-shell {{ min-height: 100vh; }}
+    .chrome {{
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 44px;
+      padding: 0 16px;
+      background: #f8fafc;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+    }}
+    .chrome-dots {{ display: flex; gap: 6px; flex-shrink: 0; }}
+    .chrome-dots i {{
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #d7dee8;
+      display: block;
+    }}
+    .chrome-address {{
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: #ffffff;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      color: #475569;
+      font-size: 12.5px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }}
+    .chrome-lock {{ flex-shrink: 0; color: #64748b; font-size: 11px; }}
+    .chrome-tag {{
+      flex-shrink: 0;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(15, 109, 255, 0.1);
+      color: #0a56ca;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .chrome-visit {{
+      flex-shrink: 0;
+      color: #475569;
+      font-size: 12px;
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    .chrome-visit:hover {{ color: #0f172a; text-decoration: underline; }}
+    .shot {{
+      display: block;
+      width: 100%;
+      height: auto;
+      /* The capture is a picture of a page, not an interactive one. Saying so
+         with the cursor is cheaper than a visitor discovering it by clicking. */
+      cursor: default;
+      user-select: none;
+    }}
+    .note {{
+      padding: 14px 16px 96px;
+      text-align: center;
+      color: #64748b;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }}
+    @media (max-width: 640px) {{
+      .chrome-tag, .chrome-visit {{ display: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="demo-shell">
+    <div class="chrome">
+      <div class="chrome-dots"><i></i><i></i><i></i></div>
+      <div class="chrome-address"><span class="chrome-lock">&#x1f512;</span>{display_host}</div>
+      <span class="chrome-tag">Demo</span>
+      {visit_link}
+    </div>
+    <img class="shot" src="{shot_url}" alt="A preview image of {display_host}" draggable="false" />
+    <p class="note">
+      This is a picture of {display_host}. The chat in the corner is live &mdash; open it and ask a question.
+    </p>
+  </div>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
+</body>
+</html>
+"""
+
+
 def _build_demo_page_html(bot: Bot, edit: bool = False) -> str:
     bot_name = html.escape(bot.name or "OyeChats")
     website = (bot.website or "").strip()
@@ -1466,7 +1724,7 @@ def _build_demo_page_html(bot: Bot, edit: bool = False) -> str:
       </div>
     </section>
   </main>
-  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{html.escape(bot.bot_key)}"></script>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
 </body>
 </html>
 """
@@ -1563,7 +1821,6 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
     from the parent frame. Typically the admin dashboard editor).
     """
     bot_name = html.escape(bot.name or "OyeChats")
-    bot_key = html.escape(bot.bot_key)
     masked_key = html.escape(_mask_bot_key(bot.bot_key))
     safe_url = html.escape(target_url)
     editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
@@ -1739,18 +1996,47 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
       <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
     </div>
   </div>
-  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
   <script>
     (function() {{
       var frame = document.getElementById('preview-frame');
       var fallback = document.getElementById('fallback');
       var shown = false;
+      var reported = false;
+
+      /*
+       * Report the INNER frame's fate to whoever embedded this page (the
+       * dashboard's preview dialog).
+       *
+       * This exists because the dialog used to infer "your site blocked
+       * embedding" from the widget's own `oyechats:preview-ready` message.
+       * The widget lives on THIS page, not on the customer's site, so it
+       * reports ready whether or not the site below it rendered, and the
+       * warning it was supposed to drive was effectively unreachable in
+       * exactly the case it was written for.
+       *
+       * Targeted at the referrer's origin rather than '*' so the state of a
+       * customer's site is not broadcast to any arbitrary embedder.
+       */
+      function report(ok) {{
+        if (reported) return;
+        reported = true;
+        try {{
+          if (window.parent === window) return;
+          var target = '*';
+          if (document.referrer) {{
+            try {{ target = new URL(document.referrer).origin; }} catch (e) {{ /* keep '*' */ }}
+          }}
+          window.parent.postMessage({{ type: 'oyechats:preview-site', ok: !!ok }}, target);
+        }} catch (e) {{ /* never let reporting break the preview */ }}
+      }}
 
       function showFallback() {{
         if (shown) return;
         shown = true;
         frame.style.display = 'none';
         fallback.classList.add('visible');
+        report(false);
       }}
 
       /*
@@ -1775,11 +2061,14 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
             var body = (doc.body && doc.body.innerHTML) || '';
             if (url === 'about:blank' || body.trim() === '') {{
               showFallback();
+            }} else {{
+              report(true);
             }}
             return;
           }}
         }} catch(e) {{
           // Cross-origin: expected for external sites that DID load.
+          report(true);
         }}
       }});
 
@@ -1799,6 +2088,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
           }}
         }} catch(e) {{
           // Cross-origin: site is loaded, all good.
+          report(true);
         }}
       }}, 8000);
     }})();
@@ -1820,7 +2110,32 @@ def get_bot_demo_page(
     url: str | None = Query(default=None, max_length=MAX_URL),
     edit: int = Query(default=0, ge=0, le=1),
 ):
-    """Render a shareable demo page, or an iframe-based preview when *url* is supplied.
+    """Render the hosted demo page for a bot.
+
+    Three renderings, in descending order of how much they look like the
+    customer's actual website:
+
+    1. **Live frame** (``?url=`` on a site that permits framing). The real site,
+       scrolling, with the widget over it. Only ever reached explicitly, and
+       only for the bot's OWN site. This is what the dashboard's preview dialog
+       asks for, where a blank frame is recoverable because the customer is
+       sitting in front of it.
+    2. **Captured site** (default, whenever a stored capture exists). A
+       full-page screenshot of the customer's site with the real widget live on
+       top. This is what a shared link resolves to, because it is the only
+       rendering that works for every customer: roughly 40% of sites forbid
+       framing, and a link sent to a prospect has to work the first time.
+    3. **Hero page** (last resort). A bot with no website, or none captured
+       yet. Honest about being a stand-in rather than dressed up as the
+       customer's site.
+
+    ``?url=`` is restricted to the bot's own website and allow-listed domains.
+    It is an unauthenticated route keyed on a PUBLIC bot key, so an unrestricted
+    parameter would let anyone render arbitrary third-party HTML on an
+    oyechats.com URL underneath our own branding: a ready-made phishing wrapper
+    borrowing our domain as the trust signal. A rejected URL is a 400 rather
+    than a silent downgrade, so a caller learns their request was refused
+    instead of wondering why the page ignored it.
 
     When ``edit=1`` is passed, the page enables a postMessage bridge so the
     embedding dashboard can drive widget appearance in real time.
@@ -1836,10 +2151,19 @@ def get_bot_demo_page(
 
         if url:
             _validate_preview_url(url)
+            if not _demo_url_belongs_to_bot(bot, url):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This demo can only preview the chatbot's own website or an allowed domain.",
+                )
             if _check_iframe_allowed(url):
                 return HTMLResponse(content=_build_preview_page_html(bot, url, edit=edit_mode))
-            # Site blocks framing. Fall through to the hero demo page
-            # so the user still sees a working widget.
+            # The site refuses to be framed. The capture, if we have one, shows
+            # the same site and cannot be blocked, so prefer it over the hero
+            # page rather than dropping all the way to a generic stand-in.
+
+        if _demo_capture_is_usable(bot):
+            return HTMLResponse(content=_build_screenshot_demo_page_html(bot, edit=edit_mode))
         return HTMLResponse(content=_build_demo_page_html(bot, edit=edit_mode))
 
 
@@ -2502,6 +2826,83 @@ def track_demo_share_click(bot_id: int, auth=Depends(get_current_client_or_opera
         _record_growth_event(session, bot.id, "demo_share_clicked")
         session.commit()
         return {"success": True, "event_type": "demo_share_clicked"}
+
+
+@router.post("/{bot_id}/demo-screenshot")
+@limiter.limit("6/hour")
+def recapture_demo_screenshot(request: Request, bot_id: int, auth=Depends(get_current_client_or_operator)):
+    """Queue a fresh capture of this bot's website for its demo page.
+
+    Normally the capture rides along with training, which covers the case
+    nobody thinks about. This is the case they do think about: the customer
+    redesigned their site, or the first attempt failed, and they want the demo
+    link to be right before they send it.
+
+    Rate-limited per caller because each call spends a real render at the
+    crawl vendor, and the button is one click on a page a customer may sit on
+    while iterating. Deduplicated on a per-bot job id, so repeat clicks while
+    one is already queued collapse into that job rather than stacking.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        if not DEMO_SCREENSHOT_ENABLED:
+            raise HTTPException(status_code=503, detail="Website previews are currently unavailable.")
+
+        from app.services.screenshot_service import normalize_site_url
+
+        target = normalize_site_url(bot.website)
+        if not target:
+            raise HTTPException(
+                status_code=400,
+                detail="Add this chatbot's website address before previewing it.",
+            )
+
+        # Reflect the queued state immediately. The Deploy page reads this
+        # field, and leaving it on its previous value would read as "nothing
+        # happened" for as long as the capture takes to start.
+        bot.demo_screenshot_status = "pending"
+        session.commit()
+        target_bot_id = bot.id
+
+    # Dispatch outside the session: the fallback path runs the capture on the
+    # background thread pool, and holding this request's session open across
+    # that hand-off buys nothing.
+    #
+    # ``WORKER_ENABLED`` defaults to false, and on that path the house
+    # convention is to run the work in-process rather than queue it (see
+    # document ingestion and lead-company resolution). Queueing regardless
+    # would leave this button setting "pending" against a queue nobody drains,
+    # and the card would promise a picture that never arrives.
+    from app.worker.enqueue import WORKER_ENABLED
+
+    try:
+        if WORKER_ENABLED:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync(
+                "task_capture_demo_screenshot",
+                target_bot_id,
+                True,
+                _job_id=f"demo-screenshot:{target_bot_id}",
+            )
+        else:
+            from app.core.thread_pool import submit_background
+            from app.services.screenshot_service import refresh_bot_capture
+
+            submit_background(refresh_bot_capture, target_bot_id, True)
+    except Exception:
+        # Nothing is going to run, so the row must not be left claiming a
+        # capture is under way. Clearing it also restores the customer's retry.
+        logger.warning("could not dispatch a demo capture for bot %s", target_bot_id, exc_info=True)
+        with get_session() as session:
+            failed = session.get(Bot, target_bot_id)
+            if failed is not None:
+                failed.demo_screenshot_status = "failed"
+                session.commit()
+        raise HTTPException(status_code=503, detail="We could not start the preview. Try again in a moment.") from None
+
+    return {"success": True, "status": "pending", "website": target}
 
 
 @router.get("/{bot_id}/framework-presets")

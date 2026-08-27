@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   INSTALL_STAMP_CAPTION,
   apiOrigin,
+  demoPreviewState,
   developerEmail,
   domainNotice,
   embedSnippet,
@@ -400,5 +401,60 @@ describe('developerEmail', () => {
     const mail = developerEmail({ ...base, snippet, attribution: false });
     expect(mail.body).not.toContain('Powered by OyeChats');
     expect(mail.body).not.toContain('do not hide it with CSS');
+  });
+});
+
+describe('demoPreviewState', () => {
+  const NOW = new Date('2026-08-27T12:00:00Z');
+  const fresh = '2026-08-20T12:00:00Z';
+  const ancient = '2025-01-01T12:00:00Z';
+
+  it('reports a usable capture as ready', () => {
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'ready', capturedAt: fresh, now: NOW }),
+    ).toEqual({ kind: 'ready' });
+  });
+
+  it('calls a capture older than the TTL stale, not ready', () => {
+    // The link still works; it just shows a design the customer may have
+    // replaced, which is the thing they need told before they share it.
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'ready', capturedAt: ancient, now: NOW }),
+    ).toEqual({ kind: 'stale', capturedAt: ancient });
+  });
+
+  it('distinguishes a chatbot with no website from a failed capture', () => {
+    expect(demoPreviewState({ website: '', status: 'ready', capturedAt: fresh, now: NOW })).toEqual({
+      kind: 'no-website',
+    });
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'failed', capturedAt: null, now: NOW }),
+    ).toEqual({ kind: 'unavailable' });
+  });
+
+  it('reports a queued capture as pending', () => {
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'pending', capturedAt: null, now: NOW }),
+    ).toEqual({ kind: 'pending' });
+  });
+
+  it('treats a never-attempted capture as unavailable', () => {
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: null, capturedAt: null, now: NOW }),
+    ).toEqual({ kind: 'unavailable' });
+  });
+
+  it('does not claim freshness it cannot verify', () => {
+    // An unparseable timestamp is not evidence the capture is current, but it
+    // is also not evidence it is stale. Ready, without a staleness claim.
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'ready', capturedAt: 'not a date', now: NOW }),
+    ).toEqual({ kind: 'ready' });
+  });
+
+  it('needs a timestamp before it will call a capture ready', () => {
+    expect(
+      demoPreviewState({ website: 'https://acme.com', status: 'ready', capturedAt: null, now: NOW }),
+    ).toEqual({ kind: 'unavailable' });
   });
 });

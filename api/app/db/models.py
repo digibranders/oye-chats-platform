@@ -638,6 +638,39 @@ class Bot(Base):
     # call five kilobytes of junk a hostname.
     widget_last_origin = Column(String, nullable=True)
 
+    # ── Hosted demo page backdrop ────────────────────────────────────────────
+    #
+    # A screenshot of the customer's OWN site, captured on the worker during
+    # training and served as the backdrop of `GET /demo/{bot_key}` with the
+    # real widget live on top. Without it the demo link can only show a
+    # generic hero page, which is what the customer complains about when they
+    # send that link to a prospect.
+    #
+    # Why a stored capture rather than framing the live site: roughly 40% of
+    # sites set `X-Frame-Options` or a CSP `frame-ancestors` that forbids
+    # framing, and the population that buys this product skews higher than that
+    # average. A headless capture is subject to neither. It also keeps the
+    # demo page's request path free of a multi-second third-party render.
+    #
+    # `demo_screenshot_url` is a public CDN URL (R2). NULL means no usable
+    # capture, and the route falls back to the hero page rather than rendering
+    # a broken image.
+    demo_screenshot_url = Column(String, nullable=True)
+    # When the stored capture was taken. Drives staleness: past
+    # DEMO_SCREENSHOT_TTL_DAYS the next training run recaptures, so a demo link
+    # never shows a site design its owner replaced months ago.
+    demo_screenshot_captured_at = Column(DateTime(timezone=True), nullable=True)
+    # The URL actually captured. Kept because `website` can change after the
+    # capture: comparing the two is what tells "this screenshot is of the site
+    # they still have" from "this screenshot is of their previous site", which
+    # a timestamp alone cannot answer.
+    demo_screenshot_source_url = Column(String, nullable=True)
+    # Capture lifecycle, for the Deploy page to report honestly rather than
+    # leaving the customer to guess why their site is not showing:
+    # NULL = never attempted, "pending" = queued or running, "ready" = usable
+    # capture stored, "failed" = the provider could not render the page.
+    demo_screenshot_status = Column(String, nullable=True)
+
     # Is this chatbot serving, and is it billable? Both, and the billing half is
     # the one that surprises people: ``plan_entitlements_service`` counts only
     # ``is_active`` bots in both ``can_client_add_new_bot`` and

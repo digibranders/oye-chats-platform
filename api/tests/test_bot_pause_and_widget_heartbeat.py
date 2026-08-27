@@ -1087,6 +1087,11 @@ class TestWidgetHeartbeatCacheRoundTrip:
 # ── Migration ────────────────────────────────────────────────────────────────
 
 
+#: The migration under test. Named so the downgrade step below can anchor to
+#: it instead of to whatever revision is currently the tip.
+_WIDGET_HEARTBEAT_REVISION = "a4d7f2c91b06"
+
+
 @pg
 def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
     """``Base.metadata.create_all`` validates the ORM, never the Alembic DDL, so
@@ -1136,7 +1141,14 @@ def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
         eng.dispose()
 
         # Reversible, then re-runnable.
-        command.downgrade(cfg, "-1")
+        #
+        # Anchored to this migration rather than to a relative "-1" from head.
+        # "-1" only unwinds THIS revision while it happens to be the tip, so
+        # the first migration added on top of it left the columns in place and
+        # failed the assertion below, turning an unrelated author's work into a
+        # failure in this file. Naming the revision makes the step mean "unwind
+        # past the migration under test" however many land after it.
+        command.downgrade(cfg, f"{_WIDGET_HEARTBEAT_REVISION}-1")
         eng = create_engine(tmp_url)
         after_down = {c["name"] for c in inspect(eng).get_columns("bots")}
         assert not ({"widget_last_seen_at", "widget_last_origin"} & after_down)

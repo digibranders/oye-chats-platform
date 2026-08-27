@@ -58,6 +58,17 @@ export interface Bot {
    */
   widget_last_origin?: string | null;
   /**
+   * State of the screenshot that backs the hosted demo page.
+   *
+   * `null` = never attempted, `"pending"` = queued or capturing, `"ready"` = a
+   * usable capture is stored, `"failed"` = the site could not be rendered. The
+   * demo link falls back to a generic page for anything but `"ready"`, so this
+   * is what lets Deploy explain that instead of leaving the reader to guess.
+   */
+  demo_screenshot_status?: string | null;
+  /** When the stored capture was taken. Drives the staleness notice. */
+  demo_screenshot_captured_at?: string | null;
+  /**
    * False while the chatbot is paused: the widget stops answering and the agent
    * stops counting against the plan's active-bot allowance. Resuming re-runs the
    * create gate server-side and can be refused.

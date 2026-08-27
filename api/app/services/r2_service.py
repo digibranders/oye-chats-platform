@@ -399,6 +399,30 @@ def upload_to_r2(file_data, filename, content_type):
 upload_to_b2 = upload_to_r2
 
 
+def upload_demo_screenshot(image_bytes: bytes, key: str, content_type: str = "image/png") -> str:
+    """Upload a captured demo-page screenshot and return its public URL.
+
+    Unlike a logo this is stored verbatim: the bytes are a full-page render of
+    the customer's own site and must not be square-cropped or downscaled to
+    512px, which is what ``upload_to_r2`` would do.
+
+    The key carries an unguessable token (see
+    ``screenshot_service.build_screenshot_key``). Screenshots sit on the public
+    CDN domain, and a key derived only from the bot id would let anyone holding
+    one public bot key enumerate every customer's homepage capture.
+    """
+    try:
+        s3_client.put_object(Bucket=R2_BUCKET_NAME, Key=key, Body=image_bytes, ContentType=content_type)
+        return _build_public_url(key)
+    except ClientError as e:
+        error_msg = (
+            f"R2 screenshot upload failed (ClientError): "
+            f"{e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
+        )
+        logger.error(error_msg)
+        raise Exception(error_msg) from e
+
+
 def upload_invoice_pdf(pdf_bytes: bytes, key: str) -> str:
     """Upload a rendered invoice PDF and return its public URL.
 

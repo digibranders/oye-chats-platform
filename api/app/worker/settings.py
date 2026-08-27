@@ -31,6 +31,7 @@ litellm.drop_params = True
 from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_auto_recrawl_bot,
     task_auto_recrawl_sweep,
+    task_capture_demo_screenshot,
     task_crawl_and_ingest,
     task_delete_expired_trial_data,
     task_deliver_webhook,
@@ -150,6 +151,7 @@ class WorkerSettings:
         task_ingest_documents,
         task_ingest_web_batch,
         task_crawl_and_ingest,
+        task_capture_demo_screenshot,
         task_deliver_webhook,
         task_resolve_lead_company,
         task_send_email,

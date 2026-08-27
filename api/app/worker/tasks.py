@@ -409,6 +409,32 @@ async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot
     return True
 
 
+async def task_capture_demo_screenshot(ctx: dict, bot_id: int, force: bool = False) -> bool:
+    """Capture the bot's own website and store it as its demo-page backdrop.
+
+    This is what lets ``GET /demo/{bot_key}`` show the customer's real site
+    instead of a generic hero page. It runs here, on the worker, because a
+    full-page capture of a JavaScript-heavy homepage routinely takes several
+    seconds; putting that on the demo page's request path would mean every
+    prospect who opened a shared link waited for a third-party render.
+
+    The work itself lives in ``screenshot_service.refresh_bot_capture``, which
+    is also what runs inline when ``WORKER_ENABLED`` is false. Keeping one
+    implementation is what stops the two paths drifting into different
+    behaviour for the same button.
+
+    Synchronous underneath (DB, then two HTTP legs, then an upload), so it runs
+    in an executor rather than blocking the worker's event loop and delaying
+    every other queued job.
+    """
+    import asyncio
+
+    from app.services.screenshot_service import refresh_bot_capture
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: refresh_bot_capture(bot_id, force))
+
+
 async def task_process_webhook_retries(ctx: dict) -> int:
     """Cron task: poll for due webhook retries and re-enqueue them.
 

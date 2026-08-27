@@ -9,18 +9,29 @@ import { getBotPreviewUrl } from '../../../services/api';
  * The frame loads an OyeChats-hosted demo page, which overlays the live widget
  * on top of the URL given — so it is never blocked by the *customer's*
  * `X-Frame-Options`. Their site can still refuse to render inside our demo
- * page, which is why the demo posts a ready message and this dialog degrades to
- * "open in a new tab" rather than leaving a blank rectangle and no explanation.
+ * page, which is why the demo page reports that frame's fate back here and this
+ * dialog degrades to "open in a new tab" rather than leaving a blank rectangle
+ * and no explanation.
  *
  * It shows the SAVED widget, because it loads the real one by bot key. That is
  * stated on the dialog rather than discovered by a user wondering why the
  * colour they just picked is not there.
  */
 
-/** How long to wait for the demo page's ping before offering the fallback. */
+/** How long to wait for the demo page's verdict before offering the fallback. */
 const READY_TIMEOUT_MS = 8000;
 
-const READY_MESSAGE = 'oyechats:preview-ready';
+/**
+ * The demo page's verdict on whether the customer's site rendered inside it.
+ *
+ * This deliberately is NOT `oyechats:preview-ready`, which is what this dialog
+ * used to listen for. That message comes from the widget, and the widget runs
+ * on the demo page rather than on the customer's site, so it fired whether or
+ * not the site below it loaded. The "your site may block embedding" warning
+ * was therefore unreachable in exactly the case it exists for: a site that
+ * blocks framing left a blank rectangle and no explanation.
+ */
+const SITE_MESSAGE = 'oyechats:preview-site';
 
 export interface WebsitePreviewDialogProps {
   open: boolean;
@@ -39,25 +50,32 @@ export function WebsitePreviewDialog({
   const [error, setError] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState('');
   const [frameLoaded, setFrameLoaded] = useState(false);
-  const [ready, setReady] = useState(false);
+  /** null = no verdict yet, true = the site rendered, false = it refused. */
+  const [siteRendered, setSiteRendered] = useState<boolean | null>(null);
   const [slow, setSlow] = useState(false);
 
   useEffect(() => {
     if (!loadedUrl) return undefined;
     const onMessage = (event: MessageEvent): void => {
-      const data = event.data as { type?: unknown } | null;
-      if (data && typeof data === 'object' && data.type === READY_MESSAGE) setReady(true);
+      const data = event.data as { type?: unknown; ok?: unknown } | null;
+      if (data && typeof data === 'object' && data.type === SITE_MESSAGE) {
+        setSiteRendered(data.ok === true);
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [loadedUrl]);
 
-  // Cleared by `ready` flipping, so a healthy preview never trips the warning.
+  // Backstop for a demo page that never reports at all. A verdict of either
+  // kind settles it, so a healthy preview never trips the warning and a
+  // blocked one does not wait out the timer to explain itself.
   useEffect(() => {
-    if (!loadedUrl || ready) return undefined;
+    if (!loadedUrl || siteRendered !== null) return undefined;
     const timer = window.setTimeout(() => setSlow(true), READY_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [loadedUrl, ready]);
+  }, [loadedUrl, siteRendered]);
+
+  const blocked = siteRendered === false || (slow && siteRendered === null);
 
   const load = useCallback((): void => {
     const reason = validateUrl(url);
@@ -69,7 +87,7 @@ export function WebsitePreviewDialog({
     setError(null);
     setUrl(normalized);
     setFrameLoaded(false);
-    setReady(false);
+    setSiteRendered(null);
     setSlow(false);
     setLoadedUrl(normalized);
   }, [url]);
@@ -135,7 +153,7 @@ export function WebsitePreviewDialog({
               />
             </div>
 
-            {slow && !ready ? (
+            {blocked ? (
               <Alert
                 tone="warning"
                 title="Your site may block being embedded"

@@ -2039,6 +2039,28 @@ export const trackDemoShareClick = async (botId) => {
     }
 };
 
+/**
+ * Queue a fresh capture of the chatbot's website for its hosted demo page.
+ *
+ * The capture normally rides along with training. This is the explicit path,
+ * for a customer who redesigned their site or whose first capture failed and
+ * wants the demo link right before they send it.
+ *
+ * The fallback message deliberately does not repeat "we could not start the
+ * preview": the caller already renders that as the alert's title, so a
+ * matching body would say the same thing twice and tell the reader nothing
+ * about what to do next.
+ */
+export const recaptureDemoScreenshot = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/demo-screenshot`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error requesting demo screenshot:', error);
+        throw buildApiError(error, 'The request did not go through. Try again in a moment.');
+    }
+};
+
 // ── Lead Management ──
 
 export const getLeads = async (botId, params = {}) => {

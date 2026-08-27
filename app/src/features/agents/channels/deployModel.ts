@@ -519,3 +519,61 @@ export function developerEmail({
     href: `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
   };
 }
+
+// ── Hosted demo page ────────────────────────────────────────────────────────
+
+/**
+ * How long a stored capture stays fresh. Mirrors `DEMO_SCREENSHOT_TTL_DAYS`
+ * on the API, which is the side that actually decides what the demo link
+ * renders. Duplicated as a constant rather than fetched because it changes
+ * about never, and a wrong guess here only mislabels a notice.
+ */
+export const DEMO_CAPTURE_TTL_DAYS = 30;
+
+export type DemoPreviewState =
+  /** No website on the chatbot, so there is nothing to capture. */
+  | { kind: 'no-website' }
+  /** A capture is queued or running. */
+  | { kind: 'pending' }
+  /** A usable, current capture: the demo link shows the customer's own site. */
+  | { kind: 'ready' }
+  /** Captured, but old enough that the site may have changed since. */
+  | { kind: 'stale'; capturedAt: string }
+  /** The site could not be rendered, or has never been captured. */
+  | { kind: 'unavailable' };
+
+/**
+ * What the shared demo link will actually show a recipient.
+ *
+ * This exists because the answer is not "whatever the customer's website is".
+ * The demo page renders a stored screenshot of their site, and when there
+ * isn't one it falls back to a generic page. Reporting that plainly is the
+ * difference between a customer who recaptures and one who sends a prospect a
+ * link to a stand-in without realising.
+ */
+export function demoPreviewState({
+  website,
+  status,
+  capturedAt,
+  now = new Date(),
+  ttlDays = DEMO_CAPTURE_TTL_DAYS,
+}: {
+  website: string | null | undefined;
+  status: string | null | undefined;
+  capturedAt: string | null | undefined;
+  now?: Date;
+  ttlDays?: number;
+}): DemoPreviewState {
+  if (!website || !website.trim()) return { kind: 'no-website' };
+  if (status === 'pending') return { kind: 'pending' };
+  if (status !== 'ready') return { kind: 'unavailable' };
+  if (!capturedAt) return { kind: 'unavailable' };
+
+  const taken = new Date(capturedAt);
+  // An unparseable timestamp is not evidence of freshness. Treat the capture
+  // as present but undateable rather than silently calling it current.
+  if (Number.isNaN(taken.getTime())) return { kind: 'ready' };
+
+  const ageDays = (now.getTime() - taken.getTime()) / 86_400_000;
+  return ageDays > ttlDays ? { kind: 'stale', capturedAt } : { kind: 'ready' };
+}
