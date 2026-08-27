@@ -17,7 +17,6 @@ import {
   PageHeader,
   SegmentedControl,
   Stack,
-  Tooltip,
   buttonClass,
   formatDate,
   formatNumber,
@@ -234,11 +233,14 @@ export function ReportsPage() {
                   },
                   {
                     key: 'credits',
-                    header: (
-                      <Tooltip content="Consumption only. Grants, top-ups and refunds are ledger movements, not spend.">
-                        <span>Credits used</span>
-                      </Tooltip>
-                    ),
+                    header: 'Credits used',
+                    // Was a `<Tooltip>` around a bare `<span>` inside `header`.
+                    // Valid HTML, unlike the knowledge table's button, but the
+                    // span is not focusable, so on a sortable column the
+                    // tooltip could only ever be reached by hovering — never by
+                    // keyboard, never on touch.
+                    headerHint:
+                      'Consumption only. Grants, top-ups and refunds are ledger movements, not spend.',
                     type: 'number',
                     sortable: (a, b) => a.credits_spent - b.credits_spent,
                     render: (row) => formatNumber(row.credits_spent),

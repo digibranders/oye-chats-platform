@@ -5,6 +5,7 @@ import {
   useMemo,
   useState,
   type MouseEvent,
+  type ReactElement,
   type ReactNode,
 } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react';
@@ -12,6 +13,7 @@ import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { Checkbox } from '../primitives/Toggle';
 import { Skeleton } from '../primitives/Skeleton';
+import { Tooltip } from '../overlays/Tooltip';
 import { EmptyState, ErrorState, LockedState } from './States';
 
 export type SortDirection = 'asc' | 'desc';
@@ -35,6 +37,21 @@ export type ColumnType = 'text' | 'number' | 'id';
 export interface Column<T> {
   key: string;
   header: ReactNode;
+  /**
+   * A definition for the column, shown as a tooltip on its heading.
+   *
+   * Pass the text here rather than putting a `<Tooltip>` inside `header`. A
+   * sortable heading is itself a `<button>`, so a tooltip trigger placed inside
+   * it nested one button in another — invalid HTML, which React warns about,
+   * and two overlapping hit targets where the inner one silently also sorted
+   * the table. `Passages` on the knowledge table shipped exactly that.
+   *
+   * Given here, the tooltip attaches to the heading control instead of sitting
+   * inside it: the sort button when the column sorts, and a button of its own
+   * when it does not. Either way the hint is reachable by keyboard, which is
+   * the whole reason it is not a `title` attribute.
+   */
+  headerHint?: ReactNode;
   render: (row: T) => ReactNode;
   align?: 'left' | 'center' | 'right';
   /**
@@ -305,6 +322,56 @@ function SortIcon({ state }: { state: SortDirection | null }) {
       className="h-3 w-3 shrink-0 text-text-tertiary opacity-50 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
     />
   );
+}
+
+/**
+ * The contents of one `th`: the label, the sort affordance, and the hint.
+ *
+ * Kept as one function because the three combine rather than stack. A hint must
+ * wrap whatever control the heading already has instead of adding another one
+ * inside it, which is the nesting this replaces.
+ */
+function renderHeader<T>(
+  column: Column<T>,
+  sortable: boolean,
+  align: 'left' | 'center' | 'right',
+  direction: SortDirection | null,
+  onSort: () => void,
+): ReactNode {
+  // The dotted underline is the only thing that says a definition is available;
+  // without it the tooltip is discoverable by accident.
+  const label = column.headerHint ? (
+    <span className="underline decoration-dotted underline-offset-4">{column.header}</span>
+  ) : (
+    column.header
+  );
+
+  const control = sortable ? (
+    <button
+      type="button"
+      onClick={onSort}
+      className={cn(
+        'group inline-flex items-center gap-1 rounded-xs',
+        'transition-colors hover:text-text-primary',
+        align === 'right' && 'flex-row-reverse',
+      )}
+    >
+      {label}
+      <SortIcon state={direction} />
+    </button>
+  ) : column.headerHint ? (
+    // A button, not a `span[tabindex]`: it is a real control that reveals text
+    // on click as well as on focus, and it has to be reachable on touch, where
+    // hover does not exist.
+    <button type="button" className="rounded-xs">
+      {label}
+    </button>
+  ) : (
+    column.header
+  );
+
+  if (!column.headerHint) return control;
+  return <Tooltip content={column.headerHint}>{control as ReactElement}</Tooltip>;
 }
 
 const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-right' } as const;
@@ -617,21 +684,8 @@ export function DataTable<T>({
                       column.secondary && 'hidden @3xl/page:table-cell',
                     )}
                   >
-                    {sortable ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(column.key)}
-                        className={cn(
-                          'group inline-flex items-center gap-1 rounded-xs',
-                          'transition-colors hover:text-text-primary',
-                          align === 'right' && 'flex-row-reverse',
-                        )}
-                      >
-                        {column.header}
-                        <SortIcon state={direction} />
-                      </button>
-                    ) : (
-                      column.header
+                    {renderHeader(column, sortable, align, direction, () =>
+                      toggleSort(column.key),
                     )}
                   </th>
                 );

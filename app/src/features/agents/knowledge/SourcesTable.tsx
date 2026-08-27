@@ -178,16 +178,13 @@ export function SourcesTable({
       },
       {
         key: 'passages',
-        header: (
-          // One tooltip, on the column head, rather than 25 identical ones on a
-          // non-focusable span — hover-only, unreachable by keyboard, invisible
-          // on touch.
-          <Tooltip content="Passages are the pieces this chatbot searches when it answers.">
-            <button type="button" className="rounded-xs underline decoration-dotted underline-offset-4">
-              Passages
-            </button>
-          </Tooltip>
-        ),
+        header: 'Passages',
+        // One hint, on the column head, rather than 25 identical ones on a
+        // non-focusable span — hover-only, unreachable by keyboard, invisible
+        // on touch. It is a `headerHint` rather than a `<Tooltip>` in `header`
+        // because this column sorts, so the heading is already a button and the
+        // trigger was nesting a second button inside it.
+        headerHint: 'Passages are the pieces this chatbot searches when it answers.',
         type: 'number',
         width: '6.5rem',
         secondary: true,
