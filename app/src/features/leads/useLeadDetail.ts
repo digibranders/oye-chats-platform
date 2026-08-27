@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { getLeadDetail } from '../../services/api';
 import { type ChatMessage, type Lead } from '../../types/domain';
 import { type LoadStatus } from './useLeads';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** The lead record plus its conversation transcript. */
 export type LeadDetail = Lead & { messages?: ChatMessage[] };
@@ -22,7 +23,7 @@ export interface LeadDetailData {
 
 function messageOf(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return 'Could not load this lead. Please try again.';
+  return translateNow('leads.couldNotLoadThisLead') || 'Could not load this lead. Please try again.';
 }
 
 export function useLeadDetail(sessionId: string | null): LeadDetailData {

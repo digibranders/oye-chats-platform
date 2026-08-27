@@ -4,9 +4,15 @@ import { Bot as BotIcon, Calendar, LogOut, Mail, Settings } from 'lucide-react';
 import { cn, Popover, Skeleton, StatusBadge } from '../design-system';
 import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { endImpersonationSession, isImpersonating } from '../utils/impersonation';
 import type { CurrentUser } from '../types/domain';
+// `translateNow` rather than the hook's `t` inside callbacks: the hook's
+// identity changes per locale, which both breaks the compiler's memoization
+// analysis and adds a dependency for no gain. The module-level function is
+// stable AND resolves against the current locale when it is called.
+import { t as translateNow } from '../i18n/i18n';
+import { useTranslation } from '../i18n/useTranslation';
+import { formatDate } from '../i18n/formatters';
 
 const AVATAR_TRIGGER_SIZE = 36;
 const AVATAR_HEADER_SIZE = 40;
@@ -26,9 +32,10 @@ function getInitials(name: string | null | undefined): string {
 /** ISO timestamp → "Joined Jul 16, 2026". Returns "-" on missing/bad input. */
 function formatJoinedDate(iso: string | null | undefined): string {
   if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  // Was `toLocaleDateString(undefined, ...)`, which follows the BROWSER's
+  // locale rather than the dashboard's. Routed through the shared formatter so
+  // the date matches the language the rest of the menu is rendered in.
+  return formatDate(iso, { year: 'numeric', month: 'short', day: 'numeric' }) || '-';
 }
 
 interface AvatarCircleProps {
@@ -80,8 +87,9 @@ function AvatarCircle({ name, size, online = false, imageUrl }: AvatarCircleProp
  * the app root, so the chip is available immediately with no extra request.
  */
 export function ProfileMenu() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
-  const fallbackName = getAuthItem('admin_name') ?? 'Admin';
+  const fallbackName = getAuthItem('admin_name') ?? (t('shell.admin') || 'Admin');
   const [profile, setProfile] = useState<CurrentUser | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
@@ -138,11 +146,13 @@ export function ProfileMenu() {
       // super-admin's own credentials in every other tab of this browser - the
       // one thing an impersonation session must never do.
       if (isImpersonating()) {
-        endImpersonationSession('Impersonation session ended. You can close this tab.');
+        endImpersonationSession(
+        translateNow('settings.sessions.impersonationEnded') ||
+          'Impersonation session ended. You can close this tab.',
+      );
         return;
       }
       clearAuthStorage();
-      clearTrialBannerDismissals();
       navigate('/login');
     },
     [navigate],
@@ -168,7 +178,7 @@ export function ProfileMenu() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label="Account menu"
+          aria-label={t('shell.profile.accountMenu') || 'Account menu'}
           className="ml-1 flex h-9 w-9 items-center justify-center rounded-full transition-opacity hover:opacity-90"
         >
           <AvatarCircle
@@ -204,12 +214,12 @@ export function ProfileMenu() {
               {isOnline && (
                 <p className="mt-0.5 flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-success)]">
                   <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
-                  Online
+                  {t('shell.profile.online') || 'Online'}
                 </p>
               )}
               {profileError && !profile && (
                 <p className="mt-1 truncate text-[11px] text-[var(--ds-text-subtle)]">
-                  Profile unavailable
+                  {t('shell.profile.unavailable') || 'Profile unavailable'}
                 </p>
               )}
             </div>
@@ -232,12 +242,20 @@ export function ProfileMenu() {
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
                   <BotIcon size={13} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
                   <span>
-                    {profile?.bot_count ?? '-'} {profile?.bot_count === 1 ? 'AI Chatbot' : 'AI Chatbots'}
+                    {t(
+                      profile?.bot_count === 1
+                        ? 'shell.profile.botCountOne'
+                        : 'shell.profile.botCountMany',
+                      { count: profile?.bot_count ?? '-' },
+                    ) || `${profile?.bot_count ?? '-'} AI Chatbots`}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
                   <Calendar size={13} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
-                  <span>Joined {formatJoinedDate(profile?.created_at)}</span>
+                  <span>
+                    {t('shell.profile.joined', { date: formatJoinedDate(profile?.created_at) }) ||
+                      `Joined ${formatJoinedDate(profile?.created_at)}`}
+                  </span>
                 </div>
               </>
             )}
@@ -252,7 +270,7 @@ export function ProfileMenu() {
               className="flex w-full items-center gap-2 rounded-[var(--ds-radius-md)] px-3 py-2 text-left text-[13px] text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]"
             >
               <Settings size={14} aria-hidden="true" />
-              Settings
+              {t('nav.settings') || 'Settings'}
             </button>
             <div className="mt-1 border-t border-[var(--ds-border)] pt-1">
               <button
@@ -262,7 +280,7 @@ export function ProfileMenu() {
                 className="flex w-full items-center gap-2 rounded-[var(--ds-radius-md)] px-3 py-2 text-left text-[13px] font-medium text-[var(--ds-danger)] transition-colors hover:bg-[var(--ds-danger-soft)]"
               >
                 <LogOut size={14} aria-hidden="true" />
-                Sign out
+                {t('settings.sessions.signOut') || 'Sign out'}
               </button>
             </div>
           </div>

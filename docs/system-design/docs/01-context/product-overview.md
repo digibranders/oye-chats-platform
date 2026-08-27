@@ -48,7 +48,8 @@ Customer signs up → creates a Bot → uploads docs OR crawls URL → copies <s
 
 ## Pricing model at a glance
 
-- **Plans** (`plans` table): Free, Standard (₹49/month, 100 credits, 1 operator seat), and higher tiers tunable via `PricingConfig` super-admin store.
+- **Plans** (`plans` table): Free, Starter, Standard, Professional and Enterprise. Amounts, credit grants and seat inclusions live in `api/scripts/seed_plans.py`, which is the price source of truth; credit costs and top-up packs are tunable at runtime via the `PricingConfig` super-admin store.
+- **Prices are BASE prices, exclusive of GST** (changed 2026-08-26). A domestic customer is debited base + GST, added at charge time by `core/tax.py::gross_charge_minor`. An international customer is an export of services, pays no Indian GST, and is charged the listed USD price.
 - **Credits**: 1 per AI message, 3 per URL scan, 1 per customer-facing email, free for system emails (OTP/password-reset/operator pings).
 - **Top-ups**: extra credit packs that expire 12 months after grant, consumed FIFO before plan credits.
 - **Seats**: extra operator seats charged per-seat above plan inclusion.

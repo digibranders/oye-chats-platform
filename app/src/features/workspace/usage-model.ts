@@ -17,6 +17,8 @@
  *     of buckets need disambiguation before display (Billing.jsx:116-139).
  */
 
+import { formatDate as i18nFormatDate, formatDateTime as i18nFormatDateTime, formatNumber, formatTime as i18nFormatTime } from '../../i18n/formatters';
+
 // ── Safe coercion at the boundary ────────────────────────────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -603,7 +605,7 @@ export function parseLedger(raw: unknown): LedgerRow[] {
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 export function formatCredits(value: number): string {
-  return Math.round(value).toLocaleString('en-US');
+  return formatNumber(Math.round(value));
 }
 
 /** DD Mon YYYY - unambiguous for a primarily-Indian audience. */
@@ -611,19 +613,18 @@ export function formatDate(iso: string | null): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return i18nFormatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function formatDateTime(iso: string | null): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString('en-GB', {
+  return i18nFormatDateTime(date, {
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
-    minute: '2-digit',
-  });
+    minute: '2-digit', year: undefined });
 }
 
 /** HH:MM - the time-of-day, for rows already grouped under a day header. */
@@ -631,5 +632,5 @@ export function formatTime(iso: string | null): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
+  return i18nFormatTime(date, { hour: 'numeric', minute: '2-digit' });
 }

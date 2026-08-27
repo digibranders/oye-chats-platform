@@ -2,6 +2,8 @@ import { useId, useState, type ReactElement } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
 import { BotAvatar, Button, Input, Modal } from '../../design-system';
 import { type Bot } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 export interface DeleteAgentDialogProps {
   /** The agent to be deleted. */
@@ -36,6 +38,7 @@ export function DeleteAgentDialog({
   busy,
   error,
 }: DeleteAgentDialogProps): ReactElement {
+  const { t } = useTranslation();
   const [typed, setTyped] = useState('');
   const inputId = useId();
   const errorId = `${inputId}-error`;
@@ -75,15 +78,22 @@ export function DeleteAgentDialog({
 
         {/* What gets removed. */}
         <p className="rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-danger-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[var(--ds-text-muted)]">
-          This permanently deletes the chatbot along with its knowledge base, conversations, and
-          captured leads. This action cannot be undone.
+          {t('agents.deletePermanently') ||
+            'This permanently deletes the chatbot along with its knowledge base, conversations, and captured leads. This action cannot be undone.'}
         </p>
 
         {/* Type-to-confirm gate. */}
         <div>
           <label htmlFor={inputId} className="block text-[13px] text-[var(--ds-text)]">
-            To confirm, type{' '}
-            <span className="font-semibold text-[var(--ds-text)]">{bot.name}</span> in the box below
+            <Trans
+              k="agents.toConfirmType"
+              fallback="To confirm, type {name} in the box below"
+              values={{
+                name: (
+                  <span className="font-semibold text-[var(--ds-text)]">{bot.name}</span>
+                ),
+              }}
+            />
           </label>
           <Input
             id={inputId}
@@ -118,7 +128,7 @@ export function DeleteAgentDialog({
           onClick={onConfirm}
         >
           {busy && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-          {busy ? 'Deleting…' : 'Delete this chatbot'}
+          {busy ? t('agents.deleting') || 'Deleting…' : t('agents.deleteThisChatbot') || 'Delete this chatbot'}
         </Button>
       </div>
     </Modal>

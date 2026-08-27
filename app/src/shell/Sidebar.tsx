@@ -4,6 +4,8 @@ import { Lock } from 'lucide-react';
 import { OyeChatsMark } from './OyeChatsMark';
 import { PRIMARY_NAV, SECONDARY_NAV, navForRole, type NavItem } from './nav.config';
 import { cn } from '../design-system';
+import { useTranslation } from '../i18n/useTranslation';
+import { formatDate } from '../i18n/formatters';
 import { useEntitlements } from '../hooks/useEntitlements';
 import { useSelectedBotPlan } from '../hooks/useSelectedBotPlan';
 import { usePromoFreePeriod } from '../hooks/usePromoFreePeriod';
@@ -57,12 +59,16 @@ interface NavLinkItemProps {
  *  markup, active-state styling, and collapsed behavior can never drift. */
 function NavLinkItem({ item, showLabels, onNavigate }: NavLinkItemProps): ReactElement {
   const Icon = item.icon;
+  const { t } = useTranslation();
+  // PRIMARY_NAV is a module constant, so `item.label` is English frozen at
+  // import. Resolve through the dictionary on every render and fall back to it.
+  const label = t(item.labelKey) || item.label;
   return (
     <NavLink
       to={item.to}
       end={item.end}
       onClick={onNavigate}
-      title={!showLabels ? item.label : undefined}
+      title={!showLabels ? label : undefined}
       className={({ isActive }) =>
         cn(
           'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
@@ -88,9 +94,9 @@ function NavLinkItem({ item, showLabels, onNavigate }: NavLinkItemProps): ReactE
             )}
           />
           {showLabels ? (
-            <span className="truncate">{item.label}</span>
+            <span className="truncate">{label}</span>
           ) : (
-            <span className="sr-only">{item.label}</span>
+            <span className="sr-only">{label}</span>
           )}
         </>
       )}
@@ -116,7 +122,9 @@ interface LockedNavItemProps {
  */
 function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): ReactElement {
   const Icon = item.icon;
-  const lockedLabel = `${item.label} - upgrade to unlock`;
+  const { t } = useTranslation();
+  const label = t(item.labelKey) || item.label;
+  const lockedLabel = t('nav.lockedUpgrade', { label }) || `${label} - upgrade to unlock`;
   return (
     <button
       type="button"
@@ -143,7 +151,7 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
       </span>
       {showLabels ? (
         <>
-          <span className="flex-1 truncate text-left">{item.label}</span>
+          <span className="flex-1 truncate text-left">{label}</span>
           <Lock
             size={13}
             aria-hidden="true"
@@ -169,6 +177,7 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
  * navigating; every other item is unaffected.
  */
 export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: SidebarProps) {
+  const { t } = useTranslation();
   const showLabels = isMobile || !collapsed;
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
@@ -189,7 +198,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
 
   return (
     <aside
-      aria-label="Primary navigation"
+      aria-label={t('nav.primaryLandmark') || 'Primary navigation'}
       // Layout hook for the impersonation bar: the rail is `fixed`, so it has
       // to be pushed down explicitly when the bar owns the top of the viewport
       // (see `.oc-impersonating` in index.css).
@@ -209,12 +218,16 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           <>
             <img
               src="/new_dark.png"
+              // @i18n-exempt: the product name is a brand mark, identical in every
+              // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}
               className="pointer-events-none block h-7 w-auto select-none object-contain object-left dark:hidden"
             />
             <img
               src="/new_white.png"
+              // @i18n-exempt: the product name is a brand mark, identical in every
+              // language; this alt text names the logo, it does not describe copy.
               alt="OyeChats"
               draggable={false}
               className="pointer-events-none hidden h-7 w-auto select-none object-contain object-left dark:block"
@@ -249,10 +262,18 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           rows; the badge sizes to its own text. */}
       {showLabels && planName && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-1 pt-2">
-          <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">{planName} Plan</span>
+          <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">
+            {t('nav.planChip', { plan: planName }) || `${planName} Plan`}
+          </span>
           {promoFreeUntil && (
             <span className="promo-shimmer text-[11px] font-semibold">
-              Free until {new Date(promoFreeUntil).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+              {/* Was pinned to 'en-GB'. A hardcoded locale ignores both the
+                  dashboard language and the reader's region, so it now goes
+                  through the shared formatter like every other date. */}
+              {t('nav.freeUntil', {
+                date: formatDate(promoFreeUntil, { day: 'numeric', month: 'short', year: undefined }),
+              }) ||
+                `Free until ${formatDate(promoFreeUntil, { day: 'numeric', month: 'short', year: undefined })}`}
             </span>
           )}
         </div>
@@ -262,7 +283,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           Preferences only (e.g. Settings); account/workspace switching stays
           in the TopBar user menu, so this never duplicates that nav. */}
       <nav
-        aria-label="Secondary navigation"
+        aria-label={t('nav.secondaryLandmark') || 'Secondary navigation'}
         className="shrink-0 space-y-1 border-t border-[var(--ds-border)] px-3 py-2"
       >
         {secondaryNav.map((item) => (

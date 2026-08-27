@@ -15,6 +15,7 @@
  *   (`lib/csvSafe.ts`), alongside the one the lead export uses.
  */
 import { csvField } from '../../lib/csvSafe';
+import { formatDate } from '../../i18n/formatters';
 import { downloadCsv } from '../../lib/downloadCsv';
 
 import { type DateRange, type FeedbackFilter, type FeedbackItem } from './types';
@@ -112,7 +113,7 @@ export function buildTrend(items: readonly FeedbackItem[], days: number): Feedba
     // because the merged bucket inherits the OLDER timestamp below and can then
     // be dropped from the "most recent 14" entirely.
     const key = `${ratedAt.getFullYear()}-${ratedAt.getMonth()}-${ratedAt.getDate()}`;
-    const date = ratedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const date = formatDate(ratedAt, { month: 'short', day: 'numeric', year: undefined });
     const bucket = buckets.get(key) ?? { date, at, positive: 0, total: 0 };
     // Earliest instant in the day, so the sort key is the same whichever order
     // that day's ratings happen to arrive in.
@@ -197,7 +198,7 @@ export function buildFeedbackCsv(items: readonly FeedbackItem[]): string {
   const header = ['Date', 'User', 'Type', 'Question', 'Answer'];
   const rows = items.map((item) =>
     [
-      new Date(item.created_at).toLocaleDateString(),
+      formatDate(item.created_at),
       item.user,
       item.feedback === 1 ? 'Positive' : 'Negative',
       item.question,

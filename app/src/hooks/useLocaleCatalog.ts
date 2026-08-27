@@ -5,6 +5,7 @@ import {
   type LocaleEntry,
   directionForLocale,
   getLocaleCatalog,
+  isAdminUiTranslated,
   isUiTranslated,
   labelForLanguage,
   nameForLocale,
@@ -56,6 +57,13 @@ export interface UseLocaleCatalogResult {
   directionFor: (locale: string | null | undefined) => 'ltr' | 'rtl';
   /** Whether the widget's own UI is translated into this locale's language. */
   uiTranslatedFor: (locale: string | null | undefined) => boolean;
+  /**
+   * Whether the ADMIN DASHBOARD's own UI is translated into this locale.
+   *
+   * Separate from `uiTranslatedFor`, which answers the same question about the
+   * chat widget. Gates the Settings language selector.
+   */
+  adminUiTranslatedFor: (locale: string | null | undefined) => boolean;
 }
 
 export function useLocaleCatalog(): UseLocaleCatalogResult {
@@ -86,6 +94,12 @@ export function useLocaleCatalog(): UseLocaleCatalogResult {
     [catalog],
   );
 
+  const adminUiTranslatedFor = useCallback(
+    (locale: string | null | undefined) => isAdminUiTranslated(locale),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catalog],
+  );
+
   return useMemo(
     () => ({
       locales: catalog.locales,
@@ -94,8 +108,9 @@ export function useLocaleCatalog(): UseLocaleCatalogResult {
       localeNameFor,
       directionFor,
       uiTranslatedFor,
+      adminUiTranslatedFor,
     }),
-    [catalog, labelFor, localeNameFor, directionFor, uiTranslatedFor],
+    [catalog, labelFor, localeNameFor, directionFor, uiTranslatedFor, adminUiTranslatedFor],
   );
 }
 

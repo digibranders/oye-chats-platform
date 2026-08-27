@@ -1,25 +1,27 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
 import { t } from '../i18n/i18n.js';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 'pending' }) => {
-    const hasEmail = !!(existingLeadInfo?.email?.trim());
-
     const [formData, setFormData] = useState({
         name: existingLeadInfo?.name || '',
         email: existingLeadInfo?.email || '',
     });
     const [emailError, setEmailError] = useState('');
-    // 'idle' | 'checking' | 'valid' | 'invalid'. Drives the submit gate.
-    // Starts 'valid' when the email is already on file (existingLeadInfo),
-    // since it was already accepted once and doesn't need rechecking.
-    const [emailCheckState, setEmailCheckState] = useState(hasEmail ? 'valid' : 'idle');
-    // Holds the in-flight server check so submit can await it if the
-    // visitor clicks "Connect Now" before the blur check resolves.
-    const emailCheckPromiseRef = useRef(null);
-    const lastCheckedEmailRef = useRef('');
+    // 'idle' | 'checking' | 'valid' | 'invalid'. PRESENTATION ONLY: it drives
+    // the spinner and the disabled state, never the decision to submit.
+    // The gate itself lives in handleSubmit and is keyed on the address in
+    // the field, because this flag describes whichever address was checked
+    // last, not necessarily the one about to be sent.
+    const [emailCheckState, setEmailCheckState] = useState('idle');
+    // Latest value in the field, so an in-flight check can tell whether its
+    // verdict still applies to what the visitor has typed.
+    const emailValueRef = useRef(formData.email);
+    useEffect(() => {
+        emailValueRef.current = formData.email;
+    }, [formData.email]);
 
     const isSubmitting = status === 'submitting';
     const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
@@ -41,24 +43,24 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur. While the visitor moves on to the name field, the
-    // server-side Reoon check runs in the background so it's usually
-    // already resolved by the time they click "Connect Now".
+    // Fires on blur, purely so the visitor sees the verdict early. While they
+    // move on to the name field, the server-side Reoon check runs in the
+    // background and is memoized by address in ``services/api``, so the
+    // matching check at submit costs no extra request.
     const handleEmailBlur = () => {
         const email = formData.email.trim();
-        if (!email || email === lastCheckedEmailRef.current) return;
+        if (!email) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
             setEmailError(t('handoff.invalid_email') || 'Please enter a valid email address.');
             return;
         }
 
-        lastCheckedEmailRef.current = email;
         setEmailCheckState('checking');
-        const promise = checkEmailWithServer(email).then((result) => {
-            // A newer check (from further edits) may have superseded this
-            // one. Only apply the result if it's still the latest email.
-            if (lastCheckedEmailRef.current !== email) return result;
+        checkEmailWithServer(email).then((result) => {
+            // A newer edit may have superseded this check. Only show the
+            // verdict while it still describes what's in the field.
+            if (emailValueRef.current.trim() !== email) return;
             if (result.valid) {
                 setEmailCheckState('valid');
                 setEmailError('');
@@ -66,22 +68,20 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 setEmailCheckState('invalid');
                 setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
             }
-            return result;
         });
-        emailCheckPromiseRef.current = promise;
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!formData.name.trim()) return;
 
-        // The email is editable even when pre-filled from an earlier capture
-        // (e.g. the quotation flow) — always validate the current value in
-        // the field, not just fresh entries. ``emailCheckState`` already
-        // starts 'valid' for an untouched pre-filled email and resets to
-        // 'idle' the moment the visitor edits it (see the onChange handler
-        // below), so an unedited known-good email skips the redundant
-        // network recheck here.
+        // Always gate on the address that is IN THE FIELD right now, resolved
+        // by value. Reading a mode flag instead was the bug: the flag says
+        // "valid" for whichever address was checked last, so a second address
+        // typed after a first one passed (or one pre-filled from an earlier
+        // capture) went to a human without ever being checked. The verdict is
+        // memoized per address in ``services/api``, so an address the blur
+        // check already resolved costs no second request here.
         const email = formData.email.trim();
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
@@ -89,25 +89,14 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
             return;
         }
 
-        // The visitor may click "Connect Now" before the blur check
-        // resolves (e.g. they filled the name field very fast).
-        // Wait for it rather than letting an unchecked email through.
-        if (emailCheckState === 'checking' && emailCheckPromiseRef.current) {
-            const result = await emailCheckPromiseRef.current;
-            if (!result.valid) return; // state/error already set inside the check
-        } else if (emailCheckState === 'invalid') {
+        setEmailCheckState('checking');
+        const result = await checkEmailWithServer(email);
+        if (!result.valid) {
+            setEmailCheckState('invalid');
+            setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
             return;
-        } else if (emailCheckState === 'idle') {
-            // Blur never fired (e.g. autofill + direct submit). Check now.
-            setEmailCheckState('checking');
-            const result = await checkEmailWithServer(email);
-            if (!result.valid) {
-                setEmailCheckState('invalid');
-                setEmailError(result.reason || t('handoff.invalid_email') || 'Please enter a valid email address.');
-                return;
-            }
-            setEmailCheckState('valid');
         }
+        setEmailCheckState('valid');
 
         setEmailError('');
         await onSubmit({

@@ -3,6 +3,7 @@ import { ArrowRight, Lock, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { UPGRADE_INTENTS, type UpgradeIntentKey } from '../../context/upgradeIntents';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Every teaser-safe intent. `add_bot` is excluded because its copy needs
@@ -34,12 +35,13 @@ export interface LockedFeatureCardProps {
  * intent is param-less and renders correctly out of the box.
  */
 export function LockedFeatureCard({ intent, icon: Icon = Lock, className }: LockedFeatureCardProps): ReactElement {
+  const { t } = useTranslation();
   const { openUpgradeModal } = useUpgradeModal();
   const copy = UPGRADE_INTENTS[intent]();
   // Prefer the registry's own eyebrow so the teaser and the modal show the
   // same kicker for a given intent; derive one from the plan only when the
   // registry entry has no eyebrow.
-  const eyebrow = copy.eyebrow || (copy.recommendedPlan ? `${copy.recommendedPlan} feature` : 'Pro feature');
+  const eyebrow = copy.eyebrow || (copy.recommendedPlan ? `${copy.recommendedPlan} feature` : t('ds.locked.proFeature') || 'Pro feature');
 
   return (
     <div
@@ -79,7 +81,7 @@ export function LockedFeatureCard({ intent, icon: Icon = Lock, className }: Lock
         onClick={() => openUpgradeModal(intent)}
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
-        Upgrade to unlock
+        {t('ds.locked.upgrade') || 'Upgrade to unlock'}
         <ArrowRight size={14} aria-hidden="true" />
       </button>
     </div>

@@ -18,6 +18,7 @@ import {
   formatLocation,
   normalizeTier,
 } from './leadModel';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Drop the table's absence placeholder, which must not reach the file.
@@ -66,16 +67,16 @@ export function buildSelectedLeadsCsv(
   // the raw email domain kept in its own column, a CSV that silently swapped
   // one for the other would break any sheet keyed on the domain.
   const header = [
-    'Name',
-    'Email',
-    'Phone',
-    'Company',
-    'Company domain',
-    'Quality',
-    'Score',
-    'Location',
-    'Tags',
-    'Last active',
+    translateNow('leads.name') || 'Name',
+    translateNow('leads.email') || 'Email',
+    translateNow('leads.phone') || 'Phone',
+    translateNow('leads.company') || 'Company',
+    translateNow('leads.companyDomain') || 'Company domain',
+    translateNow('leads.quality') || 'Quality',
+    translateNow('leads.score') || 'Score',
+    translateNow('leads.location') || 'Location',
+    translateNow('leads.tags') || 'Tags',
+    translateNow('leads.lastActive') || 'Last active',
   ];
   const rows = leads.map((lead) => {
     const tier = TIER_META[normalizeTier(lead.status)];

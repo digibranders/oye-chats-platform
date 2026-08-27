@@ -57,7 +57,7 @@ The customer can adjust, with a live preview:
   ```
 - The script is a self-contained ~416KB IIFE bundle: it reads its own `data-bot-key` attribute, injects its CSS, creates its own DOM container, and mounts an isolated React app that talks to the backend via an `X-Bot-Key` header. No build step, no npm install, no SDK integration required on the customer's site.
 - It genuinely works on any platform with a `<body>` tag — same integration pattern as Intercom, Crisp, or Drift [T1].
-- Workspaces with a `branding_removable` entitlement (a paid-plan feature) get a variant snippet *without* the visible "Powered by OyeChats" attribution line [T1] — this is a real, code-level plan-gated capability; the snippet shown varies by plan.
+- Workspaces with a `branding_removable` entitlement get a variant snippet *without* the visible "Powered by OyeChats" attribution line [T1]. This is a real, code-level gated capability. As of 2026-08-26 it is **a separately purchased add-on, not a plan inclusion**: every plan seeds `branding_removable: false`, and the entitlement is granted only by an authorized add-on mandate (`Subscription.branding_addon_active`) billed on its own Razorpay subscription. The price is ₹499/month or $5/month, and like every OyeChats price it is a base price: an Indian customer is charged ₹588.82 once GST is added, an international customer $5.00 (an export, no Indian GST).
 - **Why the attribution line is a real `<a>` tag, not a rendered widget element:** the widget mounts into a shadow root from JavaScript after a visitor *clicks* the launcher — so anything the widget itself renders, including any in-widget "Powered by" mark, is invisible to search crawlers (non-rendering crawlers execute no JS; rendering ones don't click). The `<a>` tag sitting directly in the customer's served HTML is the only attribution surface that's actually crawlable.
 
 ## 4. What It Looks Like
@@ -85,7 +85,7 @@ A skincare brand signs up for OyeChats and points the setup flow at their existi
 - Classifying site tone into 8 presets and injecting it into the AI's actual conversational behavior, not just cosmetic labeling [T1].
 - Manual override of every auto-detected value at any time [T1].
 - Genuine one-line install across a documented broad set of website platforms/frameworks [T1].
-- Plan-gated attribution removal (`branding_removable` entitlement) [T1].
+- Paid attribution removal (`branding_removable` entitlement, sold as a standalone add-on) [T1].
 
 **Known limits / not claimed:**
 - Brand color extraction is best-effort and silently returns nothing (falling back to defaults) on network failure, a fully JS-rendered SPA homepage with no static CSS signal, or an unreachable site — this is by design, not a bug; it does not *always* succeed.
@@ -95,7 +95,7 @@ A skincare brand signs up for OyeChats and points the setup flow at their existi
 
 ## 7. Evidence & Open [VERIFY] Items
 
-- All core mechanics (color extraction, favicon extraction, tone presets, manual customization UI, one-line install, platform breadth, plan-gated attribution removal) are [T1] — confirmed directly in `api/app/services/brand_color_extractor.py`, `favicon_extractor.py`, `brand_tone.py`, `app/src/features/launch-studio/steps/CustomizeStep.tsx`, `app/src/data/widgetEmbed.ts`, `app/src/design-system/icons/platformLogos.ts`, and root `CLAUDE.md`.
+- All core mechanics (color extraction, favicon extraction, tone presets, manual customization UI, one-line install, platform breadth, paid attribution removal) are [T1] — confirmed directly in `api/app/services/brand_color_extractor.py`, `favicon_extractor.py`, `brand_tone.py`, `app/src/features/launch-studio/steps/CustomizeStep.tsx`, `app/src/data/widgetEmbed.ts`, `app/src/design-system/icons/platformLogos.ts`, and root `CLAUDE.md`.
 - **[VERIFY]** Whether brand-color/tone extraction happens automatically during the standard Launch Studio Train step for every new bot, or whether it requires an explicit action — the service modules confirm the *capability* exists and is wired to the crawl orchestrator, but this doc does not independently trace the exact trigger point in `crawl_orchestrator.py`.
 - **[VERIFY]** No font/typography-matching capability was found in code — only color and a raster avatar are confirmed.
-- Per this session's platform-wide brand guidance: never depict the widget's `branding_removable` attribution-free variant as the default for all customers — it is confirmed plan-gated, not universal.
+- Per this session's platform-wide brand guidance: never depict the widget's `branding_removable` attribution-free variant as the default for all customers. It is confirmed to require a paid add-on, and is not universal.

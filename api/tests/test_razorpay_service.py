@@ -49,6 +49,22 @@ def _razorpay_keys(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _seller_tax_rate():
+    """Pin the GST rate these tests compute charges against.
+
+    Every published price is a BASE price, so the charge sites uplift by
+    ``charge_tax_rate_bps``, which returns 0 for a profile with no GSTIN. The
+    sessions in this module are ``MagicMock``s, which resolve to an
+    unconfigured profile and therefore to a 0% rate. Pin the live 18% so the
+    expected charges below are real arithmetic rather than a silent no-op.
+    """
+    from app.services import razorpay_service as svc
+
+    with patch.object(svc, "charge_tax_rate_bps", return_value=1800):
+        yield
+
+
 def _make_client(client_id: int = 42) -> SimpleNamespace:
     return SimpleNamespace(id=client_id, name="Acme Pvt Ltd", email="ops@acme.example")
 
@@ -92,21 +108,29 @@ def test_create_topup_order_sends_paise_inr_and_notes():
 
     fake_client.order.create.assert_called_once()
     sent = fake_client.order.create.call_args.kwargs["data"]
-    assert sent["amount"] == 159900  # rupees → paise
+    # ₹1,599 base + 18% GST. Published prices are exclusive of tax, so the
+    # order collects base + GST (188682 paise = ₹1,886.82).
+    assert sent["amount"] == 188682
     assert sent["currency"] == "INR"
     assert sent["payment_capture"] == 1
     assert sent["notes"] == {
         "purpose": "topup",
         "client_id": "7",
         "credits": "2000",
+        # BASE rupees: the advertised pack price and the taxable value.
         "amount_inr": "1599",
+        # What is actually captured. The capture handler reconciles against
+        # THIS, not against amount_inr.
+        "charge_paise": "188682",
         "bonus_pct": "0",
     }
     assert sent["receipt"].startswith("topup_c7_")
 
     assert result["provider"] == "razorpay"
     assert result["order_id"] == "order_test123"
-    assert result["amount"] == 159900
+    # The payload the checkout sheet opens with quotes the CHARGE, so the sheet
+    # and the debit can never disagree.
+    assert result["amount"] == 188682
     assert result["currency"] == "INR"
     assert result["credits"] == 2000
     assert result["key_id"] == "rzp_test_dummy"
@@ -129,11 +153,13 @@ def test_create_topup_order_reads_inr_key_and_never_charges_usd():
         result = razorpay_service.create_topup_order(MagicMock(), _make_client(7), pack)
 
     sent = fake_client.order.create.call_args.kwargs["data"]
-    assert sent["amount"] == 159900  # ₹1,599 → paise, NOT the $19 figure
+    # ₹1,599 base + 18% GST, NOT the $19 figure. ``amount_inr`` in notes stays
+    # the BASE rupees, which is what the pack advertises and the invoice carves.
+    assert sent["amount"] == 188682
     assert sent["currency"] == "INR"
     assert sent["notes"]["amount_inr"] == "1599"
     assert sent["notes"]["display_price"] == "$19"  # usd carried as display-only
-    assert result["amount"] == 159900
+    assert result["amount"] == 188682
 
 
 def test_create_topup_order_rejects_pack_without_amount():
@@ -318,8 +344,9 @@ def test_resolve_discounted_plan_creates_and_caches(monkeypatch):
 
     assert result == "plan_disc_15pct"
     sent = rzp.plan.create.call_args.kwargs["data"]
-    # 459900 - (459900 * 1500) // 10000 = 459900 - 68985 = 390915
-    assert sent["item"]["amount"] == 390915
+    # Base after discount: 459900 - (459900 * 1500) // 10000 = 390915.
+    # Charged with 18% GST on top: 461280 paise.
+    assert sent["item"]["amount"] == 461280
     assert sent["item"]["currency"] == "INR"
     assert sent["period"] == "monthly"
     assert rzp.plan.create.call_count == 1
@@ -337,7 +364,9 @@ def test_resolve_discounted_plan_reuses_cached(monkeypatch):
     session = MagicMock()
     # A hit is valid only when the cached amount still matches the price the
     # current base plan produces (F34): 459900 − 15% = 390915.
-    cached = SimpleNamespace(razorpay_plan_id="plan_already_exists", amount_paise=390915)
+    # The cache stores the CHARGED amount (base 390915 + 18% GST = 461280), so
+    # a GST rate change invalidates it instead of reusing a stale mandate.
+    cached = SimpleNamespace(razorpay_plan_id="plan_already_exists", amount_paise=461280)
     session.scalars.return_value.first.return_value = cached
 
     base = _make_plan(id=2, name="Standard", slug="standard", monthly_price_cents=459900, annual_price_cents=4409900)
@@ -362,8 +391,9 @@ def test_resolve_discounted_plan_annual_uses_annual_price(monkeypatch):
     rs.resolve_discounted_plan(session, base, "annual", 1000)
 
     sent = rzp.plan.create.call_args.kwargs["data"]
-    # 4409900 - (4409900 * 1000) // 10000 = 4409900 - 440990 = 3968910
-    assert sent["item"]["amount"] == 3968910
+    # Base after discount: 4409900 - (4409900 * 1000) // 10000 = 3968910.
+    # Charged with 18% GST on top: 4683314 paise.
+    assert sent["item"]["amount"] == 4683314
     assert sent["period"] == "yearly"
 
 
@@ -586,6 +616,64 @@ def test_webhook_dispatcher_skips_replay():
 # ── Topup capture handler ────────────────────────────────────────────────────
 
 
+def _topup_capture_payload(*, amount: int, notes: dict) -> dict:
+    return {
+        "payment": {
+            "entity": {
+                "id": "pay_topup_tax",
+                "order_id": "order_topup_tax",
+                "amount": amount,
+                "currency": "INR",
+                "notes": {"purpose": "topup", "client_id": "9", "credits": "2000", **notes},
+            }
+        }
+    }
+
+
+def test_payment_captured_reconciles_against_the_charged_amount_not_the_base():
+    """Regression: the capture guard must compare against what was CHARGED.
+
+    Prices are published exclusive of GST, so a domestic top-up captures
+    base + tax while ``amount_inr`` stays the base. Comparing the capture to
+    ``amount_inr × 100`` rejected every real top-up: the customer was debited,
+    the credits were never granted, and the webhook retry-looped until Razorpay
+    gave up. ``charge_paise`` is stamped at order creation for exactly this.
+    """
+    from app.services import razorpay_service
+
+    payload = _topup_capture_payload(
+        amount=188682,  # ₹1,599 base + 18% GST
+        notes={"amount_inr": "1599", "charge_paise": "188682"},
+    )
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = None
+
+    with patch("app.services.credit_service.grant_topup") as grant:
+        razorpay_service._handle_payment_captured(session, payload)
+
+    grant.assert_called_once()
+    assert grant.call_args[0][2] == 2000
+
+
+def test_payment_captured_still_refuses_a_genuine_amount_mismatch():
+    """The anti-tamper guard must survive the fix, not be loosened by it."""
+    from app.services import razorpay_service
+
+    payload = _topup_capture_payload(
+        amount=100000,  # not what the order was created for
+        notes={"amount_inr": "1599", "charge_paise": "188682"},
+    )
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = None
+
+    with (
+        patch("app.services.credit_service.grant_topup") as grant,
+        pytest.raises(razorpay_service.RazorpayBillingError, match="mismatch"),
+    ):
+        razorpay_service._handle_payment_captured(session, payload)
+    grant.assert_not_called()
+
+
 def test_payment_captured_grants_topup_when_purpose_marker_present():
     """``payment.captured`` with ``notes.purpose='topup'`` triggers grant_topup."""
     from app.services import razorpay_service
@@ -739,3 +827,60 @@ def test_webhook_signature_roundtrip_rejects_wrong_secret():
 
     with pytest.raises(razorpay_service.SignatureMismatch):
         razorpay_service.verify_webhook_signature(payload=payload, signature=bad_sig)
+
+
+# ── Add-on checkout sheets quote what is DEBITED ────────────────────────────
+
+
+def _client_in(country: str = "IN"):
+    return SimpleNamespace(id=77, name="Acme Pvt Ltd", email="ops@acme.example", billing_country=country)
+
+
+def test_charged_price_display_leads_with_the_gross_and_names_the_split():
+    from app.services import razorpay_service as rs
+
+    # ₹449 base + 18% GST = ₹529.82 debited.
+    out = rs.charged_price_display(_client_in(), 44900, 1800)
+    assert "529.82" in out
+    assert "449" in out and "GST" in out
+
+
+def test_charged_price_display_symbol_can_be_pinned_to_the_amount_s_rail():
+    """Regression: an INR amount must never be rendered with a dollar sign.
+
+    The dunning and pre-charge emails read the plan's INR columns for every
+    customer, so deriving the symbol from the buyer's country printed
+    "the $1,799 charge failed" to a foreign customer. The override fixes the
+    symbol without changing the tax treatment: an export is still untaxed.
+    """
+    from app.services import razorpay_service as rs
+
+    out = rs.charged_price_display(_client_in("US"), 179900, 1800, currency="INR")
+    assert out.startswith("₹")
+    assert "$" not in out
+    assert "GST" not in out  # still an export, still untaxed
+
+
+def test_charged_price_display_leaves_an_export_bare():
+    """No Indian GST on an export, and no misleading parenthetical either."""
+    from app.services import razorpay_service as rs
+
+    out = rs.charged_price_display(_client_in("US"), 500, 1800)
+    assert "GST" not in out
+
+
+def test_seat_checkout_sheet_quotes_the_gross_not_the_base():
+    """The sheet is one click from the Razorpay modal, so its number has to be
+    the number Razorpay is about to show. It quoted the ex-GST base."""
+    from app.services import razorpay_service as rs
+
+    payload = rs._seat_checkout_payload("sub_seat", _client_in(), 2, rate_bps=1800)
+    assert "529.82" in payload["description"], payload["description"]
+
+
+def test_branding_checkout_sheet_quotes_the_gross_not_the_base():
+    from app.services import razorpay_service as rs
+
+    # ₹499 base + 18% GST = ₹588.82 debited.
+    payload = rs._branding_checkout_payload("sub_brand", _client_in(), rate_bps=1800)
+    assert "588.82" in payload["description"], payload["description"]

@@ -1,7 +1,9 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Languages } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type LanguageBreakdown as LanguageBreakdownData } from './analytics-types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * LanguageBreakdown - which languages this agent's visitors actually chat in,
@@ -15,12 +17,13 @@ import { type LanguageBreakdown as LanguageBreakdownData } from './analytics-typ
  * `SatisfactionBreakdown`.
  */
 export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): ReactElement {
+  const { t } = useTranslation();
   if (data.totals.total === 0) {
     return (
       <EmptyState
         icon={Languages}
-        title="No conversations yet"
-        description="Once visitors start chatting, you'll see which languages they use and how well your chatbot handles each one."
+        title={t('analytics.noConversationsYet') || 'No conversations yet'}
+        description={t('analytics.onceVisitorsStartChattingYoull') || 'Once visitors start chatting, you\'ll see which languages they use and how well your chatbot handles each one.'}
       />
     );
   }
@@ -49,12 +52,16 @@ export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): Re
                 <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{row.label}</p>
                 <p className="text-[12px] text-[var(--ds-text-subtle)]">
                   {isResidual
-                    ? 'Chats from before multilingual was on, or with no language detected'
-                    : `${row.resolved.toLocaleString()} resolved · ${row.liveChat.toLocaleString()} reached a human`}
+                    ? t('analytics.chatsFromBeforeMultilingualWas') || 'Chats from before multilingual was on, or with no language detected'
+                    : t('analytics.resolvedAndHuman', {
+                    resolved: formatNumber(row.resolved),
+                    human: formatNumber(row.liveChat),
+                  }) ||
+                  `${formatNumber(row.resolved)} resolved · ${formatNumber(row.liveChat)} reached a human`}
                 </p>
               </div>
               <p className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
-                {row.total.toLocaleString()}
+                {formatNumber(row.total)}
                 <span className="ml-1.5 text-[var(--ds-text-subtle)]">{share}%</span>
               </p>
             </div>
@@ -90,6 +97,7 @@ export function LanguageBreakdown({ data }: { data: LanguageBreakdownData }): Re
  * worse than showing nothing.
  */
 export function TranslationUsage({ data }: { data: LanguageBreakdownData }): ReactElement {
+  const { t } = useTranslation();
   const { translation, creditsSpent } = data;
   const successRate =
     translation.requests > 0 ? Math.round((translation.ok / translation.requests) * 100) : null;
@@ -99,35 +107,36 @@ export function TranslationUsage({ data }: { data: LanguageBreakdownData }): Rea
     <div className="space-y-5">
       <section>
         <p className="text-[12px] font-medium text-[var(--ds-text-muted)]">
-          Last {translation.windowHours} hours
+          {t('analytics.lastHours', { hours: translation.windowHours }) ||
+            `Last ${translation.windowHours} hours`}
         </p>
         <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
-          A rolling window. These counters expire, so this is recent activity, not history.
+          {t('analytics.aRollingWindowTheseCounters') || 'A rolling window. These counters expire, so this is recent activity, not history.'}
         </p>
         {translation.requests === 0 ? (
           <p className="mt-3 text-[13px] text-[var(--ds-text-muted)]">
-            No messages translated in this window.
+            {t('analytics.noMessagesTranslatedInThis') || 'No messages translated in this window.'}
           </p>
         ) : (
           <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <Stat label="Messages translated" value={translation.ok} />
+            <Stat label={t('analytics.messagesTranslated') || 'Messages translated'} value={translation.ok} />
             <Stat
-              label="Succeeded"
+              label={t('analytics.succeeded') || 'Succeeded'}
               value={successRate === null ? '—' : `${successRate}%`}
               warn={successRate !== null && successRate < 90}
             />
-            <Stat label="Failed or timed out" value={problems} warn={problems > 0} />
+            <Stat label={t('analytics.failedOrTimedOut') || 'Failed or timed out'} value={problems} warn={problems > 0} />
           </dl>
         )}
       </section>
 
       <section className="border-t border-[var(--ds-border)] pt-4">
-        <p className="text-[12px] font-medium text-[var(--ds-text-muted)]">Credits spent</p>
+        <p className="text-[12px] font-medium text-[var(--ds-text-muted)]">{t('analytics.creditsSpent') || 'Credits spent'}</p>
         <p className="mt-0.5 text-[11px] text-[var(--ds-text-subtle)]">
-          From your billing record, for the selected period. This does not expire.
+          {t('analytics.fromYourBillingRecordFor') || 'From your billing record, for the selected period. This does not expire.'}
         </p>
         <p className="mt-2 text-[20px] font-bold tabular-nums text-[var(--ds-text)]">
-          {creditsSpent.toLocaleString()}
+          {formatNumber(creditsSpent)}
         </p>
       </section>
     </div>
@@ -150,7 +159,7 @@ function Stat({
         className="mt-0.5 text-[17px] font-bold tabular-nums"
         style={{ color: warn ? 'var(--ds-warning)' : 'var(--ds-text)' }}
       >
-        {typeof value === 'number' ? value.toLocaleString() : value}
+        {typeof value === 'number' ? formatNumber(value) : value}
       </dd>
     </div>
   );

@@ -3,6 +3,7 @@ import { Bell, BellOff, Loader2, ShieldAlert, X, type LucideIcon } from 'lucide-
 import { Button, cn } from '../design-system';
 import { usePushSubscription } from '../hooks/usePushSubscription';
 import { useNotifications } from '../context/NotificationContext';
+import { useTranslation } from '../i18n/useTranslation';
 
 /** Once dismissed, stay hidden for this long so we never nag. */
 const DISMISS_KEY = 'oyechats:push_nudge_dismissed_at';
@@ -24,28 +25,43 @@ interface Variant {
   title: string;
   body: string;
   actionLabel: string;
+  /** Dictionary keys. This table is a module constant, evaluated at import
+   *  before any locale exists, so the strings above are the inline fallbacks
+   *  and the component resolves these keys at render time. */
+  titleKey: string;
+  bodyKey: string;
+  actionLabelKey: string;
 }
 
 const VARIANTS: Record<'default' | 'denied' | 'error', Variant> = {
   default: {
     icon: Bell,
     wrapClassName: 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]',
+    titleKey: 'shell.pushNudge.default.title',
     title: 'Stay reachable when this tab is closed',
+    bodyKey: 'shell.pushNudge.default.body',
     body: 'Turn on browser notifications and we’ll alert you the moment a visitor wants to chat.',
+    actionLabelKey: 'shell.pushNudge.default.action',
     actionLabel: 'Enable notifications',
   },
   denied: {
     icon: BellOff,
     wrapClassName: 'bg-[var(--ds-warning-soft)] text-[var(--ds-warning)]',
+    titleKey: 'shell.pushNudge.denied.title',
     title: 'Notifications are blocked in your browser',
+    bodyKey: 'shell.pushNudge.denied.body',
     body: 'Click the lock icon next to the address bar → Notifications → Allow, then re-check below.',
+    actionLabelKey: 'shell.pushNudge.denied.action',
     actionLabel: 'Re-check permission',
   },
   error: {
     icon: ShieldAlert,
     wrapClassName: 'bg-[var(--ds-warning-soft)] text-[var(--ds-warning)]',
+    titleKey: 'shell.pushNudge.error.title',
     title: 'Notifications couldn’t be turned on',
+    bodyKey: 'shell.pushNudge.error.body',
     body: 'Something went wrong enabling push on this device.',
+    actionLabelKey: 'shell.pushNudge.error.action',
     actionLabel: 'Try again',
   },
 };
@@ -68,6 +84,7 @@ const VARIANTS: Record<'default' | 'denied' | 'error', Variant> = {
  * persists for 3 days per device. Mounted once in `AppShell`.
  */
 export function PushPermissionNudge(): ReactElement | null {
+  const { t } = useTranslation();
   const { phase, busy, enable, recheck } = usePushSubscription();
   const { incomingHandoff } = useNotifications();
   const [dismissed, setDismissed] = useState<boolean>(wasDismissedRecently);
@@ -95,7 +112,12 @@ export function PushPermissionNudge(): ReactElement | null {
   if (!variantKey || dismissed || incomingHandoff) return null;
 
   const variant = VARIANTS[variantKey];
-  const body = phase.status === 'error' && phase.message ? phase.message : variant.body;
+  // A provider message is server text and passes through untranslated; the
+  // canned copy resolves through the dictionary.
+  const body =
+    phase.status === 'error' && phase.message
+      ? phase.message
+      : t(variant.bodyKey) || variant.body;
   const onAction = variantKey === 'default' ? enable : recheck;
 
   return (
@@ -117,7 +139,9 @@ export function PushPermissionNudge(): ReactElement | null {
           <variant.icon size={17} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-[var(--ds-text)]">{variant.title}</p>
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">
+            {t(variant.titleKey) || variant.title}
+          </p>
           <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{body}</p>
           <div className="mt-3 flex items-center gap-2">
             <Button
@@ -127,16 +151,16 @@ export function PushPermissionNudge(): ReactElement | null {
               disabled={busy}
             >
               {busy ? <Loader2 size={14} aria-hidden="true" className="animate-spin" /> : null}
-              {variant.actionLabel}
+              {t(variant.actionLabelKey) || variant.actionLabel}
             </Button>
             <Button size="sm" variant="ghost" onClick={dismiss}>
-              Not now
+              {t('shell.pushNudge.notNow') || 'Not now'}
             </Button>
           </div>
         </div>
         <button
           type="button"
-          aria-label="Dismiss"
+          aria-label={t('common.dismiss') || 'Dismiss'}
           onClick={dismiss}
           className="-mr-1 -mt-1 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
         >

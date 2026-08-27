@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getLeads, getLeadStats } from '../../services/api';
 import { type Lead } from '../../types/domain';
 import { type LeadStatsSummary, readLeadStats } from './leadModel';
+import { t as translateNow } from '../../i18n/i18n';
 
 export type LoadStatus = 'loading' | 'ready' | 'error';
 
@@ -33,7 +34,7 @@ const LEADS_PAGE_LIMIT = 200;
 
 function messageOf(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return 'Something went wrong while loading your leads.';
+  return translateNow('leads.somethingWentWrongWhileLoading') || 'Something went wrong while loading your leads.';
 }
 
 /**

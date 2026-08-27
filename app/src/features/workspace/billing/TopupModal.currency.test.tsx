@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import { formatNumber } from '../../../i18n/formatters';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CurrencyProvider } from '../../../context/CurrencyContext';
 import { TopupModal } from './TopupModal';
@@ -39,8 +40,8 @@ vi.mock('../../../lib/razorpay', () => ({
 
 /** The live smallest pack (credit_service.py `topup_packs`): ₹1,000 charged, $13 shown. */
 const PACK = { inr: 1000, usd: 13, credits: 2000, bonus_pct: 0 };
-const INR_PRICE = `₹${PACK.inr.toLocaleString('en-IN')}`;
-const USD_PRICE = `$${PACK.usd.toLocaleString()}`;
+const INR_PRICE = `₹${formatNumber(PACK.inr)}`;
+const USD_PRICE = `$${formatNumber(PACK.usd)}`;
 
 function renderModal(): void {
   getTopupPacks.mockResolvedValue([PACK]);

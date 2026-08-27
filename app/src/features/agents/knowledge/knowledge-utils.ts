@@ -1,4 +1,73 @@
 import type { KnowledgeSource } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
+import { formatDate, formatNumber } from '../../../i18n/formatters';
+
+/**
+ * "12 pages" / "1 page" / "500+ pages", in the active language.
+ *
+ * English forms the plural by appending "s", so the markup used to do that
+ * inline. Hindi does not, and neither do most languages, so the two forms are
+ * separate keys. The "+" marks a capped discovery and is not copy.
+ */
+export function pageCountLabel(total: number, capped = false): string {
+  const count = `${formatNumber(total)}${capped ? '+' : ''}`;
+  const one = total === 1 && !capped;
+  return (
+    translateNow(one ? 'agents.pageOne' : 'agents.pageMany', { count }) ||
+    `${count} page${one ? '' : 's'}`
+  );
+}
+
+/** "Showing first 20 of 480 pages." */
+export function showingFirstLabel(shown: number, total: number): string {
+  const a = formatNumber(shown);
+  const b = formatNumber(total);
+  return translateNow('agents.showingFirstOf', { shown: a, total: b }) ||
+    `Showing first ${a} of ${b} pages.`;
+}
+
+/** "Finished - your AI learned 12 pages." */
+export function crawlFinishedLabel(pages: number): string {
+  const label = pageCountLabel(pages);
+  return translateNow('agents.crawlFinished', { pages: label }) ||
+    `Finished - your AI learned ${label}.`;
+}
+
+/** "1 document" / "3 documents", same plural rule as pageCountLabel. */
+export function documentCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.documentOne' : 'agents.documentMany', { count }) ||
+    `${count} document${n === 1 ? '' : 's'}`
+  );
+}
+
+/** "1 file" / "12 files", same plural rule as pageCountLabel. */
+export function fileCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.fileOne' : 'agents.fileMany', { count }) ||
+    `${count} file${n === 1 ? '' : 's'}`
+  );
+}
+
+/** "1 word" / "1,204 words", same plural rule as pageCountLabel. */
+export function wordCountLabel(n: number): string {
+  const count = formatNumber(n);
+  return (
+    translateNow(n === 1 ? 'agents.wordOne' : 'agents.wordMany', { count }) ||
+    `${count} word${n === 1 ? '' : 's'}`
+  );
+}
+
+/** "1 credit" / "250 credits", same plural rule as pageCountLabel. */
+export function creditCountLabel(total: number): string {
+  const count = formatNumber(total);
+  return (
+    translateNow(total === 1 ? 'agents.creditOne' : 'agents.creditMany', { count }) ||
+    `${count} credit${total === 1 ? '' : 's'}`
+  );
+}
 
 /** True when a source name is a crawled website (vs an uploaded file). */
 export function isUrlSource(name: string): boolean {
@@ -45,10 +114,13 @@ export function formatRelativeDate(iso?: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '-';
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 30) return `${days} days ago`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (days <= 0) return translateNow('agents.today') || 'Today';
+  if (days === 1) return translateNow('agents.yesterday') || 'Yesterday';
+  if (days < 30) {
+    const count = formatNumber(days);
+    return translateNow('agents.daysAgo', { count }) || `${count} days ago`;
+  }
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /** Most recent ingestion timestamp across all sources, or undefined. */
@@ -88,11 +160,17 @@ export function filterUploadFiles(fileList: FileList | File[]): FileFilterResult
       SUPPORTED_MIME_TYPES.has(file.type) ||
       (SUPPORTED_EXTENSIONS as readonly string[]).includes(ext);
     if (!supported) {
-      rejected.push(`${file.name} - unsupported file type`);
+      rejected.push(
+      translateNow('agents.rejectedUnsupported', { name: file.name }) ||
+        `${file.name} - unsupported file type`,
+    );
       continue;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      rejected.push(`${file.name} - larger than 10 MB`);
+      rejected.push(
+      translateNow('agents.rejectedTooLarge', { name: file.name }) ||
+        `${file.name} - larger than 10 MB`,
+    );
       continue;
     }
     accepted.push(file);

@@ -45,11 +45,13 @@ import {
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { pollUntil } from '../../lib/pollUntil';
 import { useBotContext } from '../../context/BotContext';
+import { useCurrency } from '../../context/CurrencyContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
+import { BrandingAddonCard } from './billing/BrandingAddonCard';
 import { CancelSubscriptionModal } from './billing/CancelSubscriptionModal';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingOverview } from './billing/BillingOverview';
@@ -57,6 +59,7 @@ import { PaymentMethodsPanel } from './billing/PaymentMethodsPanel';
 import { PlansPanel } from './billing/PlansPanel';
 import { PromotionBanner } from './billing/PromotionBanner';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
+import { formatTaxRatePercent, safeTaxRateBps } from './billing/taxCopy';
 import { PlanActivationNotice } from './billing/PlanActivationNotice';
 import { usePlanActivation, type ActivationHint } from './billing/usePlanActivation';
 import type { BillingCycle } from './billing/planPricing';
@@ -584,6 +587,17 @@ export function BillingPage(): ReactElement {
                 />
               )}
 
+              {/* Branding removal - a recurring add-on that rides on the
+                  subscription, exactly like an extra seat, so it is managed
+                  here rather than sold as a plan tier. Always rendered: an
+                  unpurchased add-on has to be discoverable, and the card
+                  explains the paid-plan requirement itself. */}
+              <BrandingAddonCard
+                botId={billingBotId}
+                hasPaidPlan={Boolean(plan?.isPaid)}
+                onSettled={handleSuccess}
+              />
+
               {/* Cancel - a live paid subscription that isn't already ending. A
                   quiet, understated row (not an alarming red card): cancellation
                   is cancel-at-period-end and fully reversible. Hidden once
@@ -824,6 +838,15 @@ function SeatManager({
   // An unlimited allowance has nothing to add or remove, and no per-seat price
   // to quote - the controls would offer a purchase that cannot exist.
   const unlimited = includedSeats === UNLIMITED_LIMIT;
+  // `seatPriceLabel` is a BASE price, so on a taxed rail it is not the amount
+  // debited. Nothing here computes the tax; the rate only decides whether the
+  // sentence has to say that more is added on top.
+  const { taxRateBps } = useCurrency();
+  const rateBps = safeTaxRateBps(taxRateBps);
+  const seatPriceSentence =
+    rateBps > 0
+      ? `${seatPriceLabel} plus ${formatTaxRatePercent(rateBps)}% GST per extra seat`
+      : `${seatPriceLabel} per extra seat`;
   return (
     <Card>
       <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -838,7 +861,7 @@ function SeatManager({
             <p className="text-[13px] text-[var(--ds-text-muted)]">
               {unlimited
                 ? 'Included with your plan · invite as many operators as you need'
-                : `${includedSeats} included with your plan · ${seatPriceLabel} per extra seat`}
+                : `${includedSeats} included with your plan · ${seatPriceSentence}`}
             </p>
           </div>
         </div>

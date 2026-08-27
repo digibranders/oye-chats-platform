@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -44,7 +45,7 @@ import { BotCreditsSection, type TopupTarget } from './usage/BotCreditsSection';
 const UNLIMITED = -1;
 
 function formatLimit(limit: number, unit: string): string {
-  return limit === UNLIMITED ? 'Unlimited' : `${limit.toLocaleString()} ${unit}`;
+  return limit === UNLIMITED ? 'Unlimited' : `${formatNumber(limit)} ${unit}`;
 }
 
 interface PlanLimitStatProps {

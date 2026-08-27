@@ -6,11 +6,14 @@ import { verifyEmail, resendVerification, getCurrentUser } from '../services/api
 import { cn } from '../lib/utils';
 import { getAuthItem, setAuthItem, removeAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { endImpersonationSessionFromSignOut } from '../utils/impersonation';
+import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 const RESEND_COOLDOWN = 30;
 const OTP_LENGTH = 6;
 
 export default function VerifyEmail() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const emailFromUrl = searchParams.get('email') || '';
@@ -146,11 +149,11 @@ export default function VerifyEmail() {
 
   const handleVerify = async (code) => {
     if (!code || code.length < OTP_LENGTH) {
-      setError('Please enter the full 6-digit code.');
+      setError(t('auth.pleaseEnterTheFull6') || 'Please enter the full 6-digit code.');
       return;
     }
     if (!email) {
-      setError('Email address missing. Please go back and log in again.');
+      setError(t('auth.emailAddressMissingPleaseGo') || 'Email address missing. Please go back and log in again.');
       return;
     }
     setIsVerifying(true);
@@ -172,7 +175,7 @@ export default function VerifyEmail() {
       // with no agent yet - exactly who onboarding is for.
       navigate(safeNext || '/launch', { replace: true });
     } catch (err) {
-      setError(err.message || 'Invalid code. Please try again.');
+      setError(err.message || t('auth.invalidCodePleaseTryAgain') || 'Invalid code. Please try again.');
       setOtp(Array(OTP_LENGTH).fill(''));
       inputRefs.current[0]?.focus();
     } finally {
@@ -183,7 +186,7 @@ export default function VerifyEmail() {
   const handleResend = async () => {
     if (resendCooldown > 0 || isResending) return;
     if (!email) {
-      setError('Email address missing. Please go back and log in again.');
+      setError(t('auth.emailAddressMissingPleaseGo') || 'Email address missing. Please go back and log in again.');
       return;
     }
     setIsResending(true);
@@ -196,7 +199,7 @@ export default function VerifyEmail() {
       setOtp(Array(OTP_LENGTH).fill(''));
       inputRefs.current[0]?.focus();
     } catch (err) {
-      setError(err.message || 'Failed to resend. Please try again.');
+      setError(err.message || t('auth.failedToResendPleaseTry') || 'Failed to resend. Please try again.');
     } finally {
       setIsResending(false);
     }
@@ -224,7 +227,7 @@ export default function VerifyEmail() {
           <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg shadow-primary-900/20">
             <Sparkles size={20} className="text-white" />
           </div>
-          <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
+          <span className="text-xl font-bold text-white tracking-tight">{t('auth.oyechats') || 'OyeChats'}</span>
         </motion.div>
 
         <div className="relative z-10 my-auto">
@@ -242,11 +245,20 @@ export default function VerifyEmail() {
             transition={{ duration: 0.6, delay: 0.15 }}
             className="text-4xl xl:text-5xl font-bold text-white leading-[1.15] mb-4"
           >
-            One step
-            <br />
-            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
-              to go
-            </span>
+            <Trans
+              k="auth.verifyHeadline"
+              fallback="One step {highlight}"
+              values={{
+                highlight: (
+                  <>
+                    <br />
+                    <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
+                      {t('auth.verifyHeadlineHighlight') || 'to go'}
+                    </span>
+                  </>
+                ),
+              }}
+            />
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -254,7 +266,7 @@ export default function VerifyEmail() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-white/45 text-lg max-w-md leading-relaxed"
           >
-            Verify your email to unlock your OyeChats dashboard and start building AI chatbots.
+            {t('auth.verifyYourEmailToUnlock') || 'Verify your email to unlock your OyeChats dashboard and start building AI chatbots.'}
           </motion.p>
         </div>
 
@@ -274,7 +286,7 @@ export default function VerifyEmail() {
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-primary-400 text-white flex items-center justify-center shadow-lg shadow-primary-500/30">
               <Sparkles size={18} />
             </div>
-            <span className="text-lg font-bold text-surface-900">OyeChats</span>
+            <span className="text-lg font-bold text-surface-900">{t('auth.oyechats') || 'OyeChats'}</span>
           </div>
 
           {/* Icon */}
@@ -283,11 +295,15 @@ export default function VerifyEmail() {
           </div>
 
           <div className="mb-8">
-            <h1 className="text-2xl font-bold text-surface-900 tracking-tight">Check your email</h1>
+            <h1 className="text-2xl font-bold text-surface-900 tracking-tight">{t('auth.checkYourEmail') || 'Check your email'}</h1>
             <p className="text-surface-500 mt-2 text-sm leading-relaxed">
-              We sent a 6-digit code to{' '}
-              <span className="text-surface-700 font-medium">{maskedEmail}</span>.
-              Enter it below to verify your account.
+              <Trans
+                k="auth.codeSentTo"
+                fallback="We sent a 6-digit code to {email}. Enter it below to verify your account."
+                values={{
+                  email: <span className="text-surface-700 font-medium">{maskedEmail}</span>,
+                }}
+              />
             </p>
           </div>
 
@@ -308,7 +324,7 @@ export default function VerifyEmail() {
               animate={{ opacity: 1, y: 0 }}
               className="mb-5 p-3.5 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-medium border border-emerald-200"
             >
-              New code sent - check your inbox.
+              {t('auth.newCodeSentCheckYour') || 'New code sent - check your inbox.'}
             </motion.div>
           )}
 
@@ -350,7 +366,7 @@ export default function VerifyEmail() {
               <Loader2 size={18} className="animate-spin" />
             ) : (
               <>
-                Verify email
+                {t('auth.verifyEmail') || 'Verify email'}
                 <ArrowRight size={15} />
               </>
             )}
@@ -367,27 +383,34 @@ export default function VerifyEmail() {
               <RotateCcw size={14} />
             )}
             {resendCooldown > 0
-              ? `Resend code in ${resendCooldown}s`
+              ? t('auth.resendCodeIn', { seconds: resendCooldown }) || `Resend code in ${resendCooldown}s`
               : isResending
-              ? 'Sending…'
-              : 'Resend code'}
+              ? t('auth.sendingEllipsis') || 'Sending…'
+              : t('auth.resendCode') || 'Resend code'}
           </button>
 
           <p className="text-center text-xs text-surface-400 mt-6">
-            Wrong account?{' '}
-            <button
-              onClick={() => {
-                // An impersonated tab must end only the support session.
-                if (endImpersonationSessionFromSignOut()) return;
-                // Only wipe auth keys (not unrelated app state) so a
-                // session-only login is fully cleared from both stores.
-                clearAuthStorage();
-                navigate('/login');
+            <Trans
+              k="auth.wrongAccountPrompt"
+              fallback="Wrong account? {signOut}"
+              values={{
+                signOut: (
+                  <button
+                    onClick={() => {
+                      // An impersonated tab must end only the support session.
+                      if (endImpersonationSessionFromSignOut()) return;
+                      // Only wipe auth keys (not unrelated app state) so a
+                      // session-only login is fully cleared from both stores.
+                      clearAuthStorage();
+                      navigate('/login');
+                    }}
+                    className="text-primary-600 hover:text-primary-700 transition-colors"
+                  >
+                    {t('auth.signOut') || 'Sign out'}
+                  </button>
+                ),
               }}
-              className="text-primary-600 hover:text-primary-700 transition-colors"
-            >
-              Sign out
-            </button>
+            />
           </p>
         </motion.div>
       </div>

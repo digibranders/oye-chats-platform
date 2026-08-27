@@ -17,6 +17,7 @@
  * acceptAffiliateInviteExisting.
  */
 import { type ReactElement, useEffect, useState } from 'react';
+import { formatDate } from '../../i18n/formatters';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Gift, Loader2 } from 'lucide-react';
 import { Button, buttonVariants, Card } from '../../design-system';
@@ -48,7 +49,7 @@ function formatExpiry(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  return formatDate(date, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 /** Shell that centers a single card on the canvas - mirrors the auth pages. */

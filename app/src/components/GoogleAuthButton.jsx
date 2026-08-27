@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { t as translateNow } from '../i18n/i18n';
 import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -64,7 +65,7 @@ async function probeGoogleOAuth() {
  *      before `window.location.href` navigates away.
  */
 export default function GoogleAuthButton({
-    label = 'Continue with Google',
+    label = translateNow('app.continueWithGoogle') || 'Continue with Google',
     next = '/',
     mode = 'login',
     // Campaign / affiliate codes captured by the page (?code=, ?ref=). The
@@ -130,7 +131,7 @@ export default function GoogleAuthButton({
             ) : (
                 <GoogleMark className="w-[18px] h-[18px]" />
             )}
-            <span>{loading ? 'Loading…' : label}</span>
+            <span>{loading ? translateNow('app.loading') || 'Loading…' : label}</span>
         </button>
     );
 }

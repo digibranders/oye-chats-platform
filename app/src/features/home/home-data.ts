@@ -9,7 +9,9 @@
  * actually returned.
  */
 import type { Bot, TopQuestion } from '../../types/domain';
+import { formatDate } from '../../i18n/formatters';
 import type { FeedbackItem } from '../feedback/types';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Primitive coercion helpers ───────────────────────────────────────────────
 
@@ -88,14 +90,14 @@ export function deriveAgentHealth(bot: Bot): AgentHealth {
   // failed recrawl report a fully-trained live agent as "Needs attention".
   if (!trained) {
     if (bot.last_crawl_status === 'failed') {
-      return { label: 'Needs attention', tone: 'danger', needsAttention: true };
+      return { label: translateNow('home.needsAttention') || 'Needs attention', tone: 'danger', needsAttention: true };
     }
-    return { label: 'Not trained yet', tone: 'warning', needsAttention: true };
+    return { label: translateNow('home.notTrainedYet') || 'Not trained yet', tone: 'warning', needsAttention: true };
   }
   if (!installed) {
-    return { label: 'Ready to deploy', tone: 'info', needsAttention: false };
+    return { label: translateNow('home.readyToDeploy') || 'Ready to deploy', tone: 'info', needsAttention: false };
   }
-  return { label: 'Live', tone: 'success', needsAttention: false };
+  return { label: translateNow('home.live') || 'Live', tone: 'success', needsAttention: false };
 }
 
 /** An agent counts as trained once it has indexed knowledge or a finished crawl. */
@@ -307,7 +309,7 @@ export function buildActivity(
       entries.push({
         id: `feedback-${bucket.botName}-${index}-${at}`,
         kind: positive ? 'positive-feedback' : 'negative-feedback',
-        title: positive ? 'Answer marked helpful' : 'Answer marked unhelpful',
+        title: positive ? translateNow('home.answerMarkedHelpful') || 'Answer marked helpful' : translateNow('home.answerMarkedUnhelpful') || 'Answer marked unhelpful',
         meta: question ? `“${question}” · ${bucket.botName}` : bucket.botName,
         at,
         iso,
@@ -323,7 +325,7 @@ export function buildActivity(
     entries.push({
       id: `message-${index}-${at}`,
       kind: 'message',
-      title: `New message from ${who}`,
+      title: translateNow('home.newMessageFrom', { who }) || `New message from ${who}`,
       meta: meta ?? null,
       at,
       iso: msg.createdAt,
@@ -338,9 +340,9 @@ export function buildActivity(
 /** Time-of-day greeting for the page header. */
 export function greeting(date: Date): string {
   const hour = date.getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return translateNow('home.goodMorning') || 'Good morning';
+  if (hour < 18) return translateNow('home.goodAfternoon') || 'Good afternoon';
+  return translateNow('home.goodEvening') || 'Good evening';
 }
 
 /**
@@ -362,7 +364,7 @@ export function firstName(fullName: string | null | undefined): string {
 
 /** Long-form date, e.g. "Monday, July 21". */
 export function formatToday(date: Date): string {
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  return formatDate(date, { weekday: 'long', month: 'long', day: 'numeric', year: undefined });
 }
 
 /**
@@ -381,5 +383,5 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
   if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
   if (diff < day) return `${Math.floor(diff / hour)}h ago`;
   if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
-  return new Date(then).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }

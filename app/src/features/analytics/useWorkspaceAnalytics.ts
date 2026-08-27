@@ -21,6 +21,7 @@ import {
   type TrendPoint,
   type WorkspaceTotals,
 } from './analytics-types';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Fully-resolved, strictly-typed analytics for the whole workspace. */
 export interface WorkspaceAnalytics {
@@ -70,7 +71,7 @@ export interface UseWorkspaceAnalyticsResult {
 
 function errorMessage(cause: unknown): string {
   if (cause instanceof Error && cause.message) return cause.message;
-  return 'We couldn’t load your analytics. Please try again.';
+  return translateNow('analytics.analyticsLoadFailedRetry') || 'We couldn’t load your analytics. Please try again.';
 }
 
 /**

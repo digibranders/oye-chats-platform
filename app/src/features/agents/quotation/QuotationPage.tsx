@@ -3,6 +3,7 @@ import { Receipt } from 'lucide-react';
 import { PageContainer, EmptyState } from '../../../design-system';
 import { useAgent } from '../../../context/AgentContext';
 import { QuotationCatalogSection } from '../advanced/QuotationCatalogSection';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * QuotationPage - the agent "Quotation" tab. Answers: *"What quote does my
@@ -14,6 +15,7 @@ import { QuotationCatalogSection } from '../advanced/QuotationCatalogSection';
  * this page only resolves the agent id and handles the "no chatbot" state.
  */
 export function QuotationPage(): ReactElement {
+  const { t } = useTranslation();
   const { agent, agentId, loading, error } = useAgent();
 
   if (!loading && agentId === null) {
@@ -22,11 +24,11 @@ export function QuotationPage(): ReactElement {
         <PageContainer>
           <EmptyState
             icon={Receipt}
-            title={error ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
+            title={error ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
             description={
               error
-                ? 'We couldn’t load this chatbot. Please try again.'
-                : 'Pick a chatbot to configure its quotation flow.'
+                ? t('agents.weCouldntLoadThisChatbot') || 'We couldn’t load this chatbot. Please try again.'
+                : t('agents.pickAChatbotToConfigure') || 'Pick a chatbot to configure its quotation flow.'
             }
           />
         </PageContainer>

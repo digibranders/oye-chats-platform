@@ -1,7 +1,9 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { MessageSquare } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type TopQuestion } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface TopQuestionsListProps {
   questions: TopQuestion[];
@@ -13,12 +15,13 @@ interface TopQuestionsListProps {
  * ranking is announced to screen readers.
  */
 export function TopQuestionsList({ questions }: TopQuestionsListProps): ReactElement {
+  const { t } = useTranslation();
   if (questions.length === 0) {
     return (
       <EmptyState
         icon={MessageSquare}
-        title="No questions yet"
-        description="Once visitors start chatting with your chatbots, their most common questions will surface here."
+        title={t('analytics.noQuestionsYet') || 'No questions yet'}
+        description={t('analytics.onceVisitorsStartChattingWith') || 'Once visitors start chatting with your chatbots, their most common questions will surface here.'}
       />
     );
   }
@@ -52,7 +55,7 @@ export function TopQuestionsList({ questions }: TopQuestionsListProps): ReactEle
               </div>
             </div>
             <span className="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ds-accent-text)]">
-              {question.count.toLocaleString()}
+              {formatNumber(question.count)}
             </span>
           </li>
         );

@@ -127,6 +127,8 @@ export const IDLE: SliceStatus = { saving: false, error: null, saved: false };
 // ── Constants ─────────────────────────────────────────────────────────────────
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
 
+// @i18n-exempt: resolved at the render site from the field name
+// (`agents.leadField.<name>`); the English here is that lookup's fallback.
 export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   name: 'Name',
   email: 'Email',
@@ -134,6 +136,8 @@ export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   company: 'Company',
 };
 
+// @i18n-exempt: resolved at the render site from the option value
+// (`agents.handoffDelay.<value>`); the English here is that lookup's fallback.
 export const HANDOFF_DELAY_OPTIONS: readonly { value: number; label: string }[] = [
   { value: 0, label: 'Immediately' },
   { value: 2, label: 'After 2 seconds' },
@@ -161,7 +165,13 @@ export const LANGUAGE_DEFAULTS: LanguageConfig = {
 export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 20 } as const;
 export const MAX_QUEUE = { min: 1, max: 100, default: 10 } as const;
 
-/** Placeholder copy - mirrors the shipped widget's own fallbacks. */
+/**
+ * Placeholder copy - mirrors the shipped widget's own fallbacks.
+ *
+ * @i18n-exempt: these must stay identical to what the WIDGET renders when the
+ * field is left blank. Translating the placeholder would promise the operator
+ * one sentence and show their visitors another.
+ */
 export const COPY_PLACEHOLDERS: WidgetCopy = {
   offlineMessage: "We'll be right back! Leave a message and we'll follow up shortly.",
   liveChatLabel: 'Live chat',
@@ -170,6 +180,8 @@ export const COPY_PLACEHOLDERS: WidgetCopy = {
   endChatLabel: 'End chat and return to AI',
 };
 
+// @i18n-exempt: same reason as COPY_PLACEHOLDERS - this mirrors the widget's
+// own fallback, which the visitor sees, not the operator.
 export const LIVE_CHAT_PLACEHOLDERS = {
   waitingMessage: 'Connecting you to support…',
   offlineMessage: COPY_PLACEHOLDERS.offlineMessage,

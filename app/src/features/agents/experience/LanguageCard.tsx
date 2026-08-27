@@ -5,6 +5,7 @@ import { useLocaleCatalog } from '../../../hooks/useLocaleCatalog';
 import { type LanguageConfig, type SliceStatus, normalizeLanguageConfig } from './botConfig';
 import { Card, SaveFooter, ToggleRow } from './configCards';
 import { CustomCopyNotice } from './CustomCopyNotice';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * LanguageCard - what languages the chatbot speaks to VISITORS.
@@ -38,6 +39,7 @@ export function LanguageCard({
   status: SliceStatus;
   onSave: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const addId = useId();
   const defaultId = useId();
   const { locales, localeNameFor, uiTranslatedFor } = useLocaleCatalog();
@@ -79,6 +81,9 @@ export function LanguageCard({
     () => value.supportedLocales.filter((locale) => !uiTranslatedFor(locale)),
     [value.supportedLocales, uiTranslatedFor],
   );
+  const untranslatedNames = untranslated
+    .map((locale) => localeNameFor(locale) ?? locale)
+    .join(', ');
 
   const defaultOptions = useMemo(
     () =>
@@ -121,13 +126,13 @@ export function LanguageCard({
   return (
     <section className="space-y-5">
       <SectionHeader
-        title="Language"
-        description="Choose the languages your chatbot speaks to visitors, and how it picks one."
+        title={t('agents.language') || 'Language'}
+        description={t('agents.chooseTheLanguagesYourChatbot') || 'Choose the languages your chatbot speaks to visitors, and how it picks one.'}
       />
       <Card>
         <ToggleRow
-          title="Multilingual"
-          description="Let visitors chat in their own language."
+          title={t('agents.multilingual') || 'Multilingual'}
+          description={t('agents.letVisitorsChatInTheir') || 'Let visitors chat in their own language.'}
           checked={value.enabled}
           onChange={setEnabled}
         />
@@ -136,7 +141,7 @@ export function LanguageCard({
             turning multilingual on would give them before they turn it on. */}
         <div className={off ? 'pointer-events-none space-y-5 opacity-60' : 'space-y-5'} aria-disabled={off}>
           <div className="space-y-2">
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">Supported languages</p>
+            <p className="text-[13px] font-medium text-[var(--ds-text)]">{t('agents.supportedLanguages') || 'Supported languages'}</p>
             <ul className="flex flex-wrap gap-2">
               {value.supportedLocales.map((locale) => (
                 <li
@@ -152,14 +157,14 @@ export function LanguageCard({
                   )}
                   {localeNameFor(locale) ?? locale}
                   {locale === value.defaultLocale && (
-                    <span className="text-[11px] text-[var(--ds-text-subtle)]">default</span>
+                    <span className="text-[11px] text-[var(--ds-text-subtle)]">{t('agents.default') || 'default'}</span>
                   )}
                   <button
                     type="button"
                     onClick={() => removeLocale(locale)}
                     disabled={off || lastLocale}
                     aria-label={`Remove ${localeNameFor(locale) ?? locale}`}
-                    title={lastLocale ? 'A chatbot needs at least one language.' : undefined}
+                    title={lastLocale ? t('agents.needsOneLanguage') || 'A chatbot needs at least one language.' : undefined}
                     className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <X size={11} aria-hidden="true" />
@@ -169,34 +174,34 @@ export function LanguageCard({
             </ul>
             <div className="max-w-xs pt-1">
               <label htmlFor={addId} className="sr-only">
-                Add a language
+                {t('agents.addALanguage') || 'Add a language'}
               </label>
               <Select
                 id={addId}
                 value=""
                 onChange={addLocale}
                 options={addable}
-                placeholder={addable.length === 0 ? 'All languages added' : 'Add a language…'}
+                placeholder={addable.length === 0 ? t('agents.allLanguagesAdded') || 'All languages added' : t('agents.addALanguagePlaceholder') || 'Add a language…'}
                 searchable
                 disabled={off || addable.length === 0}
-                aria-label="Add a language"
+                aria-label={t('agents.addALanguage') || 'Add a language'}
               />
             </div>
             {lastLocale && (
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                A chatbot needs at least one language, so the last one can’t be removed.
+                {t('agents.aChatbotNeedsAtLeast') || 'A chatbot needs at least one language, so the last one can’t be removed.'}
               </p>
             )}
             <p className="text-[11px] text-[var(--ds-text-subtle)]">
-              Only languages the chat widget itself is translated into can be added, so visitors
-              never meet an English interface around a translated conversation.
+              {t('agents.onlyTranslatedLanguagesAddable') ||
+                'Only languages the chat widget itself is translated into can be added, so visitors never meet an English interface around a translated conversation.'}
             </p>
             {untranslated.length > 0 && (
               <div
                 role="status"
                 // Named so it is distinguishable from the turning-off warning
                 // below, which is also a status region.
-                aria-label="Languages without a translated widget"
+                aria-label={t('agents.languagesWithoutATranslatedWidget') || 'Languages without a translated widget'}
                 className="flex gap-2.5 rounded-[var(--ds-radius-lg)] border border-[var(--ds-warning-border,var(--ds-border))] bg-[var(--ds-bg-sunken)] p-3"
               >
                 <AlertTriangle
@@ -207,14 +212,24 @@ export function LanguageCard({
                 <div className="space-y-1 text-[12px] text-[var(--ds-text-muted)]">
                   <p className="font-medium text-[var(--ds-text)]">
                     {untranslated.length === 1
-                      ? `The widget is not translated into ${localeNameFor(untranslated[0]) ?? untranslated[0]}.`
-                      : 'The widget is not translated into some of these languages.'}
+                      ? t('agents.widgetNotTranslatedInto', {
+                          language: localeNameFor(untranslated[0]) ?? untranslated[0],
+                        }) ||
+                        `The widget is not translated into ${localeNameFor(untranslated[0]) ?? untranslated[0]}.`
+                      : t('agents.theWidgetIsNotTranslated') || 'The widget is not translated into some of these languages.'}
                   </p>
                   <p>
-                    Your chatbot answers in{' '}
-                    {untranslated.map((locale) => localeNameFor(locale) ?? locale).join(', ')}, but
-                    its buttons and forms stay in English. Remove{' '}
-                    {untranslated.length === 1 ? 'it' : 'them'} unless you want that.
+                    {/* One key. Split around the language list and the it/them
+                        pronoun, this only ever read as English. */}
+                    {t(
+                      untranslated.length === 1
+                        ? 'agents.untranslatedWidgetNoteOne'
+                        : 'agents.untranslatedWidgetNoteMany',
+                      { languages: untranslatedNames },
+                    ) ||
+                      `Your chatbot answers in ${untranslatedNames}, but its buttons and forms stay in English. Remove ${
+                        untranslated.length === 1 ? 'it' : 'them'
+                      } unless you want that.`}
                   </p>
                 </div>
               </div>
@@ -223,7 +238,7 @@ export function LanguageCard({
 
           <div className="max-w-xs space-y-1.5">
             <label htmlFor={defaultId} className="block text-[13px] font-medium text-[var(--ds-text)]">
-              Default language
+              {t('agents.defaultLanguage') || 'Default language'}
             </label>
             <Select
               id={defaultId}
@@ -231,30 +246,30 @@ export function LanguageCard({
               onChange={(defaultLocale) => onChange((prev) => ({ ...prev, defaultLocale }))}
               options={defaultOptions}
               disabled={off}
-              aria-label="Default language"
+              aria-label={t('agents.defaultLanguage') || 'Default language'}
             />
             <p className="text-[11px] text-[var(--ds-text-subtle)]">
-              Used when a visitor’s language can’t be determined. Only supported languages can be
-              the default.
+              {t('agents.defaultLanguageHint') ||
+                'Used when a visitor’s language can’t be determined. Only supported languages can be the default.'}
             </p>
           </div>
 
           <ToggleRow
-            title="Detect the visitor’s language automatically"
-            description="Uses the visitor’s browser, your page, and their first message."
+            title={t('agents.detectTheVisitorsLanguageAutomatically') || 'Detect the visitor’s language automatically'}
+            description={t('agents.usesTheVisitorsBrowserYour') || 'Uses the visitor’s browser, your page, and their first message.'}
             checked={value.autoDetect}
             onChange={(autoDetect) => onChange((prev) => ({ ...prev, autoDetect }))}
             disabled={off}
           />
 
           <ToggleRow
-            title="Let visitors switch language in the widget"
-            description="Shows a language selector visitors can change at any time."
+            title={t('agents.letVisitorsSwitchLanguageIn') || 'Let visitors switch language in the widget'}
+            description={t('agents.showsALanguageSelectorVisitors') || 'Shows a language selector visitors can change at any time.'}
             checked={value.allowVisitorSwitch}
             onChange={(allowVisitorSwitch) => onChange((prev) => ({ ...prev, allowVisitorSwitch }))}
             disabled={off || singleLocale}
             disabledReason={
-              !off && singleLocale ? 'Add a second language to give visitors something to switch to.' : undefined
+              !off && singleLocale ? t('agents.addASecondLanguageTo') || 'Add a second language to give visitors something to switch to.' : undefined
             }
           />
 
@@ -264,12 +279,12 @@ export function LanguageCard({
           <CustomCopyNotice multilingual={value.enabled} />
 
           <ToggleRow
-            title="Translate live chat for operators"
-            description="Visitor messages are shown to your team in their own working language, and replies are translated back."
+            title={t('agents.translateLiveChatForOperators') || 'Translate live chat for operators'}
+            description={t('agents.visitorMessagesAreShownTo') || 'Visitor messages are shown to your team in their own working language, and replies are translated back.'}
             checked={value.operatorTranslation}
             onChange={(operatorTranslation) => onChange((prev) => ({ ...prev, operatorTranslation }))}
             disabled={off}
-            disabledReason={off ? 'Turn multilingual on first.' : undefined}
+            disabledReason={off ? t('agents.turnMultilingualOnFirst') || 'Turn multilingual on first.' : undefined}
           />
         </div>
 
@@ -280,14 +295,14 @@ export function LanguageCard({
           >
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-[var(--ds-warning,var(--ds-text-muted))]" aria-hidden="true" />
             <div className="space-y-1 text-[12px] text-[var(--ds-text-muted)]">
-              <p className="font-medium text-[var(--ds-text)]">Saving will turn multilingual off.</p>
+              <p className="font-medium text-[var(--ds-text)]">{t('agents.savingWillTurnMultilingualOff') || 'Saving will turn multilingual off.'}</p>
               <p>
-                The widget’s language selector disappears, your chatbot answers everyone in its
-                default language, and live chat is no longer translated for your team.
+                {t('agents.turningMultilingualOffEffects') ||
+                  'The widget’s language selector disappears, your chatbot answers everyone in its default language, and live chat is no longer translated for your team.'}
               </p>
               <p>
-                Past conversations keep the language they were held in, so turning this back on
-                restores them.
+                {t('agents.pastConversationsKeepLanguage') ||
+                  'Past conversations keep the language they were held in, so turning this back on restores them.'}
               </p>
             </div>
           </div>
@@ -297,7 +312,7 @@ export function LanguageCard({
           dirty={dirty}
           status={status}
           onSave={onSave}
-          label={turningOff ? 'Turn off multilingual' : 'Save language'}
+          label={turningOff ? t('agents.turnOffMultilingual') || 'Turn off multilingual' : t('agents.saveLanguage') || 'Save language'}
         />
       </Card>
     </section>

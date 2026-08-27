@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -35,7 +36,7 @@ export default function Select({
   value,
   onChange,
   options,
-  placeholder = 'Select…',
+  placeholder = translateNow('app.select') || 'Select…',
   searchable = false,
   disabled = false,
   light = false,
@@ -205,7 +206,7 @@ export default function Select({
                   setActiveIndex(0);
                 }}
                 onKeyDown={handleListNavKeys}
-                placeholder="Search…"
+                placeholder={translateNow('app.search') || 'Search…'}
                 className={cn(
                   'w-full bg-transparent text-sm outline-none border-none p-0',
                   'text-surface-900',
@@ -219,7 +220,7 @@ export default function Select({
           <ul ref={listRef} id={listboxId} role="listbox" className="max-h-64 overflow-auto py-1">
             {visible.length === 0 && (
               <li className={cn('px-3 py-2 text-sm text-surface-400', dk('dark:text-surface-500'))}>
-                No matches
+                {translateNow('app.noMatches') || 'No matches'}
               </li>
             )}
             {visible.map((opt, index) => (

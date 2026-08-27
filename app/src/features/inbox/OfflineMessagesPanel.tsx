@@ -13,7 +13,10 @@ import { type CannedResponse } from '../../types/domain';
 import { useOfflineMessages, type StatusFilter } from './useOfflineMessages';
 import { MessageDetail } from './MessageDetail';
 import { relativeTime, statusBadge, type OfflineStatus } from './inboxHelpers';
+import { useTranslation } from '../../i18n/useTranslation';
 
+// @i18n-exempt: resolved at the render site from the filter key
+// (`inbox.offlineFilter.<key>`); the English here is that lookup's fallback.
 const FILTER_OPTIONS: ReadonlyArray<{ key: StatusFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'new', label: 'New' },
@@ -33,6 +36,7 @@ export interface OfflineMessagesPanelProps {
  * loading skeletons, an error with retry, and an empty state.
  */
 export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): ReactElement {
+  const { t } = useTranslation();
   const {
     messages,
     total,
@@ -95,7 +99,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
     try {
       await updateStatus(id, status);
     } catch {
-      setActionError('Could not update the message. Please try again.');
+      setActionError(t('inbox.couldNotUpdateTheMessage') || 'Could not update the message. Please try again.');
     } finally {
       setSavingStatusId(null);
     }
@@ -108,7 +112,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
       await remove(id);
       if (selectedId === id) setSelectedId(null);
     } catch {
-      setActionError('Could not delete the message. Please try again.');
+      setActionError(t('inbox.couldNotDeleteTheMessage') || 'Could not delete the message. Please try again.');
     } finally {
       setDeletingId(null);
     }
@@ -146,11 +150,11 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
               <div className="p-4">
                 <EmptyState
                   icon={AlertCircle}
-                  title="Couldn’t load your messages"
+                  title={t('inbox.couldntLoadYourMessages') || 'Couldn’t load your messages'}
                   description={error}
                   action={
                     <Button variant="outline" size="sm" onClick={reload}>
-                      Try again
+                      {t('inbox.tryAgain') || 'Try again'}
                     </Button>
                   }
                 />
@@ -159,11 +163,11 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
               <div className="p-4">
                 <EmptyState
                   icon={MailOpen}
-                  title="No messages here"
+                  title={t('inbox.noMessagesHere') || 'No messages here'}
                   description={
                     statusFilter === 'all'
-                      ? 'When a visitor leaves a message while your team is offline, it lands here.'
-                      : 'No messages match this filter yet.'
+                      ? t('inbox.whenAVisitorLeavesA') || 'When a visitor leaves a message while your team is offline, it lands here.'
+                      : t('inbox.noMessagesMatchThisFilter') || 'No messages match this filter yet.'
                   }
                 />
               </div>
@@ -177,8 +181,8 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
                     // assistive tech announces which conversation is being read.
                     <li key={m.id} aria-current={selected ? 'true' : undefined}>
                       <ConversationCard
-                        name={m.visitor_name?.trim() || m.visitor_email || 'Anonymous visitor'}
-                        snippet={m.message_body || 'No message content.'}
+                        name={m.visitor_name?.trim() || m.visitor_email || t('inbox.anonymousVisitor') || 'Anonymous visitor'}
+                        snippet={m.message_body || t('inbox.noMessageContent') || 'No message content.'}
                         time={relativeTime(m.created_at)}
                         unread={m.status === 'new'}
                         status={{ label: badge.label, tone: badge.tone }}
@@ -196,13 +200,13 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
           {!loading && !error && total > pageSize && (
             <div className="flex items-center justify-between border-t border-[var(--ds-border)] px-3 py-2">
               <span className="text-[12px] text-[var(--ds-text-subtle)]">
-                Page {page} of {totalPages}
+                {t('inbox.pageOf', { page, total: totalPages }) || `Page ${page} of ${totalPages}`}
               </span>
               <div className="flex items-center gap-1">
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="Previous page"
+                  aria-label={t('inbox.previousPage') || 'Previous page'}
                   disabled={page <= 1}
                   onClick={() => setPage(page - 1)}
                 >
@@ -211,7 +215,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="Next page"
+                  aria-label={t('inbox.nextPage') || 'Next page'}
                   disabled={page >= totalPages}
                   onClick={() => setPage(page + 1)}
                 >
@@ -238,8 +242,8 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
             <div className="flex h-full items-center justify-center p-6">
               <EmptyState
                 icon={MousePointerClick}
-                title="Select a message"
-                description="Choose a conversation on the left to read it and reply."
+                title={t('inbox.selectAMessage') || 'Select a message'}
+                description={t('inbox.chooseAConversationOnThe') || 'Choose a conversation on the left to read it and reply.'}
               />
             </div>
           )}
@@ -262,10 +266,11 @@ interface StatusFilterBarProps {
  * apply here.
  */
 function StatusFilterBar({ value, onChange }: StatusFilterBarProps): ReactElement {
+  const { t } = useTranslation();
   return (
     <div
       role="group"
-      aria-label="Filter messages by status"
+      aria-label={t('inbox.filterMessagesByStatus') || 'Filter messages by status'}
       className="inline-flex items-center gap-1 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-1"
     >
       {FILTER_OPTIONS.map((opt) => {
@@ -283,7 +288,7 @@ function StatusFilterBar({ value, onChange }: StatusFilterBarProps): ReactElemen
                 : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
             )}
           >
-            {opt.label}
+            {t(`inbox.offlineFilter.${opt.key}`) || opt.label}
           </button>
         );
       })}

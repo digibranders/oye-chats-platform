@@ -1,7 +1,9 @@
 import { type ReactElement } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import { Star } from 'lucide-react';
 import { EmptyState } from '../../design-system';
 import { type RatingsSummary } from './analytics-types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface SatisfactionBreakdownProps {
   ratings: RatingsSummary;
@@ -21,12 +23,13 @@ function barColor(star: number): string {
  * assistive tech (e.g. "5 stars, 62%").
  */
 export function SatisfactionBreakdown({ ratings }: SatisfactionBreakdownProps): ReactElement {
+  const { t } = useTranslation();
   if (ratings.total === 0) {
     return (
       <EmptyState
         icon={Star}
-        title="No ratings yet"
-        description="After a live chat, visitors can rate their experience. Those ratings will appear here."
+        title={t('analytics.noRatingsYet') || 'No ratings yet'}
+        description={t('analytics.afterALiveChatVisitors') || 'After a live chat, visitors can rate their experience. Those ratings will appear here.'}
       />
     );
   }
@@ -39,7 +42,7 @@ export function SatisfactionBreakdown({ ratings }: SatisfactionBreakdownProps): 
         </span>
         <span className="text-sm text-[var(--ds-text-subtle)]">/ 5</span>
         <span className="ml-1 text-[13px] text-[var(--ds-text-muted)]">
-          {ratings.total.toLocaleString()} {ratings.total === 1 ? 'rating' : 'ratings'}
+          {formatNumber(ratings.total)} {ratings.total === 1 ? 'rating' : 'ratings'}
         </span>
       </div>
 

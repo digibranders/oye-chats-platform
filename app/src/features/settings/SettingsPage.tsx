@@ -19,6 +19,7 @@ import { AccountSessionsSection } from './AccountSessionsSection';
 import { AppearanceSection } from './AppearanceSection';
 import { ContactSection } from './ContactSection';
 import { NotificationsSection } from './NotificationsSection';
+import { useTranslation } from '../../i18n/useTranslation';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
  * `phase.user` so the profile card above never goes stale.
  */
 export function SettingsPage(): ReactElement {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
   const { feedback, notify, dismiss } = useFeedback();
@@ -101,13 +103,21 @@ export function SettingsPage(): ReactElement {
         if (!active) return;
         setPhase({
           status: 'error',
-          message: toMessage(error, 'We couldn’t load your account settings. Please try again.'),
+          message: toMessage(
+            error,
+            t('settings.page.loadFailed') || 'We couldn’t load your account settings. Please try again.',
+          ),
         });
       }
     })();
     return () => {
       active = false;
     };
+    // `t` is intentionally omitted. It is a thin wrapper over the module-level
+    // store and resolves against the CURRENT locale at call time, so a stale
+    // closure still produces correctly localized text. Including it would
+    // re-run this on every language change for no benefit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
   const retry = (): void => {
@@ -134,7 +144,7 @@ export function SettingsPage(): ReactElement {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setNameError('Your name can’t be empty.');
+      setNameError(t('settings.page.nameEmpty') || 'Your name can’t be empty.');
       return;
     }
     if (trimmed === (user?.name ?? '')) {
@@ -151,9 +161,9 @@ export function SettingsPage(): ReactElement {
           : current,
       );
       setNameEditing(false);
-      notify({ tone: 'success', message: 'Your name has been updated.' });
+      notify({ tone: 'success', message: t('settings.page.nameUpdated') || 'Your name has been updated.' });
     } catch (error) {
-      setNameError(toMessage(error, 'Failed to update your name.'));
+      setNameError(toMessage(error, t('settings.page.nameUpdateFailed') || 'Failed to update your name.'));
     } finally {
       setSavingName(false);
     }
@@ -167,9 +177,9 @@ export function SettingsPage(): ReactElement {
       setPhase((current) =>
         current.status === 'ready' ? { status: 'ready', user: { ...current.user, avatar_url } } : current,
       );
-      notify({ tone: 'success', message: 'Your profile picture has been updated.' });
+      notify({ tone: 'success', message: t('settings.page.avatarUpdated') || 'Your profile picture has been updated.' });
     } catch (error) {
-      setAvatarError(toMessage(error, 'Failed to upload profile picture.'));
+      setAvatarError(toMessage(error, t('settings.page.avatarUploadFailed') || 'Failed to upload profile picture.'));
     } finally {
       setAvatarUploading(false);
     }
@@ -183,9 +193,9 @@ export function SettingsPage(): ReactElement {
       setPhase((current) =>
         current.status === 'ready' ? { status: 'ready', user: { ...current.user, avatar_url: null } } : current,
       );
-      notify({ tone: 'success', message: 'Your profile picture has been removed.' });
+      notify({ tone: 'success', message: t('settings.page.avatarRemoved') || 'Your profile picture has been removed.' });
     } catch (error) {
-      setAvatarError(toMessage(error, 'Failed to remove profile picture.'));
+      setAvatarError(toMessage(error, t('settings.page.avatarRemoveFailed') || 'Failed to remove profile picture.'));
     } finally {
       setAvatarUploading(false);
     }
@@ -199,7 +209,10 @@ export function SettingsPage(): ReactElement {
   };
 
   return (
-    <PageContainer title="Settings" description="Your account, profile and sign-in security.">
+    <PageContainer
+      title={t('settings.page.title') || 'Settings'}
+      description={t('settings.page.description') || 'Your account, profile and sign-in security.'}
+    >
       {/* Live feedback for the name mutation. */}
       <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
 
@@ -208,9 +221,9 @@ export function SettingsPage(): ReactElement {
       {phase.status === 'error' && (
         <EmptyState
           icon={AlertTriangle}
-          title="Couldn’t load your settings"
+          title={t('settings.page.errorTitle') || 'Couldn’t load your settings'}
           description={phase.message}
-          action={<Button onClick={retry}>Try again</Button>}
+          action={<Button onClick={retry}>{t('settings.page.tryAgain') || 'Try again'}</Button>}
         />
       )}
 
@@ -219,13 +232,13 @@ export function SettingsPage(): ReactElement {
           {/* ── Profile ─────────────────────────────────────────────────── */}
           <section aria-labelledby="profile-heading" className="space-y-4">
             <SectionHeader
-              title={<span id="profile-heading">Your profile</span>}
-              description="Your identity, sign-in email, and password."
+              title={<span id="profile-heading">{t('settings.page.profileTitle') || 'Your profile'}</span>}
+              description={t('settings.page.profileDescription') || 'Your identity, sign-in email, and password.'}
               actions={
                 !nameEditing ? (
                   <Button variant="outline" size="sm" onClick={startNameEditing}>
                     <Pencil size={14} aria-hidden="true" />
-                    Edit name
+                    {t('settings.page.editName') || 'Edit name'}
                   </Button>
                 ) : undefined
               }
@@ -243,24 +256,24 @@ export function SettingsPage(): ReactElement {
                   )}
                   <div>
                     <label htmlFor="profile-name" className={labelClass}>
-                      Your name
+                      {t('settings.page.yourName') || 'Your name'}
                     </label>
                     <Input
                       id="profile-name"
                       autoFocus
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      placeholder="e.g. Priya Sharma"
+                      placeholder={t('settings.page.namePlaceholder') || 'e.g. Priya Sharma'}
                     />
                   </div>
                   <div className="flex items-center gap-2">
                     <Button type="submit" disabled={savingName}>
                       {savingName ? (
-                        'Saving…'
+                        t('settings.page.saving') || 'Saving…'
                       ) : (
                         <>
                           <Check size={16} aria-hidden="true" />
-                          Save changes
+                          {t('settings.page.saveChanges') || 'Save changes'}
                         </>
                       )}
                     </Button>
@@ -270,12 +283,12 @@ export function SettingsPage(): ReactElement {
                       disabled={savingName}
                       onClick={cancelNameEditing}
                     >
-                      Cancel
+                      {t('common.cancel') || 'Cancel'}
                     </Button>
                   </div>
                 </form>
               ) : (
-                <SettingRow icon={UserRound} label="Name" value={user.name} />
+                <SettingRow icon={UserRound} label={t('settings.page.name') || 'Name'} value={user.name} />
               )}
             </Card>
 
@@ -294,10 +307,12 @@ export function SettingsPage(): ReactElement {
                       )}
                     </span>
                     <div className="min-w-0">
-                      <p className="text-[14px] font-semibold text-[var(--ds-text)]">Profile picture</p>
+                      <p className="text-[14px] font-semibold text-[var(--ds-text)]">
+                        {t('settings.page.profilePicture') || 'Profile picture'}
+                      </p>
                       <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                        Optional - shown to teammates and to visitors in live chat. Without one, your
-                        initials are shown instead.
+                        {t('settings.page.profilePictureHint') ||
+                          'Optional - shown to teammates and to visitors in live chat. Without one, your initials are shown instead.'}
                       </p>
                     </div>
                   </div>
@@ -308,7 +323,7 @@ export function SettingsPage(): ReactElement {
                       ) : (
                         <Upload size={14} aria-hidden="true" />
                       )}
-                      {user.avatar_url ? 'Replace' : 'Upload image'}
+                      {user.avatar_url ? t('settings.replace') || 'Replace' : t('settings.page.uploadImage') || 'Upload image'}
                       <input
                         type="file"
                         accept="image/png,image/jpeg,image/jpg,image/webp"
@@ -329,7 +344,7 @@ export function SettingsPage(): ReactElement {
                         onClick={() => void handleAvatarRemove()}
                       >
                         <Trash2 size={14} aria-hidden="true" />
-                        Remove
+                        {t('settings.page.remove') || 'Remove'}
                       </Button>
                     )}
                   </div>
@@ -348,15 +363,15 @@ export function SettingsPage(): ReactElement {
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
                       <Mail size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                      Email address
+                      {t('settings.page.emailAddress') || 'Email address'}
                     </p>
                     <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                      Contact your workspace owner to change your email - operator accounts don’t have a
-                      self-serve email change today.
+                      {t('settings.operatorEmailChange') ||
+                        'Contact your workspace owner to change your email - operator accounts don’t have a self-serve email change today.'}
                     </p>
                   </div>
                   <StatusBadge tone="neutral" className="shrink-0">
-                    Not available
+                    {t('settings.page.notAvailable') || 'Not available'}
                   </StatusBadge>
                 </div>
               </Card>

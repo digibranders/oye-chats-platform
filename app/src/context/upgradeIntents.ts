@@ -5,7 +5,9 @@
  * Ported VERBATIM from the legacy `context/UpgradeModalContext.jsx`
  * `UPGRADE_INTENTS` map (see `git show 75c2197~1:app/src/context/UpgradeModalContext.jsx`)
  * so every gate keeps its exact wording after the redesign - only the
- * presentation changed, not the substance. All 17 legacy intents are here,
+ * presentation changed, not the substance. Every legacy intent is here except
+ * `branding_removable`, which was retired when branding removal stopped being a
+ * plan inclusion and became a paid add-on (see the note beside `auto_recrawl`),
  * plus one new entry (`live_chat`) that did not exist in the legacy registry:
  * the legacy app only had `live_chat_appearance` (the handoff/appearance
  * config screen), so a bare "live chat" gate (e.g. the Inbox live-chat tab)
@@ -38,7 +40,6 @@ export type UpgradeIntentKey =
   | 'meetings_integration'
   | 'advanced_settings'
   | 'widget_behavior'
-  | 'branding_removable'
   | 'auto_recrawl'
   | 'topup_credits'
   | 'live_chat_appearance'
@@ -274,18 +275,11 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     ],
     recommendedPlan: 'Starter',
   }),
-  branding_removable: () => ({
-    eyebrow: 'Removing branding is a Standard feature',
-    title: 'Remove the "Powered by" footer',
-    description:
-      'Free and Starter AI Chatbots always show the OyeChats branding footer in the widget. Upgrade to Standard to hide it and give the widget your own look.',
-    highlights: [
-      'Fully white-labeled chat widget',
-      'No "Powered by OyeChats" link on your site',
-      'Everything in Starter, plus BANT scoring & API access',
-    ],
-    recommendedPlan: 'Standard',
-  }),
+  // NOTE: there is no `branding_removable` intent. Removing the "Powered by
+  // OyeChats" badge is no longer bundled into any plan tier - it is a paid
+  // add-on bought on top of any paid plan, so the gate sells the add-on in
+  // place (see `useBrandingAddon` and `BrandingAddonCard`) rather than routing
+  // the customer to a plan upgrade that would not grant it.
   auto_recrawl: () => ({
     eyebrow: 'Auto-retrain is a Standard feature',
     title: 'Keep your knowledge base fresh, automatically',
@@ -303,7 +297,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
   // client - and this registry is static copy with no access to a workspace's
   // credit ledger either, so it has no evidence for an expiry claim of any
   // kind. It therefore makes none. The surfaces that CAN read the ledger
-  // (TopupModal, CancelSubscriptionModal, UsageHero) state the real position
+  // (TopupModal, CancelSubscriptionModal, AgentCreditHero) state the real position
   // there. See TopupModal's `describeTopupExpiry`.
   topup_credits: () => ({
     eyebrow: 'Top-up credits are a paid feature',

@@ -18,7 +18,7 @@ describe('AgentCard', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/Created Jul 12, 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Created 12 Jul 2026/)).toBeInTheDocument();
   });
 
   it('does not render created date caption when created_at is missing or invalid', () => {

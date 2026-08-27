@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactElement, useEffect, useMemo, useRef, useState } from 'react';
+import { formatDate as i18nFormatDate } from '../../i18n/formatters';
 import {
   AlertTriangle,
   Building2,
@@ -85,7 +86,7 @@ function formatDate(iso: string | null | undefined): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   // en-GB → DD/MM/YYYY, unambiguous for a primarily-Indian audience.
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return i18nFormatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 type RoleTone = 'accent' | 'info' | 'neutral';

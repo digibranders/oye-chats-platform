@@ -2,6 +2,7 @@ import { type ReactElement, useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Globe, Loader2, RefreshCw } from 'lucide-react';
 import { Button, Input, Modal } from '../../../design-system';
 import { getBotPreviewUrl } from '../../../services/api';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface WebsitePreviewPanelProps {
   /** The agent's public bot key, needed to build the hosted preview URL. Null hides the panel. */
@@ -43,6 +44,7 @@ export function WebsitePreviewPanel({
   open,
   onClose,
 }: WebsitePreviewPanelProps): ReactElement | null {
+  const { t } = useTranslation();
   // Agent (and its website) is resolved before this panel mounts, so a lazy
   // initial value is stable - no prefill effect (and its sync setState) needed.
   const [urlInput, setUrlInput] = useState<string>(() => website ?? '');
@@ -95,16 +97,16 @@ export function WebsitePreviewPanel({
     <Modal
       open={open}
       onClose={onClose}
-      title="Preview on my website"
-      description="See the widget on your own site. It shows your saved settings - save first, then reload."
+      title={t('agents.previewOnMyWebsite') || 'Preview on my website'}
+      description={t('agents.seeTheWidgetOnYour') || 'See the widget on your own site. It shows your saved settings - save first, then reload.'}
       size="lg"
     >
       <div className="space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               value={urlInput}
-              placeholder="Enter your link, e.g. https://your-website.com"
-              aria-label="Website URL to preview"
+              placeholder={t('agents.enterYourLinkEG') || 'Enter your link, e.g. https://your-website.com'}
+              aria-label={t('agents.websiteUrlToPreview') || 'Website URL to preview'}
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleLoad();
@@ -116,7 +118,7 @@ export function WebsitePreviewPanel({
               className="shrink-0"
             >
               {loadedUrl ? <RefreshCw size={15} /> : <Globe size={15} />}
-              {loadedUrl ? 'Reload' : 'Load preview'}
+              {loadedUrl ? t('agents.reload') || 'Reload' : t('agents.loadPreview') || 'Load preview'}
             </Button>
           </div>
 
@@ -126,13 +128,13 @@ export function WebsitePreviewPanel({
                 {!frameLoaded && (
                   <div className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] text-[var(--ds-text-muted)]">
                     <Loader2 size={16} className="animate-spin" />
-                    Loading preview…
+                    {t('agents.loadingPreview') || 'Loading preview…'}
                   </div>
                 )}
                 <iframe
                   key={previewSrc}
                   src={previewSrc}
-                  title="Website preview with the chat widget"
+                  title={t('agents.websitePreviewWithTheChat') || 'Website preview with the chat widget'}
                   onLoad={() => setFrameLoaded(true)}
                   className="h-[520px] w-full"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
@@ -144,15 +146,15 @@ export function WebsitePreviewPanel({
                   role="status"
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2 text-[12px] text-[var(--ds-text-muted)]"
                 >
-                  Your site may block being embedded. The widget still works on the live site once
-                  installed.
+                  {t('agents.siteMayBlockEmbedding') ||
+                    'Your site may block being embedded. The widget still works on the live site once installed.'}
                   <a
                     href={previewSrc}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 font-medium text-[var(--ds-accent)] hover:underline"
                   >
-                    Open preview in a new tab
+                    {t('agents.openPreviewInANew') || 'Open preview in a new tab'}
                     <ExternalLink size={12} aria-hidden="true" />
                   </a>
                 </p>

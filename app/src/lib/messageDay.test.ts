@@ -1,3 +1,10 @@
+/**
+ * Date expectations here follow the DASHBOARD's locale (en-IN by default),
+ * not a hardcoded en-US. Phase 7D routed every locale-sensitive format through
+ * `src/i18n/formatters`, so "Jul 7" became "7 Jul": same field set, different
+ * locale. A Hindi dashboard renders these in Devanagari; see
+ * `src/i18n/formatters.test.ts`.
+ */
 import { describe, expect, it } from 'vitest';
 
 import { dayKey, formatDayLabel, isNewDay } from './messageDay';
@@ -24,11 +31,11 @@ describe('formatDayLabel', () => {
   });
 
   it('uses an absolute date for older days', () => {
-    expect(formatDayLabel('2026-08-14T12:00:00', NOW)).toBe('Aug 14');
+    expect(formatDayLabel('2026-08-14T12:00:00', NOW)).toBe('14 Aug');
   });
 
   it('includes the year for a prior year', () => {
-    expect(formatDayLabel('2025-08-14T12:00:00', NOW)).toBe('Aug 14, 2025');
+    expect(formatDayLabel('2025-08-14T12:00:00', NOW)).toBe('14 Aug 2025');
   });
 
   it('is empty for missing input', () => {

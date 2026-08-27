@@ -33,6 +33,7 @@ import {
   type HomeData,
   type OfflineActivityInput,
 } from './home-data';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface UseHomeDataResult {
   loading: boolean;
@@ -173,7 +174,7 @@ export function useHomeData(botId: number | null = null): UseHomeDataResult {
         if (!cancelled) {
           setResult({
             data: null,
-            error: err instanceof Error ? err.message : 'Something went wrong loading your dashboard.',
+            error: err instanceof Error ? err.message : translateNow('home.somethingWentWrongLoadingYour') || 'Something went wrong loading your dashboard.',
           });
         }
       }

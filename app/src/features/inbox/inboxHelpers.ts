@@ -1,4 +1,6 @@
 import { type StatusBadgeProps } from '../../design-system';
+import { formatDate, formatDateTime } from '../../i18n/formatters';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Pure presentation helpers for the Inbox. No React, no side effects - kept
@@ -13,6 +15,8 @@ export type Sentiment = 'positive' | 'neutral' | 'negative';
 
 type BadgeTone = NonNullable<StatusBadgeProps['tone']>;
 
+// @i18n-exempt: resolved at the render site from the status key
+// (`inbox.offlineStatus.<status>`); the English here is that lookup's fallback.
 const STATUS_META: Record<OfflineStatus, { label: string; tone: BadgeTone }> = {
   new: { label: 'New', tone: 'accent' },
   read: { label: 'Read', tone: 'neutral' },
@@ -21,12 +25,15 @@ const STATUS_META: Record<OfflineStatus, { label: string; tone: BadgeTone }> = {
 
 /** Map a raw status string to a labelled, toned badge descriptor. */
 export function statusBadge(status: string | null | undefined): { label: string; tone: BadgeTone } {
-  if (status && status in STATUS_META) {
-    return STATUS_META[status as OfflineStatus];
+  if (status && Object.prototype.hasOwnProperty.call(STATUS_META, status)) {
+    const meta = STATUS_META[status as OfflineStatus];
+    return { ...meta, label: translateNow(`inbox.offlineStatus.${status}`) || meta.label };
   }
-  return { label: 'New', tone: 'accent' };
+  return { label: translateNow('inbox.new') || 'New', tone: 'accent' };
 }
 
+// @i18n-exempt: resolved at the render site from the sentiment
+// (`inbox.sentiment.<sentiment>`); the English here is that lookup's fallback.
 const SENTIMENT_META: Record<Sentiment, { label: string; tone: BadgeTone }> = {
   positive: { label: 'Positive', tone: 'success' },
   neutral: { label: 'Neutral', tone: 'neutral' },
@@ -81,7 +88,14 @@ export function detectSentiment(text: string | null | undefined): Sentiment {
   return 'neutral';
 }
 
-/** Presentation descriptor for a sentiment value. */
+/**
+ * Presentation descriptor for a sentiment value.
+ *
+ * The label is the ENGLISH fallback. This module is pure and importable from
+ * anywhere (its unit tests deliberately avoid dragging React in), so it must
+ * not resolve a locale itself. Callers render
+ * `t(\`inbox.sentiment.${sentiment}\`) || badge.label`.
+ */
 export function sentimentBadge(sentiment: Sentiment): { label: string; tone: BadgeTone } {
   return SENTIMENT_META[sentiment];
 }
@@ -111,7 +125,7 @@ export function relativeTime(iso: string | null | undefined): string {
   if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
   if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
   if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDate(new Date(then), { month: 'short', day: 'numeric', year: undefined });
 }
 
 /** Absolute, human date-time for the detail pane. */
@@ -119,7 +133,7 @@ export function absoluteTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, {
+  return formatDateTime(d, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

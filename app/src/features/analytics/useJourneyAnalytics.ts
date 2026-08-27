@@ -14,6 +14,7 @@ import {
   type JourneySummary,
   type JourneyTopPagesResponse,
 } from '../../services/api';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Conversion types the Journeys tab attributes paths for. */
 export const JOURNEY_CONVERSION_TYPES: readonly JourneyConversionType[] = [
@@ -128,7 +129,7 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
         // The `status` field is set by `buildApiError` on every API error.
         // 402 is the plan gate; everything else is a real failure.
         const status = (cause as { status?: number })?.status;
-        const message = cause instanceof Error && cause.message ? cause.message : 'Something went wrong.';
+        const message = cause instanceof Error && cause.message ? cause.message : translateNow('analytics.somethingWentWrong') || 'Something went wrong.';
         if (status === 402) {
           setState({ status: 'gated', data: null, error: null });
         } else {

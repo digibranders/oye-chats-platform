@@ -4,6 +4,8 @@ import { MessageSquareText, X } from 'lucide-react';
 import { Button } from '../design-system';
 import { useNotifications } from '../context/NotificationContext';
 import { playPing } from '../features/inbox/notifications';
+import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /** How long the banner stays before auto-dismissing. */
 const AUTO_DISMISS_MS = 30_000;
@@ -17,6 +19,7 @@ const AUTO_DISMISS_MS = 30_000;
  * once in `AppShell`, so a waiting visitor is never missed regardless of route.
  */
 export function IncomingChatBanner(): ReactElement | null {
+  const { t } = useTranslation();
   const { incomingHandoff, dismissIncomingHandoff } = useNotifications();
   const navigate = useNavigate();
   const [progress, setProgress] = useState(1);
@@ -56,10 +59,13 @@ export function IncomingChatBanner(): ReactElement | null {
 
   if (!incomingHandoff) return null;
 
-  const title = incomingHandoff.title || 'New chat request';
+  const title = incomingHandoff.title || t('shell.incomingChat.title') || 'New chat request';
   const body =
     incomingHandoff.body ||
-    (botName ? `A visitor on ${botName} wants to talk to a person.` : 'A visitor wants to talk to a person.');
+    (botName
+      ? translateNow('shell.incomingChat.bodyOnBot', { name: botName }) ||
+        `A visitor on ${botName} wants to talk to a person.`
+      : t('shell.incomingChat.body') || 'A visitor wants to talk to a person.');
 
   const openChat = (): void => {
     dismissIncomingHandoff();
@@ -83,16 +89,16 @@ export function IncomingChatBanner(): ReactElement | null {
           <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{body}</p>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" onClick={openChat}>
-              Open chat
+              {t('shell.incomingChat.open') || 'Open chat'}
             </Button>
             <Button size="sm" variant="ghost" onClick={dismissIncomingHandoff}>
-              Later
+              {t('shell.incomingChat.later') || 'Later'}
             </Button>
           </div>
         </div>
         <button
           type="button"
-          aria-label="Dismiss"
+          aria-label={t('common.dismiss') || 'Dismiss'}
           onClick={dismissIncomingHandoff}
           className="-mr-1 -mt-1 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
         >

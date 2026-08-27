@@ -48,9 +48,14 @@ import { SatisfactionBreakdown } from './SatisfactionBreakdown';
 import { LanguageBreakdown, TranslationUsage } from './LanguageBreakdown';
 import { FeedbackPanel } from '../feedback/FeedbackPanel';
 import { UnansweredQuestionsPanel } from './UnansweredQuestionsPanel';
+import { t as translateNow } from '../../i18n/i18n';
+import { formatNumber } from '../../i18n/formatters';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'language' | 'feedback' | 'uaq';
 
+// @i18n-exempt: resolved at the render site from the tab key
+// (`analytics.tab.<key>`); the English here is that lookup's fallback.
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'leads', label: 'Leads' },
@@ -65,6 +70,8 @@ const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
  * insight, and on the "All agents" scope there is no single language config to
  * report against. Inserted before Feedback, beside the other per-agent views.
  */
+// @i18n-exempt: resolved at the render site from the tab key
+// (`analytics.tab.<key>`); the English here is that lookup's fallback.
 const LANGUAGE_TAB: { key: AnalyticsTab; label: string } = { key: 'language', label: 'Languages' };
 
 /**
@@ -92,7 +99,13 @@ function isAnalyticsTab(key: string): key is AnalyticsTab {
  */
 function trendFromChange(change: number | null): { delta?: string; trend?: MetricTrend } {
   if (change === null) return {};
-  if (change === 0) return { delta: `No change · ${MOMENTUM_WINDOW_DAYS}d`, trend: 'flat' };
+  if (change === 0)
+    return {
+      delta:
+        translateNow('analytics.noChangeWindow', { days: MOMENTUM_WINDOW_DAYS }) ||
+        `No change · ${MOMENTUM_WINDOW_DAYS}d`,
+      trend: 'flat',
+    };
   const sign = change > 0 ? '+' : '';
   return {
     delta: `${sign}${change}% · ${MOMENTUM_WINDOW_DAYS}d`,
@@ -111,8 +124,12 @@ function deriveInsight(
   if (leads.sql > 0) {
     return {
       tone: 'accent',
-      title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
-      body: 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
+      title:
+        translateNow(
+          leads.sql === 1 ? 'analytics.readyToBuyCapturedOne' : 'analytics.readyToBuyCapturedMany',
+          { count: formatNumber(leads.sql) },
+        ) || `${formatNumber(leads.sql)} ready-to-buy leads captured`,
+      body: translateNow('analytics.yourChatbotsAreTurningConversations') || 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
     };
   }
 
@@ -134,15 +151,16 @@ function LoadingState(): ReactElement {
 }
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): ReactElement {
+  const { t } = useTranslation();
   return (
     <EmptyState
       icon={TriangleAlert}
-      title="We couldn’t load your analytics"
+      title={t('analytics.weCouldntLoadYourAnalytics') || 'We couldn’t load your analytics'}
       description={message}
       action={
         <Button variant="primary" onClick={onRetry}>
           <RefreshCw size={16} aria-hidden="true" />
-          Try again
+          {t('analytics.tryAgain') || 'Try again'}
         </Button>
       }
     />
@@ -156,7 +174,9 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
  * three progressive-disclosure tabs (Conversations · Leads · Satisfaction).
  */
 export function AnalyticsPage(): ReactElement {
+  const { t } = useTranslation();
   const { bots, selectedBot, loading: botsLoading } = useBotContext();
+  const chatbotName = selectedBot?.name ?? (t('analytics.thisChatbot') || 'this chatbot');
   // When the shell BotSwitcher is set to a specific agent, scope the whole
   // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
   // back to workspace-aggregated across every agent.
@@ -204,7 +224,7 @@ export function AnalyticsPage(): ReactElement {
         const locked =
           (item.key === 'leads' && !leadsUnlocked) ||
           (item.key === 'satisfaction' && !satisfactionUnlocked);
-        if (!locked) return { key: item.key, label: item.label };
+        if (!locked) return { key: item.key, label: translateNow(`analytics.tab.${item.key}`) || item.label };
         return {
           key: item.key,
           label: (
@@ -215,7 +235,7 @@ export function AnalyticsPage(): ReactElement {
                 aria-hidden="true"
                 className="text-[var(--ds-text-subtle)]"
               />
-              {item.label}
+              {translateNow(`analytics.tab.${item.key}`) || item.label}
             </span>
           ),
         };
@@ -239,7 +259,7 @@ export function AnalyticsPage(): ReactElement {
           aria-hidden="true"
           className={refreshing ? 'animate-spin' : undefined}
         />
-        {refreshing ? 'Refreshing…' : 'Refresh'}
+        {refreshing ? t('analytics.refreshing') || 'Refreshing…' : t('analytics.refresh') || 'Refresh'}
       </Button>
     ) : undefined;
 
@@ -247,19 +267,19 @@ export function AnalyticsPage(): ReactElement {
   if (!botsLoading && bots.length === 0) {
     return (
       <PageContainer
-        title="Analytics"
+        title={t('analytics.analytics') || 'Analytics'}
       >
         <EmptyState
           icon={BarChart3}
-          title="No performance data yet"
-          description="Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here."
+          title={t('analytics.noPerformanceDataYet') || 'No performance data yet'}
+          description={t('analytics.createYourFirstAiChatbot') || 'Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here.'}
           action={
             <Link
               to="/agents"
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <BotIcon size={16} aria-hidden="true" />
-              Create an AI chatbot
+              {t('analytics.createAnAiChatbot') || 'Create an AI chatbot'}
             </Link>
           }
         />
@@ -274,14 +294,14 @@ export function AnalyticsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="Analytics"
-      description="How your whole workspace is performing across every AI chatbot."
+      title={t('analytics.analytics') || 'Analytics'}
+      description={t('analytics.howYourWholeWorkspaceIs') || 'How your whole workspace is performing across every AI chatbot.'}
       actions={actions}
     >
       {showLoading ? (
         <LoadingState />
       ) : status === 'error' || !data ? (
-        <ErrorState message={error ?? 'Something went wrong.'} onRetry={reload} />
+        <ErrorState message={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')} onRetry={reload} />
       ) : (
         <>
           {insight && (
@@ -303,7 +323,7 @@ export function AnalyticsPage(): ReactElement {
               }
               setTab(key);
             }}
-            ariaLabel="Analytics views"
+            ariaLabel={t('analytics.analyticsViews') || 'Analytics views'}
           />
 
           {/* Conversations */}
@@ -318,14 +338,17 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Message volume"
-                    description="Daily messages across every chatbot"
+                    title={t('analytics.messageVolume') || 'Message volume'}
+                    description={t('analytics.dailyMessagesAcrossEveryChatbot') || 'Daily messages across every chatbot'}
                     actions={
                       <SegmentedControl
-                        options={TREND_RANGES}
+                        options={TREND_RANGES.map((r) => ({
+                          ...r,
+                          label: t(`analytics.range.${r.value}`) || r.label,
+                        }))}
                         value={range}
                         onChange={setRange}
-                        ariaLabel="Message trend time range"
+                        ariaLabel={t('analytics.messageTrendTimeRange') || 'Message trend time range'}
                       />
                     }
                   />
@@ -334,25 +357,25 @@ export function AnalyticsPage(): ReactElement {
                   <div className="mb-4 grid grid-cols-3 gap-3">
                     <MetricCard
                       size="sm"
-                      label="Messages"
-                      value={trendSummary.total.toLocaleString()}
+                      label={t('analytics.messages') || 'Messages'}
+                      value={formatNumber(trendSummary.total)}
                       icon={MessageSquare}
                       delta={messagesTrend.delta}
                       trend={messagesTrend.trend}
                     />
                     <MetricCard
                       size="sm"
-                      label="Daily average"
-                      value={trendSummary.dailyAverage.toLocaleString()}
+                      label={t('analytics.dailyAverage') || 'Daily average'}
+                      value={formatNumber(trendSummary.dailyAverage)}
                       icon={BarChart3}
                     />
                     <MetricCard
                       size="sm"
-                      label="Busiest day"
+                      label={t('analytics.busiestDay') || 'Busiest day'}
                       value={
                         trendSummary.peak > 0
-                          ? `${trendSummary.peak.toLocaleString()} · ${trendSummary.peakLabel}`
-                          : trendSummary.peak.toLocaleString()
+                          ? `${formatNumber(trendSummary.peak)} · ${trendSummary.peakLabel}`
+                          : formatNumber(trendSummary.peak)
                       }
                       icon={Zap}
                     />
@@ -360,8 +383,8 @@ export function AnalyticsPage(): ReactElement {
                   {trendWindow.length === 0 || trendSummary.total === 0 ? (
                     <EmptyState
                       icon={Activity}
-                      title="No messages in this range"
-                      description="Try a wider time range, or come back once your chatbots have handled more conversations."
+                      title={t('analytics.noMessagesInThisRange') || 'No messages in this range'}
+                      description={t('analytics.tryAWiderTimeRange') || 'Try a wider time range, or come back once your chatbots have handled more conversations.'}
                     />
                   ) : (
                     <MessageTrendChart points={trendWindow} />
@@ -372,8 +395,8 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Top questions"
-                    description="What visitors ask your chatbots most"
+                    title={t('analytics.topQuestions') || 'Top questions'}
+                    description={t('analytics.whatVisitorsAskYourChatbots') || 'What visitors ask your chatbots most'}
                   />
                 </CardHeader>
                 <CardContent className="pt-0">
@@ -413,8 +436,8 @@ export function AnalyticsPage(): ReactElement {
                 <Card>
                   <CardHeader>
                     <SectionHeader
-                      title="Visitor satisfaction"
-                      description="Post-chat ratings from live conversations, across every chatbot"
+                      title={t('analytics.visitorSatisfaction') || 'Visitor satisfaction'}
+                      description={t('analytics.postChatRatingsFromLive') || 'Post-chat ratings from live conversations, across every chatbot'}
                     />
                   </CardHeader>
                   <CardContent className="pt-0">
@@ -446,17 +469,23 @@ export function AnalyticsPage(): ReactElement {
               <Card>
                 <CardHeader>
                   <SectionHeader
-                    title="Languages"
-                    description={`What visitors chat to ${selectedBot?.name ?? 'this chatbot'} in, and how each language performs`}
+                    title={t('analytics.languages') || 'Languages'}
+                    description={
+                  t('analytics.languageMixDescription', { name: chatbotName }) ||
+                  `What visitors chat to ${chatbotName} in, and how each language performs`
+                }
                     actions={
                       // The SAME state the message trend uses, rendered here so
                       // the control is reachable from the tab it affects. Not a
                       // second selector: moving it on either tab moves it on both.
                       <SegmentedControl
-                        options={TREND_RANGES}
+                        options={TREND_RANGES.map((r) => ({
+                          ...r,
+                          label: t(`analytics.range.${r.value}`) || r.label,
+                        }))}
                         value={range}
                         onChange={setRange}
-                        ariaLabel="Language breakdown time range"
+                        ariaLabel={t('analytics.languageBreakdownTimeRange') || 'Language breakdown time range'}
                       />
                     }
                   />
@@ -470,8 +499,8 @@ export function AnalyticsPage(): ReactElement {
                 <Card>
                   <CardHeader>
                     <SectionHeader
-                      title="Translation"
-                      description="Live chat translated between your visitors and your team"
+                      title={t('analytics.translation') || 'Translation'}
+                      description={t('analytics.liveChatTranslatedBetweenYour') || 'Live chat translated between your visitors and your team'}
                     />
                   </CardHeader>
                   <CardContent className="pt-0">

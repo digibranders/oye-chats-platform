@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { t as translateNow } from '../i18n/i18n';
 import { getVapidPublicKey, subscribePush, unsubscribePush } from '../services/api';
 
 // ── Capability detection ─────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ export function usePushSubscription(): UsePushSubscriptionResult {
         if (!active) return;
         setPhase({
           status: 'error',
-          message: toMessage(error, 'Couldn’t check your notification status.'),
+          message: toMessage(error, translateNow('app.couldntCheckYourNotificationStatus') || 'Couldn’t check your notification status.'),
         });
       }
     })();
@@ -185,7 +186,7 @@ export function usePushSubscription(): UsePushSubscriptionResult {
       }
       setPhase(await mintSubscription(registration));
     } catch (error) {
-      setActionError(toMessage(error, 'Couldn’t enable notifications. Please try again.'));
+      setActionError(toMessage(error, translateNow('app.couldntEnableNotificationsPleaseTry') || 'Couldn’t enable notifications. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -213,7 +214,7 @@ export function usePushSubscription(): UsePushSubscriptionResult {
       // that's exactly the honest `incomplete` state.
       setPhase({ status: 'incomplete' });
     } catch (error) {
-      setActionError(toMessage(error, 'Couldn’t turn off notifications. Please try again.'));
+      setActionError(toMessage(error, translateNow('app.couldntTurnOffNotificationsPlease') || 'Couldn’t turn off notifications. Please try again.'));
     } finally {
       setBusy(false);
     }

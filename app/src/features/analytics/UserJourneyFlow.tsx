@@ -1,4 +1,5 @@
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { formatNumber } from '../../i18n/formatters';
 import {
   BookOpen,
   Bot,
@@ -41,6 +42,11 @@ import {
   outcomeLabel,
   type FilterableOutcome,
 } from './journeyModel';
+// `translateNow` in memos/effects: the hook's `t` changes identity per locale,
+// which breaks the compiler's memoization analysis and would add a dependency
+// that recomputes on every language change. This resolves at call time.
+import { t as translateNow } from '../../i18n/i18n';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * UserJourneyFlow, a Sankey-inspired flow visualisation. Sources on
@@ -266,6 +272,8 @@ const EXIT_DESTINATION = { id: 'exit', label: 'Drop-off / Exit', tone: 'gray' as
 // left so the entry column sums to the center count instead of silently
 // under-counting these sessions. Sentinel, never a real URL path, so
 // clicking it is a no-op rather than a page filter.
+// @i18n-exempt: sentinel VALUE, compared and filtered on, never chrome.
+// Translating it would break the comparison that identifies these sessions.
 const DIRECT_PATH = 'Direct (no prior page)';
 
 const DEST_COLUMN_X = 990;
@@ -351,6 +359,8 @@ const TRIE_MAX_LEAVES = 25;
 const DEFAULT_MAX_FLOWS = 5;
 /** Options for the "Page flows shown" control in the filter popover. `All`
  *  maps to the hard ceiling so it shows every fetched flow. */
+// @i18n-exempt: resolved where it is rendered, keyed by the option value
+// (`analytics.flowCount.<value>`); the English here is that lookup's fallback.
 const FLOW_COUNT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: 'Top 5', value: 5 },
   { label: 'Top 10', value: 10 },
@@ -687,6 +697,7 @@ export interface UserJourneyFlowProps {
 }
 
 export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
+  const { t } = useTranslation();
   const { status, data, error, refreshing, reload, lastUpdatedAt } = useJourneyAnalytics(botId);
   const [zoomOpen, setZoomOpen] = useState(false);
   // Click a row to focus it. That row stays at full opacity, everything
@@ -731,16 +742,16 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // on every hook update anyway.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 1_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNowTick(Date.now()), 1_000);
+    return () => clearInterval(timer);
   }, []);
   const freshnessLabel = useMemo(() => {
     if (lastUpdatedAt == null) return null;
     const secs = Math.max(0, Math.round((nowTick - lastUpdatedAt) / 1_000));
-    if (secs < 5) return 'Updated just now';
-    if (secs < 60) return `Updated ${secs}s ago`;
+    if (secs < 5) return translateNow('analytics.updatedJustNow') || 'Updated just now';
+    if (secs < 60) return translateNow('analytics.updatedSecsAgo', { secs }) || `Updated ${secs}s ago`;
     const mins = Math.round(secs / 60);
-    return `Updated ${mins}m ago`;
+    return translateNow('analytics.updatedMinsAgo', { mins }) || `Updated ${mins}m ago`;
   }, [lastUpdatedAt, nowTick]);
 
   // Human label for the active flow-count scope ("Top 5" / "Top 10" /
@@ -749,7 +760,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // the filter popover. Falls back defensively if maxFlows ever holds a
   // value outside FLOW_COUNT_OPTIONS.
   const flowCountLabel = useMemo(
-    () => FLOW_COUNT_OPTIONS.find((o) => o.value === maxFlows)?.label ?? `Top ${maxFlows}`,
+    () =>
+      translateNow(`analytics.flowCount.${maxFlows}`) ||
+      FLOW_COUNT_OPTIONS.find((o) => o.value === maxFlows)?.label ||
+      `Top ${maxFlows}`,
     [maxFlows],
   );
 
@@ -1045,8 +1059,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title="Pick a chatbot to see its flow"
-        description="Journey flows are always per-chatbot. Use the chatbot switcher above to focus this view."
+        title={t('analytics.pickAChatbotForFlow') || 'Pick a chatbot to see its flow'}
+        description={t('analytics.journeyFlowsAreAlwaysPer') || 'Journey flows are always per-chatbot. Use the chatbot switcher above to focus this view.'}
       />
     );
   }
@@ -1060,12 +1074,12 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return (
       <EmptyState
         icon={TriangleAlert}
-        title="We couldn’t load the flow"
-        description={error ?? 'Something went wrong.'}
+        title={t('analytics.weCouldntLoadTheFlow') || 'We couldn’t load the flow'}
+        description={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')}
         action={
           <Button variant="primary" onClick={reload}>
             <RefreshCw size={16} aria-hidden="true" />
-            Try again
+            {t('analytics.tryAgain') || 'Try again'}
           </Button>
         }
       />
@@ -1075,8 +1089,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return (
       <EmptyState
         icon={UserCheck}
-        title="No chat sessions yet in this window"
-        description="Once visitors start chatting with your chatbot, their journey through your pages will render here."
+        title={t('analytics.noChatSessionsYetIn') || 'No chat sessions yet in this window'}
+        description={t('analytics.onceVisitorsStartChattingWith2') || 'Once visitors start chatting with your chatbot, their journey through your pages will render here.'}
       />
     );
   }
@@ -1089,7 +1103,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       <div className="relative overflow-hidden rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-6">
         <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
-            User Journey Flow (All Paths)
+            {t('analytics.userJourneyFlowAllPaths') || 'User Journey Flow (All Paths)'}
           </h3>
           <Button
             variant="secondary"
@@ -1098,12 +1112,12 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               setOutcomeFilter(null);
             }}
           >
-            Clear filters
+            {t('analytics.clearFilters') || 'Clear filters'}
           </Button>
         </div>
         <EmptyState
           icon={Compass}
-          title={flow.hasTrackedJourneys ? 'No journeys match this filter' : 'No journeys tracked yet'}
+          title={flow.hasTrackedJourneys ? t('analytics.noJourneysMatchThisFilter') || 'No journeys match this filter' : t('analytics.noJourneysTrackedYet') || 'No journeys tracked yet'}
           description={filterEmptyDescription({
             outcome: outcomeFilter,
             startPage: effectiveStartFilter,
@@ -1356,10 +1370,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             <Bot size={22} strokeWidth={1.75} />
           </div>
           <p className="text-[11px] font-medium leading-tight text-[var(--ds-accent-fg)] opacity-90">
-            Opened Chatbot
+            {t('analytics.openedChatbot') || 'Opened Chatbot'}
           </p>
           <p className="tabular-nums text-[16px] font-semibold leading-tight text-[var(--ds-accent-fg)]">
-            {flow.centerValue.toLocaleString()}
+            {formatNumber(flow.centerValue)}
           </p>
         </div>
       </foreignObject>
@@ -1419,7 +1433,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               }}
               subtitle={node.isFork ? 'merged' : undefined}
               active={selectedRowId === node.id}
-              tooltip={`${node.path} · ${value.toLocaleString()} ${value === 1 ? 'visitor' : 'visitors'}${node.isFork ? ' (merged across branches)' : ''}`}
+              tooltip={`${node.path} · ${formatNumber(value)} ${value === 1 ? 'visitor' : 'visitors'}${node.isFork ? t('analytics.mergedAcrossBranches') || ' (merged across branches)' : ''}`}
             />
           </foreignObject>
         );
@@ -1478,10 +1492,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
-            User Journey Flow (All Paths)
+            {t('analytics.userJourneyFlowAllPaths') || 'User Journey Flow (All Paths)'}
           </h3>
           <p className="text-[12px] text-[var(--ds-text-muted)]">
-            Thicker lines represent more users
+            {t('analytics.thickerLinesRepresentMoreUsers') || 'Thicker lines represent more users'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1499,21 +1513,27 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             type="button"
             onClick={() => setFilterOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-            aria-label={`Showing ${flowCountLabel} page flows. Click to change how many are shown.`}
-            title="Change how many page flows are shown"
+            aria-label={
+            translateNow('analytics.showingFlows', { count: flowCountLabel }) ||
+            `Showing ${flowCountLabel} page flows. Click to change how many are shown.`
+          }
+            title={t('analytics.changeHowManyPageFlows') || 'Change how many page flows are shown'}
           >
-            <span className="text-[var(--ds-text-muted)]">Showing:</span>
-            <span>{flowCountLabel === 'All' ? 'All flows' : `${flowCountLabel} flows`}</span>
+            <span className="text-[var(--ds-text-muted)]">{t('analytics.showing') || 'Showing:'}</span>
+            <span>{flowCountLabel === 'All' ? t('analytics.allFlows') || 'All flows' : `${flowCountLabel} flows`}</span>
           </button>
           {startFilter && (
             <button
               type="button"
               onClick={() => setStartFilter(null)}
               className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-              aria-label={`Clear filter: journeys starting on ${startFilter}`}
-              title="Clear filter"
+              aria-label={
+              translateNow('analytics.clearStartFilter', { page: startFilter }) ||
+              `Clear filter: journeys starting on ${startFilter}`
+            }
+              title={t('analytics.clearFilter') || 'Clear filter'}
             >
-              <span className="text-[var(--ds-text-muted)]">Starts on:</span>
+              <span className="text-[var(--ds-text-muted)]">{t('analytics.startsOn') || 'Starts on:'}</span>
               <span className="max-w-[160px] truncate">{startFilter}</span>
               <span className="text-[var(--ds-text-muted)]">✕</span>
             </button>
@@ -1523,16 +1543,19 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               type="button"
               onClick={() => setOutcomeFilter(null)}
               className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
-              aria-label={`Clear outcome filter: ${outcomeFilter}`}
-              title="Clear outcome filter"
+              aria-label={
+              translateNow('analytics.clearOutcomeFilter', { outcome: outcomeFilter }) ||
+              `Clear outcome filter: ${outcomeFilter}`
+            }
+              title={t('analytics.clearOutcomeFilterShort') || 'Clear outcome filter'}
             >
-              <span className="text-[var(--ds-text-muted)]">Ends in:</span>
+              <span className="text-[var(--ds-text-muted)]">{t('analytics.endsIn') || 'Ends in:'}</span>
               <span>{outcomeLabel(outcomeFilter)}</span>
               <span className="text-[var(--ds-text-muted)]">✕</span>
             </button>
           )}
           <IconButton
-            aria-label="Refresh"
+            aria-label={t('analytics.refresh') || 'Refresh'}
             onClick={reload}
             disabled={refreshing}
           >
@@ -1544,7 +1567,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           </IconButton>
           <div className="relative">
             <IconButton
-              aria-label="Filter by starting page"
+              aria-label={t('analytics.filterByStartingPage') || 'Filter by starting page'}
               onClick={() => setFilterOpen((v) => !v)}
               active={startFilter != null || maxFlows !== DEFAULT_MAX_FLOWS || filterOpen}
             >
@@ -1565,7 +1588,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               />
             )}
           </div>
-          <IconButton aria-label="Expand diagram" onClick={() => setZoomOpen(true)}>
+          <IconButton aria-label={t('analytics.expandDiagram') || 'Expand diagram'} onClick={() => setZoomOpen(true)}>
             <Maximize2 size={16} />
           </IconButton>
         </div>
@@ -1586,8 +1609,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       <Modal
         open={zoomOpen}
         onClose={() => setZoomOpen(false)}
-        title="User Journey Flow"
-        description="Drag to pan · scroll to zoom"
+        title={t('analytics.userJourneyFlow') || 'User Journey Flow'}
+        description={t('analytics.dragToPanScrollTo') || 'Drag to pan · scroll to zoom'}
         size="xl"
       >
         <ZoomableFlowCanvas vbH={flow.effVBH}>{diagramContent}</ZoomableFlowCanvas>
@@ -1622,6 +1645,7 @@ function FlowCard({
    *  clipped by displayPath(). */
   tooltip?: string;
 }): ReactElement {
+  const { t } = useTranslation();
   const tone = TONE[node.tone];
   const compact = node.width < FLOW_CARD_COMPACT_THRESHOLD;
   const borderClass = active
@@ -1653,10 +1677,10 @@ function FlowCard({
         )}
         <div className="min-w-0 max-w-full text-center">
           <p className="truncate text-[10px] font-medium leading-tight text-[var(--ds-text-muted)]">
-            {node.label}
+            {t(`analytics.destination.${node.id}`) || node.label}
           </p>
           <p className="tabular-nums text-[11px] font-semibold leading-tight text-[var(--ds-text)]">
-            {node.value.toLocaleString()}
+            {formatNumber(node.value)}
           </p>
         </div>
       </div>
@@ -1676,9 +1700,11 @@ function FlowCard({
         />
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">{node.label}</p>
+        <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">
+          {t(`analytics.destination.${node.id}`) || node.label}
+        </p>
         <p className="tabular-nums text-[13px] font-semibold leading-tight text-[var(--ds-text)]">
-          {node.value.toLocaleString()}
+          {formatNumber(node.value)}
           {!hidePct && typeof node.pct === 'number' && node.value > 0 && (
             <span className="ml-1 text-[11px] font-normal text-[var(--ds-text-subtle)]">
               ({node.pct}%)
@@ -1718,6 +1744,7 @@ function StartingPageFilter({
   onSelect: (path: string | null) => void;
   onClose: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   // Close on outside click, a small effect that watches document
   // mousedown; skipped when the target is inside the popover so
   // scrolling the list doesn't close it.
@@ -1736,7 +1763,7 @@ function StartingPageFilter({
     >
       <div className="border-b border-[var(--ds-border)] px-3 py-2.5">
         <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          Page flows shown
+          {t('analytics.pageFlowsShown') || 'Page flows shown'}
         </p>
         <div className="flex gap-0.5 rounded-lg bg-[var(--ds-bg-sunken)] p-0.5">
           {FLOW_COUNT_OPTIONS.map((opt) => {
@@ -1761,7 +1788,7 @@ function StartingPageFilter({
       </div>
       <div className="border-b border-[var(--ds-border)] px-3 py-2">
         <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          Filter by starting page
+          {t('analytics.filterByStartingPage') || 'Filter by starting page'}
         </p>
       </div>
       <ul className="max-h-72 overflow-y-auto p-1">
@@ -1773,15 +1800,15 @@ function StartingPageFilter({
               selected == null ? 'bg-[var(--ds-bg-sunken)] font-medium text-[var(--ds-text)]' : 'text-[var(--ds-text-muted)]'
             }`}
           >
-            <span>All pages</span>
+            <span>{t('analytics.allPages') || 'All pages'}</span>
             {selected == null && (
-              <span className="text-[10px] uppercase text-[var(--ds-accent-fg)]">Active</span>
+              <span className="text-[10px] uppercase text-[var(--ds-accent-fg)]">{t('analytics.active') || 'Active'}</span>
             )}
           </button>
         </li>
         {pages.length === 0 ? (
           <li className="px-3 py-3 text-[12px] text-[var(--ds-text-subtle)]">
-            No starting pages recorded yet in this window.
+            {t('analytics.noStartingPagesRecordedYet') || 'No starting pages recorded yet in this window.'}
           </li>
         ) : (
           pages.map((p) => {
@@ -1798,7 +1825,7 @@ function StartingPageFilter({
                 >
                   <span className="min-w-0 flex-1 truncate">{p.path}</span>
                   <span className="tabular-nums text-[11px] text-[var(--ds-text-muted)]">
-                    {p.sessions.toLocaleString()}
+                    {formatNumber(p.sessions)}
                   </span>
                 </button>
               </li>
@@ -1871,6 +1898,7 @@ function clamp(v: number, min: number, max: number): number {
  * scroll every time the visitor tried to zoom.
  */
 function ZoomableFlowCanvas({ children, vbH }: { children: ReactNode; vbH: number }): ReactElement {
+  const { t } = useTranslation();
   const svgRef = useRef<SVGSVGElement>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const [dragging, setDragging] = useState(false);
@@ -1966,13 +1994,13 @@ function ZoomableFlowCanvas({ children, vbH }: { children: ReactNode; vbH: numbe
 
       {/* Zoom toolbar. Sits on top of the canvas in the corner. */}
       <div className="absolute right-3 top-3 flex flex-col gap-1">
-        <CanvasButton onClick={zoomIn} aria-label="Zoom in" disabled={transform.scale >= ZOOM_MAX}>
+        <CanvasButton onClick={zoomIn} aria-label={t('analytics.zoomIn') || 'Zoom in'} disabled={transform.scale >= ZOOM_MAX}>
           <ZoomIn size={14} />
         </CanvasButton>
-        <CanvasButton onClick={zoomOut} aria-label="Zoom out" disabled={transform.scale <= ZOOM_MIN}>
+        <CanvasButton onClick={zoomOut} aria-label={t('analytics.zoomOut') || 'Zoom out'} disabled={transform.scale <= ZOOM_MIN}>
           <ZoomOut size={14} />
         </CanvasButton>
-        <CanvasButton onClick={reset} aria-label="Reset view">
+        <CanvasButton onClick={reset} aria-label={t('analytics.resetView') || 'Reset view'}>
           <RotateCcw size={14} />
         </CanvasButton>
       </div>

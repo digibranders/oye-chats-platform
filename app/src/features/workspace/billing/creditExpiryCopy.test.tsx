@@ -13,7 +13,7 @@ import { TopupModal } from './TopupModal';
  *
  * The one piece of evidence the client DOES have is the customer's own live
  * grants: `GET /credits/balance` returns `soonest_expiry`, non-null exactly when
- * a top-up they hold carries an expiry. `UsageHero` already gates on it. These
+ * a top-up they hold carries an expiry. `AgentCreditHero` already gates on it. These
  * tests pin that same rule onto the two surfaces that were still promising
  * forever, and pin the third case the hero never had to answer: say NOTHING
  * when there is no evidence either way.

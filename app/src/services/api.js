@@ -1,6 +1,6 @@
 import axios from 'axios';
+import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import {
     IMPERSONATION_FORBIDDEN_MESSAGE,
     endImpersonationSession,
@@ -44,14 +44,17 @@ const api = axios.create({
     timeout: 30000,
 });
 
-const buildApiError = (error, fallbackMessage = 'Request failed') => {
+const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed') || 'Request failed') => {
     const status = error.response?.status;
     const data = error.response?.data;
     let detail = data?.detail;
 
     // Handle Pydantic 422 validation errors (detail is an array of error objects)
     if (status === 422 && Array.isArray(detail) && detail.length > 0) {
-        const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+        const msg = detail[0]?.msg || detail[0]?.message || translateNow('app.validationError') || 'Validation error';
+        // @i18n-exempt: this strips a prefix the SERVER emits (FastAPI's
+        // pydantic message). Translating it would stop the replace matching
+        // and leak "Value error, " into the message shown to the user.
         detail = msg.replace('Value error, ', '');
     }
 
@@ -67,7 +70,7 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
         // SlowAPI uses {"error": "Rate limit exceeded: ..."} - not FastAPI's {"detail": "..."}
         message = (typeof data?.error === 'string' && data.error)
             ? data.error
-            : 'Too many requests - please wait a moment and try again.';
+            : translateNow('app.tooManyRequestsPleaseWait') || 'Too many requests - please wait a moment and try again.';
     } else {
         message = error.message || fallbackMessage;
     }
@@ -166,7 +169,7 @@ api.interceptors.request.use(
         // the super-admin's own account. Cancellations are swallowed by the
         // response interceptor's ``isCancel`` guard.
         if (isImpersonationSessionEnded()) {
-            return Promise.reject(new axios.CanceledError('Impersonation session ended'));
+            return Promise.reject(new axios.CanceledError(translateNow('app.impersonationEnded') || 'Impersonation session ended'));
         }
 
         const token = getAuthItem('admin_token');
@@ -291,7 +294,7 @@ api.interceptors.response.use(
             || isImpersonationSessionEnded()
         ) {
             if (status === 401) {
-                endImpersonationSession('This impersonation session expired or was revoked.');
+                endImpersonationSession(translateNow('app.thisImpersonationSessionExpiredOr') || 'This impersonation session expired or was revoked.');
             } else if (status === 403 && isImpersonationBlockedWrite(error)) {
                 applyImpersonationForbiddenCopy(error);
             }
@@ -345,10 +348,6 @@ api.interceptors.response.use(
             // logs-out doesn't leave a stale localStorage shadow (or
             // vice versa).
             clearAuthStorage();
-            // Banner dismissals are scoped to the session, not to a user -
-            // wipe them on auto-logout so the next account sees a fresh
-            // trial banner.
-            clearTrialBannerDismissals();
             // Only force the user to /login from a PROTECTED page. On public
             // auth pages (notably /register from the "Start free" CTA) a stale
             // token's 401 must not hijack the page - clear it and stay put.
@@ -2888,6 +2887,45 @@ export const changeOperatorSeats = async (delta, botId = null) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to update operator seats');
+    }
+};
+
+/**
+ * Buy the branding-removal add-on for a subscription.
+ *
+ * Branding removal is not bundled into any plan tier - it rides on its own
+ * Razorpay mandate, exactly like an extra operator seat. The entitlement is NOT
+ * granted by this call: the mandate is minted in `created` state and
+ * `branding_removable` only flips once the customer authorizes the returned
+ * `checkout` payload and the `activated` webhook lands. Callers must re-read
+ * entitlements rather than assume success.
+ *
+ * 400 when the subscription is on the Free plan.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const purchaseBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.post('/subscriptions/branding-addon', { bot_id: botId ?? null });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start the branding removal add-on');
+    }
+};
+
+/**
+ * Cancel the branding-removal add-on. Cancels immediately (not at cycle end),
+ * so billing stops the moment the customer asks; the badge reappears on their
+ * widget within the entitlements cache TTL.
+ * @param {number|null} botId - Target that agent's subscription; null = account.
+ */
+export const cancelBrandingAddon = async (botId = null) => {
+    try {
+        const response = await api.delete('/subscriptions/branding-addon', {
+            data: { bot_id: botId ?? null },
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to cancel the branding removal add-on');
     }
 };
 

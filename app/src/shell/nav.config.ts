@@ -3,12 +3,23 @@ import { JourneyIcon } from './icons/JourneyIcon';
 
 export interface NavItem {
   to: string;
+  /**
+   * English label. Also the inline fallback when a dictionary has no entry.
+   *
+   * This list is a module constant, so anything rendered straight from it
+   * freezes its English at import and would survive a language switch
+   * untouched. Consumers must render `t(item.labelKey) || item.label`.
+   */
   label: string;
+  /** Dictionary key for {@link label}. */
+  labelKey: string;
   icon: LucideIcon;
   /** Match the route exactly (used for the index "/" Home link). */
   end?: boolean;
   /** Short description for the command palette. */
   hint?: string;
+  /** Dictionary key for {@link hint}. */
+  hintKey?: string;
   /** Visible to a plain operator acting in someone else's workspace. Operators
    *  get an inbox-scoped view; owner/admin surfaces (Home, Chatbots, Analytics,
    *  Workspace) are hidden and route-guarded. */
@@ -23,19 +34,19 @@ export interface NavItem {
  * (or promoted) once the design settles.
  */
 export const PRIMARY_NAV: NavItem[] = [
-  { to: '/', label: 'Home', icon: Home, end: true, hint: 'Daily overview' },
-  { to: '/agents', label: 'Chatbots', icon: Bot, hint: 'Create, train and manage chatbots' },
-  { to: '/inbox', label: 'Support', icon: Inbox, hint: 'Live chat and messages', allowOperator: true },
-  { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', allowOperator: true },
-  { to: '/journey', label: 'Journey', icon: JourneyIcon, hint: 'Visitor journey flow' },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across chatbots' },
-  { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and usage' },
+  { to: '/', label: 'Home', labelKey: 'nav.home', icon: Home, end: true, hint: 'Daily overview', hintKey: 'nav.homeHint' },
+  { to: '/agents', label: 'Chatbots', labelKey: 'nav.agents', icon: Bot, hint: 'Create, train and manage chatbots', hintKey: 'nav.agentsHint' },
+  { to: '/inbox', label: 'Support', labelKey: 'nav.inbox', icon: Inbox, hint: 'Live chat and messages', hintKey: 'nav.inboxHint', allowOperator: true },
+  { to: '/leads', label: 'Leads', labelKey: 'nav.leads', icon: Users, hint: 'Captured leads and qualification', hintKey: 'nav.leadsHint', allowOperator: true },
+  { to: '/journey', label: 'Journey', labelKey: 'nav.journey', icon: JourneyIcon, hint: 'Visitor journey flow', hintKey: 'nav.journeyHint' },
+  { to: '/analytics', label: 'Analytics', labelKey: 'nav.analytics', icon: BarChart3, hint: 'Performance across chatbots', hintKey: 'nav.analyticsHint' },
+  { to: '/workspace', label: 'Workspace', labelKey: 'nav.workspace', icon: Building2, hint: 'Members, billing and usage', hintKey: 'nav.workspaceHint' },
 ];
 
 /** Secondary, bottom-anchored nav - preferences, separate from the primary
  *  object-nav. Account/workspace switching stays in the TopBar menu. */
 export const SECONDARY_NAV: NavItem[] = [
-  { to: '/settings', label: 'Settings', icon: Settings, hint: 'Profile, workspace and preferences', allowOperator: true },
+  { to: '/settings', label: 'Settings', labelKey: 'nav.settings', icon: Settings, hint: 'Profile, workspace and preferences', hintKey: 'nav.settingsHint', allowOperator: true },
 ];
 
 /**

@@ -16,6 +16,8 @@ import { ChannelCard } from './ChannelCard';
 import { WebsiteInstall } from './WebsiteInstall';
 import { DomainRestrictionsSection } from './DomainRestrictionsSection';
 import { SubdomainSessionSection } from './SubdomainSessionSection';
+import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * The full agent record includes channel fields the lightweight list `Bot`
@@ -50,6 +52,7 @@ function ChannelsSkeleton(): ReactElement {
  * loaded fresh via `getBot`.
  */
 export function ChannelsPage(): ReactElement {
+  const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const numericId = agent?.id ?? null;
 
@@ -73,7 +76,7 @@ export function ChannelsPage(): ReactElement {
         if (!cancelled) {
           setFailed({
             token,
-            message: err instanceof Error ? err.message : 'We couldn’t load your channels.',
+            message: err instanceof Error ? err.message : translateNow('agents.weCouldntLoadYourChannels') || 'We couldn’t load your channels.',
           });
         }
       });
@@ -92,8 +95,8 @@ export function ChannelsPage(): ReactElement {
       return (
         <EmptyState
           icon={PlugZap}
-          title="No chatbot selected"
-          description="Open a chatbot to see where it's connected."
+          title={t('agents.noChatbotSelected') || 'No chatbot selected'}
+          description={t('agents.openAChatbotToSee') || 'Open a chatbot to see where it\'s connected.'}
         />
       );
     }
@@ -102,11 +105,11 @@ export function ChannelsPage(): ReactElement {
       return (
         <EmptyState
           icon={PlugZap}
-          title="Couldn’t load channels"
-          description={loadError ?? 'Something went wrong. Please try again.'}
+          title={t('agents.couldntLoadChannels') || 'Couldn’t load channels'}
+          description={loadError ?? (t('agents.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.')}
           action={
             <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)}>
-              Try again
+              {t('agents.tryAgain') || 'Try again'}
             </Button>
           }
         />
@@ -126,16 +129,16 @@ export function ChannelsPage(): ReactElement {
           <InsightCard
             tone="warning"
             icon={PlugZap}
-            title="Your chatbot isn’t live yet"
-            body="Add the snippet below to your website so visitors can start chatting. It takes about a minute."
+            title={t('agents.yourChatbotIsntLiveYet') || 'Your chatbot isn’t live yet'}
+            body={t('agents.addTheSnippetBelowTo') || 'Add the snippet below to your website so visitors can start chatting. It takes about a minute.'}
           />
         )}
 
         {/* Live channels */}
-        <section aria-label="Live channels" className="space-y-4">
+        <section aria-label={t('agents.liveChannels') || 'Live channels'} className="space-y-4">
           <SectionHeader
-            title="Live channels"
-            description="Places your chatbot can answer people today."
+            title={t('agents.liveChannels') || 'Live channels'}
+            description={t('agents.placesYourChatbotCanAnswer') || 'Places your chatbot can answer people today.'}
           />
 
           {/* Website - the primary channel, with the full install flow */}
@@ -146,18 +149,18 @@ export function ChannelsPage(): ReactElement {
             description={
               installed
                 ? website
-                  ? `Embedded on ${website}.`
-                  : 'The chat widget is installed on your site.'
-                : 'Embed the chat widget to go live on your site.'
+                  ? t('agents.embeddedOn', { site: website }) || `Embedded on ${website}.`
+                  : t('agents.widgetInstalledOnSite') || 'The chat widget is installed on your site.'
+                : t('agents.embedTheChatWidgetTo') || 'Embed the chat widget to go live on your site.'
             }
             status={
               installed ? (
                 <StatusBadge tone="success" dot>
-                  Live
+                  {t('agents.live') || 'Live'}
                 </StatusBadge>
               ) : (
                 <StatusBadge tone="warning" dot>
-                  Not installed
+                  {t('agents.notInstalled') || 'Not installed'}
                 </StatusBadge>
               )
             }
@@ -195,7 +198,7 @@ export function ChannelsPage(): ReactElement {
               </>
             ) : (
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                This chatbot doesn’t have an embed key yet. Finish creating the chatbot to get one.
+                {t('agents.thisChatbotDoesntHaveAn') || 'This chatbot doesn’t have an embed key yet. Finish creating the chatbot to get one.'}
               </p>
             )}
           </ChannelCard>

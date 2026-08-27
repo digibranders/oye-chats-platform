@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { formatDateTime as i18nFormatDateTime } from '../../i18n/formatters';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -54,6 +55,7 @@ import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain';
 import { ChannelCard } from '../agents/channels/ChannelCard';
 import { COMING_SOON_CHANNELS } from '../agents/channels/channels.data';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Bot integration fields ────────────────────────────────────────────────────
 // The shared `Bot` shim intentionally types only the core columns. Email routing
@@ -207,12 +209,11 @@ function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString('en-GB', {
+  return i18nFormatDateTime(date, {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
-    minute: '2-digit',
-  });
+    minute: '2-digit', year: undefined });
 }
 
 function truncateUrl(url: string, max = 72): string {
@@ -1636,7 +1637,12 @@ export function IntegrationsPage(): ReactElement {
               iconTone="neutral"
               brand={channel.brand}
               name={channel.name}
-              description={channel.description}
+              // The table is built at import, so its description is the English
+              // fallback and the real one resolves here, from the channel id.
+              // (This page's own copy is localized in a later phase.)
+              description={
+                translateNow(`agents.channel.${channel.id}`) || channel.description
+              }
               status={<StatusBadge tone="neutral">Coming soon</StatusBadge>}
             />
           ))}
