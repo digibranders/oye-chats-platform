@@ -22,9 +22,15 @@ const GLYPH_BOX = 'flex h-icon-md w-icon-md shrink-0 items-center justify-center
  * which is measured against paper; on the near-black rail it is the same trap
  * DESIGN.md §2.2 warns about for every other paper token, so the rail's own
  * accent carries it.
+ *
+ * `text-base` (14px), not `text-sm` (13px) — the next rung up the type scale.
+ * The rail is on screen in every state the app can be in, permanently, and at
+ * 13px its labels read smaller than the 14px body copy in the pages they open.
+ * Truncation is already the row's answer to a label that does not fit, so the
+ * one-rung increase costs nothing there.
  */
 const RAIL_ROW =
-  'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-[var(--dur-fast)] focus-visible:outline-rail-accent';
+  'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-base font-medium transition-colors duration-[var(--dur-fast)] focus-visible:outline-rail-accent';
 
 export interface RailFrameProps {
   /** The workspace switcher, or the platform console's mark. */

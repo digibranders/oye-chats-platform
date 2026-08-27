@@ -91,8 +91,8 @@ export function PlatformShell() {
     );
   }
 
-  // The drawer is always the full rail: it is an overlay with 248px to spend
-  // whatever the viewport is doing behind it.
+  // The drawer is always the full rail: it is an overlay with the whole
+  // `--spacing-rail` width to spend whatever the viewport is doing behind it.
   function renderRail(railCollapsed: boolean) {
     return (
       <RailFrame

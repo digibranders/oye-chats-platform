@@ -135,8 +135,10 @@ export function AppShell() {
               <BaseDialog.Backdrop className="motion-overlay fixed inset-0 z-[var(--z-scrim)] bg-overlay" />
               {/* The panel sits a rung above its own backdrop rather than
                   relying on DOM order, which is the failure the ladder exists
-                  to prevent. `w-rail` rather than `w-64`: every inset in the
-                  rail is tuned for 248, not 256. */}
+                  to prevent. `w-rail` rather than a fixed Tailwind width like
+                  `w-64`: every inset inside `Rail` is tuned against the same
+                  `--spacing-rail` token, so a fixed pixel class here would
+                  drift out of sync the next time that token changes. */}
               <BaseDialog.Popup className="motion-slide-left fixed inset-y-0 left-0 z-[var(--z-overlay)] w-rail focus:outline-none">
                 <BaseDialog.Title className="sr-only">Navigation</BaseDialog.Title>
                 <Rail

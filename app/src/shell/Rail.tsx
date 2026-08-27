@@ -24,7 +24,7 @@ import {
   railPrimary,
 } from './nav';
 import { OyeChatsMark } from './OyeChatsMark';
-import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { RailBrand } from './RailBrand';
 import { AgentSwitcher } from './AgentSwitcher';
 import { SetupProgress } from './SetupProgress';
 import { AccountMenu } from './AccountMenu';
@@ -174,7 +174,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
     </Tooltip>
   ) : (
     <>
-      <WorkspaceSwitcher onNavigate={onNavigate} />
+      <RailBrand />
       {onClose ? (
         <RailHeaderButton
           label="Close navigation"

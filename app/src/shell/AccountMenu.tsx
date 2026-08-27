@@ -66,7 +66,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
         <Avatar name={name} size="sm" />
         {!collapsed ? (
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-rail-text">{name}</span>
+            <span className="block truncate text-base font-medium text-rail-text">{name}</span>
             {email ? (
               <span className="block truncate text-2xs text-rail-text-muted">{email}</span>
             ) : null}

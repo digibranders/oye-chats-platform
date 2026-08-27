@@ -256,9 +256,14 @@ describe('the rail, rendered', () => {
     expect(create.className).toMatch(/\bw-6\b/);
   });
 
-  it('keeps the workspace block a menu at one workspace', () => {
+  it('renders the brand mark as a static block, not a workspace-switcher menu', () => {
+    // `RailBrand` replaced `WorkspaceSwitcher`: the current workspace's name
+    // was stated twice — once here as an interactive menu, once 48px below
+    // in the account menu — so this became the plain wordmark and switching
+    // workspaces moved to living only in the account menu's own paths.
     renderRail('/');
-    expect(screen.getByRole('button', { name: /workspace:/i })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'OyeChats' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /workspace/i })).not.toBeInTheDocument();
   });
 
   it('does not announce the create control as the page you are on', () => {
@@ -286,10 +291,10 @@ describe('the rail, rendered', () => {
 });
 
 describe('WORKSPACE_NAV', () => {
-  it('lists Journey as a direct sidebar entry pointing at the Analytics tab', () => {
+  it('lists Journey as its own top-level sidebar entry', () => {
     const journey = WORKSPACE_NAV.find((item) => item.label === 'Journey');
     expect(journey).toBeDefined();
-    expect(journey?.to).toBe('/analytics/journey');
+    expect(journey?.to).toBe('/journey');
   });
 });
 
@@ -297,7 +302,6 @@ describe('the breadcrumb', () => {
   it.each([
     ['/billing/usage', ['Billing', 'Usage']],
     ['/billing/reports', ['Billing', 'Reports']],
-    ['/analytics/journey', ['Analytics', 'Journeys']],
     ['/settings/workspace', ['Settings', 'Workspace']],
     ['/settings/team', ['Settings', 'Team']],
     ['/settings/integrations', ['Settings', 'Integrations']],
@@ -313,6 +317,7 @@ describe('the breadcrumb', () => {
     ['/welcome', 'Welcome'],
     ['/welcome/12', 'Welcome'],
     ['/account', 'Account'],
+    ['/journey', 'Journey'],
   ])('never renders an empty trail at %s', (path, expected) => {
     expect(crumbsAt(path).map((crumb) => crumb.label)).toEqual([expected]);
   });

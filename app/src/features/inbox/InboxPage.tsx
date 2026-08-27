@@ -108,13 +108,13 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   const socket = useInboxSocket();
   const [params, setParams] = useSearchParams();
   // `SplitPane` shows its third pane at 1152px of split width, which beside the
-  // 248px rail is a 1400px viewport. The console used to promise three panes at
+  // 224px rail is a 1376px viewport. The console used to promise three panes at
   // 1280 and could not honour it: at exactly 1280 the transcript was 392px wide.
   //
   // A collapsed rail widens the split, so the pane can appear a little before
   // this says so — which offers the drawer as well as the pane for a moment,
   // rather than neither. That is the right way round for the error to fall.
-  const wide = useMediaQuery('(min-width: 1400px)');
+  const wide = useMediaQuery('(min-width: 1376px)');
 
   const view = parseView(params.get('view'));
   const selectedId = params.get('c');
