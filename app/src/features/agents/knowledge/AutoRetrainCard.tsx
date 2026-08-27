@@ -173,6 +173,25 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             }
           />
         </CardBody>
+      ) : !status.enabled && status.sourcesCount === 0 ? (
+        /* Off, with nothing it could refresh. The full card below reserves
+           space for facts that cannot exist yet: four definition rows that all
+           read "—", and a run table for a schedule that cannot run. Rendered in
+           full it measured 622px, which made this dormant control the largest
+           single card on the page — taller than the Add-knowledge panel that is
+           the page's actual job. The switch in the header and the reason below
+           are the whole card until there is a website to refresh. */
+        <CardBody>
+          <Alert tone="neutral">
+            There are no trained websites to refresh yet. Uploaded documents are not re-read — they
+            only change when you replace them.
+          </Alert>
+          {actionError ? (
+            <Alert tone="danger" live className="mt-4">
+              {actionError}
+            </Alert>
+          ) : null}
+        </CardBody>
       ) : (
         <>
           <CardBody>
@@ -223,12 +242,17 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             ) : null}
           </CardBody>
 
-          {/* Always rendered, so a newly-enabled schedule does not silently
-              grow by 250px after its first run. `DataTable` ships an `empty`
-              slot precisely so a table can hold its shape. Seated and flush,
+          {/* Rendered whenever a run is possible or has happened, so a
+              newly-enabled schedule does not silently grow by 250px after its
+              first run. `DataTable` ships an `empty` slot precisely so a table
+              can hold its shape. It is NOT rendered for a switched-off schedule
+              that has never run: holding 250px for rows that cannot arrive is
+              not holding shape, it is padding — and in a 24rem rail it was a
+              third of the card. Seated and flush,
               because a table inside a `CardSection` sits its border 20px inside
               the card's and its first cell 37px from the card edge, against a
               header title at 20. */}
+          {status.enabled || status.history.length > 0 ? (
           <CardBody flush>
             <DataTable
               seated
@@ -252,6 +276,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               }
             />
           </CardBody>
+          ) : null}
         </>
       )}
 

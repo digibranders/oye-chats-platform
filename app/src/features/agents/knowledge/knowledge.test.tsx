@@ -586,6 +586,72 @@ function status(overrides: Partial<RecrawlStatus> = {}): RecrawlStatus {
 }
 
 describe('AutoRetrainCard', () => {
+  /**
+   * A schedule that is off, on a chatbot with nothing trained, cannot run.
+   * It used to render the full dashboard anyway — four definition rows reading
+   * "—", an explanatory alert, and a reserved empty run table — which made this
+   * dormant card 622px, taller than the Add-knowledge panel above it and the
+   * largest single thing on the page.
+   */
+  it('stays small while it has nothing it could possibly refresh', () => {
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(
+          status({ enabled: false, sourcesCount: 0, history: [], lastRecrawlAt: null, nextRecrawlAt: null }),
+        )}
+        planName="Standard"
+      />,
+    );
+
+    // The switch and the reason are the whole card.
+    expect(screen.getByRole('switch')).toBeInTheDocument();
+    expect(screen.getByText(/no trained websites to refresh yet/i)).toBeInTheDocument();
+    // Not four em dashes and a table that cannot have rows.
+    expect(screen.queryByRole('table', { name: /recent weekly retrains/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Next check')).not.toBeInTheDocument();
+    expect(screen.queryByText(/no runs yet/i)).not.toBeInTheDocument();
+  });
+
+  it('does not reserve a run table for a schedule that is switched off', () => {
+    // Off, but it has a website, so the definition list still has something to
+    // say. The table does not: nothing will run until the switch goes on.
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(status({ enabled: false, sourcesCount: 2, history: [] }))}
+        planName="Standard"
+      />,
+    );
+    expect(screen.getByText('Websites in the set')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /recent weekly retrains/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps showing history for a schedule that ran before it was switched off', () => {
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(status({ enabled: false, sourcesCount: 2 }))}
+        planName="Standard"
+      />,
+    );
+    expect(screen.getByRole('table', { name: /recent weekly retrains/i })).toBeInTheDocument();
+  });
+
+  it('still reserves the run table once the schedule can actually run', () => {
+    // The original reason for always rendering it: a newly-enabled schedule
+    // must not silently grow by 250px after its first run.
+    mount(
+      <AutoRetrainCard
+        agentId={7}
+        section={section<RecrawlStatus | null>(status({ enabled: true, sourcesCount: 2, history: [] }))}
+        planName="Standard"
+      />,
+    );
+    expect(screen.getByRole('table', { name: /recent weekly retrains/i })).toBeInTheDocument();
+    expect(screen.getByText(/no runs yet/i)).toBeInTheDocument();
+  });
+
   it('shows the run history the backend has always written', () => {
     mount(
       <AutoRetrainCard agentId={7} section={section<RecrawlStatus | null>(status())} planName="Standard" />,

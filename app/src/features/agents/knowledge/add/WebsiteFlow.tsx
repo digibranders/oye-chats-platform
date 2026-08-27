@@ -221,6 +221,14 @@ export function WebsiteFlow({
           description="Slower, fewer pages per run."
         />
 
+        {/* Side by side once the column is wide enough for it. Stacked, the
+            cost block and the page list are ~190px and ~340px of a panel that
+            measured 999px in this state — and reading "20 pages · 100 credits"
+            is what the checkboxes are FOR, so the two belong on one row where
+            changing the selection visibly changes the number. Below `2xl` they
+            stack in this order, cost first, because the price is the thing you
+            check before you start ticking. */}
+        <div className="grid gap-4 @2xl/page:grid-cols-[18rem_minmax(0,1fr)] @2xl/page:items-start">
         {budget ? (
           <Well>
             <FigureList>
@@ -261,6 +269,7 @@ export function WebsiteFlow({
             disabled={crawlRunning}
           />
         ) : null}
+        </div>
 
         {crawlRunning ? (
           <IngestionProgress

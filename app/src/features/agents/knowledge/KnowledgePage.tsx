@@ -489,8 +489,18 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
           </CardBody>
         </Card>
 
-        {/* Look at what it has read, decide what is missing, add it — one row,
-            not a 600px scroll each way. */}
+        {/* See what it has read, then add to it. Both live in the primary
+            column because both are the page's job; the rail holds what you
+            only read (the gaps) and what you configure once (the schedule).
+
+            Adding used to be the rail. Measured at 1440 on a chatbot with no
+            sources, the rail carried 1,032px against the main column's 455 —
+            69% of the page in a 384px gutter, leaving ~590px of dead space
+            beside it, and widening the window only grew that gap because the
+            rail is a fixed 24rem. The page's own empty state says "Train it on
+            your website, or upload a document" while the control that does
+            exactly that sat in the narrow column and an empty table took the
+            wide one. */}
         <Columns
           asideWidth="md"
           asideLabel="Knowledge management"
@@ -519,15 +529,6 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
                 </CardBody>
               </Card>
 
-              <KnowledgeGapsCard
-                section={knowledge.gaps}
-                window={gapWindow}
-                onWindowChange={setGapWindow}
-              />
-            </Stack>
-          }
-          aside={
-            <Stack>
               <AddKnowledgePanel
                 agentId={agent.id}
                 agentName={agent.name ?? 'this chatbot'}
@@ -540,6 +541,15 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
                 planLoading={planLoading}
                 empty={summary.total === 0}
                 onChanged={refreshEverything}
+              />
+            </Stack>
+          }
+          aside={
+            <Stack>
+              <KnowledgeGapsCard
+                section={knowledge.gaps}
+                window={gapWindow}
+                onWindowChange={setGapWindow}
               />
 
               <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
