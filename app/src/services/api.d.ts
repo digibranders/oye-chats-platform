@@ -192,6 +192,16 @@ export function recordActivationEvent(
   opts?: { botId?: number | null; eventData?: unknown },
 ): Promise<void>;
 
+/** What `POST /bots/{botId}/install-invite` reports back. */
+export interface InstallInviteResult {
+  email: string;
+  sent_at: string;
+  /** True when this address had already been mailed for this chatbot. */
+  resent: boolean;
+}
+/** Email the install snippet to a developer. Rejects on failure. */
+export function sendInstallInvite(botId: number, email: string): Promise<InstallInviteResult>;
+
 // ── Authentication ───────────────────────────────────────────────────────────
 /** `POST /auth/login` — the customer/admin credential. */
 export interface ClientLoginResult {

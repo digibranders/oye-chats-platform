@@ -1,10 +1,22 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstallStatusCard } from './InstallStatusCard';
+import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
 import { installStatus, widgetHeartbeat } from './deployModel';
+import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
+
+vi.mock('../../../services/api', () => ({
+  recordActivationEvent: vi.fn(),
+  sendInstallInvite: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(recordActivationEvent).mockReset();
+  vi.mocked(sendInstallInvite).mockReset();
+});
 
 /**
  * What is covered here is what a unit test of the model cannot reach: that the
@@ -249,5 +261,153 @@ describe('PlatformGuide', () => {
     expect(
       screen.getByRole('combobox', { name: 'What is your website built on?' }),
     ).toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------- emailing the developer */
+
+/**
+ * The handoff to whoever actually edits the website.
+ *
+ * This was a `mailto:` link. On a machine with no mail client configured it did
+ * nothing at all, and its green tick was local state that meant "you clicked"
+ * and reset on reload. What is covered here is the part a model test cannot
+ * reach: that the control opens a field rather than navigating, that the sent
+ * state comes from the server and so survives a reload, and that a repeat send
+ * to the same person is confirmed rather than blocked.
+ */
+describe('SnippetSection — emailing the developer', () => {
+  const base = {
+    botKey: BOT_KEY,
+    botName: 'Acme Assistant',
+    botId: 7,
+    env: 'production' as const,
+    apiBaseUrl: 'https://api.oyechats.com',
+    platform: null,
+    attribution: true,
+    resolving: false,
+    devInviteEmail: null as string | null,
+    devInviteSentAt: null as string | null,
+  };
+
+  async function open(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: /email this to my developer/i }));
+    return screen.getByRole('textbox', { name: /developer'?s email/i });
+  }
+
+  it('opens a field instead of navigating away', async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<SnippetSection {...base} />);
+
+    expect(screen.queryByRole('textbox', { name: /developer'?s email/i })).not.toBeInTheDocument();
+    await open(user);
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+  });
+
+  it('does not spend a request on an address that cannot be one', async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<SnippetSection {...base} />);
+
+    const field = await open(user);
+    await user.type(field, 'not-an-email');
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    expect(sendInstallInvite).not.toHaveBeenCalled();
+    expect(await screen.findByText(/valid email address/i)).toBeInTheDocument();
+  });
+
+  it('sends, and then says who it went to', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendInstallInvite).mockResolvedValue({
+      email: 'dev@acme.com',
+      sent_at: new Date().toISOString(),
+      resent: false,
+    });
+    renderWithRouter(<SnippetSection {...base} />);
+
+    const field = await open(user);
+    await user.type(field, 'dev@acme.com');
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    expect(sendInstallInvite).toHaveBeenCalledWith(7, 'dev@acme.com');
+    // The address and the way back to it: both only exist in the sent state.
+    expect(await screen.findByText('dev@acme.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send again/i })).toBeInTheDocument();
+  });
+
+  it('reports a send that already happened, on a page it has never opened', () => {
+    // The whole point of storing this server-side: a reload, or another
+    // device, still knows.
+    renderWithRouter(
+      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+    );
+
+    expect(screen.getByText('dev@acme.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send again/i })).toBeInTheDocument();
+  });
+
+  it('confirms before mailing the same person twice, and still sends', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendInstallInvite).mockResolvedValue({
+      email: 'dev@acme.com',
+      sent_at: new Date().toISOString(),
+      resent: true,
+    });
+    renderWithRouter(
+      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /send again/i }));
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // A warning, not a wall.
+    expect(await screen.findByText(/already sent to dev@acme\.com/i)).toBeInTheDocument();
+    expect(sendInstallInvite).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /send it again/i }));
+    expect(sendInstallInvite).toHaveBeenCalledWith(7, 'dev@acme.com');
+  });
+
+  it('treats a different address as a new handoff, with no confirmation', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendInstallInvite).mockResolvedValue({
+      email: 'bob@acme.com',
+      sent_at: new Date().toISOString(),
+      resent: false,
+    });
+    renderWithRouter(
+      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /send again/i }));
+    const field = screen.getByRole('textbox', { name: /developer'?s email/i });
+    await user.clear(field);
+    await user.type(field, 'bob@acme.com');
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    expect(screen.queryByText(/already sent/i)).not.toBeInTheDocument();
+    expect(sendInstallInvite).toHaveBeenCalledWith(7, 'bob@acme.com');
+  });
+
+  it('keeps the typed address when the send fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendInstallInvite).mockRejectedValue(new Error('The mail service did not answer.'));
+    renderWithRouter(<SnippetSection {...base} />);
+
+    const field = await open(user);
+    await user.type(field, 'dev@acme.com');
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    expect(await screen.findByText(/did not answer/i)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /developer'?s email/i })).toHaveValue('dev@acme.com');
+  });
+
+  it('still offers the customer their own mail client', async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<SnippetSection {...base} />);
+
+    await open(user);
+    const mailto = screen.getByRole('link', { name: /my mail app/i });
+    expect(mailto).toHaveAttribute('href', expect.stringContaining('mailto:'));
   });
 });

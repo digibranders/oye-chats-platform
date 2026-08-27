@@ -263,6 +263,8 @@ export function DeployPage() {
                 platform={platform}
                 attribution={attribution}
                 resolving={entitlementsLoading}
+                devInviteEmail={bot.dev_invite_email ?? null}
+                devInviteSentAt={bot.dev_invite_sent_at ?? null}
               />
 
               {/* Help, only when wanted: two tabs over one card, instead of two

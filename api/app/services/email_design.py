@@ -306,6 +306,29 @@ def code_box(code: str, *, label: str = "Verification code") -> str:
     )
 
 
+def pre_box(code: str, *, label: str) -> str:
+    """A multi-line code block, left-aligned and wrapping.
+
+    Distinct from ``code_box``, which is built for a short verification code:
+    32px type, centred, with 0.30em letter-spacing. Run an HTML snippet through
+    that and it arrives as unreadable spaced-out capitals. This is the same
+    frame at body size, monospace, left-aligned, and pre-wrapped so a long
+    script tag folds instead of forcing the whole email into a sideways scroll
+    no mail client offers.
+    """
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'class="oc-fill oc-rule" style="background-color:{FILL};border:1px solid {RULE};'
+        f'border-radius:10px;margin:6px 0 18px 0;">'
+        f'<tr><td style="padding:16px;">'
+        f'<p class="oc-muted" style="margin:0 0 10px 0;font-family:{FONT};font-size:11px;font-weight:700;'
+        f'letter-spacing:0.14em;text-transform:uppercase;color:{INK400};">{html.escape(label)}</p>'
+        f'<pre class="oc-code" style="margin:0;font-family:{MONO};font-size:13px;line-height:1.6;'
+        f'color:{INK900};white-space:pre-wrap;word-break:break-all;">{esc(code)}</pre>'
+        f"</td></tr></table>"
+    )
+
+
 def section_label(text: str) -> str:
     return (
         f'<p class="oc-muted" style="margin:0 0 8px 0;font-family:{FONT};font-size:11px;font-weight:700;'

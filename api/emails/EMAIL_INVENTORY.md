@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (28 distinct emails)
+## 2. Email Catalogue (29 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -345,6 +345,19 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 
 ---
 
+#### G1. Install handoff to a developer
+| | |
+|---|---|
+| Function | `send_install_invite_email(to_email, bot_name, snippet, script_origin, api_origin, attribution, requester_name, reply_to, platform_name=None)` |
+| Subject | `Please add the {bot_name} chat widget to our website` |
+| Audience | The customer's **developer** — a third party who never signed up with us |
+| Body | The embed snippet, where it goes, and the two Content-Security-Policy origins the widget needs; plus the "keep the credit link" note when the plan carries attribution |
+| Trigger | `bot_routes.py` — `POST /bots/{bot_id}/install-invite`, from the Deploy page's "Email this to my developer" |
+| Metered | No |
+| Notes | `reply_to` is the **requesting customer**, never support: a recipient asking "did you actually ask for this?" must reach the colleague who did. Rate limited to 5/hour per client, because it mails an arbitrary address under our sending domain. |
+
+---
+
 ## 3. Cron-Triggered Emails (schedule reference)
 
 From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
@@ -363,7 +376,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **28 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (8), Affiliate (2), Team (1).
+- **29 distinct emails** across 7 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (8), Affiliate (2), Team (1), Install handoff (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).

@@ -26,6 +26,9 @@ export interface DeployBot extends Bot {
   session_share_domain?: string | null;
   branding_text?: string | null;
   branding_url?: string | null;
+  /** Who the install briefing was last emailed to, and when. */
+  dev_invite_email?: string | null;
+  dev_invite_sent_at?: string | null;
 }
 
 /** Why a section cannot be shown, when it cannot. */

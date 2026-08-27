@@ -40,7 +40,7 @@ from app.config import (
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
-from app.services.email_design import button, code_box, esc, h1, info_table, link, p, shell, strong
+from app.services.email_design import button, code_box, esc, h1, info_table, link, p, pre_box, shell, strong
 
 logger = logging.getLogger(__name__)
 
@@ -1117,6 +1117,83 @@ def send_operator_invite_email(
             preheader=f"Accept your invite to join {workspace_name}. Link expires in {expiry}.",
             inner=inner,
         ),
+    )
+
+
+# ── Install handoff ──────────────────────────────────────────────────────────
+
+
+def send_install_invite_email(
+    *,
+    to_email: str,
+    bot_name: str,
+    snippet: str,
+    script_origin: str,
+    api_origin: str,
+    attribution: bool,
+    requester_name: str | None,
+    reply_to: str,
+    platform_name: str | None = None,
+) -> None:
+    """Send a developer the one tag that puts a chatbot on the customer's site.
+
+    The buyer is very often not the installer: for an SMB the person who signs
+    up frequently cannot edit the website at all. This is the handoff, and it
+    carries everything the recipient needs to finish without a second email -
+    the snippet, where it goes, and the two Content-Security-Policy origins
+    that are the single most common reason a correct paste still shows nothing.
+
+    ``reply_to`` is the requesting customer, never our support inbox. The
+    recipient is a third party who never signed up with us, so a reply asking
+    "did you actually ask for this?" has to reach the colleague who did.
+
+    The snippet is built by the caller from the bot's OWN entitlement, never
+    accepted from a request body: nothing downstream re-checks a string a
+    customer has already pasted into their repository.
+    """
+    asker = esc(requester_name) if requester_name else "A colleague"
+    safe_bot = esc(bot_name)
+    where = (
+        f"It goes on every page of {esc(platform_name)}, in the shared layout or footer template."
+        if platform_name
+        else "It goes in the shared layout or footer template, so it loads site-wide."
+    )
+    inner = (
+        h1("Please add our chat widget to the website")
+        + p(
+            f"{asker} uses {esc(BRAND_NAME)} for the {strong(safe_bot)} chat assistant and has asked you to "
+            f"install it. Paste this immediately before the closing {esc('</body>')} tag."
+        )
+        + pre_box(snippet, label="Embed snippet")
+        + p(where)
+        + p(strong("Two things that catch people out:"), top=8)
+        + p(f"1. It must be in {esc('<body>')}, not {esc('<head>')}.")
+        + p(
+            "2. If the site sends a Content-Security-Policy header, it needs "
+            f"{strong(esc('script-src ' + script_origin))} and {strong(esc('connect-src ' + api_origin))}."
+        )
+        + (
+            p(
+                "The second line is a small visible &ldquo;Powered by OyeChats&rdquo; credit link. Please keep it "
+                "in the served HTML and do not hide it with CSS: a hidden link is a Google policy violation "
+                "against your own domain.",
+                top=8,
+            )
+            if attribution
+            else ""
+        )
+        + p(f"Questions? Just reply to this email and it goes straight back to {esc(reply_to)}.", top=8)
+    )
+    subject = f"Please add the {bot_name} chat widget to our website"
+    send_email_async(
+        to_email,
+        subject,
+        shell(
+            subject=subject,
+            preheader=f"One script tag to add before </body>. Sent by {requester_name or 'a colleague'}.",
+            inner=inner,
+        ),
+        reply_to=reply_to,
     )
 
 

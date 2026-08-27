@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot as BotIcon, Check, Mail } from 'lucide-react';
+import { Bot as BotIcon, Check, Mail, Send } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -10,12 +10,15 @@ import {
   CardSection,
   CodeBlock,
   CopyField,
+  Field,
+  Input,
   Skeleton,
   Tooltip,
   buttonClass,
+  formatRelative,
   useClipboard,
 } from '../../../ui';
-import { recordActivationEvent } from '../../../services/api';
+import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
 import { ATTRIBUTION_TEXT } from '../../../data/widgetEmbed';
 import type { Platform, PlatformEnv } from '../../../data/platformIntegrations';
 import { developerEmail, embedSnippet } from './deployModel';
@@ -33,7 +36,18 @@ export interface SnippetSectionProps {
   attribution: boolean;
   /** Entitlements have not resolved, so we do not yet know which snippet is right. */
   resolving: boolean;
+  /** `Bot.dev_invite_email` — who the briefing last went to, or null. */
+  devInviteEmail: string | null;
+  /** `Bot.dev_invite_sent_at` — when it went, or null. */
+  devInviteSentAt: string | null;
 }
+
+/**
+ * Matches the server's `EmailAddress` validator, which is the thing that
+ * actually decides. Checked here only so a typo costs nothing: the alternative
+ * is a round trip to be told about a missing `@`.
+ */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
  * The snippet, and the two ways it leaves this page without being pasted here.
@@ -64,9 +78,22 @@ export function SnippetSection({
   platform,
   attribution,
   resolving,
+  devInviteEmail,
+  devInviteSentAt,
 }: SnippetSectionProps) {
   const prompt = useClipboard();
-  const [emailed, setEmailed] = useState(false);
+
+  // Seeded from the bot, so a reload — or a different machine — still knows.
+  // Local state takes over only once this session has sent something.
+  const [sent, setSent] = useState<{ email: string; at: string } | null>(
+    devInviteEmail && devInviteSentAt ? { email: devInviteEmail, at: devInviteSentAt } : null,
+  );
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  // The one case worth a second look: the same person, twice.
+  const [confirming, setConfirming] = useState(false);
 
   const snippet = embedSnippet({ botKey, env, attribution });
   const email = developerEmail({
@@ -77,6 +104,55 @@ export function SnippetSection({
     platformName: platform?.name ?? null,
     attribution,
   });
+
+  function reveal() {
+    setOpen(true);
+    setConfirming(false);
+    setError(null);
+    // Pre-filled with the last recipient: re-sending to the same developer is
+    // the common case, and retyping an address to be told it is a duplicate is
+    // the worst possible ordering.
+    setDraft(sent?.email ?? '');
+  }
+
+  async function send(address: string) {
+    setSending(true);
+    setError(null);
+    try {
+      const result = await sendInstallInvite(botId, address);
+      setSent({ email: result.email, at: result.sent_at });
+      setOpen(false);
+      setConfirming(false);
+      setDraft('');
+      // A real milestone, unlike the `install_snippet_copied` this button used
+      // to emit: nothing was ever copied.
+      void recordActivationEvent('install_invite_sent', { botId });
+    } catch (cause) {
+      setError(
+        cause instanceof Error && cause.message
+          ? cause.message
+          : 'We could not send that email. Please try again.',
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function submit() {
+    const address = draft.trim();
+    if (!EMAIL_PATTERN.test(address)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    // Confirm only for the address we already mailed. A second developer is a
+    // new handoff, not a duplicate, and a warning that fires when nothing is
+    // wrong stops being read.
+    if (!confirming && sent && sent.email.toLowerCase() === address.toLowerCase()) {
+      setConfirming(true);
+      return;
+    }
+    void send(address);
+  }
 
   async function copyPrompt() {
     // Belt-and-braces alongside the disabled state: never build a briefing from
@@ -143,47 +219,140 @@ export function SnippetSection({
       {/* The buyer is very often not the installer. For an SMB the person who
           signs up frequently cannot edit the website at all, so handing the job
           to whoever can is a first-class path, not a fallback. */}
-      <CardSection className="flex flex-wrap items-center gap-2">
-        <Tooltip content="Carries the snippet above, the platform steps, and the two Content-Security-Policy origins the widget needs">
-          <a
-            href={email.href}
-            className={buttonClass('secondary', 'sm')}
-            onClick={() => {
-              setEmailed(true);
-              void recordActivationEvent('install_snippet_copied', { botId });
+      <CardSection className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {sent && !open ? (
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-sm text-text-secondary">
+                <Check aria-hidden className="text-success" />
+                Sent to <strong className="font-medium text-text-primary">{sent.email}</strong>{' '}
+                {formatRelative(sent.at)}
+              </span>
+              <Button variant="secondary" size="sm" onClick={reveal}>
+                Send again
+              </Button>
+            </span>
+          ) : !open ? (
+            <Tooltip content="Carries the snippet above, the platform steps, and the two Content-Security-Policy origins the widget needs">
+              <Button variant="secondary" size="sm" onClick={reveal} iconLeft={<Mail aria-hidden />}>
+                Email this to my developer
+              </Button>
+            </Tooltip>
+          ) : null}
+          <Tooltip content="The same briefing, written for a coding agent">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyPrompt()}
+              disabled={resolving}
+              iconLeft={
+                prompt.state === 'copied' ? (
+                  <Check aria-hidden className="text-success" />
+                ) : (
+                  <BotIcon aria-hidden />
+                )
+              }
+            >
+              {prompt.state === 'copied' ? 'Prompt copied' : 'Copy a prompt for a coding agent'}
+            </Button>
+          </Tooltip>
+          <span role="status" aria-live="polite" className="sr-only">
+            {prompt.state === 'copied' ? 'Install prompt copied' : ''}
+            {prompt.state === 'failed'
+              ? 'Could not copy the prompt. Use the email option instead.'
+              : ''}
+            {/* The send collapses the form and swaps in a line of text. That is
+                obvious to anyone looking at it and silent to anyone not. */}
+            {sent && !open ? `Install snippet emailed to ${sent.email}` : ''}
+          </span>
+        </div>
+
+        {open ? (
+          <form
+            className="space-y-3"
+            // `type="email"` earns its keep on mobile (the right keyboard, and
+            // autofill), but its native validation would answer with a browser
+            // bubble that no styling reaches, disappears on its own, and is not
+            // wired to the input for assistive tech. `noValidate` keeps the
+            // input type and moves the message into `Field`'s error, which is.
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
             }}
           >
-            {emailed ? (
-              <Check aria-hidden className="text-success" />
-            ) : (
-              <Mail aria-hidden />
-            )}
-            Email this to my developer
-          </a>
-        </Tooltip>
-        <Tooltip content="The same briefing, written for a coding agent">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void copyPrompt()}
-            disabled={resolving}
-            iconLeft={
-              prompt.state === 'copied' ? (
-                <Check aria-hidden className="text-success" />
-              ) : (
-                <BotIcon aria-hidden />
-              )
-            }
-          >
-            {prompt.state === 'copied' ? 'Prompt copied' : 'Copy a prompt for a coding agent'}
-          </Button>
-        </Tooltip>
-        <span role="status" aria-live="polite" className="sr-only">
-          {prompt.state === 'copied' ? 'Install prompt copied' : ''}
-          {prompt.state === 'failed'
-            ? 'Could not copy the prompt. Use the email option instead.'
-            : ''}
-        </span>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-0 flex-1 basis-64">
+                <Field
+                  label="Your developer's email"
+                  error={error}
+                  hint="They get the snippet, where it goes, and the two origins a CSP has to allow."
+                >
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    autoFocus
+                    placeholder="dev@yourcompany.com"
+                    value={draft}
+                    onChange={(event) => {
+                      setDraft(event.target.value);
+                      // A repeat is judged on what is being sent, so editing
+                      // the address retracts the question.
+                      setConfirming(false);
+                      setError(null);
+                    }}
+                  />
+                </Field>
+              </div>
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                loading={sending}
+                iconLeft={<Send aria-hidden />}
+              >
+                Send
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setOpen(false);
+                  setConfirming(false);
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+
+            {confirming && sent ? (
+              // A warning, never a wall: the customer asked for it twice, and
+              // the second time is usually deliberate.
+              <Alert
+                tone="warning"
+                live
+                title={`Already sent to ${sent.email} ${formatRelative(sent.at)}`}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => void send(draft.trim())}>
+                    Send it again
+                  </Button>
+                }
+              >
+                Sending again is fine. This is only here so a second copy is on purpose.
+              </Alert>
+            ) : null}
+
+            <p className="text-xs text-text-secondary">
+              Would rather use your own contacts?{' '}
+              <a href={email.href} className="underline underline-offset-2 hover:text-text-primary">
+                Open it in my mail app
+              </a>
+              . We cannot record what you send that way.
+            </p>
+          </form>
+        ) : null}
       </CardSection>
     </Card>
   );

@@ -1784,6 +1784,26 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
 };
 
 /**
+ * Email the install snippet to the developer who will actually paste it.
+ *
+ * `POST /bots/{botId}/install-invite`. The server builds the snippet from the
+ * bot's own entitlement and sends the mail itself, so unlike the `mailto:` link
+ * this replaces, "sent" is a fact the product can store and show later.
+ *
+ * Not fire-and-forget, unlike `recordActivationEvent`: the customer is waiting
+ * on this one and a silent failure would look like a delivered email.
+ */
+export const sendInstallInvite = async (botId, email) => {
+    try {
+        const response = await api.post(`/bots/${botId}/install-invite`, { email });
+        return response.data;
+    } catch (error) {
+        console.error('API Error sending install invite:', error);
+        throw buildApiError(error, 'We could not send that email. Please try again.');
+    }
+};
+
+/**
  * Free, origin-exempt preview chat against one of the client's OWN bots - used
  * by the Build Studio "Test & trust" milestone. Authenticated via the admin
  * X-API-Key (auto-attached); the backend `?preview=true` path skips credits and

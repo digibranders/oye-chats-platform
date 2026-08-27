@@ -586,6 +586,18 @@ class Bot(Base):
     # actually live without a user self-report. NULL = never seen installed.
     widget_installed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Who the install briefing was last emailed to, and when. The Deploy page's
+    # "Email this to my developer" was a ``mailto:`` link, so the product could
+    # never know whether anything was sent; these two make "already sent to X on
+    # Y" a fact that survives a reload and a change of device.
+    #
+    # Only the most recent send is kept. Re-sending to the SAME address is what
+    # the console confirms before spending, so the last recipient is the only
+    # one it has to compare against; a second developer is a new handoff, not a
+    # duplicate. NULL on both = never sent.
+    dev_invite_email = Column(String, nullable=True)
+    dev_invite_sent_at = Column(DateTime(timezone=True), nullable=True)
+
     # Liveness heartbeat for the same install, refreshed by the public settings
     # endpoint. ``widget_installed_at`` answers "did they ever finish the
     # install"; these two answer "is it still running, and where", which is the

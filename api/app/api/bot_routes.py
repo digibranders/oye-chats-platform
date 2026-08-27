@@ -23,12 +23,12 @@ from app.api.auth import (
     require_active_subscription_for_workspace,
     require_verified_email_for_workspace,
 )
-from app.config import APP_URL, FRONTEND_URL, MARKETING_URL
+from app.config import API_BASE_URL, APP_URL, FRONTEND_URL, MARKETING_URL
 from app.core.cache import PREFIX, bot_config_key, cache_delete, get_redis
 from app.core.origin_check import extract_hostname, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
-from app.db.models import Bot, BotGrowthEvent
+from app.db.models import ActivationEvent, Bot, BotGrowthEvent
 from app.db.repository import stamp_manual_avatar
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -48,6 +48,7 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
+from app.services.email_service import send_install_invite_email
 from app.services.language_service import is_multilingual_enabled
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
@@ -384,6 +385,8 @@ def _require_bot_management_access(auth: dict) -> None:
 # been customised, so a PATCH resending them is a no-op and must not trip the
 # add-on guard: the Experience page saves its whole draft, unchanged fields
 # included.
+WIDGET_SCRIPT_URL = "https://cdn.oyechats.com/oyechats-widget.js"
+
 DEFAULT_BRANDING_TEXT = "Powered by OyeChats"
 DEFAULT_BRANDING_URL = "https://www.oyechats.com"
 
@@ -1943,6 +1946,8 @@ def list_bots(
                     live_chat_enabled=b.live_chat_enabled,
                     widget_installed_at=b.widget_installed_at,
                     widget_last_seen_at=b.widget_last_seen_at,
+                    dev_invite_email=b.dev_invite_email,
+                    dev_invite_sent_at=b.dev_invite_sent_at,
                     widget_last_origin=b.widget_last_origin,
                     last_crawl_status=b.last_crawl_status,
                     crawl_completed_at=b.crawl_completed_at,
@@ -2598,6 +2603,104 @@ def get_seed_questions(
             bot.seed_questions = questions
             session.commit()
         return {"questions": questions}
+
+
+class InstallInviteRequest(BaseModel):
+    # The ONLY input. The snippet is built server-side from the bot's own
+    # entitlement: accepting one here would let a customer mail themselves a
+    # white-label snippet they have not paid for, and nothing downstream ever
+    # re-checks a string already pasted into their repository.
+    model_config = ConfigDict(extra="ignore")
+
+    email: EmailAddress
+
+
+def _attribution_anchor(bot_key: str) -> str:
+    """The crawlable "Powered by OyeChats" link that rides beside the tag.
+
+    Mirrors ``app/src/data/widgetEmbed.ts``. Kept in sync by hand, and safe to
+    interpolate for the same reason stated there: ``bot_key`` is matched against
+    an allowlist before it reaches the URL, so it cannot carry a quote or an
+    angle bracket into this markup.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", bot_key or ""):
+        raise HTTPException(status_code=422, detail="This chatbot's embed key is malformed.")
+    href = f"https://www.oyechats.com/?ref={bot_key}&utm_source=widget&utm_medium=referral"
+    css = "font-size:11px;color:inherit;opacity:0.7;text-decoration:none"
+    return f'<a href="{href}" rel="nofollow" style="{css}">{DEFAULT_BRANDING_TEXT}</a>'
+
+
+def _embed_snippet(bot_key: str, *, attribution: bool) -> str:
+    tag = f'<script src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
+    return f"{tag}\n{_attribution_anchor(bot_key)}" if attribution else tag
+
+
+@router.post("/{bot_id}/install-invite")
+@limiter.limit("5/hour")
+def send_install_invite(
+    bot_id: int,
+    body: InstallInviteRequest,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Email the install briefing to whoever actually edits the website.
+
+    Replaces a ``mailto:`` link, which handed the briefing to the operating
+    system and lost sight of it: on a machine with no mail client configured
+    the button did nothing at all, and the product could never say whether a
+    developer had been told.
+
+    ``resent`` reports whether this address had already been mailed for this
+    bot. The console confirms before re-sending to the same person and sends
+    straight to a new one, because a second developer is a fresh handoff rather
+    than an accidental duplicate. It is never a block: the customer asked.
+
+    The rate limit is deliberately tight. This is an authenticated endpoint that
+    mails an arbitrary address, so it is attached to our sending domain's
+    reputation; five an hour is far more than a real handoff needs.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+
+        # Deny-by-default: an unresolved entitlement keeps the credit link in,
+        # which is the recoverable mistake. The reverse mails out a white-label
+        # snippet we cannot take back.
+        attribution = not _bot_has_branding_addon(session, bot.id)
+        snippet = _embed_snippet(bot.bot_key, attribution=attribution)
+
+        requester = auth["entity"]
+        reply_to = getattr(requester, "email", None)
+        if not reply_to:
+            raise HTTPException(status_code=422, detail="Your account has no email address to reply to.")
+
+        # Both sides are already case-folded by ``EmailAddress``; the lower()
+        # on the stored value guards rows written before that was true.
+        resent = (bot.dev_invite_email or "").lower() == body.email
+
+        send_install_invite_email(
+            to_email=body.email,
+            bot_name=bot.name,
+            snippet=snippet,
+            script_origin=urlparse(WIDGET_SCRIPT_URL).scheme + "://" + urlparse(WIDGET_SCRIPT_URL).netloc,
+            api_origin=API_BASE_URL,
+            attribution=attribution,
+            requester_name=getattr(requester, "name", None),
+            reply_to=reply_to,
+        )
+
+        bot.dev_invite_email = body.email
+        bot.dev_invite_sent_at = datetime.now(UTC)
+        session.add(
+            ActivationEvent(
+                client_id=auth["client_id"],
+                bot_id=bot.id,
+                event_type="install_invite_sent",
+            )
+        )
+        session.commit()
+
+        return {"email": bot.dev_invite_email, "sent_at": bot.dev_invite_sent_at, "resent": resent}
 
 
 @router.post("/{bot_id}/brand-tone/preview")
