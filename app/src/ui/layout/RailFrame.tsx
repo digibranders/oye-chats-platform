@@ -119,10 +119,21 @@ export function RailItem({
       RAIL_ROW,
       collapsed && 'justify-center px-0',
       isActive
-        ? // The rule is an inset shadow rather than a pseudo-element, so it
-          // follows the row's own radius and cannot be knocked out of place by
-          // the padding.
-          'bg-rail-active text-rail-text shadow-[inset_2px_0_0_var(--color-rail-accent)]'
+        ? // No coloured leading rule. A saturated periwinkle stripe was the one
+          // piece of chroma on an otherwise monochrome rail, which made a
+          // decorative marker the loudest thing in the navigation — the
+          // opposite of what the rail is for (`tokens.css`: a dark surface that
+          // "stops the rail competing with the content").
+          //
+          // It earned its place, though, and the replacement has to do the same
+          // job: hover ALSO raises the label to `--color-rail-text`, so without
+          // the stripe an active row and a hovered one differed only by
+          // `--color-rail-active` against `--color-rail-hover` — two greys
+          // 1.14 apart on the rail, which is a felt step, not a legible
+          // distinction. Weight is the second axis: the current row is the only
+          // one set in semibold, so it reads as current even while the pointer
+          // is somewhere else, and it costs no colour to say so.
+          'bg-rail-active font-semibold text-rail-text'
         : 'text-rail-text-muted hover:bg-rail-hover hover:text-rail-text',
       className,
     );

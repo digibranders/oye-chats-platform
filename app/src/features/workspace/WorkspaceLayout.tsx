@@ -118,11 +118,14 @@ export function WorkspaceLayout() {
                 'flex h-control-lg items-center gap-2.5 rounded-md px-3 text-base',
                 'transition-colors duration-[var(--dur-fast)]',
                 isActive
-                  ? // The same marker the rail uses, rotated nowhere: a 2px ink
-                    // leading rule. A filled blue pill would be a second
-                    // active-nav language one click away from `/billing`'s
-                    // underline, and `--color-accent-50` is a selected *row*.
-                    'bg-surface-active font-medium text-text-primary shadow-[inset_2px_0_0_var(--color-ink)]'
+                  ? // The same marker the rail uses — which is now a fill and a
+                    // weight, not a leading rule. These two navigations are one
+                    // click apart, so they get one language; when the rail
+                    // dropped its stripe this had to drop its own or the
+                    // console would be teaching two answers to "which one am I
+                    // on". A filled accent pill is still not it: on paper
+                    // `--color-accent-50` means a selected *row*.
+                    'bg-surface-active font-semibold text-text-primary'
                   : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
               )
             }
