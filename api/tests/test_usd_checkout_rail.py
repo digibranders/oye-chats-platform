@@ -230,7 +230,13 @@ def test_seat_addon_keeps_inr_seat_plan_for_domestic_client():
         )
 
     assert fake.subscription.create.call_args.kwargs["data"]["plan_id"] == "plan_seat_inr"
-    assert "₹449" in payload["description"]
+    # The base is named in the description, but asserting only on it stopped
+    # pinning anything once the sheet started quoting the gross: "₹529.82
+    # (₹449 + GST)" contains "₹449" too. Pin the rail instead, which is what
+    # this test is actually about, and leave the tax wording to
+    # test_razorpay_service's charged_price_display coverage.
+    assert payload["description"].startswith("1 extra seat(s) - ₹")
+    assert "$" not in payload["description"]
 
 
 # ── Discounted (referral) plans must not cross the currency boundary ──────────

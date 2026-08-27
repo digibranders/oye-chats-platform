@@ -1,4 +1,11 @@
 /**
+ * Date expectations here follow the DASHBOARD's locale (en-IN by default),
+ * not a hardcoded en-US. Phase 7D routed every locale-sensitive format through
+ * `src/i18n/formatters`, so "Jul 7" became "7 Jul": same field set, different
+ * locale. A Hindi dashboard renders these in Devanagari; see
+ * `src/i18n/formatters.test.ts`.
+ */
+/**
  * The two feedback helpers a customer reads conclusions off: the CSV export and
  * the satisfaction trend.
  *
@@ -184,23 +191,23 @@ describe('buildTrend', () => {
 
   it('keeps the most recent 14 days, not the oldest 14', () => {
     /* The bug this pins: `.slice(-14)` over newest-first input takes from the
-       wrong end, so the chart rendered Jul 1-14 while the customer's latest
+       wrong end, so the chart rendered 1 Jul-14 while the customer's latest
        week (the only part they can still act on) was dropped. */
     expect(buildTrend(twentyDays, 0).map((point) => point.date)).toEqual([
-      'Jul 7',
-      'Jul 8',
-      'Jul 9',
-      'Jul 10',
-      'Jul 11',
-      'Jul 12',
-      'Jul 13',
-      'Jul 14',
-      'Jul 15',
-      'Jul 16',
-      'Jul 17',
-      'Jul 18',
-      'Jul 19',
-      'Jul 20',
+      '7 Jul',
+      '8 Jul',
+      '9 Jul',
+      '10 Jul',
+      '11 Jul',
+      '12 Jul',
+      '13 Jul',
+      '14 Jul',
+      '15 Jul',
+      '16 Jul',
+      '17 Jul',
+      '18 Jul',
+      '19 Jul',
+      '20 Jul',
     ]);
   });
 
@@ -209,8 +216,8 @@ describe('buildTrend', () => {
        newest day is reading right-to-left, whatever the labels say. */
     const points = buildTrend(twentyDays, 0);
 
-    expect(points.at(-1)).toEqual({ date: 'Jul 20', rate: 100, total: 1 });
-    expect(points.at(0)).toEqual({ date: 'Jul 7', rate: 0, total: 1 });
+    expect(points.at(-1)).toEqual({ date: '20 Jul', rate: 100, total: 1 });
+    expect(points.at(0)).toEqual({ date: '7 Jul', rate: 0, total: 1 });
   });
 
   it('keeps every day, oldest first, when there are fewer than 14', () => {
@@ -219,9 +226,9 @@ describe('buildTrend', () => {
     const threeDays = [ratedOn(3, 1), ratedOn(2, -1), ratedOn(1, 1)];
 
     expect(buildTrend(threeDays, 0).map((point) => point.date)).toEqual([
-      'Jul 1',
-      'Jul 2',
-      'Jul 3',
+      '1 Jul',
+      '2 Jul',
+      '3 Jul',
     ]);
   });
 
@@ -240,13 +247,13 @@ describe('buildTrend', () => {
     vi.setSystemTime(new Date(2026, 6, 20, 18));
 
     expect(buildTrend(twentyDays, 7).map((point) => point.date)).toEqual([
-      'Jul 14',
-      'Jul 15',
-      'Jul 16',
-      'Jul 17',
-      'Jul 18',
-      'Jul 19',
-      'Jul 20',
+      '14 Jul',
+      '15 Jul',
+      '16 Jul',
+      '17 Jul',
+      '18 Jul',
+      '19 Jul',
+      '20 Jul',
     ]);
   });
 
@@ -257,16 +264,16 @@ describe('buildTrend', () => {
        1 of 3 is 33.33%, which also pins the rounding rather than truncation. */
     const oneOfThree = [ratedOn(5, 1), ratedOn(5, -1), ratedOn(5, -1)];
 
-    expect(buildTrend(oneOfThree, 0)).toEqual([{ date: 'Jul 5', rate: 33, total: 3 }]);
+    expect(buildTrend(oneOfThree, 0)).toEqual([{ date: '5 Jul', rate: 33, total: 3 }]);
 
     // 2 of 3 is 66.67%. Rounds up, so the two cases together show it is not
     // flooring.
     const twoOfThree = [ratedOn(6, 1), ratedOn(6, 1), ratedOn(6, -1)];
-    expect(buildTrend(twoOfThree, 0)).toEqual([{ date: 'Jul 6', rate: 67, total: 3 }]);
+    expect(buildTrend(twoOfThree, 0)).toEqual([{ date: '6 Jul', rate: 67, total: 3 }]);
   });
 
   it('keeps the same calendar day in different years apart', () => {
-    /* The label carries no year, so keying buckets on it merged this Jul 21
+    /* The label carries no year, so keying buckets on it merged this 21 Jul
        with last year's into one averaged point. Reachable from the "All" range
        on any workspace older than a year, and the merged bucket took the older
        timestamp, so it also sorted as ancient and could fall out of the most
@@ -277,8 +284,8 @@ describe('buildTrend', () => {
     ];
 
     expect(buildTrend(acrossYears, 0)).toEqual([
-      { date: 'Jul 21', rate: 0, total: 1 },
-      { date: 'Jul 21', rate: 100, total: 1 },
+      { date: '21 Jul', rate: 0, total: 1 },
+      { date: '21 Jul', rate: 100, total: 1 },
     ]);
   });
 });

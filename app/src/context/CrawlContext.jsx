@@ -15,6 +15,7 @@ import {
     getCrawlProgress,
 } from '../services/api';
 import { useBotContext } from './BotContext';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * Global crawl context.
@@ -345,7 +346,7 @@ export const CrawlProvider = ({ children }) => {
                     ...prev,
                     status: 'failed',
                     isStarting: false,
-                    error: error?.message || 'Failed to start crawl.',
+                    error: error?.message || translateNow('app.failedToStartCrawl') || 'Failed to start crawl.',
                 }));
                 throw error;
             }
@@ -356,7 +357,7 @@ export const CrawlProvider = ({ children }) => {
     const cancelCrawl = useCallback(async () => {
         const current = crawlRef.current;
         if (!ACTIVE_STATUSES.has(current.status)) {
-            return { status: current.status, message: 'No crawl in progress.' };
+            return { status: current.status, message: translateNow('app.noCrawlInProgress') || 'No crawl in progress.' };
         }
         cancelledByUserRef.current = true;
         // Optimistic flip so the toast shows "Cancelling…" within one frame.

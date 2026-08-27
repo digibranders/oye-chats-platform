@@ -12,6 +12,7 @@ import {
 import { getEntitlements } from '../services/api';
 import { WORKSPACE_SWITCHED_EVENT } from './WorkspaceContext';
 import type { Entitlements } from '../types/domain';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * EntitlementsContext - the single source of truth for "what can this
@@ -103,7 +104,7 @@ export function EntitlementsProvider({ children }: { children: ReactNode }): Rea
       // crash or leave a stale, possibly-paid entitlements snapshot in
       // place. Deny-by-default matches the backend resolver's own policy.
       setEntitlements(FREE_FALLBACK);
-      setError(err instanceof Error ? err : new Error('Failed to load entitlements'));
+      setError(err instanceof Error ? err : new Error(translateNow('app.failedToLoadEntitlements') || 'Failed to load entitlements'));
     } finally {
       if (requestIdRef.current === requestId) setLoading(false);
     }

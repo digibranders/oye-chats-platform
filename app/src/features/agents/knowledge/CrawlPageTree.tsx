@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight, File as FileIcon, Folder, FolderOpen, Globe, Maximize2 } from 'lucide-react';
 import { Button, Checkbox, Dialog, cn, formatNumber } from '../../../ui';
+// A pure helper, not a component, so the module-level resolver rather than the hook.
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * A node in the discovered-page route tree.
@@ -43,7 +45,7 @@ function rootHost(urls: readonly string[]): string {
       continue;
     }
   }
-  return 'Website';
+  return translateNow('agents.website') || 'Website';
 }
 
 /**

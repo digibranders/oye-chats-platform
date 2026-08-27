@@ -3,6 +3,7 @@ import { Link, useRouteError } from 'react-router-dom';
 import { Button, buttonClass } from '../../ui';
 import { AppCrashScreen } from './AppCrashScreen';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The console did not start.
@@ -26,6 +27,7 @@ import { parseRouteError, useReportRouteError } from './parseRouteError';
  * its own height instead.
  */
 export function RootErrorBoundary() {
+  const { t } = useTranslation();
   const error = useRouteError();
   useReportRouteError(error);
   const { title, description, detail } = parseRouteError(error);
@@ -33,7 +35,10 @@ export function RootErrorBoundary() {
   return (
     <AppCrashScreen
       title={title}
-      description={`${description} Your data is safe — your chatbots keep answering visitors while this screen is up.`}
+      description={`${description} ${
+        t('app.yourDataIsSafe') ||
+        'Your data is safe — your chatbots keep answering visitors while this screen is up.'
+      }`}
       detail={detail}
       actions={
         <>
@@ -41,14 +46,14 @@ export function RootErrorBoundary() {
             onClick={() => window.location.reload()}
             iconLeft={<RefreshCw aria-hidden />}
           >
-            Reload the page
+            {t('app.reloadThePage') || 'Reload the page'}
           </Button>
           {/* A route change unmounts this boundary, so this is a real way out
               and not just a second reload button — unless the crash is in a
               provider, in which case reloading is the one that works. Both are
               offered rather than guessing which failed. */}
           <Link to="/" className={buttonClass('secondary', 'md')}>
-            Go to Home
+            {t('app.goToHome') || 'Go to Home'}
           </Link>
         </>
       }

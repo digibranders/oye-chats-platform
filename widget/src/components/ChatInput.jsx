@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Headphones, Paperclip, CalendarDays } from 'lucide-react';
+import { Paperclip, CalendarDays } from 'lucide-react';
 import SendIcon from './SendIcon';
 import {
     SLASH_COMMANDS,
@@ -10,6 +10,8 @@ import {
     matchSlashCommand,
 } from '../lib/slashCommands';
 import { getSlashHintSeenKey } from '../services/storage-keys';
+import { t } from '../i18n/i18n.js';
+import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import {
     buildBrandingHref,
     resolveBrandingText,
@@ -106,7 +108,11 @@ const ChatInput = ({
     }, [settings?.branding_text, settings?.branding_url]);
 
     const messages = settings?.widget_messages || {};
-    const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
+    const inputPlaceholder =
+        authoredCopy(messages.input_placeholder, SEEDED.input_placeholder)
+        || placeholder
+        || t('input.placeholder')
+        || SEEDED.input_placeholder;
 
     const isWaiting = chatMode === 'waiting';
     const isLive = chatMode === 'live';
@@ -255,14 +261,10 @@ const ChatInput = ({
         }, 0);
     };
 
-    const showSlashHint =
-        isBotMode &&
-        !pendingConfirm &&
-        !inputText &&
-        !slashHintSeen &&
-        availableCommands.length > 0 &&
-        userMessageCount >= SLASH_HINT_THRESHOLD;
-    const slashHintPlaceholder = `${inputPlaceholder.replace(/\.\.\.$|…$/, '')} · press / for commands`;
+    const hasSeenSlashHint = slashHintSeen;
+    const effectivePlaceholder = !hasSeenSlashHint && userMessageCount >= SLASH_HINT_THRESHOLD
+        ? (t('input.slash_hint') || 'Write a message... or press / for commands')
+        : inputPlaceholder;
 
     // Inline slash-token highlight, the pill visible under the visitor's
     // text as they type. Only computed when a matched (or matching-prefix)
@@ -474,7 +476,7 @@ const ChatInput = ({
                         onClick={onEndChat}
                         className="text-[11px] text-gray-400 hover:text-red-500 transition-colors focus-visible:outline-none"
                     >
-                        End chat and return to AI
+                        {t('input.end_chat_return') || 'End chat and return to AI'}
                     </button>
                 </div>
             )}
@@ -484,7 +486,7 @@ const ChatInput = ({
             {popoverOpen && (
                 <div
                     role="listbox"
-                    aria-label="Chat commands"
+                    aria-label={t('input.commands_aria') || 'Chat commands'}
                     className="mb-2 rounded-xl border border-[#BBE7FF]/60 bg-white shadow-lg overflow-hidden"
                 >
                     {filteredCommands.map((cmd, i) => {
@@ -521,7 +523,7 @@ const ChatInput = ({
                                         /{cmd.name}
                                     </span>
                                     <span className="block text-[11px] text-gray-500 leading-tight mt-0.5">
-                                        {cmd.description}
+                                        {t(cmd.descriptionKey) || cmd.description}
                                     </span>
                                 </span>
                             </button>
@@ -538,8 +540,8 @@ const ChatInput = ({
                             type="button"
                             onClick={onFilePick}
                             disabled={uploadProgress !== null || isReconnecting}
-                            title="Attach file"
-                            aria-label="Attach file"
+                            title={t('input.attach_file') || "Attach file"}
+                            aria-label={t('input.attach_file') || "Attach file"}
                             className={`mb-0.5 flex-shrink-0 transition-opacity ${(uploadProgress !== null || isReconnecting) ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
                         >
                             <Paperclip size={16} className="text-[#16202C]" />
@@ -619,12 +621,10 @@ const ChatInput = ({
                                 onScroll={handleTextareaScroll}
                                 placeholder={
                                     isWaiting
-                                        ? 'Connecting you with the support team...'
-                                        : showSlashHint
-                                            ? slashHintPlaceholder
-                                            : inputPlaceholder
+                                        ? (t('system.connecting') || 'Connecting you with the support team...')
+                                        : effectivePlaceholder
                                 }
-                                aria-label="Chat message input"
+                                aria-label={t('input.message_aria') || 'Chat message input'}
                                 className="relative w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                                 style={{
                                     // Inline mirrors of the Tailwind sizing so the
@@ -652,7 +652,7 @@ const ChatInput = ({
                     <button
                         type="submit"
                         disabled={sendDisabled}
-                        aria-label="Send message"
+                        aria-label={t('input.send_aria') || "Send message"}
                         className="mb-0.5 flex-shrink-0 flex items-center justify-center transition-all disabled:cursor-not-allowed focus-visible:outline-none"
                     >
                         <SendIcon
@@ -670,8 +670,10 @@ const ChatInput = ({
                 <div className="mt-3 px-1 flex items-center justify-between gap-3">
                     <span className="text-[12px] text-[#16202C]">
                         {pendingConfirm.name === 'new'
-                            ? 'Start a new chat? This will clear the current conversation.'
-                            : `Run /${pendingConfirm.name}?`}
+                            ? (t('input.confirm_new_chat')
+                                || 'Start a new chat? This will clear the current conversation.')
+                            : (t('input.confirm_run_command', { name: pendingConfirm.name })
+                                || `Run /${pendingConfirm.name}?`)}
                     </span>
                     <span className="flex items-center gap-2">
                         <button
@@ -679,7 +681,7 @@ const ChatInput = ({
                             onClick={cancelPending}
                             className="text-[12px] text-gray-500 hover:text-gray-700 px-2 py-1 rounded-md"
                         >
-                            Cancel
+                            {t('input.cancel') || 'Cancel'}
                         </button>
                         <button
                             type="button"
@@ -688,7 +690,7 @@ const ChatInput = ({
                             className="text-[12px] font-semibold text-white px-2.5 py-1 rounded-md"
                             style={{ backgroundColor: primaryColor || '#3A0CA3' }}
                         >
-                            Yes
+                            {t('input.yes') || 'Yes'}
                         </button>
                     </span>
                 </div>
@@ -706,13 +708,15 @@ const ChatInput = ({
                             <button
                                 type="button"
                                 onClick={onHandoff}
-                                title="Live chat"
-                                aria-label="Live chat"
+                                title={t('input.live_chat_aria') || 'Live chat'}
+                                aria-label={t('input.live_chat_aria') || 'Live chat'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
                             >
                                 <span className="relative flex-shrink-0">
-                                    <Headphones size={12} />
+                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+                                    </svg>
                                     {showProminentHandoff && (
                                         <span
                                             className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse"
@@ -726,8 +730,8 @@ const ChatInput = ({
                             <button
                                 type="button"
                                 onClick={onBookMeeting}
-                                title="Book a meeting"
-                                aria-label="Book a meeting"
+                                title={t('input.book_meeting') || 'Book a meeting'}
+                                aria-label={t('input.book_meeting') || 'Book a meeting'}
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
                             >
                                 <CalendarDays size={12} />
@@ -741,7 +745,7 @@ const ChatInput = ({
                             rel="noopener noreferrer"
                             className="font-semibold text-gray-300 hover:text-gray-400 transition-colors"
                         >
-                            Privacy Policy
+                            {t('input.privacy_policy') || 'Privacy Policy'}
                         </a>
                     </p>
                     {showBranding ? (

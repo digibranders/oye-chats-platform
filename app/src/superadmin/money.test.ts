@@ -57,10 +57,13 @@ describe('currency labelling', () => {
   it('refuses to guess a symbol when the server sent no usable currency', () => {
     // Legacy rows predate the currency column. Printing "$" over a rupee amount
     // is worse than printing no symbol at all.
-    expect(docMoney(149_900, null)).toBe('149,900 minor units (currency not recorded)');
-    expect(docMoney(149_900, '')).toBe('149,900 minor units (currency not recorded)');
-    expect(docMoney(149_900, 'rupees')).toBe('149,900 minor units (currency not recorded)');
-    expect(docMoneyWithCode(149_900, null)).toBe('149,900 minor units (currency not recorded)');
+    // Grouped the Indian way, because the console's default locale is `en-IN`
+    // and every figure now follows the dashboard's language rather than the
+    // browser's. 149,900 is 1,49,900 there — one lakh, forty-nine thousand.
+    expect(docMoney(149_900, null)).toBe('1,49,900 minor units (currency not recorded)');
+    expect(docMoney(149_900, '')).toBe('1,49,900 minor units (currency not recorded)');
+    expect(docMoney(149_900, 'rupees')).toBe('1,49,900 minor units (currency not recorded)');
+    expect(docMoneyWithCode(149_900, null)).toBe('1,49,900 minor units (currency not recorded)');
   });
 
   it('does not throw on a currency Intl would reject', () => {

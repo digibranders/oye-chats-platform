@@ -23,6 +23,7 @@ import { ChatPane } from './ChatPane';
 import { ConversationList } from './ConversationList';
 import { InboxSocketProvider } from './InboxSocketContext';
 import { useInboxSocket } from './inboxSocket';
+import { OperatorLanguagePicker } from './OperatorLanguagePicker';
 import { MessagePane } from './MessagePane';
 import { SnippetsDrawer } from './SnippetsDrawer';
 import { VisitorPanel } from './VisitorPanel';
@@ -83,8 +84,14 @@ export function InboxPage() {
   // they are away routes visitors to a desk nobody is sitting at.
   const connect = liveChat && !operator.unavailable && operator.isOnline;
 
+  // Having an operator seat is not the same as being at the desk. The
+  // self-service reads that DESCRIBE the operator — their working language —
+  // are theirs whether or not they are taking chats right now, so they are
+  // gated on this rather than on the live connection.
+  const isOperator = liveChat && !operator.loading && !operator.unavailable;
+
   return (
-    <InboxSocketProvider enabled={connect}>
+    <InboxSocketProvider enabled={connect} isOperator={isOperator}>
       <InboxConsole botId={botId} operator={operator} liveChat={liveChat} planLoading={planLoading} />
     </InboxSocketProvider>
   );
@@ -297,6 +304,10 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         rating: null,
         handoffReason: null,
         bant: null,
+        // An offline message is a form submission, not a conversation: it has
+        // no resolved language and never reached the quotation flow.
+        languageCode: null,
+        quotation: null,
       };
     }
     return details.details ? profileFromSession(details.details, selected.name) : null;
@@ -505,12 +516,26 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               Add me as an operator
             </Button>
           ) : (
-            <Switch
-              checked={operator.isOnline}
-              onCheckedChange={() => void operator.toggle()}
-              disabled={operator.saving || operator.loading}
-              label="Taking chats"
-            />
+            <>
+              {/* The working language sits beside availability because both are
+                  this operator's own settings for this desk, not workspace
+                  configuration — and because the language decides what they can
+                  read the moment they start taking chats. It appears only when
+                  the chatbot actually offers a second language. */}
+              {socket.operatorAvailableLocales.length > 0 ? (
+                <OperatorLanguagePicker
+                  value={socket.operatorLanguage}
+                  availableLocales={socket.operatorAvailableLocales}
+                  onChange={socket.setOperatorLanguage}
+                />
+              ) : null}
+              <Switch
+                checked={operator.isOnline}
+                onCheckedChange={() => void operator.toggle()}
+                disabled={operator.saving || operator.loading}
+                label="Taking chats"
+              />
+            </>
           )}
         </div>
       </header>

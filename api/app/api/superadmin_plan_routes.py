@@ -393,7 +393,7 @@ def _resolve_annual_discount(*, monthly_minor: int | None, annual_minor: int | N
     return derived
 
 
-def _emandate_warnings(plan: Plan) -> list[str]:
+def _emandate_warnings(plan: Plan, rate_bps: int) -> list[str]:
     """Every amount this plan can debit in one transaction.
 
     The check itself is :func:`app.core.pricing.emandate_warning`. Shared with
@@ -405,8 +405,8 @@ def _emandate_warnings(plan: Plan) -> list[str]:
     return [
         w
         for w in (
-            emandate_warning(plan.monthly_price_cents, plan.currency),
-            emandate_warning(plan.annual_price_cents, plan.currency),
+            emandate_warning(plan.monthly_price_cents, plan.currency, rate_bps=rate_bps),
+            emandate_warning(plan.annual_price_cents, plan.currency, rate_bps=rate_bps),
         )
         if w
     ]
@@ -451,12 +451,17 @@ def _checkout_wiring_warning(plan: Plan) -> str | None:
     )
 
 
-def _plan_warnings(plan: Plan) -> list[str]:
+def _plan_warnings(plan: Plan, session) -> list[str]:
     """Every non-blocking advisory the plan-CRUD routes return to the operator.
 
-    One list so the two routes cannot drift on which checks they run.
+    One list so the two routes cannot drift on which checks they run. Takes the
+    open session because the e-mandate check needs the GST rate: the RBI ceiling
+    applies to the amount DEBITED, which is the stored base plus tax.
     """
-    return _emandate_warnings(plan) + [w for w in (_checkout_wiring_warning(plan),) if w]
+    from app.services.seller_profile_service import charge_tax_rate_bps
+
+    rate_bps = charge_tax_rate_bps(session)
+    return _emandate_warnings(plan, rate_bps) + [w for w in (_checkout_wiring_warning(plan),) if w]
 
 
 @router.post("/plans")
@@ -530,7 +535,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
         return {
             "message": f"Plan '{plan.name}' created successfully.",
             "plan_id": plan.id,
-            "warnings": _plan_warnings(plan),
+            "warnings": _plan_warnings(plan, session),
         }
 
 
@@ -601,6 +606,12 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         # and log the orphaned plan ids so they can be reconciled, never leak a
         # generic 500.
         from app.services import razorpay_service
+        from app.services.seller_profile_service import charge_tax_rate_bps
+
+        # Read once for the whole mint loop, off the session already open here,
+        # so the rate cannot shift between the monthly and annual mints of the
+        # same edit and leave the two rails taxed differently.
+        seller_rate_bps = charge_tax_rate_bps(session)
 
         minted_ids: dict[str, str | None] = {}
         for price_field, (id_field, period, rail_currency) in _PRICE_TO_PLAN_ID.items():
@@ -626,11 +637,15 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 try:
                     new_rzp_id = razorpay_service.create_plan_for_price(
                         name=f"{plan.name} ({period}{', USD' if rail_currency == 'USD' else ''})",
+                        # The BASE price the admin typed. ``create_plan_for_price``
+                        # adds GST itself on the domestic rail, so this must stay
+                        # the base: uplifting here too would mint at base × 1.18².
                         amount_paise=int(new_price),
                         period=period,
                         # Each rail mints in its own fixed currency: paise for the
                         # *_cents fields, cents for *_usd_cents. Never cross-label.
                         currency=rail_currency,
+                        rate_bps=seller_rate_bps,
                     )
                 except razorpay_service.RazorpayBillingError as exc:
                     if minted_ids:
@@ -672,7 +687,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         return {
             "message": f"Plan '{plan.name}' updated successfully.",
-            "warnings": _plan_warnings(plan),
+            "warnings": _plan_warnings(plan, session),
         }
 
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { UserCheck, X } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
+import { t } from '../i18n/i18n.js';
 
 /**
  * OperatorJoinedToast. Non-blocking notification shown when an operator
@@ -60,10 +61,15 @@ const OperatorJoinedToast = ({
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-semibold text-emerald-900 leading-tight">
-                        {operatorName || 'Someone from our team'} is available!
+                        {(() => {
+                            const name = operatorName
+                                || t('system.someone_from_team')
+                                || 'Someone from our team';
+                            return t('connect.operator_available', { name }) || `${name} is available!`;
+                        })()}
                     </p>
                     <p className="text-[11px] text-emerald-700 leading-tight mt-0.5">
-                        Switch to live chat instead?
+                        {t('connect.switch_instead') || 'Switch to live chat instead?'}
                     </p>
                 </div>
                 <button
@@ -72,13 +78,13 @@ const OperatorJoinedToast = ({
                     className="px-3 py-1.5 rounded-lg text-white text-[12px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
                     style={{ backgroundColor: primaryColor }}
                 >
-                    Switch
+                    {t('connect.switch') || 'Switch'}
                 </button>
                 <button
                     type="button"
                     onClick={handleManualDismiss}
                     className="text-emerald-700/60 hover:text-emerald-900 transition-colors flex-shrink-0"
-                    aria-label="Dismiss"
+                    aria-label={t('livechat.dismiss_aria') || 'Dismiss'}
                 >
                     <X className="w-3.5 h-3.5" />
                 </button>

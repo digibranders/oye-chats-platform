@@ -37,7 +37,14 @@ import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "a4d7f2c91b06"
-down_revision: str | Sequence[str] | None = "c2e8b41f07d9"
+# Re-parented from ``c2e8b41f07d9`` onto the tip of the multilingual /
+# quotation / branding chain, which production has already run. Both were
+# authored against the same parent and left the tree with two heads; the chain
+# is linearized rather than joined with a merge revision, matching how the
+# quotation branch was reconciled. Nothing here depends on anything in that
+# chain: it adds two independent nullable columns to ``bots``, so the only
+# thing the move changes is the order they arrive in.
+down_revision: str | Sequence[str] | None = "j4e5f6a7b8c9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

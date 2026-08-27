@@ -19,12 +19,13 @@ import { useBotContext } from '../../context/BotContext';
 import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromPath, tabFromUrl, tabUrl } from './tabs';
 import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
 import { monthOptions, parseMonth } from './month';
-import { useAnalyticsRefresh } from './useAnalyticsData';
+import { useAnalyticsRefresh, useLanguageBreakdown } from './useAnalyticsData';
 import { OverviewTab } from './OverviewTab';
 import { ConversationsTab } from './ConversationsTab';
 import { JourneyTab } from './JourneyTab';
 import { VisitorsTab } from './VisitorsTab';
 import { FeedbackTab } from './FeedbackTab';
+import { LanguagesTab } from './LanguagesTab';
 
 /**
  * Analytics — one surface, one period.
@@ -75,6 +76,11 @@ export function AnalyticsPage() {
 
   const botId = selectedBot?.id ?? null;
 
+  // Whether the Languages tab is worth offering. Read from the same cached
+  // query the view itself uses, so showing the tab costs no extra request.
+  const { breakdown } = useLanguageBreakdown(botId, range.key);
+  const multilingual = breakdown?.multilingualEnabled === true;
+
   function setParam(key: string, value: string, fallback: string) {
     const next = new URLSearchParams(params);
     if (value === fallback) next.delete(key);
@@ -89,12 +95,12 @@ export function AnalyticsPage() {
   // re-scopes the page under the reader.
   const tabItems = useMemo(
     () =>
-      ANALYTICS_TABS.map((entry) => ({
+      ANALYTICS_TABS.filter((entry) => !entry.conditional || multilingual).map((entry) => ({
         to: tabUrl(entry.value, params),
         label: entry.label,
         end: entry.end,
       })),
-    [params],
+    [params, multilingual],
   );
 
   const rangeControl =
@@ -212,6 +218,7 @@ export function AnalyticsPage() {
         <Route path="conversations" element={<ConversationsTab botId={botId} range={range} />} />
         <Route path="journey" element={<JourneyTab botId={botId} month={month} />} />
         <Route path="visitors" element={<VisitorsTab botId={botId} range={range} />} />
+        <Route path="languages" element={<LanguagesTab botId={botId} range={range} />} />
         <Route path="feedback" element={<FeedbackTab botId={botId} range={range} />} />
         {/* An address under `/analytics` that names nothing is the section's
             own index, not a 404 in the shell: the reader asked for analytics

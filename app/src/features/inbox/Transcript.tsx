@@ -1,18 +1,19 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Bot, Download, FileText, MessageSquare } from 'lucide-react';
 import {
   Avatar,
   Button,
+  DayDivider,
   EmptyState,
   ErrorState,
-  Separator,
   Skeleton,
   Spinner,
   cn,
-  formatDate,
   formatTime,
 } from '../../ui';
-import { isSafeFileUrl } from './liveChatHelpers';
+import { dayKey, formatDayLabel } from '../../lib/messageDay';
+import { isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
+import { TranslationToggle } from './TranslationToggle';
 import type { OperatorMessage } from './liveChatProtocol';
 
 export interface TranscriptProps {
@@ -39,6 +40,14 @@ export interface TranscriptProps {
   loadingOlder?: boolean;
   /** Rendered under the last message — an ended-conversation note, for instance. */
   footnote?: ReactNode;
+  /**
+   * The language this operator reads in, from their own working-language
+   * setting. Null means "no translation": every message renders exactly as it
+   * was written, which is what a single-language desk wants.
+   */
+  readerLanguage?: string | null;
+  /** Ask the server to translate one message again, after a failure. */
+  onRetryTranslation?: (message: OperatorMessage) => Promise<void> | void;
   className?: string;
 }
 
@@ -66,15 +75,6 @@ function elapsed(from: string | null, to: string | null): number | null {
   const end = Date.parse(to);
   if (Number.isNaN(start) || Number.isNaN(end)) return null;
   return end - start;
-}
-
-/** Group boundary: a date divider goes in wherever the calendar day changes. */
-function dayKey(timestamp: string | null): string {
-  if (!timestamp) return '';
-  const parsed = Date.parse(timestamp);
-  if (Number.isNaN(parsed)) return '';
-  const date = new Date(parsed);
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
 function isImage(contentType: string | undefined): boolean {
@@ -147,8 +147,14 @@ export function Transcript({
   onLoadOlder,
   loadingOlder = false,
   footnote,
+  readerLanguage = null,
+  onRetryTranslation,
   className,
 }: TranscriptProps) {
+  // Per-message "show me what they actually wrote". Keyed by message, and
+  // deliberately NOT a single transcript-wide flag: an operator checking one
+  // suspicious translation should not have the other forty revert under them.
+  const [originals, setOriginals] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Whether the operator is reading the newest messages. Auto-scroll is only
   // honest when they are: yanking someone back to the bottom while they scroll
@@ -191,10 +197,10 @@ export function Transcript({
   // one left in it, which puts the divider on the wrong message.
   const dividerAt = useMemo(() => {
     const flags = new Array<boolean>(messages.length).fill(false);
-    let previous = '';
+    let previous: string | null = '';
     messages.forEach((message, index) => {
       const key = dayKey(message.timestamp);
-      if (key !== '' && key !== previous) {
+      if (key !== null && key !== previous) {
         flags[index] = true;
         previous = key;
       }
@@ -260,6 +266,8 @@ export function Transcript({
       <ol className="flex flex-col">
         {messages.map((message, index) => {
           const showDivider = dividerAt[index];
+          const showsOriginal = originals[message.key] === true;
+          const display = resolveDisplay(message, readerLanguage, showsOriginal);
           const mine = message.role === 'operator';
           const system = message.role === 'system';
           const groupStart = grouping.starts[index] || showDivider;
@@ -274,13 +282,11 @@ export function Transcript({
           return (
             <li key={message.key} className="contents">
               {showDivider ? (
-                <div className="my-3 flex items-center gap-3" role="presentation">
-                  <Separator className="flex-1" />
-                  <span className="figure text-2xs text-text-tertiary">
-                    {formatDate(message.timestamp)}
-                  </span>
-                  <Separator className="flex-1" />
-                </div>
+                // "Today" / "Yesterday" over a bare date: the two most common
+                // answers are the ones a reader should not have to work out
+                // from a number, and this is the marker that tells them whether
+                // a lead is still warm.
+                <DayDivider label={formatDayLabel(message.timestamp)} className="my-3" />
               ) : null}
 
               {system ? (
@@ -350,11 +356,35 @@ export function Transcript({
                       ) : null}
                       {/* `whitespace-pre-wrap` and nothing else: message bodies are
                           visitor-authored text and are never parsed as markup. */}
-                      {message.content ? (
-                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                      {display.text ? (
+                        // `dir` follows the text being rendered, not the
+                        // conversation: a translated Arabic message inside an
+                        // English thread still has to lay out right-to-left.
+                        <p dir={display.direction} className="whitespace-pre-wrap break-words">
+                          {display.text}
+                        </p>
                       ) : null}
                       {message.fileUrl ? <Attachment message={message} /> : null}
                     </div>
+                    {readerLanguage && message.role !== 'operator' ? (
+                      <TranslationToggle
+                        className="mt-1 px-0.5"
+                        isTranslated={display.isTranslated}
+                        showOriginal={showsOriginal}
+                        sourceLanguage={message.sourceLanguage}
+                        onToggle={() =>
+                          setOriginals((previous) => ({
+                            ...previous,
+                            [message.key]: !previous[message.key],
+                          }))
+                        }
+                        onRetry={
+                          onRetryTranslation && translationMissing(message, readerLanguage)
+                            ? () => onRetryTranslation(message)
+                            : undefined
+                        }
+                      />
+                    ) : null}
                     {groupEnd ? (
                       <p className="mt-1 flex items-center gap-1.5 px-0.5 text-2xs text-text-tertiary">
                         {message.timestamp ? (

@@ -1,5 +1,25 @@
 # Invoicing & Tax — Implementation Plan v2
 
+> ## ⚠️ Decision D4 was reversed on 26 Aug 2026: pricing is now GST-EXCLUSIVE
+>
+> This plan records the decisions taken on 2026-07-02 and is left unedited. **D4 ("Tax-inclusive vs
+> exclusive → Inclusive") no longer describes what the product does.** Every published price is now a
+> **base** price, exclusive of GST. A domestic customer is debited base + GST, added at charge time
+> by `core/tax.py::gross_charge_minor`; an international customer is an export, pays no Indian GST,
+> and is charged the listed USD price.
+>
+> D4's own sentence "No price or checkout changes" is what inverted: the checkout now adds the tax,
+> and every INR Razorpay plan had to be re-minted at base + GST because Razorpay Subscriptions have
+> no tax layer.
+>
+> **The rest of the plan still stands, including the invoicing engine.** Because the charge is
+> `base + tax`, the captured amount is itself tax-inclusive of the base, so the `total ÷ 1.18`
+> carve-out described here still recovers the advertised price exactly. `SellerProfile.price_inclusive`
+> remains pinned `true` and setting it false is still refused.
+>
+> Current source of truth: `api/app/core/tax.py` and
+> [`razorpay-plan-ids.md`](./razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+
 **Status:** ✅ IMPLEMENTED (all phases 0–7, 2026-07-02/03) · **Owner:** Engineering
 
 > **§0. Implementation status (2026-07-03).** All eight phases are built, tested, and per-phase code-reviewed on `development` (platform repo commits `6266344`→`dae29b6`; admin repo `2904ad0`→`863192e`). Suite: 1,529 API tests green; both frontends lint/tsc/build clean. Review findings INV-1…INV-10 are all resolved. **Go-live decisions:** both feature flags default ON (kill switches only); the activation gate is the seller profile — invoicing starts the moment the super-admin saves the Digibranders legal identity in admin → Billing. Receipts use the reserved `RCT/` series, credit notes `CN/`; tax invoices use the configured prefix (default `DB/`). Financial year is IST-based.

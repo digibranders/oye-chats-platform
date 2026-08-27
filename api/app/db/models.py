@@ -360,6 +360,44 @@ class Bot(Base):
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
 
+    # Admin-defined pre-handoff question flow. Fires once the BANT signals reach
+    # ``threshold`` marked dimensions and BEFORE the handoff card is offered,
+    # to finish qualifying the lead with structured answers the sales team
+    # sees on the very first touch. NULL disables the feature for this bot.
+    # Shape:
+    #   {
+    #     "enabled": true,
+    #     "threshold": 2,          # BANT dimensions needed to trigger (1-4)
+    #     "questions": [
+    #       {"id": "q1", "text": "...", "type": "text"|"choice"|"email"|"phone",
+    #        "options": ["..."], "required": true,
+    #        "skip_if_bant": null|"need"|"timeline"|"authority"|"budget"}
+    #     ]
+    #   }
+    qualification_flow = Column(JSONB, nullable=True)
+
+    # Admin-defined quotation catalog. An ordered list of billable services
+    # the bot can quote a qualified visitor on (Website design, Logo, SEO
+    # audit, …). Each service carries its own price per unit, unit label,
+    # optional default quantity, and per-service questions the bot asks to
+    # scope the quote. NULL disables quoting for this bot.
+    # Shape:
+    #   {
+    #     "enabled": true,
+    #     "currency": "INR",
+    #     "services": [
+    #       {"id": "s1", "name": "Landing page", "description": "...",
+    #        "unit_label": "page", "price_per_unit": 5000,
+    #        "default_quantity": 1,
+    #        "questions": [
+    #          {"id": "q1", "text": "How many sections?",
+    #           "type": "number"|"text"|"choice",
+    #           "options": [...], "required": true}
+    #        ]}
+    #     ]
+    #   }
+    quotation_catalog = Column(JSONB, nullable=True)
+
     # CRAG relevance gate threshold override.
     # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
     # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
@@ -469,6 +507,18 @@ class Bot(Base):
         JSONB,
         nullable=False,
         server_default='{"file_sharing": false, "post_chat_rating": true, "show_branding": true, "queue_position": false, "typing_preview": true, "email_transcript": false}',
+    )
+
+    # Multilingual configuration. Controls supported locales, auto-detection, and translation
+    language_config = Column(
+        JSONB,
+        nullable=False,
+        server_default=(
+            '{"enabled": false, "default_locale": "en-IN", '
+            '"supported_locales": ["en-IN"], "auto_detect": true, '
+            '"allow_visitor_language_switch": false, '
+            '"operator_translation_enabled": false}'
+        ),
     )
 
     # Widget messages. All customizable user-facing strings (welcome, chat input, error messages, etc.)
@@ -888,6 +938,31 @@ class ChatSession(Base):
     bant_last_updated = Column(DateTime(timezone=True), nullable=True)
     dimension_scores = Column(JSONB, nullable=True)
     qualification_framework = Column(String, default="bant", server_default="bant", nullable=False)
+    # The qualification dimension the bot probed on its most recent turn (e.g.
+    # "timeline"), or NULL when the last turn asked nothing. Drives two things
+    # the score columns alone cannot: (1) probe de-duplication — the next turn
+    # skips this dimension so the bot never re-asks a question it just asked,
+    # even while the async score for that answer is still catching up; (2)
+    # answer-binding — this value is fed to the background extractor as the
+    # frame for the visitor's reply, so a terse answer ("2 months") binds to
+    # the dimension actually asked instead of being dropped as ambiguous.
+    last_probed_dimension = Column(String, nullable=True)
+
+    # Pre-handoff quotation flow progress. NULL == "idle" (never activated).
+    # Shape:
+    #   {"status": "active"|"selecting"|"answering"|"quoting"|"complete"|"skipped",
+    #    "selected_service_ids": ["s1", "s2"],
+    #    "current_service_index": 0, "current_question_index": 0,
+    #    "answers": {"s1": {"q1": "value"}}, "quantities": {"s1": 3},
+    #    "activated_at": "...", "completed_at": null}
+    quotation_state = Column(JSONB, nullable=True)
+
+    # Pre-handoff qualification flow progress. NULL == "idle" (never activated).
+    # Shape once activated:
+    #   {"status": "active"|"complete"|"skipped",
+    #    "current_index": 0, "answers": {"q1": "5"},
+    #    "activated_at": "2026-08-21T...", "completed_at": null}
+    flow_state = Column(JSONB, nullable=True)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
@@ -907,6 +982,14 @@ class ChatSession(Base):
     # Backed by partial index ix_chat_sessions_bot_id_lead_viewed_at
     # (see migration d4e5f6a7b8c9) to keep sidebar polling cheap.
     lead_viewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Multilingual state (Phase 2). Resolved language context for this session
+    language_code = Column(String(16), nullable=True)
+    locale = Column(String(32), nullable=True)
+    language_source = Column(String(32), nullable=True)
+    language_confidence = Column(Float, nullable=True)
+    language_locked = Column(Boolean, default=False, server_default="false", nullable=False)
+    language_changed_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # No `onupdate=func.now()` here on purpose: that fires on ANY UPDATE to
@@ -936,6 +1019,17 @@ class ChatSession(Base):
             "bot_id",
             created_at.desc(),
         ),
+        # NO language-specific index here, deliberately. The Phase 5C language
+        # breakdown groups by ``language_code`` within one bot over a window,
+        # and a ``(bot_id, language_code, created_at DESC)`` index was measured
+        # against it on 120k sessions across 60 bots: Postgres never chose it,
+        # because ``language_code`` in the middle blocks ``created_at`` from
+        # being used as a range condition. A reordered
+        # ``(bot_id, created_at DESC, language_code)`` variant WAS chosen but
+        # ran no faster (0.76ms vs 0.72ms, same buffer count) because the plan
+        # is a bitmap heap scan either way. The index above already serves the
+        # query; a third index would only add write cost to a hot,
+        # append-heavy table.
     )
 
 
@@ -1118,6 +1212,23 @@ class Operator(Base):
     avatar_url = Column(String, nullable=True)
     max_concurrent_chats = Column(Integer, default=5, server_default="5", nullable=False)
     notification_preferences = Column(JSONB, nullable=True)
+
+    # ── Multilingual (Phase 4) ──
+    # The language this operator works in. Live chat translates incoming
+    # visitor messages INTO this locale and outgoing replies FROM it. NULL
+    # means "not set": no translation is performed on this operator's behalf.
+    # A personal working preference, so it is self-editable (see
+    # ``PATCH /operators/{id}``), unlike ``supported_languages`` below.
+    preferred_locale = Column(String(32), nullable=True)
+    # Languages this operator can handle unaided. Phase 5's language-aware
+    # routing filters candidates on this; Phase 4 only stores it so that
+    # filter has data to read. A team-management field, not self-editable.
+    supported_languages = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sqlalchemy.text("'[]'::jsonb"),
+    )
 
     # Linked-identity fields. Populated when an operator was created via an
     # invite the invitee accepted while authenticated as a Client.
@@ -1307,6 +1418,23 @@ class ChatMessage(Base):
     # and card-less answers stay valid.
     media_card = Column(JSONB, nullable=True)
     media_secondary = Column(JSONB, nullable=True)
+
+    # ── Multilingual (Phase 4) ──
+    # The language ``content`` is written IN. NULL for every pre-Phase-4 row and
+    # for every message on a bot without multilingual enabled.
+    source_language = Column(String(16), nullable=True)
+    # Derived translations, keyed by TARGET language code. ``content`` above is
+    # the canonical original and is NEVER modified after insert; this column is
+    # the only place a translation is stored. Shape:
+    #   {"en": {"content": "...", "provider": "litellm",
+    #           "model": "gemini/gemini-2.5-flash",
+    #           "status": "ok" | "failed",
+    #           "created_at": "2026-08-24T10:15:00Z"}}
+    # Keyed by language (not a single column) so a chat transferred to an
+    # operator working in a different language can add a key without touching
+    # the ones already there.
+    translations = Column(JSONB, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
@@ -1727,6 +1855,23 @@ class Subscription(Base):
     # from seat_addon_quantity (the AUTHORIZED/billed count).
     seat_addon_pending_quantity = Column(Integer, nullable=True)
 
+    # Razorpay id of the SEPARATE branding-removal add-on subscription. Same
+    # reason as seats for living on its own mandate: the main plan's amount
+    # must never move. Unlike seats there is no quantity, the add-on is a
+    # boolean, so one mandate per subscription.
+    branding_addon_subscription_id = Column(String, nullable=True)
+    # The AUTHORIZED entitlement. This column, and nothing else, is what
+    # ``plan_entitlements_service`` reads to grant ``branding_removable``. No
+    # plan tier grants it: branding removal is sold only as this add-on.
+    branding_addon_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Purchase DESIRED but awaiting mandate authorization, mirroring
+    # ``seat_addon_pending_quantity``. The add-on subscription is minted in
+    # Razorpay's ``created`` state and charges nothing until the customer
+    # authorizes it, so the entitlement must wait for the ``activated``
+    # webhook. Otherwise a customer who opens checkout and dismisses it hides
+    # the branding for free.
+    branding_addon_pending = Column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -1980,6 +2125,27 @@ def _reject_frozen_invoice_mutation(mapper, connection, target):  # noqa: ANN001
         )
 
 
+# ``Invoice.kind`` values that document ADD-ON revenue rather than a plan
+# charge. Add-on invoices stamp the MAIN subscription's id (they have no
+# subscription row of their own) but fund no credit grant, so any query asking
+# "was the plan actually paid for this period?" must exclude them. Missing one
+# lets a ₹499 add-on debit masquerade as a full plan renewal and mask an unpaid
+# plan charge, which is the leak the seat-only version of this filter was
+# written to close (F5).
+#
+# Every new add-on kind belongs in this tuple at the moment it is introduced.
+ADDON_INVOICE_KINDS: tuple[str, ...] = ("seat", "branding")
+
+
+def plan_charge_only_clauses() -> list:
+    """SQLAlchemy filter clauses restricting a query to PLAN charges.
+
+    ``is_distinct_from`` rather than ``!=`` so legacy rows with ``kind IS NULL``
+    still count as plan charges; a plain inequality drops NULLs too.
+    """
+    return [Invoice.kind.is_distinct_from(kind) for kind in ADDON_INVOICE_KINDS]
+
+
 class InvoiceCounter(Base):
     """Gapless per-FY invoice serial allocator.
 
@@ -2094,7 +2260,8 @@ class CreditLedger(Base):
     # binds the params as typed VARCHAR and Postgres rejects the enum insert
     # with DatatypeMismatch; the page TX then rolls back and every retry hits
     # the same boundary. Single-row inserts only ever worked via implicit cast.
-    # Values mirror the live enum (c1d2e3f4a5b6 + d9e3c1b7a4f2 migrations).
+    # Values mirror the live enum (c1d2e3f4a5b6 + d9e3c1b7a4f2 + f5a1c2b3d4e6 +
+    # d1b4f7a2c9e6 migrations).
     # Prod schema is alembic-managed (the type already exists there); the
     # default create_type=True only matters for metadata.create_all in the
     # throwaway-Postgres test fixtures, which need the type created with the
@@ -2112,6 +2279,11 @@ class CreditLedger(Base):
             "document_upload",
             "email_verification",
             "company_name",
+            # Operator live-chat translation (Phase 4). Without this label the
+            # ledger insert fails with InvalidTextRepresentation, and because
+            # ``charge_for_translation`` swallows every exception to protect
+            # message delivery, translation would silently never run.
+            "translation",
             name="credit_reason",
         ).with_variant(String(), "sqlite"),
         nullable=False,
@@ -2609,7 +2781,8 @@ class BillingFunnelEvent(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     # checkout_abandoned (customer closed the sheet) | payment_failed (gateway decline)
     event = Column(String(24), nullable=False)
-    # plan | topup | seat | resume, which purchase surface opened the sheet
+    # plan | topup | seat | resume | branding, which purchase surface opened
+    # the sheet. Validated by the route's Literal, not by a CHECK constraint.
     surface = Column(String(12), nullable=False)
     meta = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)

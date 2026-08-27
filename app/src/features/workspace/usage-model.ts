@@ -17,6 +17,7 @@
  *     of buckets need disambiguation before display (Billing.jsx:116-139).
  */
 
+
 // ── Safe coercion at the boundary ────────────────────────────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -756,7 +757,7 @@ export function parseLedger(raw: unknown): LedgerRow[] {
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 export function formatCredits(value: number): string {
-  return Math.round(value).toLocaleString('en-US');
+  return formatNumber(Math.round(value));
 }
 
 /**
@@ -764,7 +765,7 @@ export function formatCredits(value: number): string {
  * copies, so an absent value is the console's em dash here as everywhere, and
  * one locale decision covers the whole app.
  */
-import { formatDate, formatDateTime, formatTime } from '../../ui/lib/formatters';
+import { formatDate, formatDateTime, formatNumber, formatTime } from '../../ui/lib/formatters';
 export { formatDate, formatDateTime, formatTime };
 
 // ── Periods ──────────────────────────────────────────────────────────────────

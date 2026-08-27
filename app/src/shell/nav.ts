@@ -10,6 +10,7 @@ import {
   Inbox,
   type LucideIcon,
   MessagesSquare,
+  Receipt,
   Settings2,
   Sparkles,
   Target,
@@ -19,8 +20,8 @@ import {
 /**
  * The console's information architecture.
  *
- * Two scopes, not one tree. A rail that lists every chatbot's six destinations
- * is O(N) in a number we sell — at six chatbots it is already sixteen rows plus
+ * Two scopes, not one tree. A rail that lists every chatbot's seven destinations
+ * is O(N) in a number we sell — at six chatbots it is already forty-two rows plus
  * a footer, and at twenty it scrolls while "Settings" sits below the fold.
  * Entering a chatbot swaps the rail instead, which is O(1) at any count and is
  * what Chatbase, Vercel and Linear all settled on for the same reason.
@@ -99,6 +100,7 @@ export const AGENT_NAV: readonly AgentNavItem[] = [
   { segment: 'experience', label: 'Experience', icon: MessagesSquare, hint: 'What do visitors see?' },
   { segment: 'deploy', label: 'Deploy', icon: Globe, hint: 'Where is it live?' },
   { segment: 'qualification', label: 'Qualification', icon: Target, hint: 'How are leads scored?' },
+  { segment: 'quotation', label: 'Quotation', icon: Receipt, hint: 'What can it price?' },
   { segment: 'behaviour', label: 'Behaviour', icon: Settings2, hint: 'How does it decide what to say?' },
 ];
 

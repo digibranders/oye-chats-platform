@@ -24,6 +24,7 @@ import { ChangeEmailCard, ChangePasswordCard } from './AccountSecuritySection';
 import { NotificationsSection } from './NotificationsSection';
 import { AccountSessionsSection } from './AccountSessionsSection';
 import { ContactSection } from './ContactSection';
+import { LanguageSection } from './LanguageSection';
 
 /**
  * `/account` — your account, not the workspace's.
@@ -138,6 +139,11 @@ export function SettingsPage() {
         </Stack>
 
         <Stack>
+          {/* Second column, at the top: it is the setting that changes every
+              other word on this page, so it belongs where a reader looking for
+              it would start. */}
+          <LanguageSection />
+
           <NotificationsSection />
 
           <ContactSection />

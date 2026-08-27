@@ -16,6 +16,25 @@ Decisions taken after this plan was written that supersede figures in its body. 
 updated to match the shipped code; this log is what says *when* and *why*, so the plan still reads as
 a record of what was decided rather than a document that was quietly made correct.
 
+### 2026-08-26 — Prices below are BASE prices, exclusive of GST · `792f5f71`
+
+Every published price became a base price, exclusive of GST. The ₹ and $ figures in this plan and in
+`seed_plans.py` are unchanged as *bases*, but they are no longer what a domestic customer is debited:
+the tax is added at charge time by `core/tax.py::gross_charge_minor`, so Enterprise monthly is
+₹5,999 listed and ₹7,078.82 charged, and Enterprise annual is ₹57,588 listed and ₹67,953.84 charged.
+The USD rail is an export, carries no Indian GST, and is unchanged at $89.99 and $863.88.
+
+Razorpay Subscriptions have no tax layer, so every INR plan must be minted at base + GST. See
+[`razorpay-plan-ids.md`](../../billing/razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+
+### 2026-08-26 — Branding removal is a paid add-on, not an Enterprise inclusion · `51eb003e`
+
+The assertion in the plan body, `ent["features"]["branding_removable"] is True`, no longer holds.
+Every plan now seeds `branding_removable: false`, and the entitlement is granted only by an
+authorized add-on mandate (`Subscription.branding_addon_active`) billed on its own Razorpay
+subscription at `RAZORPAY_BRANDING_PLAN_PRICE_CENTS` (₹499 base, ₹588.82 charged) or
+`BRANDING_ADDON_PRICE_USD_CENTS` ($5). Enterprise takes the add-on like every other tier.
+
 ### 2026-08-13 — Enterprise credits stay at 10,000/month (supersedes 13,000) · `ba22a0c`
 
 The plan specified 13,000 credits/month. **Enterprise grants 10,000/month, the same as

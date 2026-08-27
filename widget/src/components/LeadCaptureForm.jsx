@@ -1,15 +1,16 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import { sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
+import { t } from '../i18n/i18n.js';
 
-const FIELD_CONFIG = {
-    name: { label: 'Your Name', icon: User, type: 'text', placeholder: 'John Doe' },
-    email: { label: 'Email Address', icon: Mail, type: 'email', placeholder: 'john@company.com' },
-    phone: { label: 'Phone Number', icon: Phone, type: 'tel', placeholder: '+1 (555) 000-0000' },
-    company: { label: 'Company', icon: Building2, type: 'text', placeholder: 'Acme Inc.' },
-};
+const getFieldConfig = () => ({
+    name: { label: t('lead.name_label') || 'Your Name', icon: User, type: 'text', placeholder: t('lead.name_placeholder') || 'John Doe' },
+    email: { label: t('lead.email_label') || 'Email Address', icon: Mail, type: 'email', placeholder: t('lead.email_placeholder') || 'john@company.com' },
+    phone: { label: t('lead.phone_label') || 'Phone Number', icon: Phone, type: 'tel', placeholder: t('lead.phone_placeholder') || '+1 (555) 000-0000' },
+    company: { label: t('lead.company_label') || 'Company', icon: Building2, type: 'text', placeholder: t('lead.company_placeholder') || 'Acme Inc.' },
+});
 
 // Inline pre-chat lead form. Renders WITHIN the chat window's messages area,
 // the parent ChatWindow already supplies the header (bot avatar, name, close
@@ -28,49 +29,60 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
     const [formData, setFormData] = useState({});
     const [errors, setErrors] = useState({});
     const [submitting, setSubmitting] = useState(false);
-    // 'idle' | 'checking' | 'valid' | 'invalid'
+    // 'idle' | 'checking' | 'valid' | 'invalid'. PRESENTATION ONLY: it drives
+    // the spinner and the disabled state. The submit gate is keyed on the
+    // address in the field, never on this flag, which describes whichever
+    // address was checked last.
     const [emailCheckState, setEmailCheckState] = useState('idle');
-    const emailCheckPromiseRef = useRef(null);
-    const lastCheckedEmailRef = useRef('');
+    // Latest value in the field, so an in-flight check can tell whether its
+    // verdict still applies to what the visitor has typed.
+    const emailValueRef = useRef('');
+    const emailValue = formData.email || '';
+    useEffect(() => {
+        emailValueRef.current = emailValue;
+    }, [emailValue]);
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-    // Fires on blur from the email field. Validates in the background
-    // while the visitor moves on to the next field.
+    // Fires on blur from the email field, purely so the visitor sees the
+    // verdict early. The check is memoized by address in ``services/api``,
+    // so the matching check at submit costs no extra request.
     const handleEmailBlur = () => {
         const email = formData.email?.trim();
-        if (!email || email === lastCheckedEmailRef.current) return;
+        if (!email) return;
         if (!looksLikeEmail(email)) {
             setEmailCheckState('invalid');
-            setErrors(prev => ({ ...prev, email: 'Please enter a valid email' }));
+            setErrors(prev => ({ ...prev, email: (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             return;
         }
 
-        lastCheckedEmailRef.current = email;
         setEmailCheckState('checking');
-        const promise = checkEmailWithServer(email).then((result) => {
-            if (lastCheckedEmailRef.current !== email) return result;
+        checkEmailWithServer(email).then((result) => {
+            // A newer edit may have superseded this check. Only show the
+            // verdict while it still describes what's in the field.
+            if (emailValueRef.current.trim() !== email) return;
             if (result.valid) {
                 setEmailCheckState('valid');
                 setErrors(prev => ({ ...prev, email: undefined }));
             } else {
                 setEmailCheckState('invalid');
-                setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
+                setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
             }
-            return result;
         });
-        emailCheckPromiseRef.current = promise;
     };
 
     const validate = () => {
         const newErrors = {};
+        const fieldConfigMap = getFieldConfig();
         for (const f of fields) {
             if (f.required && !formData[f.field]?.trim()) {
-                newErrors[f.field] = `${FIELD_CONFIG[f.field]?.label || f.field} is required`;
+                const label = fieldConfigMap[f.field]?.label || f.field;
+                newErrors[f.field] = t('lead.field_required', { field: label })
+                    || `${label} is required`;
             }
             if (f.field === 'email' && formData.email?.trim()) {
                 if (!looksLikeEmail(formData.email.trim())) {
-                    newErrors.email = 'Please enter a valid email';
+                    newErrors.email = (t('lead.invalid_email_short') || 'Please enter a valid email');
                 }
             }
         }
@@ -85,22 +97,19 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         if (!validate()) return;
 
         if (hasEmailField && formData.email?.trim()) {
-            // The visitor may click submit before the blur check resolves.
-            if (emailCheckState === 'checking' && emailCheckPromiseRef.current) {
-                const result = await emailCheckPromiseRef.current;
-                if (!result.valid) return; // error already set inside the check
-            } else if (emailCheckState === 'invalid') {
+            // Gate on the address that is IN THE FIELD right now, resolved by
+            // value rather than by reading the mode flag: the flag describes
+            // whichever address was checked last, so a second address typed
+            // after a first one passed would otherwise inherit its "valid".
+            const email = formData.email.trim();
+            setEmailCheckState('checking');
+            const result = await checkEmailWithServer(email);
+            if (!result.valid) {
+                setEmailCheckState('invalid');
+                setErrors(prev => ({ ...prev, email: result.reason || (t('lead.invalid_email_short') || 'Please enter a valid email') }));
                 return;
-            } else if (emailCheckState === 'idle') {
-                setEmailCheckState('checking');
-                const result = await checkEmailWithServer(formData.email.trim());
-                if (!result.valid) {
-                    setEmailCheckState('invalid');
-                    setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
-                    return;
-                }
-                setEmailCheckState('valid');
             }
+            setEmailCheckState('valid');
         }
 
         setSubmitting(true);
@@ -137,15 +146,16 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 </div>
 
                 <h2 className="text-center text-[#16202C] text-lg font-bold mb-1">
-                    Before we start
+                    {settings?.lead_form_title || t('lead.title') || 'Before we start'}
                 </h2>
                 <p className="text-center text-gray-500 text-sm mb-5">
-                    Please share your details so we can assist you better.
+                    {settings?.lead_form_subtitle || t('lead.subtitle') || 'Please share your details so we can assist you better.'}
                 </p>
 
                 <form onSubmit={handleSubmit} className="space-y-3">
                     {fields.map((f, i) => {
-                        const config = FIELD_CONFIG[f.field];
+                        const fieldConfigMap = getFieldConfig();
+                        const config = fieldConfigMap[f.field];
                         if (!config) return null;
                         const Icon = config.icon;
                         return (
@@ -193,7 +203,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         ) : (
                             <>
-                                Start Chat
+                                {t('lead.submit') || 'Start Chat'}
                                 <ArrowRight className="w-4 h-4" />
                             </>
                         )}

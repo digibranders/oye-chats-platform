@@ -12,6 +12,7 @@ import {
 } from '../../ui';
 import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * One page did not load. The rest of the console still works.
@@ -28,6 +29,7 @@ import { parseRouteError, useReportRouteError } from './parseRouteError';
  * both faster and less destructive than throwing away the whole application.
  */
 export function PageErrorBoundary() {
+  const { t } = useTranslation();
   const error = useRouteError();
   useReportRouteError(error);
   const { status, title, description, detail } = parseRouteError(error);
@@ -36,20 +38,24 @@ export function PageErrorBoundary() {
     <Page>
       <Measure width="reading">
         <PageHeader
-          eyebrow={status != null ? `Error ${status}` : 'This page'}
+          eyebrow={
+            status != null
+              ? t('app.errorStatus', { status }) || `Error ${status}`
+              : t('app.thisPage') || 'This page'
+          }
           title={title}
           description={description}
           actions={
             <>
               <Link to="/" className={buttonClass('primary', 'md')}>
-                Go to Home
+                {t('app.goToHome') || 'Go to Home'}
               </Link>
               <Button
                 variant="secondary"
                 onClick={() => window.location.reload()}
                 iconLeft={<RefreshCw aria-hidden />}
               >
-                Reload this page
+                {t('app.reloadThisPage') || 'Reload this page'}
               </Button>
             </>
           }
@@ -57,20 +63,24 @@ export function PageErrorBoundary() {
 
         <Card>
           <CardHeader
-            title="Everything else still works"
+            title={t('app.everythingElseStillWorks') || 'Everything else still works'}
             titleAs="h2"
-            description="Only this page failed. Your chatbots are still answering visitors."
+            description={
+              t('app.onlyThisPageFailed') ||
+              'Only this page failed. Your chatbots are still answering visitors.'
+            }
           />
           <CardBody>
             <p className="text-base text-text-secondary">
-              If this page keeps failing, email{' '}
+              {t('app.ifThisPageKeepsFailing') || 'If this page keeps failing, email'}{' '}
               <a
                 href="mailto:developer@oyechats.com"
                 className="text-accent-600 underline underline-offset-2"
               >
                 developer@oyechats.com
               </a>{' '}
-              with the address in your browser bar and what is under Technical details.
+              {t('app.withTheAddressInYourBrowser') ||
+                'with the address in your browser bar and what is under Technical details.'}
             </p>
             <ErrorDetails detail={detail} className="mt-4" />
           </CardBody>

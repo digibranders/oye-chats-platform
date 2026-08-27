@@ -230,11 +230,11 @@ Per-bot business events (engagement spikes, milestones).
 | `id` | int **PK** | |
 | `slug` | varchar **UNIQUE** | `free`, `standard`, … |
 | `name`, `description` | varchar / text | |
-| `monthly_price_cents`, `annual_price_cents` | int | Minor units |
+| `monthly_price_cents`, `annual_price_cents` | int | Minor units. **BASE price, exclusive of GST**: a domestic charge is this plus tax |
 | `currency` | varchar | `INR`, `USD` |
 | `credits_per_month` | int | Plan grant |
 | `included_operator_seats` | int | |
-| `extra_seat_price_cents` | int | |
+| `extra_seat_price_cents` | int | BASE price, exclusive of GST |
 | `feature_flags` | jsonb | Per-plan toggles |
 | `usage_limits` | jsonb | E.g., max bots, max docs |
 | `trial_days` | int | |

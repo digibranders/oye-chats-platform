@@ -29,6 +29,7 @@ import {
   type PlanView,
   type PromotionView,
 } from '../billingModel';
+import { TaxNote } from './TaxNote';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 import { usePlanActivation } from './usePlanActivation';
 
@@ -234,6 +235,11 @@ export function PlanPickerDialog({
       }
     >
       <div className="space-y-4">
+        {/* Every price on this dialog is a BASE price. Razorpay debits the
+            gross, and the gap between the two is only ever learned here —
+            after the payment sheet opens it is too late to be a disclosure. */}
+        <TaxNote />
+
         {/* The promotion, where the customer is choosing. It used to be a sixth
             banner on `/billing`, above the plan and — when a card had just
             failed — above the payment failure. */}

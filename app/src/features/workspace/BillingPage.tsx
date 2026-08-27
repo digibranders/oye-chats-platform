@@ -37,6 +37,7 @@ import { PaymentMethodsSection } from './billing/PaymentMethodsSection';
 import { BillingIdentitySection } from './billing/BillingIdentitySection';
 import { PlanPickerDialog } from './billing/PlanPickerDialog';
 import { CancelSubscriptionDialog } from './billing/CancelSubscriptionDialog';
+import { BrandingAddonCard } from './billing/BrandingAddonCard';
 import { SeatDialog } from './billing/SeatDialog';
 import { useBillingData } from './useBillingData';
 import {
@@ -384,6 +385,15 @@ export function BillingPage() {
                 )}
               </Card>
             }
+          />
+
+          {/* Beside the plan, because it is bought the same way and billed on
+              the same mandate — but not among the plan cards, because no plan
+              includes it. */}
+          <BrandingAddonCard
+            botId={botId}
+            hasPaidPlan={!entitlements.is_free && Boolean(subscription)}
+            onSettled={(message) => toast.success(message)}
           />
 
           {entitlements.limits?.credits === UNLIMITED_LIMIT ? (

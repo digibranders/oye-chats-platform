@@ -8,7 +8,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
 import { Bot as BotIcon, Plus, SearchX } from 'lucide-react';
 import {
-  Avatar,
   Badge,
   Button,
   Card,
@@ -32,6 +31,7 @@ import { keys } from '../../query/keys';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { agentPath } from '../../shell/nav';
+import { AgentAvatar } from './AgentAvatar';
 import { agentHealth, type AgentHealth } from '../home/agentHealth';
 import type { Bot } from '../../types/domain';
 import { AgentActionsMenu } from './AgentActionsMenu';
@@ -401,7 +401,7 @@ export function AgentsPage() {
           const name = bot.name || `Chatbot ${bot.id}`;
           return (
             <span className="flex min-w-0 items-center gap-2.5">
-              <Avatar name={name} src={bot.bot_logo} size="sm" shape="rounded" />
+              <AgentAvatar agent={bot} size="sm" />
               <span className="min-w-0">
                 <Link
                   to={agentPath(bot.id, 'overview')}

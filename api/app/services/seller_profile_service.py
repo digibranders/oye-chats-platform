@@ -97,6 +97,24 @@ def _clamped_prefix(raw: Any, fallback: str) -> str:
     return fallback
 
 
+def charge_tax_rate_bps(session: Session) -> int:
+    """The GST rate to ADD to a base price at charge time. Zero when unregistered.
+
+    ``tax_rate_bps`` defaults to 1800 even on a profile nobody has configured,
+    which is right for reading an invoice but wrong for setting a price: an
+    install with no GSTIN would collect 18% from every domestic customer while
+    ``invoice_service`` issues them a plain receipt with no tax breakup, because
+    tax-invoice mode is keyed off :attr:`SellerProfile.gst_enabled`. Charging a
+    tax you are not registered to collect, and documenting none of it, is a
+    worse failure than under-charging.
+
+    So the charge path asks THIS, not ``tax_rate_bps`` directly. Collecting the
+    tax and documenting it are now driven by the same switch.
+    """
+    profile = get_seller_profile(session)
+    return profile.tax_rate_bps if profile.gst_enabled else 0
+
+
 def get_seller_profile(session: Session) -> SellerProfile:
     row = session.get(PricingConfig, SELLER_PROFILE_KEY)
     if row is None or not isinstance(row.value, dict):
@@ -189,13 +207,20 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Z]{2}", country):
         raise SellerProfileError("country must be a 2-letter ISO code")
 
-    # Checkout charges exactly the sticker price; exclusive pricing would
-    # invoice tax ON TOP of money never collected. Reject until a checkout
-    # that actually adds tax exists.
+    # Do NOT relax this on the grounds that pricing is now GST-exclusive. The
+    # premise changed; the guard did not, and it is what keeps invoicing right.
+    #
+    # Prices are published exclusive of GST, but ``gross_charge_minor`` adds the
+    # tax BEFORE the gateway is told what to collect, so the amount actually
+    # captured is already tax-inclusive of the advertised base. The invoice
+    # carves the tax back OUT of that captured amount and lands exactly on the
+    # base. Setting ``price_inclusive=false`` would make it ADD tax on top of an
+    # amount that already contains it: every invoice would read base x 1.18^2
+    # while the customer was charged base x 1.18.
     if not bool(payload.get("price_inclusive", defaults.price_inclusive)):
         raise SellerProfileError(
-            "price_inclusive=false is not supported: checkout collects the sticker price, "
-            "so exclusive pricing would invoice more than was paid"
+            "price_inclusive=false is not supported: the captured amount already includes GST "
+            "(added at charge time), so invoicing exclusively would tax it a second time"
         )
 
     lut_active = bool(payload.get("lut_active", defaults.lut_active))

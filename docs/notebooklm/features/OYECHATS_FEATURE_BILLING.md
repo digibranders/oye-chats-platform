@@ -33,6 +33,11 @@ Every billable action that isn't explicitly priced still costs credits — a def
 ### Plans and entitlements
 A `Plan` record defines the commercial shape of a tier: price, `credits_per_month`, included operator seats, and feature flags (`plan_service.py`, `plan_entitlements_service.py`, `CLAUDE.md` schema). Entitlements — what a plan tier actually unlocks — are resolved through a dedicated service rather than scattered conditionals, so feature gating stays centralized. [T1]
 
+### Pricing is GST-exclusive
+Every price OyeChats publishes is a **base** price, exclusive of GST (changed 2026-08-26). A `Plan`'s `monthly_price_cents`, the seat and branding add-on prices, and the credit top-up packs all hold the base. For an Indian customer the tax is added at charge time by `core/tax.py::gross_charge_minor`, so ₹1,199 listed is ₹1,414.82 debited. For an international customer the sale is an export of services: no Indian GST applies, and the listed USD price is the full charge. Discounts apply to the base, and GST is computed on the discounted base, per Section 15(3) of the CGST Act. [T1: `api/app/core/tax.py`, `api/app/services/seller_profile_service.py`]
+
+The invoicing engine was not changed by this. Because the charge is base + tax, the captured amount is itself tax-inclusive of the base, so the existing carve-out recovers the advertised base exactly. Razorpay Subscriptions have no tax layer of their own (measured, `api/scripts/razorpay_tax_probe.py`), so every INR plan is minted at base + GST. [T1]
+
 ### Invoicing
 Every charge that reaches a terminal, chargeable state produces a real `Invoice` row with an **allocated, sequential invoice number** (`allocate_invoice_number`) and a rendered PDF (WeasyPrint-based — `invoice_pdf.py`). Invoice numbers are treated as **immutable once assigned** — the code explicitly refuses to re-touch a `finalized` invoice number. [T1: `invoice_service.py` — "already finalized — immutable, never re-touch"]
 

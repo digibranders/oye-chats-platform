@@ -22,13 +22,35 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 # ── create_plan_for_price (pure, no DB) ──────────────────────────────────────
 
 
-def test_create_plan_for_price_returns_id():
+def test_create_plan_for_price_mints_at_base_plus_gst():
+    """``amount_paise`` is the BASE; the mint adds GST on the domestic rail.
+
+    The uplift lives inside this function precisely so a caller cannot forget
+    it. The super-admin price edit did forget it, and silently re-minted a tier
+    at the base, putting OyeChats back to absorbing the tax on that plan while
+    discounted customers (whose plans DO carry GST) paid more than undiscounted
+    ones.
+    """
     rzp = MagicMock()
     rzp.plan.create.return_value = {"id": "plan_NEW"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
-        pid = razorpay_service.create_plan_for_price(name="Standard (monthly)", amount_paise=559900, period="monthly")
+        pid = razorpay_service.create_plan_for_price(
+            name="Standard (monthly)", amount_paise=559900, period="monthly", rate_bps=1800
+        )
     assert pid == "plan_NEW"
-    assert rzp.plan.create.call_args.kwargs["data"]["item"]["amount"] == 559900
+    # 559900 base + 18% = 660682 paise charged.
+    assert rzp.plan.create.call_args.kwargs["data"]["item"]["amount"] == 660682
+
+
+def test_create_plan_for_price_does_not_uplift_usd():
+    """The USD rail is an export: no Indian GST is added to the mint."""
+    rzp = MagicMock()
+    rzp.plan.create.return_value = {"id": "plan_USD"}
+    with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
+        razorpay_service.create_plan_for_price(
+            name="Standard (monthly, USD)", amount_paise=1599, period="monthly", currency="USD", rate_bps=1800
+        )
+    assert rzp.plan.create.call_args.kwargs["data"]["item"]["amount"] == 1599
 
 
 def test_create_plan_for_price_rejects_nonpositive():
@@ -63,7 +85,7 @@ def test_update_plan_mints_new_rzp_plan_on_price_change(db, monkeypatch):
     monkeypatch.setattr(spr, "get_session", _fake_session)
     minted = {}
 
-    def _fake_create(*, name, amount_paise, period, currency="INR"):
+    def _fake_create(*, name, amount_paise, period, currency="INR", rate_bps=None):
         minted["amount"] = amount_paise
         minted["period"] = period
         return "plan_NEW"
@@ -249,7 +271,7 @@ def test_update_plan_mints_usd_plan_on_usd_price_change(db, monkeypatch):
 
     minted = {}
 
-    def _fake_create(*, name, amount_paise, period, currency="INR"):
+    def _fake_create(*, name, amount_paise, period, currency="INR", rate_bps=None):
         minted.update(amount=amount_paise, period=period, currency=currency)
         return "plan_USD_NEW"
 

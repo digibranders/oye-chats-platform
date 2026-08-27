@@ -6,7 +6,7 @@ diagrams); every scenario asserts the reconciliation invariants.
 
 import pytest
 
-from app.core.tax import TaxBreakup, compute_tax, supply_kind
+from app.core.tax import TaxBreakup, compute_tax, gross_charge_minor, supply_kind
 
 # ── supply classification ─────────────────────────────────────────────────────
 
@@ -257,3 +257,87 @@ def test_invariants_hold_everywhere(amount, rate, inclusive, kind, lut):
             assert b.taxable_minor == b.total_minor
         else:
             assert b.igst_minor == b.total_tax_minor
+
+
+# ── Exclusive pricing: what we charge for an advertised base price ──────────
+
+
+# Every live base price, in minor units, across plans, add-ons and top-up packs.
+_LIVE_BASE_PRICES = [
+    59900,  # Starter monthly ₹599
+    574800,  # Starter annual ₹5,748
+    119900,  # Standard monthly ₹1,199
+    1150800,  # Standard annual ₹11,508
+    299900,  # Professional monthly ₹2,999
+    2818800,  # Professional annual ₹28,188 (seed_plans.py is the charge source of truth)
+    599900,  # Enterprise monthly ₹5,999
+    5758800,  # Enterprise annual ₹57,588
+    44900,  # Operator seat ₹449
+    49900,  # Branding add-on ₹499
+    100000,  # Top-up ₹1,000
+    3000000,  # Top-up ₹30,000
+]
+
+
+@pytest.mark.parametrize("base", _LIVE_BASE_PRICES)
+@pytest.mark.parametrize("kind", ["intra", "inter"])
+def test_gross_charge_round_trip(base: int, kind: str) -> None:
+    """Carving tax back out of the charge must return the advertised base.
+
+    This is the property that lets the switch to exclusive pricing leave the
+    INVOICING engine completely untouched. The gateway collects base + GST, the
+    invoice carves the tax out of what was collected, and the carve-out lands
+    exactly on the price the customer was quoted. If this ever drifts by a
+    paisa, invoices stop reconciling against the advertised price and the
+    "customer pays exactly the sticker price plus stated tax" claim breaks.
+    """
+    gross = gross_charge_minor(base, rate_bps=1800, kind=kind)
+    assert gross > base  # tax was actually added
+
+    carved = compute_tax(gross, 1800, inclusive=True, kind=kind)
+    assert carved.taxable_minor == base
+    assert carved.total_minor == gross
+    assert carved.taxable_minor + carved.total_tax_minor == gross
+
+
+@pytest.mark.parametrize("base", _LIVE_BASE_PRICES)
+def test_exports_are_never_uplifted(base: int) -> None:
+    """An export is charged the base, with or without an LUT.
+
+    Indian GST is not billable to a foreign customer. Whether OyeChats owes
+    IGST on an unLUTed export is a remittance question that must not silently
+    become an 18% price rise for an international buyer.
+    """
+    assert gross_charge_minor(base, rate_bps=1800, kind="export") == base
+
+
+def test_zero_rate_charges_the_base() -> None:
+    """A 0% rate must not move the price (the super-admin can set rate_bps=0)."""
+    assert gross_charge_minor(119900, rate_bps=0, kind="intra") == 119900
+
+
+def test_gross_charge_rejects_negative_base() -> None:
+    with pytest.raises(ValueError, match="base_minor"):
+        gross_charge_minor(-1, rate_bps=1800, kind="intra")
+
+
+@pytest.mark.parametrize("base", _LIVE_BASE_PRICES)
+def test_export_round_trip_is_lossless_under_lut(base: int) -> None:
+    """The export half of the round-trip claim, which the intra/inter cases skip.
+
+    A zero-rated export is charged the base and carves back to the base. Without
+    an LUT the carve-out deliberately extracts IGST that OyeChats absorbs
+    (Rule 96A), so the base is NOT recovered there. That asymmetry is a chosen
+    remittance position, and pinning it here stops it being "fixed" into an 18%
+    price rise for international customers.
+    """
+    gross = gross_charge_minor(base, rate_bps=1800, kind="export")
+    assert gross == base
+
+    with_lut = compute_tax(gross, 1800, inclusive=True, kind="export", lut_active=True)
+    assert with_lut.taxable_minor == base
+    assert with_lut.total_tax_minor == 0
+
+    without_lut = compute_tax(gross, 1800, inclusive=True, kind="export", lut_active=False)
+    assert without_lut.total_minor == base  # customer still pays the base
+    assert without_lut.igst_minor > 0  # absorbed, not added to the price
