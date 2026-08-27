@@ -281,51 +281,59 @@ export function SnippetSection({
               submit();
             }}
           >
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-0 flex-1 basis-64">
-                <Field
-                  label="Your developer's email"
-                  error={error}
-                  hint="They get the snippet, where it goes, and the two origins a CSP has to allow."
+            {/* Send and Cancel belong to the control ROW, not beside the
+                `Field`. As siblings of it they aligned to the field's bottom
+                edge — which is under the hint, not under the input — so the
+                buttons sat a line low against the text they act on. Inside,
+                the label sits above the whole row and the hint below it, and
+                the input and its two actions share one baseline. */}
+            <Field
+              label="Your developer's email"
+              error={error}
+              hint="They get the snippet, where it goes, and the two origins a CSP has to allow."
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="min-w-0 flex-1 basis-64"
+                  type="email"
+                  autoComplete="email"
+                  autoFocus
+                  placeholder="dev@yourcompany.com"
+                  value={draft}
+                  onChange={(event) => {
+                    setDraft(event.target.value);
+                    // A repeat is judged on what is being sent, so editing
+                    // the address retracts the question.
+                    setConfirming(false);
+                    setError(null);
+                  }}
+                />
+                {/* `md`, matching the input's own rung. The "one rung below"
+                    rule is for a button INSIDE a bordered control, where the
+                    border steals 2px of the content box; these sit beside it,
+                    where a shorter button reads as a mismatch rather than as
+                    nesting. */}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={sending}
+                  iconLeft={<Send aria-hidden />}
                 >
-                  <Input
-                    type="email"
-                    autoComplete="email"
-                    autoFocus
-                    placeholder="dev@yourcompany.com"
-                    value={draft}
-                    onChange={(event) => {
-                      setDraft(event.target.value);
-                      // A repeat is judged on what is being sent, so editing
-                      // the address retracts the question.
-                      setConfirming(false);
-                      setError(null);
-                    }}
-                  />
-                </Field>
+                  Send
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setOpen(false);
+                    setConfirming(false);
+                    setError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
               </div>
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                loading={sending}
-                iconLeft={<Send aria-hidden />}
-              >
-                Send
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setOpen(false);
-                  setConfirming(false);
-                  setError(null);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
+            </Field>
 
             {confirming && sent ? (
               // A warning, never a wall: the customer asked for it twice, and
