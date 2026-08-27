@@ -53,7 +53,7 @@ export function useSetupChecklist() {
   });
 
   const leads = useQuery({
-    queryKey: keys.leads.stats(primary?.id ?? null),
+    queryKey: keys.leads.stats(primary?.id ?? null, null),
     queryFn: () => getLeadStats(primary!.id),
     enabled: Boolean(primary),
     staleTime: 60_000,

@@ -154,7 +154,16 @@ def _emails(served: dict) -> set[str]:
 
 def test_the_lead_list_does_not_leak_across_bots(db, workspace):
     served = lead_routes.list_leads(
-        bot_id=None, tier=None, status=None, min_score=None, page=1, limit=50, auth=workspace["operator_auth"]
+        bot_id=None,
+        tier=None,
+        status=None,
+        min_score=None,
+        days=None,
+        from_date=None,
+        to_date=None,
+        page=1,
+        limit=50,
+        auth=workspace["operator_auth"],
     )
     assert _emails(served) == {"visitor@a.test"}
 
@@ -173,7 +182,9 @@ def test_the_csv_export_does_not_leak_across_bots(db, workspace):
 
 
 def test_lead_stats_count_only_the_operators_own_bot(db, workspace):
-    stats = lead_routes.lead_stats(bot_id=None, auth=workspace["operator_auth"])
+    stats = lead_routes.lead_stats(
+        bot_id=None, days=None, from_date=None, to_date=None, auth=workspace["operator_auth"]
+    )
     assert stats["total"] == 1
 
 
@@ -186,7 +197,16 @@ def test_a_sibling_bots_lead_is_not_readable_by_id(db, workspace):
 def test_the_owner_still_sees_both_bots_leads(db, workspace):
     """The narrowing is operator-only; the workspace owner loses nothing."""
     served = lead_routes.list_leads(
-        bot_id=None, tier=None, status=None, min_score=None, page=1, limit=50, auth=workspace["owner_auth"]
+        bot_id=None,
+        tier=None,
+        status=None,
+        min_score=None,
+        days=None,
+        from_date=None,
+        to_date=None,
+        page=1,
+        limit=50,
+        auth=workspace["owner_auth"],
     )
     assert _emails(served) == {"visitor@a.test", "visitor@b.test"}
     suppressions = lead_routes.list_suppressions(

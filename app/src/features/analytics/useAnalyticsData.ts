@@ -157,7 +157,7 @@ export function useRatings(botId: number | null) {
 
 export function useLeadStats(botId: number | null) {
   const query = useQuery({
-    queryKey: keys.leads.stats(botId),
+    queryKey: keys.leads.stats(botId, null),
     queryFn: () => getLeadStats(scope(botId)),
     select: parseLeadFunnelStats,
     enabled: botId != null,

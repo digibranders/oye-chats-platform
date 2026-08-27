@@ -413,6 +413,12 @@ export interface LeadsResult {
 export interface LeadsQuery {
   status?: string;
   min_score?: number;
+  /** Trailing window in days, matching `/leads/stats`. Omitted = all time. */
+  days?: number;
+  /** Custom range start (`YYYY-MM-DD`), inclusive. Wins over `days` when both are sent. */
+  from_date?: string;
+  /** Custom range end (`YYYY-MM-DD`), inclusive. */
+  to_date?: string;
   page?: number;
   limit?: number;
 }

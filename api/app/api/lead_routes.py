@@ -3,7 +3,7 @@
 import csv
 import io
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -115,12 +115,59 @@ def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int
     return [bot_id]
 
 
+def _resolve_window(
+    days: int | None, from_date: date | None, to_date: date | None
+) -> tuple[datetime | None, datetime | None]:
+    """The trailing-N-days preset and an explicit calendar range, as one
+    ``(since, until)`` pair on ``created_at`` — never ``last_active_at``, see
+    the note on the filter below.
+
+    An explicit ``from_date``/``to_date`` wins over ``days`` when both somehow
+    arrive: the UI's range control is one selection (a preset OR "Custom
+    range"), so this only matters for a hand-built query string, and the more
+    specific bound is the more likely intent. ``to_date`` is the last
+    INCLUDED day, so its bound is that day's last microsecond, not its
+    midnight — a naive ``<= to_date`` compares a `date` to a `datetime` and,
+    worse, would drop every lead captured after midnight on the end day.
+    """
+    if from_date is not None or to_date is not None:
+        if from_date is not None and to_date is not None and from_date > to_date:
+            raise HTTPException(status_code=422, detail="from_date must not be after to_date.")
+        since = datetime.combine(from_date, time.min, tzinfo=UTC) if from_date else None
+        until = datetime.combine(to_date, time.max, tzinfo=UTC) if to_date else None
+        return since, until
+    if days is not None:
+        return datetime.now(UTC) - timedelta(days=days), None
+    return None, None
+
+
+_DAYS_DESCRIPTION = "Restrict to leads captured in the trailing N days; omitted = all time."
+_FROM_DATE_DESCRIPTION = "Custom range start (YYYY-MM-DD), inclusive. Wins over `days` when given."
+_TO_DATE_DESCRIPTION = "Custom range end (YYYY-MM-DD), inclusive."
+
+
+def _windowed(stmt, since: datetime | None, until: datetime | None):
+    """Apply a `_resolve_window()` result to a `created_at`-filterable
+    statement. One helper for both bounds, so a future caller cannot repeat
+    the bug this one fixes: `lead_stats` applied `since` in three places and
+    `until` in none of them, so `?to_date=` silently did nothing to any of
+    the three figures it built."""
+    if since is not None:
+        stmt = stmt.where(ChatSession.created_at >= since)
+    if until is not None:
+        stmt = stmt.where(ChatSession.created_at <= until)
+    return stmt
+
+
 @router.get("")
 def list_leads(
     bot_id: RowId | None = Query(None),
     tier: LeadTier | None = Query(None, description="unqualified|mql|sal|sql"),
     status: LeadTier | None = Query(None, description="backward-compat alias for tier"),
     min_score: int | None = Query(None, ge=0, le=100),
+    days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
+    from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
+    to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     auth: dict = Depends(get_current_client_or_operator),
@@ -142,6 +189,10 @@ def list_leads(
             .group_by(ChatSession.id)
             .order_by(desc(ChatSession.last_active_at))
         )
+        # `created_at`, not `last_active_at` — a lead captured 90 days ago
+        # that a visitor reopened yesterday must not count as "captured in
+        # the last 7 days" just because it is still active.
+        stmt = _windowed(stmt, *_resolve_window(days, from_date, to_date))
 
         results = session.execute(stmt).all()
 
@@ -208,11 +259,18 @@ def list_leads(
 @router.get("/stats")
 def lead_stats(
     bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
+    from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
+    to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
     with get_session() as session:
         bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
+        # Every figure in the strip states the same window (`StatRow` requires
+        # it), so the window narrows every count below it, not just the
+        # headline total. See the identical `created_at` note in `list_leads`.
+        since, until = _resolve_window(days, from_date, to_date)
 
         if not is_lead_intelligence_enabled(auth["client_id"], session):
             # Free plan: total + unread keep the list header and sidebar badge
@@ -221,22 +279,23 @@ def lead_stats(
             total = 0
             unread = 0
             if bot_ids:
-                total = (
-                    session.execute(select(func.count(ChatSession.id)).where(ChatSession.bot_id.in_(bot_ids))).scalar()
-                    or 0
+                total_stmt = _windowed(
+                    select(func.count(ChatSession.id)).where(ChatSession.bot_id.in_(bot_ids)), since, until
                 )
-                unread = (
-                    session.execute(
-                        select(func.count(ChatSession.id)).where(
-                            ChatSession.bot_id.in_(bot_ids),
-                            ChatSession.lead_viewed_at.is_(None),
-                        )
-                    ).scalar()
-                    or 0
+                unread_stmt = _windowed(
+                    select(func.count(ChatSession.id)).where(
+                        ChatSession.bot_id.in_(bot_ids),
+                        ChatSession.lead_viewed_at.is_(None),
+                    ),
+                    since,
+                    until,
                 )
+                total = session.execute(total_stmt).scalar() or 0
+                unread = session.execute(unread_stmt).scalar() or 0
             return {"total": total, "unread": unread}
 
-        sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
+        sessions_stmt = _windowed(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids)), since, until)
+        sessions = session.execute(sessions_stmt).scalars().all()
         bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else []
         bot_map = {bot.id: bot for bot in bots}
 
@@ -252,15 +311,15 @@ def lead_stats(
         # ix_chat_sessions_bot_id_lead_viewed_at (migration d4e5f6a7b8c9).
         unread = 0
         if bot_ids:
-            unread = (
-                session.execute(
-                    select(func.count(ChatSession.id)).where(
-                        ChatSession.bot_id.in_(bot_ids),
-                        ChatSession.lead_viewed_at.is_(None),
-                    )
-                ).scalar()
-                or 0
+            unread_stmt = _windowed(
+                select(func.count(ChatSession.id)).where(
+                    ChatSession.bot_id.in_(bot_ids),
+                    ChatSession.lead_viewed_at.is_(None),
+                ),
+                since,
+                until,
             )
+            unread = session.execute(unread_stmt).scalar() or 0
 
         total = len(sessions)
         return {

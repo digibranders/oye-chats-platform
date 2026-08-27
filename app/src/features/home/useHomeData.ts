@@ -109,7 +109,7 @@ export function useHomeData() {
   });
 
   const leadStats = useQuery({
-    queryKey: keys.leads.stats(null),
+    queryKey: keys.leads.stats(null, null),
     queryFn: () => getLeadStats(),
     staleTime: 60_000,
     retry: false,

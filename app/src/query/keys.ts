@@ -39,7 +39,8 @@ export const keys = {
 
   leads: {
     list: (params: Record<string, unknown>) => ['leads', params] as const,
-    stats: (agentId: number | null) => ['leads', 'stats', agentId] as const,
+    stats: (agentId: number | null, window: Record<string, unknown> | null) =>
+      ['leads', 'stats', agentId, window] as const,
     detail: (sessionId: string) => ['leads', 'detail', sessionId] as const,
     suppressions: (params: Record<string, unknown>) => ['leads', 'suppressions', params] as const,
   },

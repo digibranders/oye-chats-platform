@@ -502,7 +502,12 @@ export function translateForSession(
 // ── Leads ────────────────────────────────────────────────────────────────────
 export function getLeads(botId?: number, params?: LeadsQuery): Promise<LeadsResult>;
 export function getLeadDetail(sessionId: string): Promise<Lead & { messages?: ChatMessage[] }>;
-export function getLeadStats(botId?: number): Promise<Record<string, unknown>>;
+export function getLeadStats(
+  botId?: number,
+  days?: number,
+  fromDate?: string,
+  toDate?: string,
+): Promise<Record<string, unknown>>;
 /** Downloads a CSV of leads (triggers a browser download; resolves to void). */
 export function exportLeadsCsv(botId?: number): Promise<void>;
 export function markLeadViewed(sessionId: string): Promise<void>;

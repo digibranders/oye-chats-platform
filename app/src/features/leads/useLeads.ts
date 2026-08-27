@@ -23,6 +23,15 @@ export interface LeadsRequest {
   botId: number | undefined;
   tier: TierKey | null;
   minScore: number | null;
+  /**
+   * The date window, resolved once by the page from its own URL state
+   * (`leadsRangeWindow`). `days` and `from`/`to` are mutually exclusive —
+   * the API takes either, never both — but this hook does not enforce that
+   * itself; it only forwards whichever the caller resolved.
+   */
+  days: number | null;
+  from: string | null;
+  to: string | null;
   page: number;
 }
 
@@ -55,7 +64,7 @@ function statusOf(error: unknown): number | undefined {
 
 export function useLeads(request: LeadsRequest): LeadsData {
   const queryClient = useQueryClient();
-  const { botId, tier, minScore, page } = request;
+  const { botId, tier, minScore, days, from, to, page } = request;
 
   // Memoised because it is a `useCallback` dependency below: a key rebuilt on
   // every render would give the row-level handlers a new identity each time and
@@ -66,10 +75,17 @@ export function useLeads(request: LeadsRequest): LeadsData {
         botId: botId ?? null,
         tier,
         minScore,
+        days,
+        from,
+        to,
         page,
         limit: LEADS_PAGE_SIZE,
       }),
-    [botId, tier, minScore, page],
+    [botId, tier, minScore, days, from, to, page],
+  );
+  const statsKey = useMemo(
+    () => keys.leads.stats(botId ?? null, days === null && from === null && to === null ? null : { days, from, to }),
+    [botId, days, from, to],
   );
 
   const list = useQuery<LeadsResult>({
@@ -80,6 +96,9 @@ export function useLeads(request: LeadsRequest): LeadsData {
         // `tier` and the only spelling the shared client sends.
         ...(tier ? { status: tier } : null),
         ...(minScore !== null ? { min_score: minScore } : null),
+        ...(days !== null ? { days } : null),
+        ...(from !== null ? { from_date: from } : null),
+        ...(to !== null ? { to_date: to } : null),
         page,
         limit: LEADS_PAGE_SIZE,
       }),
@@ -93,8 +112,9 @@ export function useLeads(request: LeadsRequest): LeadsData {
   });
 
   const stats = useQuery({
-    queryKey: keys.leads.stats(botId ?? null),
-    queryFn: () => getLeadStats(botId),
+    queryKey: statsKey,
+    queryFn: () =>
+      getLeadStats(botId, days ?? undefined, from ?? undefined, to ?? undefined),
     staleTime: 60_000,
     retry: (failureCount, error) => statusOf(error) !== 403 && failureCount < 2,
   });
@@ -133,7 +153,7 @@ export function useLeads(request: LeadsRequest): LeadsData {
           ),
         });
         queryClient.setQueryData<Record<string, unknown> | undefined>(
-          keys.leads.stats(botId ?? null),
+          statsKey,
           (previous) =>
             previous
               ? { ...previous, unread: Math.max(Number(previous.unread ?? 0) - 1, 0) }
@@ -142,7 +162,7 @@ export function useLeads(request: LeadsRequest): LeadsData {
       }
       void markLeadViewed(sessionId).catch(() => undefined);
     },
-    [botId, listKey, queryClient],
+    [listKey, statsKey, queryClient],
   );
 
   const markAll = useMutation({

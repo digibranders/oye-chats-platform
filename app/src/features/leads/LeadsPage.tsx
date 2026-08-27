@@ -19,9 +19,9 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
   ConfirmDialog,
   DataTable,
+  DatePicker,
   EmptyState,
   LockedState,
   MenuContent,
@@ -57,11 +57,15 @@ import { useLeadAnnotations } from './useLeadAnnotations';
 import { LeadDrawer } from './LeadDrawer';
 import { SuppressionsDrawer } from './SuppressionsDrawer';
 import {
+  LEADS_RANGE_OPTIONS,
   MIN_SCORE_OPTIONS,
   hasActiveFilters,
   hasClientRefinement,
+  leadsRangeLabel,
+  leadsRangeWindow,
   readLeadsUrl,
   writeLeadsUrl,
+  type LeadsRangeKey,
   type LeadsUrlState,
 } from './leadsUrl';
 import {
@@ -119,8 +123,8 @@ const SCORE_OPTIONS = [
   ...MIN_SCORE_OPTIONS.map((score) => ({ value: String(score), label: `Score ${score}+` })),
 ];
 
-/** What search and the lead-type filter actually reach. One tooltip, not two lines. */
-const SCOPE_NOTE = `Quality and score filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
+/** What each filter actually reaches. One tooltip, not two lines. */
+const SCOPE_NOTE = `Quality, score and date filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
 
 /**
  * A deliverability verdict beside an email.
@@ -147,22 +151,24 @@ function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
 }
 
 /**
- * How much of the framework this lead answered, as one figure.
+ * Which boxes this lead has ticked, as one chip per dimension.
  *
- * It was four to five tinted word-chips — `Budget` `Authority` `Need`
- * `Timeline` — each in its own tooltip, wrapping to two lines the moment the
- * framework was MEDDIC, so no two rows in the column were the same height. And
- * the question a reader actually asks down a column is "how complete is this
- * one?", which four words cannot answer at a glance. The words move to the
- * drawer, where there is room to read them; the column carries the count and
- * names every dimension in one tooltip.
+ * An even earlier version of this column was four to five tinted WORD chips —
+ * `Budget` `Authority` `Need` `Timeline` — which wrapped to two lines the
+ * moment the framework was MEDDIC, so no two rows in the column were the same
+ * height. A single fraction replaced it for exactly that reason. This restores
+ * the "which boxes has this lead ticked?" read at a glance, without the
+ * original defect: each chip is a fixed 20px box holding one INITIAL, never a
+ * word, so nothing in it can wrap regardless of how many dimensions the bot's
+ * framework has or how long their names are. The full names and what the
+ * visitor actually said still live in the one tooltip over the row, and in the
+ * detail drawer.
  */
 function QualificationCell({ lead }: { lead: Lead }) {
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) {
     return <span className="text-text-tertiary">{ABSENT}</span>;
   }
-  const captured = dimensions.filter((dimension) => dimension.captured);
   return (
     <Tooltip
       content={
@@ -175,19 +181,26 @@ function QualificationCell({ lead }: { lead: Lead }) {
         </ul>
       }
     >
-      <span
-        className={cn(
-          'figure inline-flex items-center rounded-xs px-1.5 py-0.5 text-xs font-medium',
-          captured.length === 0
-            ? 'bg-neutral-tint text-neutral'
-            : captured.length === dimensions.length
-              ? 'bg-success-tint text-success'
-              : 'bg-surface-sunken text-text-secondary',
-        )}
+      <div
+        role="group"
+        aria-label="Qualification signals"
+        className="inline-flex items-center gap-1"
       >
-        {captured.length}/{dimensions.length}
-        <span className="sr-only"> dimensions captured</span>
-      </span>
+        {dimensions.map((dimension) => (
+          <span
+            key={dimension.key}
+            aria-label={`${dimension.label}: ${dimension.captured ? 'captured' : 'not captured'}`}
+            className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-2xs font-bold uppercase',
+              dimension.captured
+                ? 'bg-success-tint text-success'
+                : 'bg-surface-sunken text-text-tertiary',
+            )}
+          >
+            {dimension.label.charAt(0)}
+          </span>
+        ))}
+      </div>
     </Tooltip>
   );
 }
@@ -248,10 +261,14 @@ export function LeadsPage() {
   // the gate is held closed rather than flashing paid UI we would take away.
   const visitorIntelligence = planSlug !== null && planIncludesVisitorIntelligence(planSlug);
 
+  const rangeWindow = leadsRangeWindow(state);
   const leads = useLeads({
     botId,
     tier: state.tier,
     minScore: state.minScore,
+    days: rangeWindow.days,
+    from: rangeWindow.from,
+    to: rangeWindow.to,
     page: state.page,
   });
   const annotations = useLeadAnnotations();
@@ -292,7 +309,7 @@ export function LeadsPage() {
   // so with it in here one keystroke silently discarded a selection the user had
   // built by hand — the reset is right, doing it mid-typing was not.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
-  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.page}|${state.contact}`;
+  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.range}|${state.rangeFrom}|${state.rangeTo}|${state.page}|${state.contact}`;
   const [selectionScope, setSelectionScope] = useState(scope);
   if (selectionScope !== scope) {
     setSelectionScope(scope);
@@ -487,7 +504,7 @@ export function LeadsPage() {
   if (!botsLoading && bots.length === 0) {
     return (
       <Page width="wide">
-        <PageHeader title="Leads" />
+        <PageHeader title="Leads" titleVisuallyHidden />
         <Card>
           <EmptyState
             icon={BotIcon}
@@ -507,7 +524,7 @@ export function LeadsPage() {
   if (leads.locked) {
     return (
       <Page width="wide">
-        <PageHeader title="Leads" />
+        <PageHeader title="Leads" titleVisuallyHidden />
         <LockedLeads />
       </Page>
     );
@@ -522,50 +539,13 @@ export function LeadsPage() {
   return (
     <Page width="wide">
       <PageHeader
-        title="Leads"
+        title="Leads" titleVisuallyHidden
         toolbar={
           exportError ? (
             <Alert tone="danger" live title="The export failed">
               {exportError}
             </Alert>
           ) : undefined
-        }
-        actions={
-          <MenuRoot>
-            <MenuTrigger
-              aria-label="Lead actions"
-              className={buttonClass('secondary', 'icon-md', BUTTON_ICON_SLOT['icon-md'])}
-            >
-              <MoreHorizontal aria-hidden />
-            </MenuTrigger>
-            <MenuContent>
-              <MenuItem
-                icon={<Download aria-hidden className="h-icon-sm w-icon-sm" />}
-                disabled={intelligenceLocked || leads.total === 0 || exporting}
-                onSelect={() => void handleExportAll()}
-              >
-                Export all leads
-              </MenuItem>
-              {/* Disabled only when there is genuinely nothing unread.
-                  `stats === null` is also the state when the stats request
-                  *failed*, and disabling on that rendered a permanently dead
-                  command with no reason given — where the action is idempotent
-                  and costs nothing to offer. */}
-              <MenuItem
-                icon={<CheckCheck aria-hidden className="h-icon-sm w-icon-sm" />}
-                disabled={leads.stats?.unread === 0}
-                onSelect={() => setConfirmMarkAll(true)}
-              >
-                Mark all read
-              </MenuItem>
-              <MenuItem
-                icon={<MailX aria-hidden className="h-icon-sm w-icon-sm" />}
-                onSelect={() => setSuppressionsOpen(true)}
-              >
-                Unsubscribes
-              </MenuItem>
-            </MenuContent>
-          </MenuRoot>
         }
       />
 
@@ -585,17 +565,17 @@ export function LeadsPage() {
         ) : null}
 
         {/* The summary the page owes the reader before any row is scanned. The
-            window is stated once, in the header: `StatRow` suppresses it on
-            every tile that inherits it and renders it nowhere itself. */}
+            window is stated once, by `StatRow`'s own caption — now the same
+            `range` the toolbar's date filter picked, not a hardcoded "All
+            time" — so nothing else on this card needs to restate it. No title
+            bar above it either — "Pipeline" named a thing "Leads, Qualified,
+            Ready to buy…" already say for themselves, and it was 40px of
+            chrome standing between the breadcrumb and the first real number. */}
         <Card>
-          {/* No period in the header. `StatRow` states the strip's window
-              itself, in a hairline caption under the tiles, so this printed
-              "All time" twice within 90px of itself. */}
-          <CardHeader size="sm" title="Pipeline" titleAs="h2" />
           <CardBody flush>
             <StatRow
               label="Lead pipeline"
-              period="All time"
+              period={leadsRangeLabel(state)}
               columns={5}
               loading={leads.loading}
               items={[
@@ -667,6 +647,42 @@ export function LeadsPage() {
                 onValueChange={(value) => update({ minScore: value ? Number(value) : null })}
               />
             </div>
+            <div className="w-36">
+              <Select
+                label="Filter by date captured"
+                value={state.range}
+                options={LEADS_RANGE_OPTIONS}
+                onValueChange={(value) => {
+                  const range = value as LeadsRangeKey;
+                  // A stale from/to survives only while staying on 'custom'
+                  // — switching to a preset and back should not resurrect a
+                  // bound the reader picked in some earlier visit.
+                  update(range === 'custom' ? { range } : { range, rangeFrom: null, rangeTo: null });
+                }}
+              />
+            </div>
+            {state.range === 'custom' ? (
+              <>
+                <div className="w-40">
+                  <DatePicker
+                    label="From date"
+                    value={state.rangeFrom}
+                    onValueChange={(rangeFrom) => update({ rangeFrom })}
+                    max={state.rangeTo ?? undefined}
+                    clearable
+                  />
+                </div>
+                <div className="w-40">
+                  <DatePicker
+                    label="To date"
+                    value={state.rangeTo}
+                    onValueChange={(rangeTo) => update({ rangeTo })}
+                    min={state.rangeFrom ?? undefined}
+                    clearable
+                  />
+                </div>
+              </>
+            ) : null}
             <div className="w-40">
               <Select
                 label="Filter by lead type"
@@ -689,12 +705,53 @@ export function LeadsPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() =>
-                  update({ query: '', contact: 'all', tier: null, minScore: null, page: 1 })
+                  update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
                 }
               >
                 Clear filters
               </Button>
             ) : null}
+            {/* Was `PageHeader`'s `actions` — its own row, above this one, with
+                nothing else in it once the page's title stopped repeating the
+                breadcrumb. This is the row it belongs on: the one other
+                page-scoped control already lives on. */}
+            <div className="ml-auto">
+              <MenuRoot>
+                <MenuTrigger
+                  aria-label="Lead actions"
+                  className={buttonClass('secondary', 'icon-md', BUTTON_ICON_SLOT['icon-md'])}
+                >
+                  <MoreHorizontal aria-hidden />
+                </MenuTrigger>
+                <MenuContent>
+                  <MenuItem
+                    icon={<Download aria-hidden className="h-icon-sm w-icon-sm" />}
+                    disabled={intelligenceLocked || leads.total === 0 || exporting}
+                    onSelect={() => void handleExportAll()}
+                  >
+                    Export all leads
+                  </MenuItem>
+                  {/* Disabled only when there is genuinely nothing unread.
+                      `stats === null` is also the state when the stats request
+                      *failed*, and disabling on that rendered a permanently dead
+                      command with no reason given — where the action is idempotent
+                      and costs nothing to offer. */}
+                  <MenuItem
+                    icon={<CheckCheck aria-hidden className="h-icon-sm w-icon-sm" />}
+                    disabled={leads.stats?.unread === 0}
+                    onSelect={() => setConfirmMarkAll(true)}
+                  >
+                    Mark all read
+                  </MenuItem>
+                  <MenuItem
+                    icon={<MailX aria-hidden className="h-icon-sm w-icon-sm" />}
+                    onSelect={() => setSuppressionsOpen(true)}
+                  >
+                    Unsubscribes
+                  </MenuItem>
+                </MenuContent>
+              </MenuRoot>
+            </div>
           </Toolbar>
 
           <div className="mt-3">
@@ -755,7 +812,7 @@ export function LeadsPage() {
                       <Button
                         size="sm"
                         onClick={() =>
-                          update({ query: '', contact: 'all', tier: null, minScore: null, page: 1 })
+                          update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
                         }
                       >
                         Clear filters

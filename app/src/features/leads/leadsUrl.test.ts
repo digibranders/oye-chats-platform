@@ -3,6 +3,8 @@ import {
   DEFAULT_LEADS_URL_STATE,
   hasActiveFilters,
   hasClientRefinement,
+  leadsRangeLabel,
+  leadsRangeWindow,
   readLeadsUrl,
   writeLeadsUrl,
 } from './leadsUrl';
@@ -21,16 +23,39 @@ describe('readLeadsUrl', () => {
   });
 
   it('reads a fully specified view', () => {
-    expect(read('q=priya&who=named&tier=sql&score=75&page=3&sort=quality:desc&lead=s1&tab=conversation')).toEqual({
+    expect(
+      read('q=priya&who=named&tier=sql&score=75&range=90d&page=3&sort=quality:desc&lead=s1&tab=conversation'),
+    ).toEqual({
       query: 'priya',
       contact: 'named',
       tier: 'sql',
       minScore: 75,
+      range: '90d',
+      rangeFrom: null,
+      rangeTo: null,
       page: 3,
       sort: { key: 'quality', direction: 'desc' },
       openLead: 's1',
       tab: 'conversation',
     });
+  });
+
+  it('reads a custom range with both bounds', () => {
+    const state = read('range=custom&from=2026-08-01&to=2026-08-20');
+    expect(state.range).toBe('custom');
+    expect(state.rangeFrom).toBe('2026-08-01');
+    expect(state.rangeTo).toBe('2026-08-20');
+  });
+
+  it('drops an unknown range, and from/to malformed or unpaired with custom', () => {
+    expect(read('range=decade').range).toBe('all');
+    expect(read('range=custom&from=not-a-date').rangeFrom).toBeNull();
+    expect(read('range=custom&from=2026-13-40').rangeFrom).toBeNull();
+    // from/to read regardless of `range` — `writeLeadsUrl` is what keeps them
+    // from ever being written outside 'custom'; a hand-edited URL with a
+    // stray `from=` on a preset range still parses the date, it just goes
+    // unused by `leadsRangeWindow` once `range !== 'custom'`.
+    expect(read('range=30d&from=2026-08-01').rangeFrom).toBe('2026-08-01');
   });
 
   it('drops a hand-edited score that is not one of the offered thresholds', () => {
@@ -95,6 +120,60 @@ describe('writeLeadsUrl', () => {
       minScore: 25,
       sort: { key: 'lead', direction: 'asc' },
     });
+  });
+
+  it('writes from/to only for a custom range', () => {
+    expect(write('', { range: 'custom', rangeFrom: '2026-08-01', rangeTo: '2026-08-20' })).toBe(
+      'range=custom&from=2026-08-01&to=2026-08-20',
+    );
+    expect(write('', { range: '30d' })).toBe('range=30d');
+  });
+
+  it('drops a stale from/to when the range leaves custom', () => {
+    // Otherwise picking a preset after a custom range keeps the old bounds in
+    // the URL, invisible until the reader switches back to 'custom'.
+    expect(write('range=custom&from=2026-08-01&to=2026-08-20', { range: '7d' })).toBe('range=7d');
+  });
+});
+
+describe('leadsRangeWindow', () => {
+  it('resolves a preset to a trailing days count, with no from/to', () => {
+    expect(leadsRangeWindow({ range: '30d', rangeFrom: null, rangeTo: null })).toEqual({
+      days: 30,
+      from: null,
+      to: null,
+    });
+    expect(leadsRangeWindow({ range: 'all', rangeFrom: null, rangeTo: null })).toEqual({
+      days: null,
+      from: null,
+      to: null,
+    });
+  });
+
+  it('resolves custom to from/to, with no days', () => {
+    expect(
+      leadsRangeWindow({ range: 'custom', rangeFrom: '2026-08-01', rangeTo: '2026-08-20' }),
+    ).toEqual({ days: null, from: '2026-08-01', to: '2026-08-20' });
+  });
+});
+
+describe('leadsRangeLabel', () => {
+  it('names a preset the same way Analytics does', () => {
+    expect(leadsRangeLabel({ range: '7d', rangeFrom: null, rangeTo: null })).toBe('Last 7 days');
+    expect(leadsRangeLabel({ range: 'all', rangeFrom: null, rangeTo: null })).toBe('All time');
+  });
+
+  it('names a custom range by its bounds, or by whichever bound is set', () => {
+    expect(
+      leadsRangeLabel({ range: 'custom', rangeFrom: '2026-08-01', rangeTo: '2026-08-20' }),
+    ).toBe('1 Aug 2026 to 20 Aug 2026');
+    expect(leadsRangeLabel({ range: 'custom', rangeFrom: '2026-08-01', rangeTo: null })).toBe(
+      'Since 1 Aug 2026',
+    );
+    expect(leadsRangeLabel({ range: 'custom', rangeFrom: null, rangeTo: '2026-08-20' })).toBe(
+      'Through 20 Aug 2026',
+    );
+    expect(leadsRangeLabel({ range: 'custom', rangeFrom: null, rangeTo: null })).toBe('Custom range');
   });
 });
 

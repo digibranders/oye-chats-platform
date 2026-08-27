@@ -2027,6 +2027,9 @@ export const getLeads = async (botId, params = {}) => {
         if (botId) query.set('bot_id', botId);
         if (params.status) query.set('status', params.status);
         if (params.min_score != null) query.set('min_score', params.min_score);
+        if (params.days != null) query.set('days', params.days);
+        if (params.from_date) query.set('from_date', params.from_date);
+        if (params.to_date) query.set('to_date', params.to_date);
         if (params.page) query.set('page', params.page);
         if (params.limit) query.set('limit', params.limit);
         const response = await api.get(`/leads?${query.toString()}`);
@@ -2047,10 +2050,15 @@ export const getLeadDetail = async (sessionId) => {
     }
 };
 
-export const getLeadStats = async (botId) => {
+export const getLeadStats = async (botId, days, fromDate, toDate) => {
     try {
-        const query = botId ? `?bot_id=${botId}` : '';
-        const response = await api.get(`/leads/stats${query}`);
+        const query = new URLSearchParams();
+        if (botId) query.set('bot_id', botId);
+        if (days != null) query.set('days', days);
+        if (fromDate) query.set('from_date', fromDate);
+        if (toDate) query.set('to_date', toDate);
+        const suffix = query.toString();
+        const response = await api.get(`/leads/stats${suffix ? `?${suffix}` : ''}`);
         return response.data;
     } catch (error) {
         console.error('API Error fetching lead stats:', error);
