@@ -576,7 +576,18 @@ function RecentActivity({ leads, loading }: { leads: readonly Lead[]; loading: b
       ) : (
         <ul data-card-band>
           {leads.map((lead) => (
-            <li key={lead.session_id} className="border-t border-border first:border-t-0">
+            <li
+              key={lead.session_id}
+              // This band is the card's LAST child, so the final row's hover
+              // fill sits in the card's own rounded bottom corners — square,
+              // opaque, and outside the border's arc. `CardFooter` carries
+              // `rounded-b-inner-flush` for exactly this reason (its comment
+              // records the "hairline sliver … outside the border's arc" it
+              // fixed); this is the same defect, only visible on hover, which
+              // is why it outlived it. The radius is the card's 10 minus its
+              // 1px border, and the clip is what makes the fill respect it.
+              className="border-t border-border first:border-t-0 last:overflow-hidden last:rounded-b-inner-flush"
+            >
               <Link
                 to={`/leads?lead=${encodeURIComponent(lead.session_id)}`}
                 className="flex min-h-row-compact items-center gap-2.5 px-cell py-1.5 transition-colors hover:bg-surface-hover"

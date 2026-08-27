@@ -15,6 +15,15 @@ import { Eyebrow } from '../primitives/Misc';
  * because a card's children are not all bands: an `AgentCard` is a link with two
  * plain `div`s in it and a `DataTable` seats itself flush without one, and
  * `divide-y` would have ruled between those too.
+ *
+ * **A band that ends the card owes its bottom corners a radius.** The card is
+ * `rounded-lg` and deliberately does not clip — so a square, opaque child
+ * sitting on that last edge paints outside the border's arc. `CardFooter`
+ * already carries `rounded-b-inner-flush` for this (see its own note), but a
+ * caller's `<ul data-card-band>` whose rows only fill on hover has the same
+ * problem in a state nobody reviews, and Home's recent-leads list shipped with
+ * it. `--radius-inner-flush` is the card's radius minus its border; the child
+ * needs that plus a clip, not the radius alone.
  */
 const BANDS = '[&>[data-card-band]+[data-card-band]]:border-t [&>[data-card-band]+[data-card-band]]:border-border';
 
