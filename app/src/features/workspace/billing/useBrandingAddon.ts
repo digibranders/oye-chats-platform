@@ -11,6 +11,7 @@ import { pollUntil } from '../../../lib/pollUntil';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { formatMoneyMinor } from '../billingModel';
+import type { PurchasePhase } from '../../../ui';
 
 /**
  * useBrandingAddon - the one money-path for the branding-removal add-on.
@@ -114,9 +115,16 @@ export interface UseBrandingAddonResult {
   notice: string | null;
   /** True while we are waiting on the activation webhook after a paid checkout. */
   awaitingActivation: boolean;
+  /**
+   * Where the purchase is in the confirm → processing → activating → done flow,
+   * for a `PurchaseDialog` to render. Driven here rather than derived in the
+   * card because only this hook can tell a settled purchase from an abandoned
+   * one — both end with `busy` false and no error.
+   */
+  phase: PurchasePhase;
   purchase: () => Promise<void>;
   cancel: () => Promise<void>;
-  /** Clear `error` and `notice` (e.g. when a dialog re-opens). */
+  /** Reset the flow to `confirm` and clear transient copy, when the dialog opens. */
   reset: () => void;
 }
 
@@ -135,6 +143,7 @@ export function useBrandingAddon({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [awaitingActivation, setAwaitingActivation] = useState(false);
+  const [phase, setPhase] = useState<PurchasePhase>('confirm');
   // Set from any add-on response, which quotes the real charge. Preferred over
   // the list price the moment we have it. `isGross` records whether the server
   // sent `gross_price_cents` (base + tax) or only the base, so no caller has to
@@ -164,6 +173,7 @@ export function useBrandingAddon({
   const reset = useCallback((): void => {
     setError(null);
     setNotice(null);
+    setPhase('confirm');
   }, []);
 
   /**
@@ -196,6 +206,7 @@ export function useBrandingAddon({
   const settleActivation = useCallback(
     async (settledMessage: string, pendingMessage: string): Promise<void> => {
       setAwaitingActivation(true);
+      setPhase('activating');
       try {
         const outcome = await pollUntil({
           read: getEntitlements,
@@ -207,6 +218,10 @@ export function useBrandingAddon({
         if (unmountedRef.current) return;
         const message = outcome.status === 'settled' ? settledMessage : pendingMessage;
         setNotice(message);
+        // Both a settled entitlement and a slow-but-paid one land on the
+        // celebration: the money is in either way, and the copy already tells
+        // the two apart. Only a hard failure earns the error phase.
+        setPhase('done');
         onSettled?.(message);
       } finally {
         if (!unmountedRef.current) setAwaitingActivation(false);
@@ -219,6 +234,7 @@ export function useBrandingAddon({
     setBusy(true);
     setError(null);
     setNotice(null);
+    setPhase('processing');
     try {
       const result = (await purchaseBrandingAddon(botId)) as Record<string, unknown>;
       absorbQuote(result);
@@ -243,6 +259,9 @@ export function useBrandingAddon({
           if ((checkoutErr as { code?: string })?.code === 'dismissed') {
             void recordBillingEvent('checkout_abandoned', 'branding');
             setNotice('Purchase cancelled. You were not charged.');
+            // Back to the confirm step, notice in hand, so a customer who backs
+            // out and looks again is told plainly that nothing happened.
+            setPhase('confirm');
             return;
           }
           if ((checkoutErr as { code?: string })?.code === 'payment_failed') {
@@ -281,16 +300,19 @@ export function useBrandingAddon({
       if (unmountedRef.current) return;
       const message = readString(result, 'message') ?? 'Branding removal is active.';
       setNotice(message);
+      setPhase('done');
       onSettled?.(message);
     } catch (err: unknown) {
       const detail = readDetail(err);
       // International USD billing is not open yet. A policy answer, not a
-      // fault - same contact-sales contract the plan checkout renders.
+      // fault - same contact-sales contract the plan checkout renders. It stays
+      // on the confirm step: there is nothing to retry and nothing failed.
       if (detail && detail.reason === 'intl_usd_pending') {
         setNotice(
           readString(detail, 'message') ??
             'USD billing for international customers is coming soon. Please contact sales.',
         );
+        setPhase('confirm');
         return;
       }
       // 502 from the gateway, a Free-plan 400, or anything else: the server's
@@ -298,6 +320,7 @@ export function useBrandingAddon({
       setError(
         err instanceof Error ? err.message : 'Could not start the add-on. Please try again.',
       );
+      setPhase('error');
     } finally {
       if (!unmountedRef.current) setBusy(false);
     }
@@ -334,6 +357,7 @@ export function useBrandingAddon({
     error,
     notice,
     awaitingActivation,
+    phase,
     purchase,
     cancel,
     reset,
