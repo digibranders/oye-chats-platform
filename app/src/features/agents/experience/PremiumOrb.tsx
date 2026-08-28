@@ -1,9 +1,18 @@
-import React, { useEffect, useRef } from 'react';
-import orbRenderer from '../../../services/orbRenderer';
+import { useEffect, useRef, type CSSProperties } from 'react';
+import orbRenderer, { type Orb } from '../../../services/orbRenderer';
+
+export interface PremiumOrbProps {
+    /** Orb colour as a hex string (e.g. `#2B66BC`); an invalid value falls back to the default. */
+    color?: string;
+    /** Rendered diameter in CSS pixels. */
+    size?: number;
+    className?: string;
+    style?: CSSProperties;
+}
 
 const HEX_RE = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
-const hexToRgbNorm = (hex) => {
+const hexToRgbNorm = (hex: string | undefined): Float32Array => {
     const safe = typeof hex === 'string' && HEX_RE.test(hex) ? hex : '#2B66BC';
     const raw = safe.replace('#', '');
     const full = raw.length === 3
@@ -17,14 +26,14 @@ const hexToRgbNorm = (hex) => {
     ]);
 };
 
-const currentDpr = () => {
+const currentDpr = (): number => {
     if (typeof window === 'undefined') return 1;
     return Math.min(window.devicePixelRatio || 1, 2);
 };
 
-const PremiumOrb = ({ color, size = 48, className = '', style = {} }) => {
-    const canvasRef = useRef(null);
-    const orbRef = useRef(null);
+const PremiumOrb = ({ color, size = 48, className = '', style = {} }: PremiumOrbProps) => {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const orbRef = useRef<Orb | null>(null);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -35,7 +44,7 @@ const PremiumOrb = ({ color, size = 48, className = '', style = {} }) => {
         canvas.width = pxSize;
         canvas.height = pxSize;
 
-        const orb = {
+        const orb: Orb = {
             destCanvas: canvas,
             destCtx: canvas.getContext('2d'),
             color: hexToRgbNorm(color),
@@ -45,7 +54,7 @@ const PremiumOrb = ({ color, size = 48, className = '', style = {} }) => {
         orbRef.current = orb;
         orbRenderer.register(orb);
 
-        let io;
+        let io: IntersectionObserver | undefined;
         if (typeof IntersectionObserver !== 'undefined') {
             io = new IntersectionObserver(([entry]) => {
                 orb.visible = entry.isIntersecting;
