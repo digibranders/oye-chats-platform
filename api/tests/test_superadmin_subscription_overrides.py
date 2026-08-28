@@ -143,8 +143,11 @@ def test_extend_trial_moves_trial_end_by_exactly_n_days(db, monkeypatch) -> None
     # sweep) would otherwise act on the stale deadline.
     assert refreshed.current_period_end == trial_end + timedelta(days=5)
     body = res.json()
-    assert body["trial_end"] == (trial_end + timedelta(days=5)).isoformat()
-    assert body["current_period_end"] == (trial_end + timedelta(days=5)).isoformat()
+    # Instants, not strings: the rendered offset follows the DB connection's
+    # local zone (machine-dependent), the instant does not. See the same note
+    # in test_superadmin_records_v2.
+    assert datetime.fromisoformat(body["trial_end"]) == trial_end + timedelta(days=5)
+    assert datetime.fromisoformat(body["current_period_end"]) == trial_end + timedelta(days=5)
 
 
 def test_extend_trial_leaves_a_later_gateway_period_end_alone(db, monkeypatch) -> None:

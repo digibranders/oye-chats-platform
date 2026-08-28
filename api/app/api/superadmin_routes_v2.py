@@ -2373,63 +2373,16 @@ def _cycle_at_risk_minor(
     currency: str,
     discount_bps: int = 0,
 ) -> int | None:
-    """The ONE billing cycle a past-due subscription is about to lose, in minor units.
+    """The ONE billing cycle a past-due subscription is about to lose, minor units.
 
-    ``currency`` is the rail the customer is actually charged on, so the price
-    column has to match it: the INR columns for an INR-rail customer, the
-    ``*_usd_cents`` columns for a USD-rail one. ``billing_cycle`` picks annual
-    or monthly; reading ``monthly_price_cents`` regardless of cycle understates
-    an annual subscription by a factor of roughly twelve.
-
-    ``discount_bps`` is the third axis, and it is not decoration either. A
-    standing referral discount is applied by swapping in a DISCOUNTED Razorpay
-    plan (``razorpay_service.resolve_discounted_plan``), so it recurs on every
-    cycle, while ENTITLEMENTS deliberately follow the base ``plan_id``. Reading
-    the base plan's price column therefore quotes list price for a customer who
-    has never paid it: at the platform's 50% cap
-    (``affiliate_service.MAX_CUSTOMER_DISCOUNT_BPS``) that is double the truth,
-    in a field a super admin reads as money at risk, and in the
-    ``at_risk_by_currency`` totals built from it. The arithmetic is
-    ``resolve_discounted_plan``'s own — ``base - floor(base × bps / 10000)`` —
-    so the two cannot round apart.
-
-    Returns ``None`` when the amount cannot be stated honestly:
-
-    * no plan row at all, or
-    * a plan whose price column for this rail and cycle carries no usable
-      amount. On the USD rail ``Plan.monthly_price_usd_cents`` /
-      ``annual_price_usd_cents`` are nullable and a NULL on a paid plan is a
-      config defect (``app.core.pricing`` says so in as many words). On the INR
-      rail ``monthly_price_cents`` / ``annual_price_cents`` are ``NOT NULL
-      DEFAULT 0``, so the very same defect — an annual subscription against a
-      plan that only ever had its monthly price filled in — surfaces as ``0``
-      rather than as NULL.
-
-    Both rails are therefore read through ONE expression and one test: a
-    missing or non-positive price is ``None``. Answering ``0`` for the INR half
-    of the identical defect was the dishonest reading — it printed "₹0.00 at
-    risk" for a customer who is about to lose a real billing cycle, and counted
-    that row in the currency total as if nothing were at stake, which is
-    exactly what the paragraph below argues against. Falling back to the INR
-    figure on a USD row would be the other way to lie: a rupee amount under a
-    ``USD`` label.
-
-    A ``None`` row is excluded from the totals rather than counted as zero, so
-    a broken plan row shows up as a gap instead of quietly shrinking the queue.
+    Thin delegate to :func:`dunning_service.cycle_charge_minor`, which is shared
+    with the customer-facing dunning email. Two implementations of "what is this
+    charge worth" is two chances to quote the operator a different number from
+    the one in the customer's inbox, for the same failed charge.
     """
-    if plan is None:
-        return None
-    annual = (billing_cycle or "monthly").strip().lower() == "annual"
-    if currency == "USD":
-        price = plan.annual_price_usd_cents if annual else plan.monthly_price_usd_cents
-    else:
-        price = plan.annual_price_cents if annual else plan.monthly_price_cents
-    if price is None or int(price) <= 0:
-        return None
-    price = int(price)
-    if discount_bps:
-        price -= (price * int(discount_bps)) // 10000
-    return price
+    from app.services.dunning_service import cycle_charge_minor
+
+    return cycle_charge_minor(plan, billing_cycle, currency, discount_bps)
 
 
 @router.get("/billing/dunning")

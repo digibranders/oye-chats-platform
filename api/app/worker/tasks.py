@@ -1624,10 +1624,45 @@ def _expire_past_due_cycle(session) -> int:
         flipped += 1
     session.commit()
 
-    # Pass 2. Best-effort notification. Each success is committed on its own
-    # so one bad row cannot cost another its marker.
-    from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
+    # Pass 2. Retire the gateway mandate. Best-effort and AFTER the load-bearing
+    # commit, for the same reason the email is: a Razorpay outage must not leave
+    # a customer entitled to a plan they stopped paying for.
+    #
+    # Without this the mandate stayed live and merely ``halted`` — which is a
+    # RECOVERABLE gateway state, so the suspension email below rendered a
+    # working "recover your subscription" button. A customer who pressed it (or
+    # a Razorpay retry that finally landed) was CHARGED, got an invoice, and
+    # got nothing: ``_handle_subscription_charged`` refuses to reactivate an
+    # expired row and stamps the charge ``withheld_charge``. Money in, no
+    # service, recoverable only by a manual refund somebody had to notice.
+    #
+    # Cancelled immediately, not at cycle end: the grace window has already
+    # elapsed unpaid, so there is no paid period left to protect, and a
+    # cycle-end cancel leaves the retries running until the boundary. This also
+    # retires the seat and branding add-on mandates, which this cron previously
+    # left billing forever.
+    from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON, execute_gateway_cancellation
 
+    for sub in subs:
+        try:
+            execute_gateway_cancellation(session, sub, at_period_end=False)
+            session.commit()
+        except Exception:  # noqa: BLE001  the expiry is what must survive
+            session.rollback()
+            logger.error(
+                "Gateway cancel FAILED for expired subscription %s (client %s). The mandate is "
+                "STILL LIVE at Razorpay and can debit a customer who now has no service. "
+                "gateway_cancel_executed_at is unstamped, so the deferred-cancellation sweep "
+                "retries it.",
+                sub.id,
+                sub.client_id,
+                exc_info=True,
+            )
+
+    # Pass 3. Best-effort notification. Each success is committed on its own
+    # so one bad row cannot cost another its marker. Runs AFTER the cancel so
+    # the recovery link resolves against the real (now dead) mandate state and
+    # the email falls back to prose instead of offering a button that charges.
     for sub in subs:
         if (sub.dunning_emails_sent or {}).get(SUSPENDED_MARKER):
             continue
@@ -2697,26 +2732,34 @@ def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int, ra
         # handed to Brevo.
         amount = ""
         if sub.plan:
-            # Charge the cycle the customer is actually on. Quoting the monthly
-            # figure to an annual subscriber ("the ₹949 charge failed" when
-            # ₹7,971 was attempted) is wrong in the one email that has to look
-            # credible. Mirrors the selector used at razorpay_service.py:556
-            # and subscription_routes.py:822.
-            minor = (
-                sub.plan.annual_price_cents
-                if (sub.billing_cycle or "monthly") == "annual"
-                else sub.plan.monthly_price_cents
-            )
-            # The GROSS, not the base. Prices are published exclusive of GST, so
-            # the base is not what Razorpay attempted and not what the customer
-            # will see on their statement. "The ₹1,799 charge failed" against a
-            # ₹2,122.82 debit is exactly the kind of mismatch that makes a
-            # dunning email look like a phishing attempt.
-            from app.services.razorpay_service import charged_price_display
+            # All three axes — cycle, rail, standing discount — through the
+            # SAME helper the super-admin at-risk queue prices with, so the
+            # operator's console and the customer's inbox can never disagree
+            # about one charge. This used to read the INR columns and honour
+            # only the cycle, so a referral-discounted customer was quoted
+            # roughly double their real debit and a USD customer was quoted
+            # rupees under a dollar sign.
+            from sqlalchemy.orm import object_session
 
-            # ``minor`` is an INR column for every rail, so the symbol is pinned
-            # to INR rather than derived from the buyer's country.
-            amount = charged_price_display(owner, minor, rate_bps, currency=sub.plan.currency or "INR")
+            from app.services import discount_service
+            from app.services import dunning_service as _dunning
+            from app.services.razorpay_service import charge_currency, charged_price_display
+
+            currency = charge_currency(getattr(owner, "billing_country", None))
+            discount_bps = 0
+            try:
+                session = object_session(sub)
+                if session is not None:
+                    discount_bps, _ = discount_service.resolve_customer_discount_bps(session, owner)
+            except Exception:  # noqa: BLE001 - a discount lookup must not cost the email
+                logger.debug("dunning: discount lookup failed for sub %s", sub.id, exc_info=True)
+            minor = _dunning.cycle_charge_minor(sub.plan, sub.billing_cycle, currency, discount_bps)
+            if minor is not None:
+                # The GROSS, not the base. Prices are published exclusive of
+                # GST, so the base is neither what Razorpay attempted nor what
+                # the statement shows. A mismatch there is what makes a dunning
+                # email look like a phishing attempt.
+                amount = charged_price_display(owner, minor, rate_bps, currency=currency)
 
         if marker == "failed_0":
             # Day 0 asks for nothing, so it needs no recovery link, which also

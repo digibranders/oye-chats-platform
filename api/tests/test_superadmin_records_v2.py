@@ -168,8 +168,13 @@ def test_session_summary_reads_the_visitor_from_lead_info(db, monkeypatch):
     (row,) = res.json()
     assert row["visitor_name"] == "Arjun"
     assert row["visitor_email"] == "arjun@buyer.example"
-    # Wire key unchanged, column read is the real ``last_active_at``.
-    assert row["last_activity_at"] == last_active.isoformat()
+    # Wire key unchanged, column read is the real ``last_active_at``. Compared
+    # as an INSTANT, not a string: psycopg2 returns timestamptz in the
+    # connection's local zone, so the rendered offset follows the machine
+    # (+00:00 on the UTC droplet, +05:30 on an IST laptop) while the instant is
+    # identical. The offset-aware parse also keeps this failing loudly if the
+    # API ever dropped the offset (naive vs aware comparison raises).
+    assert datetime.fromisoformat(row["last_activity_at"]) == last_active
 
 
 def test_session_summary_is_null_when_the_visitor_never_identified(db, monkeypatch):
