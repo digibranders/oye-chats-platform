@@ -1,0 +1,142 @@
+name: Deploy Admin Dashboard
+
+# The admin SPA ships AFTER the backend it talks to, never beside it.
+#
+# Vercel used to deploy this project itself, on its Git integration, the moment
+# main moved. That put the dashboard and the API in a race the dashboard
+# usually won: Vercel builds a Vite SPA in a couple of minutes, while
+# `deploy-api.yml` runs the full CI suite, migrates the database over SSH and
+# then waits for `/health/full` to come back green. A release that added an
+# endpoint therefore put a dashboard live against a backend that did not have
+# it yet, and every user in that window got 404s from a screen that looked fine.
+#
+# So the Git integration is off for this project (`app/vercel.json`,
+# `git.deploymentEnabled.main`) and the deployment is triggered from here
+# instead, by a Deploy Hook, once the backend for THIS commit is confirmed
+# healthy. `git.deploymentEnabled` only suppresses deployments made "upon
+# commits" - Deploy Hooks still fire, which is what makes the swap possible.
+# (The one setting that WOULD break the hook is the deprecated
+# `github.enabled: false`. Do not add it.)
+#
+# SETUP, one time: create a Deploy Hook on the `main` branch under the Vercel
+# project's Settings -> Git, and store the URL as the repository secret
+# `VERCEL_DEPLOY_HOOK_URL`. The URL is a credential - anyone holding it can
+# deploy the project.
+
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', '.github/workflows/deploy-app.yml']
+  workflow_dispatch:
+
+# `actions: read` is what lets the wait job see the backend workflow's run.
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+  actions: read
+
+# Two pushes in quick succession must not deploy out of order. Queued rather
+# than cancelled: a superseded run still has to release its slot cleanly, and
+# the hook itself already collapses duplicate builds of the same commit.
+concurrency:
+  group: deploy-app
+  cancel-in-progress: false
+
+jobs:
+  # In-repo CI gate (audit F20), same as the API and widget deploys: a push to
+  # main that bypassed branch protection still cannot reach production unless
+  # the full suite passes in THIS run.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Runs beside `ci` rather than after it, so the wait overlaps the suite
+  # instead of following it. `deploy` needs both.
+  wait-for-backend:
+    name: Wait for the backend deploy
+    runs-on: ubuntu-latest
+    # The backend's own deploy is ~15 minutes on a bad day: CI, then migrations,
+    # then the health gate and its retries.
+    timeout-minutes: 50
+    steps:
+      - name: Wait for the backend deploy of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          WORKFLOW='deploy-api.yml'
+          # A run triggered by the same push as this one is created within
+          # seconds. One that has not appeared by now is one that is never
+          # coming: the commit did not touch `api/**`, so there is no backend
+          # deploy to wait for and the dashboard may ship on its own.
+          GRACE_SECONDS=120
+          DEADLINE_SECONDS=2400
+          started=$SECONDS
+
+          while :; do
+            # A transient API failure must not fail the deploy, so a failed
+            # read is treated as "nothing yet" and retried.
+            run=$(gh api \
+              "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?head_sha=${SHA}&per_page=100" \
+              --jq '.workflow_runs | sort_by(.created_at) | last // empty' 2>/dev/null || echo '')
+
+            if [ -n "$run" ]; then
+              status=$(jq -r '.status' <<<"$run")
+              conclusion=$(jq -r '.conclusion // ""' <<<"$run")
+              url=$(jq -r '.html_url' <<<"$run")
+
+              if [ "$status" = 'completed' ]; then
+                case "$conclusion" in
+                  success|skipped)
+                    echo "Backend deploy ${conclusion}. Dashboard may ship: ${url}"
+                    exit 0
+                    ;;
+                  *)
+                    # `deploy-api.yml` rolls the droplet back to the previous
+                    # healthy release when it fails, so what is live right now
+                    # is the OLD backend. Shipping a new dashboard against it
+                    # is the exact breakage this workflow exists to prevent.
+                    echo "::error::Backend deploy concluded '${conclusion}'. The droplet has rolled back to the previous release, so the dashboard must not ship against it. ${url}"
+                    exit 1
+                    ;;
+                esac
+              fi
+              echo "Backend deploy is ${status}; waiting. ${url}"
+            elif [ $((SECONDS - started)) -ge $GRACE_SECONDS ]; then
+              echo "No backend deploy for ${SHA} after ${GRACE_SECONDS}s: this commit does not touch api/**. Proceeding."
+              exit 0
+            else
+              echo "No backend deploy yet; inside the ${GRACE_SECONDS}s grace period."
+            fi
+
+            if [ $((SECONDS - started)) -ge $DEADLINE_SECONDS ]; then
+              echo "::error::Timed out after ${DEADLINE_SECONDS}s waiting for the backend deploy to finish."
+              exit 1
+            fi
+            sleep 15
+          done
+
+  deploy:
+    needs: [ci, wait-for-backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the Vercel deployment
+        env:
+          HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HOOK_URL:-}" ]; then
+            echo "::error::VERCEL_DEPLOY_HOOK_URL is not set. Create a Deploy Hook for the main branch under the Vercel project's Settings -> Git and add the URL as a repository secret. Without it nothing deploys the dashboard, because the Git integration is off."
+            exit 1
+          fi
+
+          # `--fail-with-body` so a 4xx/5xx is an error AND its body is still
+          # printed; the URL itself is never echoed.
+          curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-connrefused --max-time 30 \
+            -X POST "$HOOK_URL"
+          echo
+          echo "Deploy Hook accepted. Vercel is building ${GITHUB_SHA}."

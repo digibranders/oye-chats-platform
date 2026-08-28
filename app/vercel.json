@@ -2,12 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "main": true,
+      "main": false,
       "*": false,
       "**": false
     }
   },
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD ./",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],
