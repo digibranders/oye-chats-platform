@@ -20,7 +20,6 @@ import {
   formatPromotionScope,
   formatAgentAllowance,
   formatSeatAllowance,
-  formatTrialOffer,
   formatMoneyMinor,
   maxAnnualSavingPercent,
   promotionAppliesToPlan,
@@ -40,7 +39,6 @@ export interface PlanPickerDialogProps {
   onOpenChange: (open: boolean) => void;
   plans: PlanView[];
   currentPlan: PlanView | null;
-  currentStatus: string | null;
   hasActiveSubscription: boolean;
   promotion: PromotionView | null;
   geo: BillingGeoView | null;
@@ -78,7 +76,6 @@ function PlanCard({
 }) {
   const price = resolvePlanPrice(plan, cycle, geo);
   const disclosure = chargeDisclosure(price);
-  const trial = formatTrialOffer(plan.trialDays);
 
   // Annual plans lead with the per-month equivalent, the figure a customer can
   // compare against the monthly toggle at a glance, and name the yearly total
@@ -156,8 +153,6 @@ function PlanCard({
         <p className="mt-3 rounded-sm bg-plan-tint px-2 py-1 text-xs text-plan">
           Your launch offer applies to this plan.
         </p>
-      ) : trial && !current ? (
-        <p className="mt-3 text-xs text-text-tertiary">{trial}, no card needed.</p>
       ) : null}
 
       <div className="mt-4">
@@ -203,7 +198,6 @@ export function PlanPickerDialog({
   onOpenChange,
   plans,
   currentPlan,
-  currentStatus,
   hasActiveSubscription,
   promotion,
   geo,
@@ -225,8 +219,6 @@ export function PlanPickerDialog({
   });
 
   const checkout = usePlanCheckout({
-    currentPlanSlug: currentPlan?.slug ?? 'free',
-    currentSubscriptionStatus: currentStatus,
     hasActiveSubscription,
     promotion,
     botId,

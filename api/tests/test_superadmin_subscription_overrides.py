@@ -84,9 +84,10 @@ def test_extend_trial_on_a_row_with_no_trial_is_409_and_changes_nothing(db, monk
     assert res.status_code == 409, res.text
     detail = res.json()["detail"]
     assert "no trial to extend" in detail
-    # The remedy is named, not left to the caller to guess, and it names a
-    # thing that exists: there is no start-a-trial route to send anyone to.
-    assert "set trial_start, trial_end and current_period_end on the row directly" in detail
+    # The message names a thing that is true. There is no start-a-trial route to
+    # send anyone to, and this console has no lever either, so it says so rather
+    # than describing an operation the caller cannot perform.
+    assert "not a supported operation" in detail
     assert "start-trial" not in detail
 
     db.expire_all()

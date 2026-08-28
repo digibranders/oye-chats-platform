@@ -489,9 +489,13 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
             trial_end_at = subscription.trial_end
             if trial_end_at.tzinfo is None:
                 trial_end_at = trial_end_at.replace(tzinfo=UTC)
+            # Both read the row or stay None, and the send below is guarded on
+            # None. ``or 7`` here reported the retired offer's length even for a
+            # row that says 0, and the missing-plan fallback named a trial shape
+            # nothing granted. Matches the register path.
             plan = subscription.plan
             trial_credits = int(plan.credits_per_month or 0) if plan else None
-            trial_duration_days = int(plan.trial_days or 7) if plan else 7
+            trial_duration_days = int(plan.trial_days or 0) if plan else None
 
         session.commit()
         session.refresh(new_client)

@@ -214,3 +214,103 @@ passed.
 Also merged `origin/development` (`24ce482`, a WidgetMock refactor) into the
 branch at the user's request. Clean merge, frontend only, and the full frontend
 suite was re-run against it.
+
+### Task 2b review
+
+11 findings. All the real ones fixed in the Task 3 commit.
+
+1. **HIGH, and it was the task's own stated failure mode.** Removing the trial
+   CTA's label left the sentence beside it: a plan card with `trialDays > 0`
+   still rendered "7-day free trial, no card needed." above a button now reading
+   "Subscribe" that goes straight to Razorpay. The replacement test asserted on
+   a button role, so a paragraph sailed past it, and the fixture rendered that
+   exact string while the test passed. The copy is deleted; the test now asserts
+   on TEXT with the fixture still carrying `trial_days: 7`, so a plan row with a
+   trial length can never resurrect the promise. Verified: re-adding the
+   sentence fails it.
+2. **HIGH.** The parity test asserted `_paid_tier_includes` over all six gates,
+   but two of them (quotation, delta recrawl) use a bare `in` and never call it,
+   so those assertions were vacuous. Worse, they papered over a live split:
+   `_paid_tier_includes` grants any slug outside `_SEEDED_PLAN_SLUGS` (a bespoke
+   per-contract tier) while a bare `in` denies it. That split is pre-existing
+   and out of this plan's scope, so it is NOT changed. The test now asserts
+   membership parity on every gate and the wrapper only where it is the
+   enforcer, with a comment naming the split so the next reader sees it.
+3. **MEDIUM.** The gate scan was still enumerated one level up: a hardcoded
+   module list, `frozenset` only, and a floor of "at least one gate found". It
+   now walks every file under `app` and carries `_KNOWN_SLUG_GATES` as a floor.
+   Walking FILES rather than `pkgutil.walk_packages` matters: `app/api` has no
+   `__init__.py`, so the package walker never descended into it and would have
+   silently missed the one gate the scan exists to catch. Verified against both
+   failure modes: dropping the trial from a gate fails, and renaming a gate out
+   of the `_SLUGS` convention fails.
+4. **MEDIUM.** My previous fix made the degraded welcome email worse, not
+   better. `credits=0, duration_days=0` renders "your 0-day free trial is live,
+   you've got 0 credits", asserted to a customer whose subscription IS trialing
+   and whose credits ARE in the ledger. Stale-but-plausible was replaced by
+   self-evidently broken. The email is now skipped when the plan row is missing,
+   with a warning log; the trial payload still reaches the app. The sibling
+   OAuth signup path carried the same retired-offer fallback and additionally
+   reported 7 days for a row that says 0. Fixed to match.
+5. **MEDIUM, and it corrects this log.** `usePlanCheckout`'s `currentPlanSlug`
+   and `currentSubscriptionStatus` existed only to feed `isTrialEligible` and
+   became dead. That produced a `react-hooks/exhaustive-deps` warning which the
+   Task 2b entry above recorded as "1 pre-existing warning". It was not
+   pre-existing, it was mine. Removed, along with the now-dead `currentStatus`
+   prop on `PlanPickerDialog` and `useBillingData.trialUsed`, which lost its
+   last reader. `npm run lint` is now clean with **zero** warnings.
+6. LOW. The promo comment still described suppressing an auto-trial path that no
+   longer exists, in the function that removed it. Reworded.
+7. LOW. `EMAIL_INVENTORY.md` still cited `subscription_routes.py:221 (trial
+   start)`. Already corrected in the Task 3 work.
+8. LOW. `docs/billing/2026-07-09-billing-invoice-system-architecture.md` still
+   drew `[*] --> trialing: start-trial` in the state machine and listed Starter
+   at 14 trial days. Both corrected, with a paragraph saying where the trial row
+   is and why it is not in the catalogue table.
+9. LOW. The newly recognised sixth gate was absent from the exported capability
+   matrix, so the published docs under-reported what Professional and Enterprise
+   include. Added, with its row in the exporter test. Two stale docstrings in
+   `quotation_routes` that still said Professional-only were reworded.
+10. LOW. The reworded super-admin 409 named a remedy no API offers: the console
+    cannot write `trial_start` / `trial_end`. It now says granting a trial to an
+    existing customer is not a supported operation, which is true.
+11. LOW. Covered by 5.
+
+### Task 3, signup lands on the trial
+
+Status: **done**. This task verifies rather than builds.
+
+`test_signup_opens_a_trialing_sub_with_500_credits` passed on the first run,
+which the plan says is the point: `assign_default_plan_to_client`'s `trial_days
+> 0` branch already opens the subscription trialing, pins `current_period_end`
+to `trial_end`, and grants the plan's credits inline. `credit_service.get_balance`
+exists under that name, so the plan's test needed no adaptation.
+
+Copy, per Step 3:
+
+* A real defect found while reading `send_trial_welcome_email`: its subject line
+  was `Welcome to OyeChats (your 14-day trial is live` with the closing paren in
+  the shell's copy of the same string, `Welcome to OyeChats) your ...`. An
+  em-dash strip had put the parentheses on the wrong words, and both halves ship
+  to customers. Fixed to a comma.
+* `send_trial_days_left_email` named the plan in its headline, which with the
+  seeded row renders "your Free Trial trial ends tomorrow". It no longer renders
+  the name. The `plan_name` parameter is kept, as the plan instructs, with a
+  docstring saying why it is accepted and not shown.
+* `EMAIL_INVENTORY.md` updated for both, including dropping the trigger that
+  pointed at the deleted start-trial route.
+
+The retention promise in the days-left body ("kept safe for 15 days after the
+trial ends") is deliberately left for Task 5, which is where the retention model
+actually changes and where the trial-ended email is rewritten, so both claims
+move in one commit with one inventory update.
+
+Gates: full backend suite **5880 passed, 4 skipped**. `ruff check` and
+`ruff format` clean. Frontend `tsc --noEmit` clean, `npm run lint` clean with
+zero warnings, `npx vitest run` 134 files / 1767 tests passed.
+
+One observation recorded, not a finding:
+`tests/test_superadmin_invoices.py::test_resend_email_requires_pdf_and_buyer_email`
+fails under a `-k`-filtered run and passes both alone and in the full suite. It
+is order-sensitive on some other module's state, is unrelated to this work, and
+does not fail any gate this plan runs.

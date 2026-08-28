@@ -908,9 +908,11 @@ def update_subscription(
                 detail=(
                     f"Subscription {sub.id} has no trial to extend (trial_end is null; status "
                     f"{sub.status!r}). extend_trial_days only moves an EXISTING trial deadline. "
-                    "There is no route that starts a trial: the 14-day trial is opened at signup "
-                    "and nowhere else. To put this customer on one, set trial_start, trial_end "
-                    "and current_period_end on the row directly."
+                    "There is no route that starts a trial: the 14-day trial is opened at "
+                    "signup and nowhere else, and this console has no lever to grant one "
+                    "(the columns it would need, trial_start and trial_end, are not writable "
+                    "here). Putting an existing customer on a trial is not a supported "
+                    "operation today."
                 ),
             )
 

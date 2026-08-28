@@ -107,6 +107,7 @@ def test_external_gates_match_the_live_constants(matrix: dict) -> None:
     the non-public signup trial, and that is a real entitlement, but it is not
     a column in a published table.
     """
+    from app.api.quotation_routes import QUOTATION_PLAN_SLUGS
     from app.services.plan_entitlements_service import (
         EMAIL_VERIFICATION_SLUGS,
         JOURNEY_ANALYTICS_SLUGS,
@@ -121,6 +122,7 @@ def test_external_gates_match_the_live_constants(matrix: dict) -> None:
         "email_verification": EMAIL_VERIFICATION_SLUGS,
         "visitor_intelligence": VISITOR_INTELLIGENCE_SLUGS,
         "delta_recrawl": _DELTA_RECRAWL_PLAN_SLUGS,
+        "quotation_flow": QUOTATION_PLAN_SLUGS,
     }
     from scripts.seed_plans import _PLANS
 

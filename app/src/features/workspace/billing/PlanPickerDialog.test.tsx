@@ -86,7 +86,6 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof PlanPickerD
           onOpenChange={onOpenChange}
           plans={[FREE, STANDARD]}
           currentPlan={FREE}
-          currentStatus="active"
           hasActiveSubscription={false}
           promotion={null}
           geo={INDIA}
@@ -329,8 +328,16 @@ describe('paths that move no money', () => {
   it('never offers a trial, because the picker is not where trials start', () => {
     // The 14-day trial is opened at signup and nowhere else. A second offer
     // here would be a trial concept the backend has no route for.
+    //
+    // Asserted on TEXT, not on a button role. The CTA lost its trial label
+    // before the sentence beside it did, which left a card reading "7-day free
+    // trial, no card needed." above a button that went straight to Razorpay.
+    // The STANDARD fixture deliberately still carries `trial_days: 7`, so a
+    // plan row with a trial length can never resurrect the promise.
     renderDialog();
-    expect(screen.queryByRole('button', { name: /trial/i })).toBeNull();
+    expect(STANDARD.trialDays).toBeGreaterThan(0);
+    expect(screen.queryByText(/trial/i)).toBeNull();
+    expect(screen.queryByText(/no card needed/i)).toBeNull();
     expect(screen.getByRole('button', { name: /subscribe/i })).toBeInTheDocument();
   });
 

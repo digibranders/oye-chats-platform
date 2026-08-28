@@ -1355,9 +1355,9 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
     try:
         send_email_async(
             to_email,
-            f"Welcome to {BRAND_NAME} (your {duration_days}-day trial is live",
+            f"Welcome to {BRAND_NAME}, your {duration_days}-day trial is live",
             shell(
-                subject=f"Welcome to {BRAND_NAME}) your {duration_days}-day trial is live",
+                subject=f"Welcome to {BRAND_NAME}, your {duration_days}-day trial is live",
                 preheader=f"You've got {credits:,} credits and {duration_days} days to build your bot.",
                 inner=inner,
             ),
@@ -1399,17 +1399,23 @@ def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining:
 
 
 def send_trial_days_left_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Urgency reminder fired at T-2 and T-1 on the 7-day trial cadence."""
-    safe_plan = esc(plan_name)
+    """Urgency reminder fired near the end of the trial.
+
+    ``plan_name`` is accepted and deliberately not rendered. There is exactly
+    one trial now, the plan-less 14-day row every signup lands on, and its row
+    is named "Free Trial", so naming it produced "your Free Trial trial". The
+    parameter stays because every caller and the email catalogue pass it, and
+    because a bespoke tier could carry a trial length again.
+    """
     if days_remaining <= 1:
-        headline = f"your {safe_plan} trial ends tomorrow"
+        headline = "your trial ends tomorrow"
         lead = (
             f"Heads up. Your trial wraps up in about {strong(f'{days_remaining} day')}. After that your "
             f"widget will switch to its offline message until you pick a plan."
         )
         subject = f"Your {BRAND_NAME} trial ends tomorrow"
     else:
-        headline = f"{days_remaining} days left in your {safe_plan} trial"
+        headline = f"{days_remaining} days left in your trial"
         lead = (
             f"You&rsquo;ve got {strong(f'{days_remaining} days')} to keep evaluating. If you&rsquo;d like your "
             f"bot to stay live without a gap, pick a plan before the trial ends."

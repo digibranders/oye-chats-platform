@@ -103,9 +103,9 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | | |
 |---|---|
 | Function | `send_trial_welcome_email(to_email, name, trial_end, credits, duration_days)` |
-| Subject | `Welcome to OyeChats — your {N}-day trial is live` |
+| Subject | `Welcome to OyeChats, your {N}-day trial is live` |
 | Body | Confirms trial active + exact end date, credit allowance, dashboard CTA, 3-step quick-start |
-| Triggers | `auth_routes.py:769` (register); `oauth_routes.py:392` (OAuth signup); `subscription_routes.py:221` (trial start) |
+| Triggers | `auth_routes.py` (register); `oauth_routes.py` (OAuth signup). **N is 14** and comes from the seeded `trial` plan row; there is no start-a-trial route to fire this from any more |
 | Metered | No |
 
 #### B2. Trial midpoint check-in (T-4 on the 7-day trial)
@@ -120,7 +120,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | | |
 |---|---|
 | Function | `send_trial_days_left_email(to_email, name, days_remaining, plan_name)` |
-| Subject | `{N} days left in your OyeChats trial` / `Your OyeChats trial ends tomorrow` (≤1 day) |
+| Subject | `{N} days left in your OyeChats trial` / `Your OyeChats trial ends tomorrow` (≤1 day). The body no longer names the plan: there is one trial and its row is called "Free Trial", so naming it read "your Free Trial trial" |
 | Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:886`) — **daily 09:00** — fires when `days_remaining ∈ {2, 1}` (marker keys `day_11`, `day_13` preserved from the legacy 14-day cadence) |
 | Metered | No |
 

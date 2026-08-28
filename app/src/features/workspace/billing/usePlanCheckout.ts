@@ -49,8 +49,6 @@ export const ACTIVATION_PENDING_MESSAGE =
   'Payment received - we’re activating your plan now. You don’t need to pay again; this usually takes under a minute.';
 
 export interface PlanCheckoutContext {
-  currentPlanSlug: string;
-  currentSubscriptionStatus: string | null;
   hasActiveSubscription: boolean;
   /**
    * The bot whose subscription the Billing view is scoped to (the agent
@@ -118,8 +116,6 @@ export interface PlanCheckoutResult {
 
 export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
   const {
-    currentPlanSlug,
-    currentSubscriptionStatus,
     hasActiveSubscription,
     promotion,
     botId = null,
@@ -206,9 +202,10 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       }
 
       // A promo-eligible selection runs the CHECKOUT money-path so the deferred
-      // free-period (start_at) is applied. Used to (a) suppress the auto-trial
-      // path (the 3-month promo beats a 7-day trial and is what the customer
-      // was shown) and (b) force checkout over change-plan below. Monthly-only:
+      // free-period (start_at) is applied, forcing checkout over change-plan
+      // below. It used to suppress an auto-trial path as well; that path is
+      // gone, because the only trial is the one every account opens on at
+      // signup. Monthly-only:
       // annual + promo would bill a full year after the free period, so the
       // backend never applies it there either.
       const promoApplies = billingCycle === 'monthly' && promotionAppliesToPlan(promotion ?? null, plan);
@@ -481,8 +478,6 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     [
       acctCountry,
       countrySource,
-      currentPlanSlug,
-      currentSubscriptionStatus,
       onBillingDetailsRequired,
       hasActiveSubscription,
       promotion,

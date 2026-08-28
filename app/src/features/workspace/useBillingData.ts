@@ -51,8 +51,6 @@ import {
 export interface BillingData {
   subscription: SubscriptionView;
   plan: PlanView | null;
-  /** True once the client has consumed their lifetime free trial. Gates the trial CTA. */
-  trialUsed: boolean;
   /** The downgrade re-auth grace row, which is `past_due` but is NOT a failed payment. */
   reauth: ReauthView | null;
 }
@@ -109,7 +107,6 @@ export function useBillingData(botId: number | null = null): UseBillingDataResul
       return {
         subscription: buildSubscription(raw.subscription),
         plan: buildPlan(raw.plan),
-        trialUsed: raw.trial_used === true,
         reauth: buildReauth(raw.reauth),
       };
     },

@@ -942,11 +942,6 @@ def register(request: Request, body: RegisterRequest):
                 if trial_end.tzinfo is None:
                     trial_end = trial_end.replace(tzinfo=UTC)
                 days_remaining = trial_days_remaining(trial_end)
-                # No hardcoded fallback. A missing plan relationship here would
-                # once have reported the retired offer's 750 credits / 7 days,
-                # numbers no row carries any more, so the honest degraded answer
-                # is to report what was actually granted, which is nothing we
-                # can name. Both branches read the row or say zero.
                 plan_row = subscription.plan
                 credits_granted = int(plan_row.credits_per_month or 0) if plan_row else 0
 
@@ -957,21 +952,37 @@ def register(request: Request, body: RegisterRequest):
                     credits_granted=credits_granted,
                 )
 
-                try:
-                    send_trial_welcome_email(
-                        new_client.email,
-                        name=new_client.name,
-                        trial_end=trial_end,
-                        credits=credits_granted,
-                        duration_days=int(plan_row.trial_days or 0) if plan_row else 0,
-                    )
-                except Exception as mail_err:
-                    # send_trial_welcome_email is already defensive. This is
-                    # the belt-and-braces guard for any import-time error.
+                # Only send when the row can actually answer the two numbers
+                # the template asserts. It writes "your {N}-day free trial is
+                # live, you've got {C} credits", so a fallback would put a
+                # figure in front of a customer that nothing granted: the old
+                # 750 credits / 7 days named the retired offer, and zeros would
+                # promise a 0-day trial while the subscription is trialing and
+                # its credits are already in the ledger. No numbers means no
+                # email, and the trial payload above still tells the app.
+                if plan_row is not None:
+                    try:
+                        send_trial_welcome_email(
+                            new_client.email,
+                            name=new_client.name,
+                            trial_end=trial_end,
+                            credits=credits_granted,
+                            duration_days=int(plan_row.trial_days or 0),
+                        )
+                    except Exception as mail_err:
+                        # send_trial_welcome_email is already defensive. This is
+                        # the belt-and-braces guard for any import-time error.
+                        logger.warning(
+                            "trial_welcome_dispatch_failed for client %s: %s",
+                            new_client.id,
+                            mail_err,
+                        )
+                else:
                     logger.warning(
-                        "trial_welcome_dispatch_failed for client %s: %s",
+                        "trial_welcome_skipped_no_plan_row for client %s: "
+                        "subscription %s is trialing but carries no plan",
                         new_client.id,
-                        mail_err,
+                        subscription.id,
                     )
 
             # Affiliate first-touch attribution. Best-effort. Invalid /

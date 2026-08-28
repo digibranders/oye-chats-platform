@@ -247,7 +247,7 @@ Guarded by `api/tests/test_invoicing_migrations.py`.
 | credits/month                              | 200            | 3000                 | 10000              | custom               |
 | price (display USD ¢)                     | 0              | 1900                 | 4900               | contact sales        |
 | annual discount                            | —             | 20%                  | 20%                | —                   |
-| trial days                                 | 0              | 14                   | 0                  | 0                    |
+| trial days                                 | 0              | 0                    | 0                  | 0                    |
 | included seats                             | 0              | 1                    | 2                  | 5                    |
 | bots                                       | 1              | 1                    | 2                  | ∞ (legacy-pooled)   |
 | max crawl pages                            | 20             | ∞ (credit-governed) | ∞                 | 10000                |
@@ -256,6 +256,8 @@ Guarded by `api/tests/test_invoicing_migrations.py`.
 | custom_sla / dedicated_csm                 | —             | —                   | —                 | ✓                   |
 
 Seeded idempotently by migration `d3e4f5a6b7c8` (upsert-by-slug; unknown custom tiers preserved). **Actual charged amount** comes from the referenced Razorpay plan (`razorpay_plan_id_monthly/_annual`), not the display columns.
+
+Every purchasable tier carries **0 trial days**. The one non-zero row is `trial`, the 14-day plan seeded `is_public: false` so it never renders on a buying surface, which `get_default_plan` hands to every new signup. It is not in the table above because the table is the catalogue a customer chooses from, and the trial is not chosen.
 
 ### 5.2 Entitlement resolution
 
@@ -300,8 +302,8 @@ Enterprise "unlimited bots" is handled outside this gate via `is_legacy_pooled=t
 
 ```mermaid
 stateDiagram-v2
-    [*] --> trialing: start-trial (paid plan, trial_days>0)
-    [*] --> active: Free plan on signup / paid activation
+    [*] --> trialing: signup (the default plan is the 14-day trial row)
+    [*] --> active: paid activation / a legacy zero-trial default
     trialing --> active: subscription.activated / charged
     trialing --> trial_expired: task_expire_trials (trial_end lapsed)
     trial_expired --> [*]: data hard-delete after 15d grace

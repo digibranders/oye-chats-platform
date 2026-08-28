@@ -214,35 +214,73 @@ def test_change_plan_refuses_a_non_public_plan_as_a_target(db):
     create_sub.assert_not_called()
 
 
-def _slug_gate_constants() -> list[tuple[str, frozenset[str]]]:
+# The slug gates known to exist when this was written. The scan below must find
+# at least these, so a rename that drops one out of the scan fails here instead
+# of silently narrowing the guard to whatever is left.
+_KNOWN_SLUG_GATES: frozenset[str] = frozenset(
+    {
+        "app.api.quotation_routes.QUOTATION_PLAN_SLUGS",
+        "app.services.plan_entitlements_service.EMAIL_VERIFICATION_SLUGS",
+        "app.services.plan_entitlements_service.JOURNEY_ANALYTICS_SLUGS",
+        "app.services.plan_entitlements_service.LEAD_SOURCE_ATTRIBUTION_SLUGS",
+        "app.services.plan_entitlements_service.VISITOR_INTELLIGENCE_SLUGS",
+        "app.services.plan_service._DELTA_RECRAWL_PLAN_SLUGS",
+    }
+)
+
+
+def _slug_gate_constants() -> list[tuple[str, frozenset[str] | set[str]]]:
     """Every module-level plan-slug gate, discovered rather than enumerated.
 
-    A gate is a module-level ``frozenset`` of plan slugs whose name ends in
-    ``_SLUGS``: the shape every capability gate outside ``Plan.features`` uses.
-    Membership decides whether a tier gets the feature, so a new one that
-    forgets the trial takes a Professional capability away from it, silently
-    and behind copy that promises the opposite. Discovering them means that
-    failure shows up here on the day the gate is written.
+    A gate is a module-level set of plan slugs whose name ends in ``_SLUGS``:
+    the shape every capability gate outside ``Plan.features`` uses. Membership
+    decides whether a tier gets the feature, so a new one that forgets the
+    trial takes a Professional capability away from it, silently and behind
+    copy that promises the opposite.
+
+    Every module under ``app`` is walked, not a hand-picked list, because the
+    gate that motivated this scan (``QUOTATION_PLAN_SLUGS``) lives in
+    ``app.api`` while the others live in ``app.services``: gates do not stay
+    where you expect them. The walk is over FILES rather than
+    ``pkgutil.walk_packages`` because ``app.api`` carries no ``__init__.py``,
+    so the package walker never descends into it and the scan would have
+    silently missed the one gate it exists to catch.
+
+    ``_KNOWN_SLUG_GATES`` is the floor, so a rename out of the ``_SLUGS``
+    convention fails loudly rather than quietly shrinking the guard.
     """
     import importlib
+    from pathlib import Path
 
-    gates: list[tuple[str, frozenset[str]]] = []
-    for module_name in (
-        "app.services.plan_entitlements_service",
-        "app.services.plan_service",
-        "app.api.quotation_routes",
-    ):
-        module = importlib.import_module(module_name)
+    import app
+
+    root = Path(app.__file__).resolve().parent
+    gates: dict[str, frozenset[str] | set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).with_suffix("")
+        parts = [part for part in rel.parts if part != "__init__"]
+        if not parts or any(part.startswith("_") and part != "__init__" for part in parts[:-1]):
+            continue
+        module_name = ".".join(["app", *parts])
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 - an unimportable module cannot hold a live gate
+            continue
         for attr in dir(module):
             if not attr.endswith("_SLUGS"):
                 continue
-            value = getattr(module, attr)
             # ``_SEEDED_PLAN_SLUGS`` is the roster of seeded tiers, not a gate:
-            # it answers "is this slug bespoke", the opposite question.
-            if isinstance(value, frozenset) and attr != "_SEEDED_PLAN_SLUGS":
-                gates.append((f"{module_name}.{attr}", value))
-    assert gates, "no slug gates discovered, the scan is broken"
-    return gates
+            # it answers "is this slug bespoke", which is the opposite question.
+            if attr == "_SEEDED_PLAN_SLUGS":
+                continue
+            value = getattr(module, attr)
+            if not isinstance(value, frozenset | set) or not all(isinstance(item, str) for item in value):
+                continue
+            gates[f"{module_name}.{attr}"] = value
+
+    missing = _KNOWN_SLUG_GATES - set(gates)
+    assert not missing, f"the scan stopped finding known slug gates: {sorted(missing)}"
+    return sorted(gates.items())
 
 
 def test_the_trial_matches_professional_on_every_gate_outside_plan_features():
@@ -263,7 +301,26 @@ def test_the_trial_matches_professional_on_every_gate_outside_plan_features():
     """
     for name, ladder in _slug_gate_constants():
         assert ("trial" in ladder) == ("professional" in ladder), name
-        assert _paid_tier_includes("trial", ladder) == _paid_tier_includes("professional", ladder), name
+
+    # Membership is what every gate reads. Four of them wrap it in
+    # ``_paid_tier_includes``, which also grants any slug OUTSIDE
+    # ``_SEEDED_PLAN_SLUGS`` (a bespoke per-contract tier); the other two use a
+    # bare ``in``. Asserting the wrapper over all six would be vacuous on the
+    # two that never call it, so it is asserted only where it is the enforcer.
+    from app.services.plan_entitlements_service import (
+        EMAIL_VERIFICATION_SLUGS,
+        JOURNEY_ANALYTICS_SLUGS,
+        LEAD_SOURCE_ATTRIBUTION_SLUGS,
+        VISITOR_INTELLIGENCE_SLUGS,
+    )
+
+    for ladder in (
+        EMAIL_VERIFICATION_SLUGS,
+        JOURNEY_ANALYTICS_SLUGS,
+        LEAD_SOURCE_ATTRIBUTION_SLUGS,
+        VISITOR_INTELLIGENCE_SLUGS,
+    ):
+        assert _paid_tier_includes("trial", ladder) == _paid_tier_includes("professional", ladder)
 
 
 def test_start_trial_route_is_gone(db):
@@ -282,3 +339,29 @@ def test_start_trial_route_is_gone(db):
     with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
         res = _api(db, buyer).post("/subscriptions/start-trial", json={"plan_slug": "standard"})
     assert res.status_code == 404, res.text
+
+
+def test_signup_opens_a_trialing_sub_with_500_credits(db):
+    """The signup branch already exists. This pins it against the new row.
+
+    ``assign_default_plan_to_client`` branches on ``trial_days > 0``, opens the
+    subscription in ``trialing``, pins ``current_period_end`` to ``trial_end``
+    so the billing UI's "renews on" label is the trial deadline, and grants the
+    plan's credits inline because no payment ever arrives to trigger a grant.
+    """
+    from app.services import credit_service, plan_service
+
+    _mk(db, "free")
+    _mk(db, "trial", default=True, public=False, trial_days=14)
+    c = Client(name="T", email="trial-t@example.com", api_key="k-trial-1", hashed_password="h")
+    db.add(c)
+    db.flush()
+    db.commit()
+
+    sub = plan_service.assign_default_plan_to_client(db, c.id)
+    db.commit()
+
+    assert sub.status == "trialing"
+    assert (sub.trial_end - sub.trial_start).days == 14
+    assert sub.current_period_end == sub.trial_end
+    assert credit_service.get_balance(db, c.id) == 500

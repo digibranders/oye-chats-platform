@@ -70,7 +70,8 @@ MAX_UNIT = 40
 VALID_BANT_KEYS = {"need", "timeline", "authority", "budget"}
 VALID_CURRENCIES = {"INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"}
 
-# Plan gating: quotation flow is a Professional-tier feature. Any bot whose
+# Plan gating: quotation flow is a Professional-tier feature, and the trial
+# carries Professional's entitlements. Any bot whose
 # active subscription resolves to one of these plan slugs may configure and
 # run the flow; everyone else gets a 403 on admin CRUD and a silent
 # ``active: false`` on the widget runtime.
@@ -83,7 +84,7 @@ QUOTATION_PLAN_SLUGS: frozenset[str] = frozenset({"trial", "professional", "ente
 
 
 def _client_plan_allows(client_id: int, db) -> bool:
-    """True when the client's active plan is Professional or higher."""
+    """True when the client's plan is Professional-grade (or the trial)."""
     try:
         ent = get_entitlements(client_id, db)
     except Exception:

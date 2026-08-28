@@ -49,6 +49,7 @@ def _load_seed_plans() -> list[dict[str, Any]]:
 # is read from so a reader can verify the claim at source, and so a rename
 # breaks this export loudly instead of silently shipping a stale matrix.
 def _external_capabilities() -> list[dict[str, Any]]:
+    from app.api.quotation_routes import QUOTATION_PLAN_SLUGS
     from app.services.plan_entitlements_service import (
         EMAIL_VERIFICATION_SLUGS,
         JOURNEY_ANALYTICS_SLUGS,
@@ -87,6 +88,12 @@ def _external_capabilities() -> list[dict[str, Any]]:
             "label": "Re-crawl updated pages only (instead of the whole site)",
             "source": "plan_service._DELTA_RECRAWL_PLAN_SLUGS",
             "slugs": sorted(_DELTA_RECRAWL_PLAN_SLUGS),
+        },
+        {
+            "key": "quotation_flow",
+            "label": "Priced quotation flow in the widget",
+            "source": "quotation_routes.QUOTATION_PLAN_SLUGS",
+            "slugs": sorted(QUOTATION_PLAN_SLUGS),
         },
     ]
 
