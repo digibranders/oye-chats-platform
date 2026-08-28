@@ -60,10 +60,22 @@ function shimSource(dtsPath: string): string {
 
 function declaredValueExports(dtsPath: string): Set<string> {
   const source = shimSource(dtsPath);
-  const pattern =
-    /^export\s+(?:declare\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
   const names = new Set<string>();
-  for (const match of source.matchAll(pattern)) names.add(match[1]);
+
+  const declaration =
+    /^export\s+(?:declare\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
+  for (const match of source.matchAll(declaration)) names.add(match[1]);
+
+  // Re-export statements bind at runtime too, and a shim that re-exports
+  // something its module does not is the same lie as declaring it. `export
+  // type { … }` is erased, so only the value form counts.
+  const reexport = /^export\s+(?!type\s)\{([^}]*)\}\s+from\s+/gm;
+  for (const match of source.matchAll(reexport)) {
+    for (const clause of match[1].split(',')) {
+      const name = clause.trim().replace(/^type\s+.*/, '').split(/\s+as\s+/).pop()?.trim();
+      if (name) names.add(name);
+    }
+  }
   return names;
 }
 
